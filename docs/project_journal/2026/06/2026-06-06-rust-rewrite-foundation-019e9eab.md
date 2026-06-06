@@ -25,7 +25,8 @@ superseded_by:
 - Architecture and user-facing README now document the crate-first direction and selection semantics.
 - PR review fixes cover redacted credential debug output, non-argv secret imports, explicit tag API
   failures, access-key-safe HTTP errors, bounded request timeouts, intl module episode parsing,
-  BVID validation, and correct repository metadata.
+  BVID validation, correct repository metadata, and real PGC response compatibility for duplicate
+  episode id fields plus string-style tags.
 
 ## Next Steps
 
@@ -37,4 +38,6 @@ superseded_by:
 - Planning thread: `019e9eab-43cf-7fc0-9218-cad1f8cd7819`.
 - Reference demand threads: `019e9e9d-8782-7c71-a72d-1b3fbf0d6942`, `019e7fd0-b463-76f2-a5ab-37d7d77620f4`.
 - Local gate: `just ci`.
+- Live PGC smoke: `bbdown info ep508404 --json` parsed the restricted `ss41410` metadata response
+  after the post-review serde fix.
 - Independent review findings addressed in the PR branch.

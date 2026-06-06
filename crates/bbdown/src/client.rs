@@ -383,8 +383,8 @@ fn season_from_pgc(result: PgcSeasonResult) -> SeasonMetadata {
         description: evaluate.unwrap_or_default(),
         cover_url: cover,
         main_episode_count,
-        areas: areas.into_iter().filter_map(|area| area.name).collect(),
-        tags: styles.into_iter().filter_map(|style| style.name).collect(),
+        areas: areas.into_iter().filter_map(PgcName::into_name).collect(),
+        tags: styles.into_iter().filter_map(PgcName::into_name).collect(),
         episodes,
     }
 }
@@ -430,8 +430,8 @@ fn season_from_intl(result: IntlSeasonResult, current_epid: Option<u64>) -> Seas
         description: evaluate.unwrap_or_default(),
         cover_url: cover,
         main_episode_count,
-        areas: areas.into_iter().filter_map(|area| area.name).collect(),
-        tags: styles.into_iter().filter_map(|style| style.name).collect(),
+        areas: areas.into_iter().filter_map(PgcName::into_name).collect(),
+        tags: styles.into_iter().filter_map(PgcName::into_name).collect(),
         episodes,
     }
 }
@@ -453,12 +453,13 @@ fn episodes_to_metadata(episodes: Vec<PgcEpisode>, start_index: usize) -> Vec<Ep
 }
 
 fn episode_from_pgc(index: usize, episode: PgcEpisode) -> Option<EpisodeMetadata> {
+    let epid = episode.epid()?;
     Some(EpisodeMetadata {
         index: u32::try_from(index + 1).ok()?,
         aid: episode.aid?,
         bvid: episode.bvid,
         cid: episode.cid?,
-        epid: episode.id?,
+        epid,
         title: episode.title.unwrap_or_default(),
         long_title: episode.long_title,
         pub_time: episode.pub_time,
@@ -613,11 +614,18 @@ struct PgcEpisode {
     aid: Option<u64>,
     bvid: Option<String>,
     cid: Option<u64>,
-    #[serde(alias = "episode_id", alias = "ep_id")]
     id: Option<u64>,
+    ep_id: Option<u64>,
+    episode_id: Option<u64>,
     title: Option<String>,
     long_title: Option<String>,
     pub_time: Option<i64>,
+}
+
+impl PgcEpisode {
+    fn epid(&self) -> Option<u64> {
+        self.ep_id.or(self.episode_id).or(self.id)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -627,8 +635,20 @@ struct PgcSection {
 }
 
 #[derive(Debug, Deserialize)]
-struct PgcName {
-    name: Option<String>,
+#[serde(untagged)]
+enum PgcName {
+    Object { name: Option<String> },
+    Text(String),
+}
+
+impl PgcName {
+    fn into_name(self) -> Option<String> {
+        match self {
+            Self::Object { name } => name,
+            Self::Text(name) => Some(name),
+        }
+        .filter(|name| !name.is_empty())
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -868,11 +888,11 @@ mod tests {
                     "title": "A Season",
                     "evaluate": "Season desc",
                     "episodes": [
-                        {"aid": 10, "bvid": "BV1aa", "cid": 100, "id": 1000, "title": "1", "long_title": "Start"},
-                        {"aid": 11, "bvid": "BV1bb", "cid": 101, "id": 1001, "title": "2", "long_title": "Next"}
+                        {"aid": 10, "bvid": "BV1aa", "cid": 100, "id": 1000, "ep_id": 1000, "title": "1", "long_title": "Start"},
+                        {"aid": 11, "bvid": "BV1bb", "cid": 101, "id": 1001, "ep_id": 1001, "title": "2", "long_title": "Next"}
                     ],
                     "areas": [{"name": "Japan"}],
-                    "styles": [{"name": "Anime"}]
+                    "styles": ["Anime", "Action"]
                 }
             }));
         });
@@ -884,6 +904,7 @@ mod tests {
         match resolved {
             ResolvedContent::Season(season) => {
                 assert_eq!(season.season.title, "A Season");
+                assert_eq!(season.season.tags, ["Anime", "Action"]);
                 assert_eq!(season.selected_episodes.len(), 1);
                 assert_eq!(season.selected_episodes[0].epid, 1001);
             }
@@ -911,7 +932,7 @@ mod tests {
                     "section": [{
                         "title": "Extras",
                         "episodes": [
-                            {"aid": 12, "bvid": "BV1cc", "cid": 102, "id": 2000, "title": "SP", "long_title": "Special"}
+                            {"aid": 12, "bvid": "BV1cc", "cid": 102, "episode_id": 2000, "title": "SP", "long_title": "Special"}
                         ]
                     }]
                 }
