@@ -32,14 +32,17 @@ bbdown info ss28276 --select page:1
 Manage local credentials:
 
 ```bash
-bbdown auth import-cookie 'SESSDATA=...; bili_jct=...'
-bbdown auth import-access-key '...'
+bbdown auth import-cookie --stdin
+bbdown auth import-cookie --file cookie.txt
+bbdown auth import-access-key --stdin
 bbdown auth status
 bbdown auth logout
 ```
 
 Credentials are stored in the platform config directory by default. Use
 `--credential-file <path>` to override this path for integration tests or local experiments.
+Secret import commands also read `BBDOWN_COOKIE` or `BBDOWN_ACCESS_KEY` when no input flag is
+provided, so callers can avoid passing credentials through process arguments.
 
 ## Developer Commands
 

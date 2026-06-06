@@ -54,7 +54,8 @@ fn auth_import_status_and_logout_use_local_store() -> anyhow::Result<()> {
     Command::cargo_bin("bbdown")?
         .arg("--credential-file")
         .arg(&credential_file)
-        .args(["auth", "import-cookie", "SESSDATA=secret"])
+        .env("BBDOWN_COOKIE", "SESSDATA=secret")
+        .args(["auth", "import-cookie"])
         .assert()
         .success();
 

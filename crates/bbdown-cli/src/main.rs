@@ -1,12 +1,14 @@
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::module_name_repetitions)]
 
-use anyhow::Context;
+use anyhow::{Context, bail, ensure};
 use bbdown::{
     BiliClient, ClientConfig, CredentialStore, Credentials, EndpointConfig, ResolvedContent,
     Selection,
 };
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
+use std::fs;
+use std::io::{self, Read};
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
@@ -55,9 +57,17 @@ enum Command {
 #[derive(Debug, Subcommand)]
 enum AuthCommand {
     Status,
-    ImportCookie { cookie: String },
-    ImportAccessKey { access_key: String },
+    ImportCookie(SecretImportArgs),
+    ImportAccessKey(SecretImportArgs),
     Logout,
+}
+
+#[derive(Debug, Args)]
+struct SecretImportArgs {
+    #[arg(long, conflicts_with = "file")]
+    stdin: bool,
+    #[arg(long, value_name = "PATH")]
+    file: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -97,16 +107,18 @@ fn handle_auth(command: AuthCommand, store: &CredentialStore) -> anyhow::Result<
                 serde_json::to_string_pretty(&credentials.redacted_summary())?
             );
         }
-        AuthCommand::ImportCookie { cookie } => {
+        AuthCommand::ImportCookie(args) => {
             let mut credentials = store.load().context("failed to load credentials")?;
+            let cookie = read_secret(args, "BBDOWN_COOKIE", "cookie")?;
             credentials.cookie = Some(cookie);
             store
                 .save(&credentials)
                 .context("failed to save credentials")?;
             println!("cookie imported");
         }
-        AuthCommand::ImportAccessKey { access_key } => {
+        AuthCommand::ImportAccessKey(args) => {
             let mut credentials = store.load().context("failed to load credentials")?;
+            let access_key = read_secret(args, "BBDOWN_ACCESS_KEY", "access key")?;
             credentials.access_key = Some(access_key);
             store
                 .save(&credentials)
@@ -119,6 +131,30 @@ fn handle_auth(command: AuthCommand, store: &CredentialStore) -> anyhow::Result<
         }
     }
     Ok(())
+}
+
+fn read_secret(
+    args: SecretImportArgs,
+    env_key: &'static str,
+    label: &str,
+) -> anyhow::Result<String> {
+    let raw = if args.stdin {
+        let mut buffer = String::new();
+        io::stdin()
+            .read_to_string(&mut buffer)
+            .with_context(|| format!("failed to read {label} from stdin"))?;
+        buffer
+    } else if let Some(path) = args.file {
+        fs::read_to_string(&path)
+            .with_context(|| format!("failed to read {label} from {}", path.display()))?
+    } else if let Ok(value) = std::env::var(env_key) {
+        value
+    } else {
+        bail!("provide {label} through --stdin, --file, or {env_key}");
+    };
+    let value = raw.trim_end_matches(['\r', '\n']).to_owned();
+    ensure!(!value.is_empty(), "{label} is empty");
+    Ok(value)
 }
 
 fn credential_path(path: Option<PathBuf>) -> anyhow::Result<PathBuf> {

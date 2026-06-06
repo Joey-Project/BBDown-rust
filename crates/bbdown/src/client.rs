@@ -122,7 +122,7 @@ impl BiliClient {
         let response: ApiData<ViewData> = self.get_json(url).await?;
         let data = response.into_data()?;
         let aid = data.aid.ok_or(Error::MissingField("data.aid"))?;
-        let tags = self.fetch_tags(aid).await.unwrap_or_default();
+        let tags = self.fetch_tags(aid).await?;
         let pages = data
             .pages
             .into_iter()
@@ -637,6 +637,41 @@ mod tests {
             }
             ResolvedContent::Season(_) => return Err(anyhow::anyhow!("expected video")),
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn video_tag_failure_is_not_silent() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("aid", "170001");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "aid": 170_001,
+                    "bvid": "BV1xx411c7mD",
+                    "title": "Example video",
+                    "pages": [{"page": 1, "cid": 9988, "part": "P1"}]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/tag/archive/tags")
+                .query_param("aid", "170001");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": -101,
+                "message": "login required"
+            }));
+        });
+
+        let client = test_client(&server);
+        let Err(error) = client.resolve_input("av170001", None).await else {
+            return Err(anyhow::anyhow!("tag API failure should propagate"));
+        };
+        assert!(matches!(error, Error::Api { code: -101, .. }));
         Ok(())
     }
 

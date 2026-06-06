@@ -1,13 +1,25 @@
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Credentials {
     pub cookie: Option<String>,
     pub access_key: Option<String>,
+}
+
+impl fmt::Debug for Credentials {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let summary = self.redacted_summary();
+        formatter
+            .debug_struct("Credentials")
+            .field("has_cookie", &summary.has_cookie)
+            .field("has_access_key", &summary.has_access_key)
+            .finish()
+    }
 }
 
 impl Credentials {
@@ -150,6 +162,22 @@ mod tests {
             }
         );
         Ok(())
+    }
+
+    #[test]
+    fn credentials_debug_is_redacted() {
+        let debug = format!(
+            "{:?}",
+            Credentials {
+                cookie: Some("SESSDATA=secret".to_owned()),
+                access_key: Some("access-token".to_owned()),
+            }
+        );
+
+        assert!(debug.contains("has_cookie: true"));
+        assert!(debug.contains("has_access_key: true"));
+        assert!(!debug.contains("SESSDATA=secret"));
+        assert!(!debug.contains("access-token"));
     }
 
     #[cfg(unix)]
