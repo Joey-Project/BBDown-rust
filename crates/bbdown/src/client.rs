@@ -316,8 +316,24 @@ impl BiliClient {
                 .map_err(|_| Error::InvalidInput("invalid cookie header".to_owned()))?;
             headers.insert(COOKIE, value);
         }
-        let response = self.http.get(url).headers(headers).send().await?;
-        Ok(response.error_for_status()?.json::<T>().await?)
+        let response = self
+            .http
+            .get(url)
+            .headers(headers)
+            .send()
+            .await
+            .map_err(Self::http_error_without_url)?;
+        let response = response
+            .error_for_status()
+            .map_err(Self::http_error_without_url)?;
+        response
+            .json::<T>()
+            .await
+            .map_err(Self::http_error_without_url)
+    }
+
+    fn http_error_without_url(error: reqwest::Error) -> Error {
+        Error::Http(error.without_url())
     }
 
     fn endpoint_url(base: &str, path: &str) -> Result<Url> {
@@ -672,6 +688,34 @@ mod tests {
             return Err(anyhow::anyhow!("tag API failure should propagate"));
         };
         assert!(matches!(error, Error::Api { code: -101, .. }));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn intl_access_key_is_redacted_from_http_errors() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let client = BiliClient::new(ClientConfig {
+            endpoints: EndpointConfig {
+                api_base: server.base_url(),
+                pgc_base: server.base_url(),
+                intl_base: server.base_url(),
+            },
+            credentials: Credentials {
+                cookie: None,
+                access_key: Some("TOKEN_SHOULD_REDACT_12345".to_owned()),
+            },
+            user_agent: "test".to_owned(),
+        });
+
+        let Err(error) = client
+            .resolve_input("https://www.bilibili.tv/en/play/34613/341736", None)
+            .await
+        else {
+            return Err(anyhow::anyhow!("HTTP status failure should propagate"));
+        };
+        let debug = format!("{error:?}");
+        assert!(!debug.contains("TOKEN_SHOULD_REDACT_12345"));
+        assert!(!debug.contains("access_key"));
         Ok(())
     }
 
