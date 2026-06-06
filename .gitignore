@@ -1,0 +1,11 @@
+.DS_Store
+.env
+.env.*
+.codex-tmp/
+node_modules/
+dist/
+build/
+out/
+target/
+__pycache__/
+*.py[cod]
