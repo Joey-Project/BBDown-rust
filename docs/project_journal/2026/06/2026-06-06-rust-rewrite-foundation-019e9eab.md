@@ -24,7 +24,8 @@ superseded_by:
 - Default CI is designed around formatter, clippy, unit tests, and mock e2e tests.
 - Architecture and user-facing README now document the crate-first direction and selection semantics.
 - PR review fixes cover redacted credential debug output, non-argv secret imports, explicit tag API
-  failures, access-key-safe HTTP errors, bounded request timeouts, and correct repository metadata.
+  failures, access-key-safe HTTP errors, bounded request timeouts, intl module episode parsing,
+  BVID validation, and correct repository metadata.
 
 ## Next Steps
 

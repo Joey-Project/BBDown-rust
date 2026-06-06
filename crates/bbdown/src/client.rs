@@ -239,7 +239,7 @@ impl BiliClient {
         }
         let response: IntlSeasonRoot = self.get_json(url).await?;
         let result = response.into_result()?;
-        let season = season_from_intl(result);
+        let season = season_from_intl(result, Some(epid));
         let selection = selection.unwrap_or(Selection::Current);
         Self::resolve_season_selection(season, Some(&selection), Some(epid), "intl episode")
     }
@@ -389,26 +389,49 @@ fn season_from_pgc(result: PgcSeasonResult) -> SeasonMetadata {
     }
 }
 
-fn season_from_intl(result: IntlSeasonResult) -> SeasonMetadata {
-    let episodes = episodes_to_metadata(result.episodes, 0);
+fn season_from_intl(result: IntlSeasonResult, current_epid: Option<u64>) -> SeasonMetadata {
+    let IntlSeasonResult {
+        season_id,
+        media_id,
+        title,
+        season_title,
+        evaluate,
+        cover,
+        episodes,
+        modules,
+        areas,
+        styles,
+    } = result;
+    let mut module_episode_groups = modules
+        .into_iter()
+        .filter_map(|module| module.data)
+        .map(|data| data.episodes)
+        .filter(|episodes| !episodes.is_empty())
+        .collect::<Vec<_>>();
+    let module_episodes = current_epid
+        .and_then(|epid| {
+            module_episode_groups
+                .iter()
+                .find(|episodes| episodes.iter().any(|episode| episode.id == Some(epid)))
+                .cloned()
+        })
+        .unwrap_or_else(|| module_episode_groups.drain(..).flatten().collect());
+    let episodes = if episodes.is_empty() {
+        module_episodes
+    } else {
+        episodes
+    };
+    let episodes = episodes_to_metadata(episodes, 0);
     let main_episode_count = episodes.len();
     SeasonMetadata {
-        season_id: result.season_id,
-        media_id: result.media_id,
-        title: result.title.or(result.season_title).unwrap_or_default(),
-        description: result.evaluate.unwrap_or_default(),
-        cover_url: result.cover,
+        season_id,
+        media_id,
+        title: title.or(season_title).unwrap_or_default(),
+        description: evaluate.unwrap_or_default(),
+        cover_url: cover,
         main_episode_count,
-        areas: result
-            .areas
-            .into_iter()
-            .filter_map(|area| area.name)
-            .collect(),
-        tags: result
-            .styles
-            .into_iter()
-            .filter_map(|style| style.name)
-            .collect(),
+        areas: areas.into_iter().filter_map(|area| area.name).collect(),
+        tags: styles.into_iter().filter_map(|style| style.name).collect(),
         episodes,
     }
 }
@@ -567,16 +590,30 @@ struct IntlSeasonResult {
     #[serde(default)]
     episodes: Vec<PgcEpisode>,
     #[serde(default)]
+    modules: Vec<IntlModule>,
+    #[serde(default)]
     areas: Vec<PgcName>,
     #[serde(default)]
     styles: Vec<PgcName>,
 }
 
 #[derive(Debug, Deserialize)]
+struct IntlModule {
+    data: Option<IntlModuleData>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IntlModuleData {
+    #[serde(default)]
+    episodes: Vec<PgcEpisode>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
 struct PgcEpisode {
     aid: Option<u64>,
     bvid: Option<String>,
     cid: Option<u64>,
+    #[serde(alias = "episode_id", alias = "ep_id")]
     id: Option<u64>,
     title: Option<String>,
     long_title: Option<String>,
@@ -722,6 +759,46 @@ mod tests {
         let debug = format!("{error:?}");
         assert!(!debug.contains("TOKEN_SHOULD_REDACT_12345"));
         assert!(!debug.contains("access_key"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolves_intl_episode_from_module_episodes() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/intl/gateway/v2/ogv/view/app/season")
+                .query_param("ep_id", "341736");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "result": {
+                    "season_id": 34613,
+                    "title": "Intl Season",
+                    "modules": [{
+                        "data": {
+                            "episodes": [
+                                {"aid": 7, "cid": 70, "id": 341_736, "title": "1", "long_title": "Start"}
+                            ]
+                        }
+                    }],
+                    "areas": [{"name": "Thailand"}],
+                    "styles": [{"name": "Anime"}]
+                }
+            }));
+        });
+
+        let client = test_client(&server);
+        let resolved = client
+            .resolve_input("https://www.bilibili.tv/en/play/34613/341736", None)
+            .await?;
+        match resolved {
+            ResolvedContent::Season(season) => {
+                assert_eq!(season.season.title, "Intl Season");
+                assert_eq!(season.season.episodes.len(), 1);
+                assert_eq!(season.selected_episodes[0].epid, 341_736);
+            }
+            ResolvedContent::Video(_) => return Err(anyhow::anyhow!("expected season")),
+        }
         Ok(())
     }
 

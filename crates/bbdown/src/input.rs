@@ -25,7 +25,7 @@ impl Input {
 
         let lower = trimmed.to_ascii_lowercase();
         if lower.starts_with("bv") {
-            return Ok(Self::Bvid(trimmed.to_owned()));
+            return parse_bvid(trimmed);
         }
         if let Some(id) = lower.strip_prefix("av") {
             return parse_number(id, "av").map(Self::Aid);
@@ -89,7 +89,7 @@ fn parse_url(raw: &str) -> Result<Input> {
             return parse_number(id, "av").map(Input::Aid);
         }
         if lower.starts_with("bv") {
-            return Ok(Input::Bvid(segment.to_owned()));
+            return parse_bvid(segment);
         }
         if let Some(id) = lower.strip_prefix("ep") {
             return parse_number(id, "ep").map(Input::Episode);
@@ -103,6 +103,11 @@ fn parse_url(raw: &str) -> Result<Input> {
     }
 
     Err(Error::InvalidInput(raw.to_owned()))
+}
+
+fn parse_bvid(text: &str) -> Result<Input> {
+    bv::decode(text)?;
+    Ok(Input::Bvid(text.to_owned()))
 }
 
 fn query_number(url: &Url, key: &str) -> Result<Option<u64>> {
@@ -144,6 +149,8 @@ mod tests {
             Input::parse("https://www.bilibili.tv/en/play/34613/341736")?,
             Input::IntlEpisode(341_736)
         );
+        assert!(Input::parse("bvideo").is_err());
+        assert!(Input::parse("bv1qt4y1X7TW").is_err());
         Ok(())
     }
 }
