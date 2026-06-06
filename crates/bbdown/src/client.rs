@@ -888,8 +888,8 @@ mod tests {
                     "title": "A Season",
                     "evaluate": "Season desc",
                     "episodes": [
-                        {"aid": 10, "bvid": "BV1aa", "cid": 100, "id": 1000, "ep_id": 1000, "title": "1", "long_title": "Start"},
-                        {"aid": 11, "bvid": "BV1bb", "cid": 101, "id": 1001, "ep_id": 1001, "title": "2", "long_title": "Next"}
+                        {"aid": 10, "bvid": "BV1aa", "cid": 100, "id": 9000, "ep_id": 1000, "title": "1", "long_title": "Start"},
+                        {"aid": 11, "bvid": "BV1bb", "cid": 101, "id": 9001, "ep_id": 1001, "title": "2", "long_title": "Next"}
                     ],
                     "areas": [{"name": "Japan"}],
                     "styles": ["Anime", "Action"]

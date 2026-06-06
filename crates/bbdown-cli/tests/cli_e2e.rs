@@ -6,6 +6,8 @@ use serde_json::Value;
 #[test]
 fn info_json_resolves_mock_video() -> anyhow::Result<()> {
     let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
     server.mock(|when, then| {
         when.method(GET)
             .path("/x/web-interface/view")
@@ -34,6 +36,8 @@ fn info_json_resolves_mock_video() -> anyhow::Result<()> {
 
     let mut command = Command::cargo_bin("bbdown")?;
     command
+        .arg("--credential-file")
+        .arg(&credential_file)
         .arg("--api-base")
         .arg(server.base_url())
         .arg("info")

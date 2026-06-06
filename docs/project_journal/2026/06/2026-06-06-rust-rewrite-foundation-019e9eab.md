@@ -27,6 +27,8 @@ superseded_by:
   failures, access-key-safe HTTP errors, bounded request timeouts, intl module episode parsing,
   BVID validation, correct repository metadata, and real PGC response compatibility for duplicate
   episode id fields plus string-style tags.
+- Final review fixes cover hermetic CLI e2e credential isolation and stronger `ep_id` precedence
+  coverage when PGC responses include both `id` and `ep_id`.
 
 ## Next Steps
 
