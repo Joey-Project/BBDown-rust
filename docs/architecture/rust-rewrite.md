@@ -52,6 +52,8 @@ permissions on Unix. The crate exposes `Credentials` and `CredentialStore` so ot
 inject their own storage or keep credentials in memory.
 
 Secrets are never included in status output; `auth status` reports only booleans.
+HTTP request errors are converted without retaining full URLs so query secrets such as intl
+`access_key` do not appear in user-facing errors.
 
 ## Testing And CI
 
@@ -64,6 +66,8 @@ Default CI is deterministic:
 
 Live tests against Bilibili will be opt-in only. They must require explicit environment variables
 for credentials and sample URLs so branch CI is not blocked by network, account, or regional state.
+Network requests have a configurable timeout through `ClientConfig` and CLI/env settings so
+misbehaving official or proxy endpoints do not hang indefinitely.
 
 ## Planned PR Slices
 

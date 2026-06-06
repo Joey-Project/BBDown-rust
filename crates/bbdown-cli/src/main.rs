@@ -10,6 +10,7 @@ use clap::{Args, Parser, Subcommand};
 use std::fs;
 use std::io::{self, Read};
 use std::path::PathBuf;
+use std::time::Duration;
 
 #[derive(Debug, Parser)]
 #[command(name = "bbdown")]
@@ -35,6 +36,8 @@ struct Cli {
     intl_base: String,
     #[arg(long, env = "BBDOWN_CREDENTIAL_FILE")]
     credential_file: Option<PathBuf>,
+    #[arg(long, env = "BBDOWN_REQUEST_TIMEOUT_SECONDS", default_value_t = 30)]
+    request_timeout_seconds: u64,
     #[command(subcommand)]
     command: Command,
 }
@@ -73,6 +76,10 @@ struct SecretImportArgs {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    ensure!(
+        cli.request_timeout_seconds > 0,
+        "--request-timeout-seconds must be greater than 0"
+    );
     let store = CredentialStore::new(credential_path(cli.credential_file)?);
     match cli.command {
         Command::Info { url, select, json } => {
@@ -85,6 +92,7 @@ async fn main() -> anyhow::Result<()> {
                 },
                 credentials,
                 user_agent: "bbdown-rs/0.1".to_owned(),
+                request_timeout: Duration::from_secs(cli.request_timeout_seconds),
             });
             let resolved = client.resolve_input(&url, select).await?;
             if json {

@@ -5,6 +5,7 @@ use crate::models::{
 use crate::{Credentials, Error, Input, Result, Selection};
 use reqwest::header::{COOKIE, HeaderMap, HeaderValue, REFERER, USER_AGENT};
 use serde::Deserialize;
+use std::time::Duration;
 use url::Url;
 
 #[derive(Clone, Debug)]
@@ -29,6 +30,7 @@ pub struct ClientConfig {
     pub endpoints: EndpointConfig,
     pub credentials: Credentials,
     pub user_agent: String,
+    pub request_timeout: Duration,
 }
 
 impl Default for ClientConfig {
@@ -37,6 +39,7 @@ impl Default for ClientConfig {
             endpoints: EndpointConfig::default(),
             credentials: Credentials::default(),
             user_agent: "bbdown-rs/0.1".to_owned(),
+            request_timeout: Duration::from_secs(30),
         }
     }
 }
@@ -320,6 +323,7 @@ impl BiliClient {
             .http
             .get(url)
             .headers(headers)
+            .timeout(self.config.request_timeout)
             .send()
             .await
             .map_err(Self::http_error_without_url)?;
@@ -611,6 +615,7 @@ mod tests {
     use crate::{Credentials, Error, ResolvedContent, Selection};
     use httpmock::MockServer;
     use httpmock::prelude::*;
+    use std::time::{Duration, Instant};
 
     #[tokio::test]
     async fn resolves_video_metadata_with_tags() -> anyhow::Result<()> {
@@ -705,6 +710,7 @@ mod tests {
                 access_key: Some("TOKEN_SHOULD_REDACT_12345".to_owned()),
             },
             user_agent: "test".to_owned(),
+            request_timeout: Duration::from_secs(30),
         });
 
         let Err(error) = client
@@ -716,6 +722,43 @@ mod tests {
         let debug = format!("{error:?}");
         assert!(!debug.contains("TOKEN_SHOULD_REDACT_12345"));
         assert!(!debug.contains("access_key"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn request_timeout_bounds_hung_endpoint() -> anyhow::Result<()> {
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let address = listener.local_addr()?;
+        let handle = std::thread::spawn(move || {
+            if let Ok((_stream, _address)) = listener.accept() {
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        });
+
+        let client = BiliClient::new(ClientConfig {
+            endpoints: EndpointConfig {
+                api_base: format!("http://{address}"),
+                pgc_base: "http://127.0.0.1:1".to_owned(),
+                intl_base: "http://127.0.0.1:1".to_owned(),
+            },
+            credentials: Credentials::default(),
+            user_agent: "test".to_owned(),
+            request_timeout: Duration::from_millis(30),
+        });
+
+        let started = Instant::now();
+        let Err(error) = client.resolve_input("av170001", None).await else {
+            return Err(anyhow::anyhow!("hung endpoint should time out"));
+        };
+        let elapsed = started.elapsed();
+        handle
+            .join()
+            .map_err(|_| anyhow::anyhow!("timeout test server panicked"))?;
+
+        assert!(matches!(error, Error::Http(_)));
+        assert!(elapsed < Duration::from_secs(1));
         Ok(())
     }
 
@@ -911,6 +954,7 @@ mod tests {
             },
             credentials: Credentials::default(),
             user_agent: "test".to_owned(),
+            request_timeout: Duration::from_secs(30),
         })
     }
 }

@@ -44,6 +44,8 @@ Credentials are stored in the platform config directory by default. Use
 Secret import commands also read `BBDOWN_COOKIE` or `BBDOWN_ACCESS_KEY` when no input flag is
 provided, so callers can avoid passing credentials through process arguments.
 
+Use `--request-timeout-seconds` or `BBDOWN_REQUEST_TIMEOUT_SECONDS` to tune HTTP request bounds.
+
 ## Developer Commands
 
 ```bash
