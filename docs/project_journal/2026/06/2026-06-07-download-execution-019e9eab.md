@@ -41,13 +41,15 @@ superseded_by:
   advertised total length. Matching 416 responses are reported as already complete instead of failed.
 - Media downloads validate stream or FLV segment sizes when the plan provides them and roll back
   failed write attempts to the pre-attempt file length.
+- DASH media filenames include stream identity material so different codec or source variants do
+  not reuse the same resume target.
 - Media body reads use a separate idle timeout instead of the metadata request timeout.
 - Subtitle and danmaku downloads are sidecars; muxing only combines media tracks.
 - Resume coverage verifies HTTP `Range` requests and appending to a partial file.
 - Safety coverage verifies media downloads do not send cookies, backup URLs are used, matching 416
   responses are treated as complete, mismatched `Content-Range` responses are rejected, range body
-  lengths are checked, non-partial `Content-Range` responses are rejected, and expected media sizes
-  are enforced.
+  lengths are checked, non-partial `Content-Range` responses including `bytes */N` are rejected,
+  expected media sizes are enforced, and stream identity is reflected in output filenames.
 - Retry coverage verifies a failed first request can be retried and then written successfully.
 - Mux coverage verifies fake ffmpeg success reports and failed ffmpeg status propagation.
 - FLV mux coverage verifies concat list paths are relative to the entry directory.
@@ -65,4 +67,4 @@ superseded_by:
 
 - Local type gate: `cargo check --workspace`.
 - Local lint gate: `cargo clippy --workspace --all-targets -- -D warnings`.
-- Local tests: `cargo test --workspace` with 42 library tests and 5 CLI e2e tests.
+- Local tests: `cargo test --workspace` with 44 library tests and 5 CLI e2e tests.

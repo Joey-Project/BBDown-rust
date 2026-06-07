@@ -236,11 +236,11 @@ fn download_json_writes_mock_media_files() -> anyhow::Result<()> {
         Some(3)
     );
     assert_eq!(
-        fs::read_to_string(output_dir.join("Mock video/P001-Main/video-80.m4s"))?,
+        fs::read_to_string(downloaded_file_path(&json, "video")?)?,
         "video"
     );
     assert_eq!(
-        fs::read_to_string(output_dir.join("Mock video/P001-Main/audio-30280.m4s"))?,
+        fs::read_to_string(downloaded_file_path(&json, "audio")?)?,
         "audio"
     );
     assert_eq!(
@@ -401,4 +401,17 @@ fn write_fake_ffmpeg(dir: &Path, body: &str) -> anyhow::Result<std::path::PathBu
     permissions.set_mode(0o755);
     fs::set_permissions(&path, permissions)?;
     Ok(path)
+}
+
+fn downloaded_file_path<'a>(json: &'a Value, kind: &str) -> anyhow::Result<&'a str> {
+    json["entries"][0]["files"]
+        .as_array()
+        .and_then(|files| {
+            files.iter().find_map(|file| {
+                (file["kind"].as_str() == Some(kind))
+                    .then(|| file["path"].as_str())
+                    .flatten()
+            })
+        })
+        .ok_or_else(|| anyhow::anyhow!("missing downloaded {kind} path"))
 }

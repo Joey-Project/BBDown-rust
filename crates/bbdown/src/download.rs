@@ -3,6 +3,7 @@ use crate::{
     Selection, SubtitleFormat, SubtitleTrack,
 };
 use futures_util::StreamExt;
+use md5::{Digest, Md5};
 use reqwest::StatusCode;
 use reqwest::header::{CONTENT_RANGE, RANGE};
 use serde::{Deserialize, Serialize};
@@ -223,11 +224,7 @@ impl BiliClient {
             | DownloadFileKind::Subtitle
             | DownloadFileKind::Danmaku => "media",
         };
-        let path = entry_dir.join(format!(
-            "{label}-{}.{}",
-            stream.id,
-            media_extension(&stream.base_url, stream.mime_type.as_deref())
-        ));
+        let path = entry_dir.join(media_file_name(label, stream));
         self.download_candidate_urls_to_file(
             &candidate_urls(&stream.base_url, &stream.backup_urls),
             &path,
@@ -361,9 +358,10 @@ impl BiliClient {
         let response = response
             .error_for_status()
             .map_err(BiliClient::http_error_without_url)?;
+        let has_content_range = response.headers().contains_key(CONTENT_RANGE);
         let content_range = content_range(response.headers())?;
         let append = resume_from > 0 && status == StatusCode::PARTIAL_CONTENT;
-        if status != StatusCode::PARTIAL_CONTENT && content_range.is_some() {
+        if status != StatusCode::PARTIAL_CONTENT && has_content_range {
             return Err(Error::InvalidInput(
                 "server returned Content-Range without partial content".to_owned(),
             ));
@@ -722,6 +720,63 @@ fn media_extension(url: &str, mime_type: Option<&str>) -> &'static str {
     "m4s"
 }
 
+fn media_file_name(label: &str, stream: &MediaStream) -> String {
+    let identity = media_stream_identity(stream);
+    format!(
+        "{label}-{}-{identity}.{}",
+        stream.id,
+        media_extension(&stream.base_url, stream.mime_type.as_deref())
+    )
+}
+
+fn media_stream_identity(stream: &MediaStream) -> String {
+    let hash = short_identity_hash(&url_identity_source(&stream.base_url));
+    if let Some(codec) = stream
+        .codecs
+        .as_deref()
+        .map(file_name_token)
+        .filter(|codec| !codec.is_empty())
+    {
+        return format!("{codec}-{hash}");
+    }
+    hash
+}
+
+fn file_name_token(raw: &str) -> String {
+    raw.chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_lowercase()
+            } else if matches!(character, '.' | '_' | '-') {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches(['-', '.', '_'])
+        .to_owned()
+}
+
+fn short_identity_hash(raw: &str) -> String {
+    let digest = format!("{:x}", Md5::digest(raw.as_bytes()));
+    format!("h{}", &digest[..8])
+}
+
+fn url_identity_source(url: &str) -> String {
+    if let Ok(parsed) = url::Url::parse(url) {
+        let mut source = String::new();
+        if let Some(host) = parsed.host_str() {
+            source.push_str(host);
+        }
+        source.push_str(parsed.path());
+        if !source.is_empty() {
+            return source;
+        }
+    }
+    url.split(['?', '#']).next().unwrap_or(url).to_owned()
+}
+
 fn subtitle_extension(subtitle: &SubtitleTrack) -> String {
     match subtitle.format {
         SubtitleFormat::Json => "json".to_owned(),
@@ -746,7 +801,7 @@ fn url_path_extension(url: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{DownloadOptions, MuxOptions, RetryPolicy};
+    use super::{DownloadOptions, MuxOptions, RetryPolicy, media_file_name};
     use crate::models::{
         DanmakuTrack, DownloadEntry, DownloadPlan, FlvSegment, MediaStream, StreamSet,
         StreamSource, SubtitleFormat, SubtitleTrack,
@@ -760,6 +815,29 @@ mod tests {
     use std::time::Duration;
     #[cfg(unix)]
     use std::{fs as std_fs, os::unix::fs::PermissionsExt};
+
+    #[test]
+    fn media_file_name_distinguishes_stream_identity_without_query() {
+        let mut stream = MediaStream {
+            id: 80,
+            base_url: "https://cdn.example/path/video.m4s?token=first".to_owned(),
+            backup_urls: Vec::new(),
+            codecs: Some("avc1.640028".to_owned()),
+            bandwidth: None,
+            width: None,
+            height: None,
+            frame_rate: None,
+            mime_type: Some("video/mp4".to_owned()),
+            size: None,
+        };
+        let first = media_file_name("video", &stream);
+        stream.base_url = "https://cdn.example/path/video.m4s?token=second".to_owned();
+        assert_eq!(media_file_name("video", &stream), first);
+        stream.codecs = Some("hev1.1.6.L120.90".to_owned());
+        assert_ne!(media_file_name("video", &stream), first);
+        stream.codecs = None;
+        assert!(media_file_name("video", &stream).starts_with("video-80-h"));
+    }
 
     #[tokio::test]
     async fn downloads_media_sidecars_and_danmaku() -> anyhow::Result<()> {
@@ -828,7 +906,11 @@ mod tests {
         plan.entries[0].danmaku.xml_url = format!("{}/danmaku.xml", server.base_url());
         let output_dir = temp.path().join("Mock video").join("P001-Main");
         tokio::fs::create_dir_all(&output_dir).await?;
-        tokio::fs::write(output_dir.join("video-80.m4s"), "old").await?;
+        tokio::fs::write(
+            output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0])),
+            "old",
+        )
+        .await?;
 
         let report = client
             .download_plan(
@@ -942,7 +1024,11 @@ mod tests {
         plan.entries[0].streams.videos[0].size = Some(3);
         let output_dir = temp.path().join("Mock video").join("P001-Main");
         tokio::fs::create_dir_all(&output_dir).await?;
-        tokio::fs::write(output_dir.join("video-80.m4s"), "old").await?;
+        tokio::fs::write(
+            output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0])),
+            "old",
+        )
+        .await?;
 
         let report = client
             .download_plan(
@@ -980,7 +1066,7 @@ mod tests {
         let plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
         let output_dir = temp.path().join("Mock video").join("P001-Main");
         tokio::fs::create_dir_all(&output_dir).await?;
-        let path = output_dir.join("video-80.m4s");
+        let path = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
         tokio::fs::write(&path, "old").await?;
 
         let Err(error) = client
@@ -1021,7 +1107,7 @@ mod tests {
         plan.entries[0].streams.videos[0].size = Some(6);
         let output_dir = temp.path().join("Mock video").join("P001-Main");
         tokio::fs::create_dir_all(&output_dir).await?;
-        let path = output_dir.join("video-80.m4s");
+        let path = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
         tokio::fs::write(&path, "old").await?;
 
         let Err(error) = client
@@ -1048,6 +1134,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rejects_unsatisfied_content_range_on_non_partial_response() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/video.m4s")
+                .header("range", "bytes=3-");
+            then.status(200).header("Content-Range", "bytes */3");
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
+        let output_dir = temp.path().join("Mock video").join("P001-Main");
+        tokio::fs::create_dir_all(&output_dir).await?;
+        let path = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
+        tokio::fs::write(&path, "old").await?;
+
+        let Err(error) = client
+            .download_plan(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().to_path_buf(),
+                    retry: RetryPolicy::single_attempt(),
+                    include_danmaku: false,
+                    mux: MuxOptions::Disabled,
+                    ..DownloadOptions::default()
+                },
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!(
+                "unsatisfied non-partial Content-Range response should fail"
+            ));
+        };
+
+        assert!(error.to_string().contains("partial content"));
+        assert_eq!(tokio::fs::read_to_string(&path).await?, "old");
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn rejects_short_content_range_body_on_resume() -> anyhow::Result<()> {
         let server = MockServer::start();
         server.mock(|when, then| {
@@ -1064,7 +1190,7 @@ mod tests {
         plan.entries[0].streams.videos[0].size = Some(6);
         let output_dir = temp.path().join("Mock video").join("P001-Main");
         tokio::fs::create_dir_all(&output_dir).await?;
-        let path = output_dir.join("video-80.m4s");
+        let path = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
         tokio::fs::write(&path, "old").await?;
 
         let Err(error) = client
@@ -1105,7 +1231,7 @@ mod tests {
         plan.entries[0].streams.videos[0].size = Some(6);
         let output_dir = temp.path().join("Mock video").join("P001-Main");
         tokio::fs::create_dir_all(&output_dir).await?;
-        let path = output_dir.join("video-80.m4s");
+        let path = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
         tokio::fs::write(&path, "old").await?;
 
         let Err(error) = client
@@ -1144,7 +1270,7 @@ mod tests {
             .path()
             .join("Mock video")
             .join("P001-Main")
-            .join("video-80.m4s");
+            .join(media_file_name("video", &plan.entries[0].streams.videos[0]));
 
         let Err(error) = client
             .download_plan(

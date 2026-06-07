@@ -89,6 +89,8 @@ appends only when `Content-Range` starts at the local file length and completes 
 range total; matching 416 responses are treated as already complete. When a stream or FLV segment
 declares a size, the executor rejects mismatched final file lengths and rolls back failed writes to
 the pre-attempt length.
+DASH media output names include codec and source identity hash material, with expiring query and
+fragment parameters excluded, so resume files are not shared across different stream variants.
 
 The crate default keeps muxing disabled so embedding projects do not spawn external processes by
 surprise. The CLI `download` command enables ffmpeg by default and exposes `--no-mux` for users and

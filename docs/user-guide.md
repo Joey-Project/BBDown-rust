@@ -63,6 +63,8 @@ and danmaku sidecars are enabled by default and can be disabled with `--no-subti
 Downloads resume partial files by default with HTTP range requests and validate `Content-Range`
 plus advertised media sizes when the plan provides them. Use `--no-resume` to force a fresh write.
 Retry behavior is bounded by `--retry-attempts` and `--retry-backoff-ms`.
+DASH media filenames include stream identity, so different codec or source variants do not share
+the same resume target.
 
 `--request-timeout-seconds` applies to API requests. Media body reads use
 `--download-idle-timeout-seconds`; pass `0` to disable that idle timeout.
