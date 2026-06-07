@@ -33,6 +33,9 @@ superseded_by:
 - `scripts/package-release.sh` packages Unix archives and is locally syntax/lint validated.
 - `scripts/package-release.ps1` packages Windows archives for the GitHub Windows runner; local
   PowerShell execution is not available in this workspace.
+- PR review follow-up pinned release workflow action references to commit SHAs and normalized package
+  version fragments to `[A-Za-z0-9._-]` so legal tags such as SemVer build metadata do not fail
+  during packaging.
 
 ## Evidence
 
@@ -42,3 +45,4 @@ superseded_by:
 - Local release build: `cargo build -p bbdown-cli --bin bbdown --release --locked`.
 - Local package smoke: `scripts/package-release.sh target/release/bbdown bbdown-local-smoke .codex-tmp/release-package-smoke`.
 - Local default gate: `just ci`.
+- Review follow-up checks also covered a `v1.2.3+build.1` package-name normalization smoke.

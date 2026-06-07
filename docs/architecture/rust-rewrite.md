@@ -197,7 +197,9 @@ Release packaging is a separate GitHub Actions workflow. Tag pushes matching `v*
 x86_64, macOS x86_64, macOS aarch64, and Windows x86_64 CLI archives and publish them to the
 GitHub Release with generated release notes. Manual workflow dispatch builds the same archives as
 downloadable workflow artifacts without publishing a release. Archives contain the `bbdown` binary,
-`README.md`, `docs/user-guide.md`, and a platform-specific checksum file.
+`README.md`, `docs/user-guide.md`, and a platform-specific checksum file. Action references in the
+release workflow are pinned to commit SHAs. Package names normalize release refs to the packager-safe
+`[A-Za-z0-9._-]` character set, so tags such as SemVer build metadata do not fail at packaging time.
 
 Live tests against Bilibili are opt-in only through `just live-e2e`. The recipe fails fast unless an
 ignored `live-e2e.samples.json` manifest exists, so branch CI is not blocked by network, account, or
