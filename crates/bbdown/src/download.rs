@@ -368,27 +368,17 @@ impl BiliClient {
             .map_err(BiliClient::http_error_without_url)?;
         let has_content_range = response.headers().contains_key(CONTENT_RANGE);
         let content_range = content_range(response.headers())?;
-        let append = resume_from > 0 && status == StatusCode::PARTIAL_CONTENT;
-        if status != StatusCode::PARTIAL_CONTENT && has_content_range {
-            return Err(Error::InvalidInput(
-                "server returned Content-Range without partial content".to_owned(),
-            ));
-        }
-        if status == StatusCode::PARTIAL_CONTENT {
-            let range = content_range.ok_or_else(|| {
-                Error::InvalidInput(
-                    "server returned partial content without Content-Range".to_owned(),
-                )
-            })?;
-            let expected_start = if append { resume_from } else { 0 };
-            if range.start != expected_start {
-                return Err(Error::InvalidInput(
-                    "server returned an unexpected Content-Range for resume".to_owned(),
-                ));
-            }
-        }
+        let response_content_len = response.content_length();
+        let append =
+            validate_resume_response(status, resume_from, has_content_range, content_range)?;
         let start_offset = if append { resume_from } else { 0 };
         let full_retry_after_ignored_range = resume_from > 0 && !append;
+        let validation_expected_size = validation_size_for_full_retry(
+            expected_size,
+            content_range,
+            response_content_len,
+            full_retry_after_ignored_range,
+        );
         let replace_existing = existing_len > 0 && !append;
         let write_path = if replace_existing {
             temporary_download_path(path)
@@ -407,7 +397,7 @@ impl BiliClient {
             response,
             content_range,
             start_offset,
-            expected_size,
+            validation_expected_size,
             options.download_idle_timeout,
         )
         .await;
@@ -421,10 +411,17 @@ impl BiliClient {
                 return Err(error);
             }
         };
-        if full_retry_after_ignored_range && expected_size.is_none() && content_range.is_none() {
+        if full_retry_after_ignored_range
+            && is_short_unvalidated_full_retry(
+                expected_size,
+                content_range,
+                bytes_written,
+                existing_len,
+            )
+        {
             let _ = fs::remove_file(&write_path).await;
             return Err(Error::InvalidInput(
-                "server ignored resume range without length validation".to_owned(),
+                "server ignored resume range with shorter full response".to_owned(),
             ));
         }
         if replace_existing {
@@ -715,6 +712,56 @@ async fn remove_file_if_exists(path: &Path) -> Result<()> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(Error::Io(error)),
     }
+}
+
+fn validate_resume_response(
+    status: StatusCode,
+    resume_from: u64,
+    has_content_range: bool,
+    content_range: Option<ParsedContentRange>,
+) -> Result<bool> {
+    let append = resume_from > 0 && status == StatusCode::PARTIAL_CONTENT;
+    if status != StatusCode::PARTIAL_CONTENT && has_content_range {
+        return Err(Error::InvalidInput(
+            "server returned Content-Range without partial content".to_owned(),
+        ));
+    }
+    if status == StatusCode::PARTIAL_CONTENT {
+        let range = content_range.ok_or_else(|| {
+            Error::InvalidInput("server returned partial content without Content-Range".to_owned())
+        })?;
+        let expected_start = if append { resume_from } else { 0 };
+        if range.start != expected_start {
+            return Err(Error::InvalidInput(
+                "server returned an unexpected Content-Range for resume".to_owned(),
+            ));
+        }
+    }
+    Ok(append)
+}
+
+fn validation_size_for_full_retry(
+    expected_size: Option<u64>,
+    content_range: Option<ParsedContentRange>,
+    response_content_len: Option<u64>,
+    full_retry_after_ignored_range: bool,
+) -> Option<u64> {
+    expected_size.or_else(|| {
+        if full_retry_after_ignored_range && content_range.is_none() {
+            response_content_len
+        } else {
+            None
+        }
+    })
+}
+
+fn is_short_unvalidated_full_retry(
+    expected_size: Option<u64>,
+    content_range: Option<ParsedContentRange>,
+    bytes_written: u64,
+    existing_len: u64,
+) -> bool {
+    expected_size.is_none() && content_range.is_none() && bytes_written < existing_len
 }
 
 fn validate_download_completion(
@@ -1672,13 +1719,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_unvalidated_full_retry_after_ignored_range() -> anyhow::Result<()> {
+    async fn replaces_existing_file_when_ignored_range_has_content_length() -> anyhow::Result<()> {
         let server = MockServer::start();
         server.mock(|when, then| {
             when.method(GET)
                 .path("/video.m4s")
                 .header("range", "bytes=3-");
             then.status(200).body("maybe-full");
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/audio.m4s");
+            then.status(200).body("audio");
         });
         let temp = tempfile::tempdir()?;
         let client = BiliClient::new(ClientConfig::default());
@@ -1688,7 +1739,7 @@ mod tests {
         let path = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
         tokio::fs::write(&path, "old").await?;
 
-        let Err(error) = client
+        let report = client
             .download_plan(
                 &plan,
                 DownloadOptions {
@@ -1699,13 +1750,56 @@ mod tests {
                     ..DownloadOptions::default()
                 },
             )
-            .await
-        else {
-            return Err(anyhow::anyhow!("unvalidated full retry should fail"));
+            .await?;
+
+        let file = &report.entries[0].files[0];
+        assert_eq!(file.bytes_written, 10);
+        assert_eq!(file.resumed_from, 0);
+        assert_eq!(tokio::fs::read_to_string(&path).await?, "maybe-full");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn preserves_existing_file_when_unvalidated_ignored_range_is_shorter()
+    -> anyhow::Result<()> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let address = listener.local_addr()?;
+        let handle = std::thread::spawn(move || -> anyhow::Result<()> {
+            let (mut stream, _) = listener.accept()?;
+            let mut buffer = [0; 1024];
+            let _ = stream.read(&mut buffer)?;
+            stream.write_all(b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nnew")?;
+            Ok(())
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let path = temp.path().join("video.m4s");
+        tokio::fs::write(&path, "existing").await?;
+        let options = DownloadOptions {
+            retry: RetryPolicy::single_attempt(),
+            include_danmaku: false,
+            mux: MuxOptions::Disabled,
+            ..DownloadOptions::default()
         };
 
-        assert!(error.to_string().contains("length validation"));
-        assert_eq!(tokio::fs::read_to_string(&path).await?, "old");
+        let Err(error) = client
+            .download_url_to_file(
+                &format!("http://{address}/video.m4s"),
+                &path,
+                DownloadFileKind::Video,
+                None,
+                &options,
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!("short full retry should fail"));
+        };
+
+        handle
+            .join()
+            .map_err(|_| anyhow::anyhow!("server thread panicked"))??;
+        assert!(error.to_string().contains("shorter full response"));
+        assert_eq!(tokio::fs::read_to_string(&path).await?, "existing");
         Ok(())
     }
 
