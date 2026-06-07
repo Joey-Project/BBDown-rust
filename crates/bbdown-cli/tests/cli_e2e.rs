@@ -89,8 +89,16 @@ fn plan_json_resolves_mock_video_streams() -> anyhow::Result<()> {
             "data": {
                 "dash": {
                     "duration": 3,
-                    "video": [{"id": 80, "base_url": "https://video.example/80.m4s"}],
-                    "audio": [{"id": 30280, "base_url": "https://audio.example/30280.m4s"}]
+                    "video": [{
+                        "id": 80,
+                        "baseUrl": "https://video.example/80.m4s",
+                        "base_url": "https://video.example/80.m4s"
+                    }],
+                    "audio": [{
+                        "id": 30280,
+                        "baseUrl": "https://audio.example/30280.m4s",
+                        "base_url": "https://audio.example/30280.m4s"
+                    }]
                 }
             }
         }));

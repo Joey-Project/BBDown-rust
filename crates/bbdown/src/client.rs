@@ -1063,34 +1063,44 @@ struct FlacPayload {
 #[derive(Debug, Deserialize)]
 struct DashTrack {
     id: Option<u32>,
-    #[serde(alias = "baseUrl")]
     base_url: Option<String>,
-    #[serde(alias = "backupUrl")]
+    #[serde(rename = "baseUrl")]
+    base_url_camel: Option<String>,
     backup_url: Option<Vec<String>>,
+    #[serde(rename = "backupUrl")]
+    backup_url_camel: Option<Vec<String>>,
     codecs: Option<String>,
     bandwidth: Option<u64>,
     width: Option<u32>,
     height: Option<u32>,
-    #[serde(alias = "frameRate")]
     frame_rate: Option<String>,
-    #[serde(alias = "mimeType")]
+    #[serde(rename = "frameRate")]
+    frame_rate_camel: Option<String>,
     mime_type: Option<String>,
+    #[serde(rename = "mimeType")]
+    mime_type_camel: Option<String>,
     size: Option<u64>,
 }
 
 impl DashTrack {
     fn into_media_stream(self) -> Option<MediaStream> {
-        let base_url = self.base_url.filter(|value| !value.is_empty())?;
+        let base_url = self
+            .base_url
+            .or(self.base_url_camel)
+            .filter(|value| !value.is_empty())?;
         Some(MediaStream {
             id: self.id?,
             base_url,
-            backup_urls: self.backup_url.unwrap_or_default(),
+            backup_urls: self
+                .backup_url
+                .or(self.backup_url_camel)
+                .unwrap_or_default(),
             codecs: self.codecs,
             bandwidth: self.bandwidth,
             width: self.width,
             height: self.height,
-            frame_rate: self.frame_rate,
-            mime_type: self.mime_type,
+            frame_rate: self.frame_rate.or(self.frame_rate_camel),
+            mime_type: self.mime_type.or(self.mime_type_camel),
             size: self.size,
         })
     }
@@ -1423,16 +1433,20 @@ mod tests {
                         "duration": 123,
                         "video": [{
                             "id": 80,
+                            "baseUrl": "https://video.example/80.m4s",
                             "base_url": "https://video.example/80.m4s",
+                            "backupUrl": ["https://backup.example/80.m4s"],
                             "backup_url": ["https://backup.example/80.m4s"],
                             "codecs": "avc1.640028",
                             "bandwidth": 1000,
                             "width": 1920,
                             "height": 1080,
+                            "frameRate": "30",
                             "frame_rate": "30"
                         }],
                         "audio": [{
                             "id": 30280,
+                            "baseUrl": "https://audio.example/30280.m4s",
                             "base_url": "https://audio.example/30280.m4s",
                             "codecs": "mp4a.40.2",
                             "bandwidth": 128_000
@@ -1670,13 +1684,16 @@ mod tests {
                         "dash": {
                             "duration": 456,
                             "video": [{
-                                "id": 64,
-                                "baseUrl": "https://video.example/64.m4s",
-                                "backupUrl": [],
-                                "codecs": "hev1",
-                                "bandwidth": 900,
-                                "mimeType": "video/mp4"
-                            }],
+                            "id": 64,
+                            "baseUrl": "https://video.example/64.m4s",
+                            "base_url": "https://video.example/64.m4s",
+                            "backupUrl": [],
+                            "backup_url": [],
+                            "codecs": "hev1",
+                            "bandwidth": 900,
+                            "mimeType": "video/mp4",
+                            "mime_type": "video/mp4"
+                        }],
                             "audio": []
                         }
                     }

@@ -33,7 +33,8 @@ superseded_by:
   not require WBI signing support.
 - Stream parsing handles DASH video/audio, Dolby/FLAC audio, legacy FLV `durl` segments, accepted
   qualities, duration, normalized protocol-relative URLs, nullable DASH lists, nullable Dolby audio,
-  and nullable FLV backup URLs.
+  nullable FLV backup URLs, and real DASH tracks that contain both camelCase and snake_case URL
+  fields.
 - Subtitle discovery supports normal/PGC player subtitles and intl subtitle responses. Subtitle
   endpoint failures degrade to empty subtitle lists so optional subtitles do not block planning.
   Intl subtitle requests include the configured access key when present.
