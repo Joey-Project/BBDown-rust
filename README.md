@@ -1,45 +1,67 @@
-# Codex-Gated Repository Template
+# BBDown Rust
 
-This template starts a repository with the Codex review gate workflow already on
-the default branch. It is intentionally language-neutral; add project-specific CI,
-tests, release workflows, and licensing after creating a repository from it.
+`BBDown Rust` is a Rust-native rewrite of BBDown with two goals:
 
-## Included
+- expose a reusable `bbdown` crate for other Rust projects;
+- provide a CLI that can serve as the e2e surface for metadata resolution and downloads.
 
-- `.github/workflows/codex-review-gate.yml`
-- `.gitignore`
-- this README
+The first PR slice establishes the crate/CLI/CI foundation and metadata resolver. Download,
+subtitle, danmaku, muxing, and QR login execution will land in later PR slices.
 
-The workflow writes the `codex/review-gate` status check and requests a controlled
-Codex review marker for each ready pull request head. It pins
-`JoeyTeng/codex-review-gate-action` to the v1.2.1 commit SHA so privileged
-`pull_request_target` runs do not depend on a movable tag.
+## Current CLI
 
-## After Creating a Repository
-
-1. Add the project source, CI workflow, tests, and license.
-2. Confirm `.github/workflows/codex-review-gate.yml` is present on the default
-   branch before requiring the status check.
-3. Enable the required status check with the bootstrap helper from
-   `JoeyTeng/codex-review-gate`:
+Resolve metadata as JSON:
 
 ```bash
-node scripts/bootstrap-codex-review-gate.mjs --repo OWNER/REPO
-node scripts/bootstrap-codex-review-gate.mjs --repo OWNER/REPO --apply
+bbdown info av170001 --json
+bbdown info BV1qt4y1X7TW --json
+bbdown info ep359333 --json
+bbdown info ss28276 --select latest --json
+bbdown info md28230188 --select latest --json
 ```
 
-The helper defaults to dry-run. It refuses to require `codex/review-gate` until
-the workflow exists on the repository default branch.
+`ss` and `md` inputs require an explicit selection in non-interactive mode:
 
-## Optional Repository Variables
+```bash
+bbdown info ss28276 --select latest
+bbdown info ss28276 --select all
+bbdown info ss28276 --select episode:359333
+bbdown info ss28276 --select page:1
+```
 
-- `CODEX_REVIEW_GATE_RUNNER_LABELS`: JSON runner label array. Defaults to
-  `["ubuntu-slim"]`; use `["ubuntu-latest"]` when `ubuntu-slim` is unavailable.
-- `CODEX_REVIEW_GATE_AUTO_RETRY=false`: disables scheduled retry jobs before a
-  runner is allocated.
-- `CODEX_REVIEW_GATE_EVENT_MODE`: `standard`, `comment-only`, or `full`.
-- `CODEX_REVIEW_GATE_BOT_LOGINS`: comma-separated additional Codex bot logins.
-- `CODEX_REVIEW_GATE_COMPLETION_SIGNAL_BUFFER_SECONDS`: clean completion buffer.
-- `CODEX_REVIEW_GATE_FAILED_FINDINGS_RECOVERY`: set to `false` to disable
-  same-head recovery after resolved Codex findings.
-- `CODEX_REVIEW_GATE_FAILED_FINDINGS_RECOVERY_MODE`: `head` or `fresh`.
+Manage local credentials:
+
+```bash
+bbdown auth import-cookie --stdin
+bbdown auth import-cookie --file cookie.txt
+bbdown auth import-access-key --stdin
+bbdown auth status
+bbdown auth logout
+```
+
+Credentials are stored in the platform config directory by default. Use
+`--credential-file <path>` to override this path for integration tests or local experiments.
+Secret import commands also read `BBDOWN_COOKIE` or `BBDOWN_ACCESS_KEY` when no input flag is
+provided, so callers can avoid passing credentials through process arguments.
+
+Use `--request-timeout-seconds` or `BBDOWN_REQUEST_TIMEOUT_SECONDS` to tune HTTP request bounds.
+
+## Developer Commands
+
+```bash
+just fmt-check
+just lint
+just test
+just e2e
+just ci
+```
+
+Default CI runs formatter, clippy, unit tests, and mock e2e tests. Live Bilibili tests are
+intentionally excluded from default CI and will be added behind explicit environment variables.
+
+## Documentation
+
+- Architecture: [docs/architecture/rust-rewrite.md](docs/architecture/rust-rewrite.md)
+- Project state: [docs/PROJECT_STATE.md](docs/PROJECT_STATE.md)
+- Project TODO: [docs/PROJECT_TODO.md](docs/PROJECT_TODO.md)
+- Workstream journals: [docs/project_journal/](docs/project_journal/)
