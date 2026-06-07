@@ -5,7 +5,7 @@ status: completed
 created: 2026-06-07
 updated: 2026-06-07
 branch: wip/live-e2e-matrix
-pr:
+pr: https://github.com/Joey-Project/BBDown-rust/pull/7
 supersedes: []
 superseded_by:
 ---
