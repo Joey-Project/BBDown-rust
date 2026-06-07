@@ -123,6 +123,25 @@ configurable comment endpoint. WEB QR login uses `--passport-base`; TV QR login 
 passport overrides. TV QR polling follows `--tv-passport-base` when that override is supplied; set
 `--tv-passport-poll-base` for split-host mocks or proxies.
 
+## Live E2E Samples
+
+`just live-e2e` is a local-only validation gate for real Bilibili samples. It is not part of default
+CI because the results depend on network, account, token, and regional eligibility. The recipe
+requires an ignored `live-e2e.samples.json` manifest in the repository root; use
+`live-e2e.samples.example.json` as the tracked shape.
+
+The manifest can point to an existing credential file with `credential_file`, read a plain text
+access key from `access_key_file`, set `request_timeout_seconds`, and configure restricted proxy
+candidates with the same area names used by the CLI. `restricted_api_proxy_all_areas` and
+`restricted_area_proxy_all_areas` expand each listed URL to `cn`, `th`, `hk`, and `tw` candidates.
+Each case declares a `kind`, `url`, optional `selection`, optional restricted-area hint, actions
+such as `info` or `plan`, and expected JSON shape. The harness copies only cookie/access-key fields
+into a temporary credential file for the case and strips CLI override environment variables before
+running the real `bbdown` binary.
+For restricted samples that depend on mutable account or regional eligibility, a case may include
+both `plan_sources` and `plan_error_contains`: a successful `plan` must match the stream assertions,
+while a restricted failure must contain the listed diagnostics.
+
 ## Restricted-Area Proxies
 
 The tool does not include public proxy defaults. Configure only proxy hosts you operate or trust.
@@ -145,8 +164,8 @@ group is ordered by area hint, generic candidates, then fixed area order.
 
 `--restricted-area-proxy` targets BBDown/BiliPlus-style HTTP(S) playurl proxy endpoints where the
 original PGC playurl query is sent to the configured URL. `--restricted-api-proxy` targets HTTP(S)
-proxies that mirror `api.bilibili.com` path layout, so the CLI calls `/pgc/player/web/v2/playurl`
-below that base URL.
+proxies that mirror `api.bilibili.com` path layout, so the CLI calls `/pgc/player/web/playurl`
+below that base URL, matching common BALH-style API proxy hosts.
 If the configured API proxy base URL already contains a query string, that query is preserved before
 the PGC playurl parameters are appended. Both flags may be repeated.
 `BBDOWN_RESTRICTED_AREA_PROXY` and `BBDOWN_RESTRICTED_API_PROXY` also accept comma-separated lists.

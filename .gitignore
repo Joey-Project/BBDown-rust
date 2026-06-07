@@ -2,6 +2,8 @@
 .env
 .env.*
 .codex-tmp/
+access_key.txt
+live-e2e.samples.json
 node_modules/
 dist/
 build/

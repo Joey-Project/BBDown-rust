@@ -790,7 +790,7 @@ impl BiliClient {
         let mut url = match proxy.kind {
             RestrictedAreaProxyKind::PlayUrl => Url::parse(&proxy.base_url)?,
             RestrictedAreaProxyKind::BilibiliApi => {
-                Self::endpoint_url_preserving_query(&proxy.base_url, "/pgc/player/web/v2/playurl")?
+                Self::endpoint_url_preserving_query(&proxy.base_url, "/pgc/player/web/playurl")?
             }
         };
         append_pgc_playurl_params(
@@ -3271,7 +3271,7 @@ mod tests {
         let url = client.pgc_proxy_playurl_url(&proxy, 10, 100, 1000)?;
         assert_eq!(
             url.as_str(),
-            "https://proxy.example/base/pgc/player/web/v2/playurl?proxy_token=a%3Db&avid=10&cid=100&ep_id=1000&module=bangumi&qn=0&fnval=4048&fnver=0&fourk=1&otype=json&area=hk&access_key=ACCESS_SECRET"
+            "https://proxy.example/base/pgc/player/web/playurl?proxy_token=a%3Db&avid=10&cid=100&ep_id=1000&module=bangumi&qn=0&fnval=4048&fnver=0&fourk=1&otype=json&area=hk&access_key=ACCESS_SECRET"
         );
         Ok(())
     }

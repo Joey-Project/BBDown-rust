@@ -188,6 +188,7 @@ dependencies = [
  "dirs",
  "httpmock",
  "predicates",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",

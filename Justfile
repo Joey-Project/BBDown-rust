@@ -19,7 +19,7 @@ e2e:
     cargo test -p bbdown-cli --test cli_e2e
 
 live-e2e:
-    test -n "${BBDOWN_LIVE_URL:-}" || { echo "BBDOWN_LIVE_URL is required for live-e2e" >&2; exit 2; }
+    test -f live-e2e.samples.json || { echo "live-e2e.samples.json is required for live-e2e; copy live-e2e.samples.example.json and fill local sample data" >&2; exit 2; }
     cargo test -p bbdown-cli --test live_e2e -- --ignored
 
 ci: fmt-check lint test e2e

@@ -135,8 +135,9 @@ reports a region/area restriction and restricted-area proxies are configured, th
 ordered candidates until one returns a valid DASH or FLV stream shape. Non-area official failures keep
 their original error and do not contact proxy hosts. A BBDown/BiliPlus-style HTTP(S) playurl proxy
 receives the PGC playurl query at the configured URL. A Bilibili API HTTP(S) proxy receives the same
-query at `/pgc/player/web/v2/playurl` below the configured base URL and preserves any query
-parameters already present on that base URL. When a generic access key is present in
+query at `/pgc/player/web/playurl` below the configured base URL, matching common BALH-style API
+proxy hosts, and preserves any query parameters already present on that base URL. When a generic
+access key is present in
 `Credentials::access_key`, proxy requests include it as `access_key`; the TV-specific access key is
 not reused for this flow. Bilibili cookies are intentionally omitted from restricted-area proxy
 requests.
@@ -191,11 +192,16 @@ Default CI is deterministic:
 - unit tests
 - CLI mock e2e tests
 
-Live tests against Bilibili are opt-in only through `just live-e2e`. The recipe fails fast unless
-`BBDOWN_LIVE_URL` is set and also accepts optional `BBDOWN_LIVE_SELECTION`, `BBDOWN_LIVE_COOKIE`,
-and `BBDOWN_LIVE_ACCESS_KEY`, so branch CI is not blocked by network, account, or regional state.
-Network requests have a configurable timeout through `ClientConfig` and CLI/env settings so
-misbehaving official or proxy endpoints do not hang indefinitely.
+Live tests against Bilibili are opt-in only through `just live-e2e`. The recipe fails fast unless an
+ignored `live-e2e.samples.json` manifest exists, so branch CI is not blocked by network, account, or
+regional state. The tracked `live-e2e.samples.example.json` documents the manifest shape. Each live
+case can run `info`, `plan`, or both against normal, PGC, intl, or restricted PGC inputs; can set a
+case-specific selection and area hint; and can assert the expected JSON kind, plan source, minimum
+entry count, and stream presence. The harness writes a temporary credential store per case from
+configured credential and access-key files, removes CLI override environment variables, and expands
+all-area restricted proxy shortcuts into the fixed `cn`, `th`, `hk`, and `tw` ordering. Network
+requests have a configurable timeout through `ClientConfig` and CLI/settings so misbehaving official
+or proxy endpoints do not hang indefinitely.
 
 ## Planned PR Slices
 
@@ -206,3 +212,9 @@ misbehaving official or proxy endpoints do not hang indefinitely.
    in PR #3.
 4. QR login state machine and live-test opt-in harness. Completed in PR #4.
 5. Restricted-area proxy resolver ordering and diagnostics. Completed in PR #5.
+6. Manifest-driven local live e2e sample matrix. Completed in PR #7.
+7. GitHub binary release packaging. Planned.
+8. Crate publish readiness and dry-run validation. Planned.
+9. Clearer stream quality selection and listing support. Planned.
+10. Restricted-area proxy response compatibility expansion. Planned.
+11. Integration API and documentation hardening. Planned.
