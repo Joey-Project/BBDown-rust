@@ -6,7 +6,7 @@
 - [completed] Add QR login flow and live-test opt-in harness.
 - [completed] Add restricted-area proxy resolver ordering and diagnostics.
 - [completed] Strengthen local live e2e coverage with a manifest-driven sample matrix.
-- [pending] Add GitHub release binary packaging for tagged and manual builds.
+- [completed] Add GitHub release binary packaging for tagged and manual builds.
 - [pending] Add crate publish readiness and dry-run validation.
 - [pending] Add clearer stream quality selection and listing support.
 - [pending] Expand restricted-area proxy response compatibility.

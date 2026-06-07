@@ -106,6 +106,13 @@ group is ordered by area hint, generic candidates, then fixed area order. Hosts 
 the tool does not ship public proxy defaults. Proxy requests do not forward Bilibili cookies.
 Resolver diagnostics reduce endpoints to URL origins and redact sensitive error-message values.
 
+## Release Builds
+
+GitHub tag releases build prepackaged `bbdown` CLI archives for Linux x86_64, macOS x86_64,
+macOS aarch64, and Windows x86_64. Manual release workflow runs can also build the same archives
+without publishing a GitHub Release. Each archive includes the CLI binary, `README.md`, and
+`docs/user-guide.md`, plus a `.sha256` checksum file.
+
 ## Developer Commands
 
 ```bash

@@ -193,6 +193,12 @@ Default CI is deterministic:
 - unit tests
 - CLI mock e2e tests
 
+Release packaging is a separate GitHub Actions workflow. Tag pushes matching `v*` build Linux
+x86_64, macOS x86_64, macOS aarch64, and Windows x86_64 CLI archives and publish them to the
+GitHub Release with generated release notes. Manual workflow dispatch builds the same archives as
+downloadable workflow artifacts without publishing a release. Archives contain the `bbdown` binary,
+`README.md`, `docs/user-guide.md`, and a platform-specific checksum file.
+
 Live tests against Bilibili are opt-in only through `just live-e2e`. The recipe fails fast unless an
 ignored `live-e2e.samples.json` manifest exists, so branch CI is not blocked by network, account, or
 regional state. The tracked `live-e2e.samples.example.json` documents the manifest shape. Each live
@@ -216,7 +222,7 @@ fixed `cn`, `th`, `hk`, and `tw` ordering. Network requests have a configurable 
 4. QR login state machine and live-test opt-in harness. Completed in PR #4.
 5. Restricted-area proxy resolver ordering and diagnostics. Completed in PR #5.
 6. Manifest-driven local live e2e sample matrix. Completed in PR #7.
-7. GitHub binary release packaging. Planned.
+7. GitHub binary release packaging. Completed in PR #8.
 8. Crate publish readiness and dry-run validation. Planned.
 9. Clearer stream quality selection and listing support. Planned.
 10. Restricted-area proxy response compatibility expansion. Planned.
