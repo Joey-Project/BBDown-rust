@@ -38,6 +38,8 @@ superseded_by:
   fragments. This lets the local gate accept either a successful proxy/official stream plan or a
   deterministic access-restricted failure that proves the official and proxy resolver attempts were
   exercised without accepting unrelated plan failures.
+- Manifest parsing rejects unknown fields so typoed expectation keys fail fast instead of silently
+  disabling source or diagnostic assertions.
 - `restricted_api_proxy_all_areas` and `restricted_area_proxy_all_areas` expand each configured URL
   into `cn`, `th`, `hk`, and `tw` proxy specs.
 - The live harness removes CLI override environment variables before each command so manifest data,
@@ -55,5 +57,8 @@ superseded_by:
   Hong Kong/Macau/Taiwan-restricted PGC sample, Mainland-restricted PGC sample, Telegram Video
   Downloader credential path, `access_key.txt`, and `https://atri.ink`.
 - Local default gate: `just ci` with formatter check, clippy, 88 library tests, 19 CLI unit tests,
-  8 mock CLI e2e tests, 4 live harness unit tests, and 1 ignored live case in the default workspace
+  8 mock CLI e2e tests, 5 live harness unit tests, and 1 ignored live case in the default workspace
   test run.
+- Review follow-up: two independent Codex review-only lanes found the same P2 unknown-field manifest
+  validation gap; the fix added strict serde parsing and a typo-manifest regression test. The
+  helper-backed frozen-diff review lane was LGTM on the pre-fix range.

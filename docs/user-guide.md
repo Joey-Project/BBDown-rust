@@ -137,7 +137,8 @@ candidates with the same area names used by the CLI. `restricted_api_proxy_all_a
 Each case declares a `kind`, `url`, optional `selection`, optional restricted-area hint, actions
 such as `info` or `plan`, and expected JSON shape. The harness copies only cookie/access-key fields
 into a temporary credential file for the case and strips CLI override environment variables before
-running the real `bbdown` binary.
+running the real `bbdown` binary. Unknown manifest fields are rejected so typoed expectation keys
+fail fast instead of silently weakening the live gate.
 Use `allowed_plan_sources` to reject unexpected sources, and `required_plan_sources` when a source
 must appear at least once. For restricted samples that depend on mutable account or regional
 eligibility, a case may set `allow_plan_error: true` with `plan_error_contains`: a successful `plan`

@@ -199,11 +199,12 @@ regional state. The tracked `live-e2e.samples.example.json` documents the manife
 case can run `info`, `plan`, or both against normal, PGC, intl, or restricted PGC inputs; can set a
 case-specific selection and area hint; and can assert the expected JSON kind, allowed or required
 plan sources, minimum entry count, and stream presence. Restricted PGC cases can explicitly allow an
-access-restricted plan failure with required diagnostic fragments. The harness writes a temporary
-credential store per case from configured credential and access-key files, removes CLI override
-environment variables, and expands all-area restricted proxy shortcuts into the fixed `cn`, `th`,
-`hk`, and `tw` ordering. Network requests have a configurable timeout through `ClientConfig` and
-CLI/settings so misbehaving official or proxy endpoints do not hang indefinitely.
+access-restricted plan failure with required diagnostic fragments. The manifest parser rejects
+unknown fields so expectation typos cannot silently disable source or diagnostic assertions. The
+harness writes a temporary credential store per case from configured credential and access-key files,
+removes CLI override environment variables, and expands all-area restricted proxy shortcuts into the
+fixed `cn`, `th`, `hk`, and `tw` ordering. Network requests have a configurable timeout through
+`ClientConfig` and CLI/settings so misbehaving official or proxy endpoints do not hang indefinitely.
 
 ## Planned PR Slices
 

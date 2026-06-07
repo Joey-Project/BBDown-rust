@@ -26,6 +26,7 @@ const CLI_OVERRIDE_ENV_VARS: &[&str] = &[
 ];
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct LiveManifest {
     #[serde(default, alias = "credentials_file")]
     credential_file: Option<PathBuf>,
@@ -45,6 +46,7 @@ struct LiveManifest {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct LiveCase {
     name: String,
     kind: LiveCaseKind,
@@ -90,6 +92,7 @@ enum LiveAction {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct LiveExpect {
     info: Option<String>,
     #[serde(default, alias = "plan_sources")]
@@ -176,6 +179,26 @@ fn manifest_expands_all_area_proxy_specs() -> anyhow::Result<()> {
     ]
     .map(|(flag, spec)| (flag, spec.to_owned()));
     assert_eq!(specs, expected);
+    Ok(())
+}
+
+#[test]
+fn manifest_rejects_unknown_fields() -> anyhow::Result<()> {
+    let Err(error) = serde_json::from_str::<LiveManifest>(
+        r#"{
+          "credential_file": "auth.json",
+          "cases": [{
+            "name": "restricted",
+            "kind": "restricted_pgc",
+            "url": "ep1",
+            "expect": {"required_plan_source": ["pgc_proxy"]}
+          }]
+        }"#,
+    ) else {
+        bail!("manifest assertion typos must fail parsing");
+    };
+
+    assert!(error.to_string().contains("unknown field"));
     Ok(())
 }
 
