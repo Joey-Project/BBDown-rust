@@ -27,9 +27,35 @@ The library resolves metadata into `ResolvedContent`:
 - `VideoMetadata` includes title, description, owner, tags, cover, pub time, and pages.
 - `SeasonResolution` includes season metadata plus the selected episode set.
 
+The library resolves media availability into `DownloadPlan`:
+
+- `DownloadEntry` records the selected `aid`, `bvid`, `cid`, optional `epid`, title, and source.
+- `StreamSet` keeps DASH video/audio tracks, FLV segments, accepted quality ids, and duration.
+- `SubtitleTrack` records language metadata, normalized URL, and basic format classification.
+- `DanmakuTrack` records the XML comment endpoint derived from `cid`.
+
 `ss` and `md` require a `Selection` in non-interactive contexts. The CLI will later add
 interactive prompting, but the library keeps the contract explicit so integrations cannot
 accidentally download a full season.
+
+## Stream Planning
+
+`BiliClient::plan_download` is the public crate API for building a typed download plan without
+performing file I/O. It currently supports three official source modes:
+
+- `NormalWeb` uses the normal web playurl endpoint for `aid`/`bvid` inputs.
+- `PgcWeb` uses the PGC web playurl endpoint for `ep`, `ss`, and `md` inputs.
+- `IntlWeb` uses the intl OGV playurl endpoint for `bilibili.tv` episode inputs and includes the
+  caller-provided access key when configured.
+
+Subtitle discovery follows the selected source. Normal and PGC entries use the player subtitle
+endpoint. Intl entries use the intl subtitle endpoint. Subtitle failures are treated as missing
+optional tracks, matching BBDown's practical behavior, while stream resolution failures remain
+hard errors.
+
+The CLI exposes this layer through `bbdown plan`. The command is intentionally a planning surface:
+it prints typed JSON or a short human summary, but it does not download, merge, or mutate output
+files.
 
 ## Restricted Area And Intl
 
@@ -41,9 +67,9 @@ configured resolver chain:
 - user-configured proxy web or mobile resolver hosts;
 - user-configured area hints such as `cn`, `hk`, `tw`, or `th`.
 
-The current slice implements endpoint override and intl metadata shape. Later slices will add
-typed stream resolvers, retry policy, and configured proxy candidate ordering based on the same
-principles.
+The current implementation supports endpoint override, intl metadata shape, official PGC/intl
+stream planning, and typed source reporting. Later slices will add download retry policy and
+configured proxy candidate ordering based on the same principles.
 
 ## Credentials
 
@@ -71,8 +97,9 @@ misbehaving official or proxy endpoints do not hang indefinitely.
 
 ## Planned PR Slices
 
-1. Workspace, CI, docs, metadata resolver, credential store, and CLI `info/auth`.
-2. Stream resolver chain, download planning, subtitle and danmaku discovery.
+1. Workspace, CI, docs, metadata resolver, credential store, and CLI `info/auth`. Completed in
+   PR #1.
+2. Stream resolver chain, download planning, subtitle and danmaku discovery. Completed in PR #2.
 3. File download, retry/resume policy, ffmpeg mux integration, and mock e2e downloads.
 4. QR login state machine and live-test opt-in harness.
 5. Restricted-area proxy resolver ordering and diagnostics.

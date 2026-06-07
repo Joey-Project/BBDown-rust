@@ -51,6 +51,13 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    Plan {
+        url: String,
+        #[arg(long)]
+        select: Option<Selection>,
+        #[arg(long)]
+        json: bool,
+    },
     Auth {
         #[command(subcommand)]
         command: AuthCommand,
@@ -99,6 +106,40 @@ async fn main() -> anyhow::Result<()> {
                 println!("{}", serde_json::to_string_pretty(&resolved)?);
             } else {
                 print_human_summary(&resolved);
+            }
+        }
+        Command::Plan { url, select, json } => {
+            let credentials = store.load().context("failed to load credentials")?;
+            let client = BiliClient::new(ClientConfig {
+                endpoints: EndpointConfig {
+                    api_base: cli.api_base,
+                    pgc_base: cli.pgc_base,
+                    intl_base: cli.intl_base,
+                },
+                credentials,
+                user_agent: "bbdown-rs/0.1".to_owned(),
+                request_timeout: Duration::from_secs(cli.request_timeout_seconds),
+            });
+            let plan = client.plan_download(&url, select).await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&plan)?);
+            } else {
+                println!("title: {}", plan.title);
+                println!("entries: {}", plan.entries.len());
+                for entry in plan.entries {
+                    println!(
+                        "- P{} aid={} cid={} title={} video={} audio={} flv={} subtitles={} danmaku={}",
+                        entry.index,
+                        entry.aid,
+                        entry.cid,
+                        entry.title,
+                        entry.streams.videos.len(),
+                        entry.streams.audios.len(),
+                        entry.streams.flv_segments.len(),
+                        entry.subtitles.len(),
+                        entry.danmaku.xml_url
+                    );
+                }
             }
         }
         Command::Auth { command } => handle_auth(command, &store)?,

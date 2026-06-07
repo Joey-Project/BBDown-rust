@@ -51,6 +51,82 @@ fn info_json_resolves_mock_video() -> anyhow::Result<()> {
 }
 
 #[test]
+fn plan_json_resolves_mock_video_streams() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/view")
+            .query_param("aid", "170001");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "aid": 170_001,
+                "bvid": "BV1xx411c7mD",
+                "title": "Mock video",
+                "pages": [{"page": 1, "cid": 2, "part": "Main"}]
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/tag/archive/tags")
+            .query_param("aid", "170001");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": []
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/playurl")
+            .query_param("avid", "170001")
+            .query_param("cid", "2")
+            .query_param("try_look", "1");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "dash": {
+                    "duration": 3,
+                    "video": [{"id": 80, "base_url": "https://video.example/80.m4s"}],
+                    "audio": [{"id": 30280, "base_url": "https://audio.example/30280.m4s"}]
+                }
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/v2")
+            .query_param("aid", "170001")
+            .query_param("cid", "2");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {"subtitle": {"subtitles": []}}
+        }));
+    });
+
+    let mut command = Command::cargo_bin("bbdown")?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("plan")
+        .arg("av170001")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    assert_eq!(json["title"], "Mock video");
+    assert_eq!(json["entries"][0]["streams"]["videos"][0]["id"], 80);
+    assert_eq!(
+        json["entries"][0]["danmaku"]["xml_url"],
+        "https://comment.bilibili.com/2.xml"
+    );
+    Ok(())
+}
+
+#[test]
 fn auth_import_status_and_logout_use_local_store() -> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;
     let credential_file = temp.path().join("credentials.json");

@@ -14,7 +14,8 @@ pub use credentials::{CredentialSource, CredentialStore, Credentials};
 pub use error::{Error, Result};
 pub use input::Input;
 pub use models::{
-    EpisodeMetadata, Owner, PageMetadata, ResolvedContent, SeasonMetadata, SeasonResolution, Tag,
-    VideoMetadata,
+    DanmakuTrack, DownloadEntry, DownloadPlan, EpisodeMetadata, FlvSegment, MediaStream, Owner,
+    PageMetadata, ResolvedContent, SeasonMetadata, SeasonResolution, StreamSet, StreamSource,
+    SubtitleFormat, SubtitleTrack, Tag, VideoMetadata,
 };
 pub use selection::Selection;
