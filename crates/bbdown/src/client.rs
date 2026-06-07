@@ -1,12 +1,14 @@
 use crate::models::{
     DanmakuTrack, DownloadEntry, DownloadPlan, EpisodeMetadata, FlvSegment, MediaStream, Owner,
-    PageMetadata, ResolvedContent, SeasonMetadata, SeasonResolution, StreamSet, StreamSource,
-    SubtitleFormat, SubtitleTrack, Tag, VideoMetadata,
+    PageMetadata, ResolvedContent, SeasonMetadata, SeasonResolution, StreamDiagnostics,
+    StreamResolverAttempt, StreamResolverOutcome, StreamSet, StreamSource, SubtitleFormat,
+    SubtitleTrack, Tag, VideoMetadata,
 };
 use crate::{Credentials, Error, Input, Result, Selection};
 use md5::{Digest, Md5};
 use reqwest::header::{COOKIE, HeaderMap, HeaderValue, REFERER, USER_AGENT};
 use serde::Deserialize;
+use std::fmt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use url::Url;
 
@@ -39,6 +41,7 @@ impl Default for EndpointConfig {
 pub struct ClientConfig {
     pub endpoints: EndpointConfig,
     pub credentials: Credentials,
+    pub restricted_area: RestrictedAreaConfig,
     pub user_agent: String,
     pub request_timeout: Duration,
 }
@@ -48,9 +51,174 @@ impl Default for ClientConfig {
         Self {
             endpoints: EndpointConfig::default(),
             credentials: Credentials::default(),
+            restricted_area: RestrictedAreaConfig::default(),
             user_agent: "bbdown-rs/0.1".to_owned(),
             request_timeout: Duration::from_secs(30),
         }
+    }
+}
+
+impl ClientConfig {
+    #[must_use]
+    pub fn new(endpoints: EndpointConfig, credentials: Credentials) -> Self {
+        Self {
+            endpoints,
+            credentials,
+            ..Self::default()
+        }
+    }
+
+    #[must_use]
+    pub fn with_restricted_area(mut self, restricted_area: RestrictedAreaConfig) -> Self {
+        self.restricted_area = restricted_area;
+        self
+    }
+
+    #[must_use]
+    pub fn with_user_agent(mut self, user_agent: impl Into<String>) -> Self {
+        self.user_agent = user_agent.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_request_timeout(mut self, request_timeout: Duration) -> Self {
+        self.request_timeout = request_timeout;
+        self
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RestrictedAreaConfig {
+    pub area_hint: Option<RestrictedArea>,
+    pub proxies: Vec<RestrictedAreaProxy>,
+}
+
+impl RestrictedAreaConfig {
+    #[must_use]
+    pub fn ordered_proxies(&self) -> Vec<RestrictedAreaProxy> {
+        let mut ordered = Vec::new();
+        let mut priorities = self
+            .proxies
+            .iter()
+            .map(|proxy| proxy.order_priority)
+            .collect::<Vec<_>>();
+        priorities.sort_unstable();
+        priorities.dedup();
+        for priority in priorities {
+            if let Some(area_hint) = self.area_hint {
+                self.push_matching(&mut ordered, |proxy| {
+                    proxy.order_priority == priority && proxy.area == Some(area_hint)
+                });
+            }
+            self.push_matching(&mut ordered, |proxy| {
+                proxy.order_priority == priority && proxy.area.is_none()
+            });
+            for area in [
+                RestrictedArea::Cn,
+                RestrictedArea::Th,
+                RestrictedArea::Hk,
+                RestrictedArea::Tw,
+            ] {
+                self.push_matching(&mut ordered, |proxy| {
+                    proxy.order_priority == priority && proxy.area == Some(area)
+                });
+            }
+            self.push_matching(&mut ordered, |proxy| proxy.order_priority == priority);
+        }
+        ordered
+    }
+
+    fn push_matching(
+        &self,
+        ordered: &mut Vec<RestrictedAreaProxy>,
+        mut predicate: impl FnMut(&RestrictedAreaProxy) -> bool,
+    ) {
+        for proxy in self.proxies.iter().filter(|proxy| predicate(proxy)) {
+            if !ordered.iter().any(|candidate| candidate == proxy) {
+                ordered.push(proxy.clone());
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RestrictedArea {
+    Cn,
+    Th,
+    Hk,
+    Tw,
+}
+
+impl RestrictedArea {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Cn => "cn",
+            Self::Th => "th",
+            Self::Hk => "hk",
+            Self::Tw => "tw",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RestrictedAreaProxyKind {
+    PlayUrl,
+    BilibiliApi,
+}
+
+#[derive(Clone, Eq)]
+pub struct RestrictedAreaProxy {
+    pub base_url: String,
+    pub area: Option<RestrictedArea>,
+    pub kind: RestrictedAreaProxyKind,
+    order_priority: u8,
+}
+
+impl PartialEq for RestrictedAreaProxy {
+    fn eq(&self, other: &Self) -> bool {
+        self.base_url == other.base_url && self.area == other.area && self.kind == other.kind
+    }
+}
+
+impl fmt::Debug for RestrictedAreaProxy {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RestrictedAreaProxy")
+            .field("base_url", &redact_url_string(&self.base_url))
+            .field("area", &self.area.map(RestrictedArea::as_str))
+            .field("kind", &self.kind)
+            .field("order_priority", &self.order_priority)
+            .finish()
+    }
+}
+
+impl RestrictedAreaProxy {
+    #[must_use]
+    pub fn playurl(base_url: impl Into<String>, area: Option<RestrictedArea>) -> Self {
+        Self {
+            base_url: base_url.into(),
+            area,
+            kind: RestrictedAreaProxyKind::PlayUrl,
+            order_priority: 0,
+        }
+    }
+
+    #[must_use]
+    pub fn bilibili_api(base_url: impl Into<String>, area: Option<RestrictedArea>) -> Self {
+        Self {
+            base_url: base_url.into(),
+            area,
+            kind: RestrictedAreaProxyKind::BilibiliApi,
+            order_priority: 0,
+        }
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_order_priority(mut self, order_priority: u8) -> Self {
+        self.order_priority = order_priority;
+        self
     }
 }
 
@@ -420,11 +588,16 @@ impl BiliClient {
     }
 
     async fn plan_entry(&self, seed: PlanEntrySeed) -> Result<DownloadEntry> {
-        let streams = self
+        let resolved_streams = self
             .fetch_stream_set(seed.source.clone(), seed.aid, seed.cid, seed.epid)
             .await?;
         let subtitles = self
-            .fetch_subtitles(seed.source.clone(), seed.aid, seed.cid, seed.epid)
+            .fetch_subtitles(
+                resolved_streams.source.clone(),
+                seed.aid,
+                seed.cid,
+                seed.epid,
+            )
             .await
             .unwrap_or_default();
         Ok(DownloadEntry {
@@ -434,8 +607,9 @@ impl BiliClient {
             cid: seed.cid,
             epid: seed.epid,
             title: seed.title,
-            source: seed.source,
-            streams,
+            source: resolved_streams.source,
+            streams: resolved_streams.streams,
+            diagnostics: resolved_streams.diagnostics,
             subtitles,
             danmaku: DanmakuTrack {
                 cid: seed.cid,
@@ -481,15 +655,15 @@ impl BiliClient {
         aid: u64,
         cid: u64,
         epid: Option<u64>,
-    ) -> Result<StreamSet> {
+    ) -> Result<ResolvedStreamSet> {
+        if source == StreamSource::PgcWeb {
+            return self.fetch_pgc_stream_set(aid, cid, epid).await;
+        }
         let mut url = match source {
             StreamSource::NormalWeb => {
                 Self::endpoint_url(&self.config.endpoints.api_base, "/x/player/playurl")?
             }
-            StreamSource::PgcWeb => Self::endpoint_url(
-                &self.config.endpoints.pgc_base,
-                "/pgc/player/web/v2/playurl",
-            )?,
+            StreamSource::PgcWeb | StreamSource::PgcProxy => unreachable!(),
             StreamSource::IntlWeb => Self::endpoint_url(
                 &self.config.endpoints.intl_base,
                 "/intl/gateway/v2/ogv/playurl",
@@ -509,19 +683,7 @@ impl BiliClient {
                         .append_pair("try_look", "1")
                         .append_pair("otype", "json");
                 }
-                StreamSource::PgcWeb => {
-                    let epid = epid.ok_or(Error::MissingField("epid"))?;
-                    query
-                        .append_pair("avid", &aid.to_string())
-                        .append_pair("cid", &cid.to_string())
-                        .append_pair("ep_id", &epid.to_string())
-                        .append_pair("module", "bangumi")
-                        .append_pair("qn", "0")
-                        .append_pair("fnval", "4048")
-                        .append_pair("fnver", "0")
-                        .append_pair("fourk", "1")
-                        .append_pair("otype", "json");
-                }
+                StreamSource::PgcWeb | StreamSource::PgcProxy => unreachable!(),
                 StreamSource::IntlWeb => {
                     let epid = epid.ok_or(Error::MissingField("epid"))?;
                     for (key, value) in intl_ogv_playurl_params(
@@ -535,7 +697,120 @@ impl BiliClient {
                 }
             }
         }
+        let streams = self.fetch_playurl_stream_set(url).await?;
+        Ok(ResolvedStreamSet::official(source, streams))
+    }
+
+    async fn fetch_pgc_stream_set(
+        &self,
+        aid: u64,
+        cid: u64,
+        epid: Option<u64>,
+    ) -> Result<ResolvedStreamSet> {
+        let epid = epid.ok_or(Error::MissingField("epid"))?;
+        let official_url = Self::pgc_playurl_url(&self.config.endpoints.pgc_base, aid, cid, epid)?;
+        match self.fetch_playurl_stream_set(official_url.clone()).await {
+            Ok(streams) => Ok(ResolvedStreamSet::official(StreamSource::PgcWeb, streams)),
+            Err(error)
+                if self.config.restricted_area.proxies.is_empty()
+                    || !is_restricted_area_fallback_error(&error) =>
+            {
+                Err(error)
+            }
+            Err(error) => {
+                let mut attempts = vec![resolver_attempt(
+                    StreamSource::PgcWeb,
+                    None,
+                    Some(redact_url_for_diagnostics(&official_url)),
+                    StreamResolverOutcome::Failed,
+                    Some(resolver_error_message(&error)),
+                )];
+                for proxy in self.config.restricted_area.ordered_proxies() {
+                    let request_url = match self.pgc_proxy_playurl_url(&proxy, aid, cid, epid) {
+                        Ok(url) => url,
+                        Err(error) => {
+                            attempts.push(resolver_attempt(
+                                StreamSource::PgcProxy,
+                                proxy.area,
+                                Some(redact_url_string(&proxy.base_url)),
+                                StreamResolverOutcome::Failed,
+                                Some(resolver_error_message(&error)),
+                            ));
+                            continue;
+                        }
+                    };
+                    match self
+                        .fetch_proxy_playurl_stream_set(request_url.clone())
+                        .await
+                    {
+                        Ok(streams) => {
+                            attempts.push(resolver_attempt(
+                                StreamSource::PgcProxy,
+                                proxy.area,
+                                Some(redact_url_for_diagnostics(&request_url)),
+                                StreamResolverOutcome::Succeeded,
+                                None,
+                            ));
+                            return Ok(ResolvedStreamSet {
+                                source: StreamSource::PgcProxy,
+                                streams,
+                                diagnostics: StreamDiagnostics { attempts },
+                            });
+                        }
+                        Err(error) => attempts.push(resolver_attempt(
+                            StreamSource::PgcProxy,
+                            proxy.area,
+                            Some(redact_url_for_diagnostics(&request_url)),
+                            StreamResolverOutcome::Failed,
+                            Some(resolver_error_message(&error)),
+                        )),
+                    }
+                }
+                Err(Error::AccessRestricted(format!(
+                    "restricted-area resolver failed: {}",
+                    summarize_resolver_attempts(&attempts)
+                )))
+            }
+        }
+    }
+
+    fn pgc_playurl_url(base_url: &str, aid: u64, cid: u64, epid: u64) -> Result<Url> {
+        let mut url = Self::endpoint_url(base_url, "/pgc/player/web/v2/playurl")?;
+        append_pgc_playurl_params(&mut url, aid, cid, epid, None, None);
+        Ok(url)
+    }
+
+    fn pgc_proxy_playurl_url(
+        &self,
+        proxy: &RestrictedAreaProxy,
+        aid: u64,
+        cid: u64,
+        epid: u64,
+    ) -> Result<Url> {
+        let mut url = match proxy.kind {
+            RestrictedAreaProxyKind::PlayUrl => Url::parse(&proxy.base_url)?,
+            RestrictedAreaProxyKind::BilibiliApi => {
+                Self::endpoint_url_preserving_query(&proxy.base_url, "/pgc/player/web/v2/playurl")?
+            }
+        };
+        append_pgc_playurl_params(
+            &mut url,
+            aid,
+            cid,
+            epid,
+            proxy.area,
+            self.config.credentials.access_key.as_deref(),
+        );
+        Ok(url)
+    }
+
+    async fn fetch_playurl_stream_set(&self, url: Url) -> Result<StreamSet> {
         let response: PlayUrlRoot = self.get_json(url).await?;
+        response.into_stream_set()
+    }
+
+    async fn fetch_proxy_playurl_stream_set(&self, url: Url) -> Result<StreamSet> {
+        let response: PlayUrlRoot = self.get_json_without_cookie(url).await?;
         response.into_stream_set()
     }
 
@@ -547,7 +822,7 @@ impl BiliClient {
         epid: Option<u64>,
     ) -> Result<Vec<SubtitleTrack>> {
         match source {
-            StreamSource::NormalWeb | StreamSource::PgcWeb => {
+            StreamSource::NormalWeb | StreamSource::PgcWeb | StreamSource::PgcProxy => {
                 let mut url = Self::endpoint_url(&self.config.endpoints.api_base, "/x/player/v2")?;
                 url.query_pairs_mut()
                     .append_pair("aid", &aid.to_string())
@@ -581,10 +856,24 @@ impl BiliClient {
     where
         T: for<'de> Deserialize<'de>,
     {
+        self.get_json_with_cookie(url, true).await
+    }
+
+    async fn get_json_without_cookie<T>(&self, url: Url) -> Result<T>
+    where
+        T: for<'de> Deserialize<'de>,
+    {
+        self.get_json_with_cookie(url, false).await
+    }
+
+    async fn get_json_with_cookie<T>(&self, url: Url, include_cookie: bool) -> Result<T>
+    where
+        T: for<'de> Deserialize<'de>,
+    {
         let response = self
             .http
             .get(url)
-            .headers(self.request_headers()?)
+            .headers(self.headers(include_cookie)?)
             .timeout(self.config.request_timeout)
             .send()
             .await
@@ -596,10 +885,6 @@ impl BiliClient {
             .json::<T>()
             .await
             .map_err(Self::http_error_without_url)
-    }
-
-    pub(crate) fn request_headers(&self) -> Result<HeaderMap> {
-        self.headers(true)
     }
 
     pub(crate) fn anonymous_headers(&self) -> Result<HeaderMap> {
@@ -638,18 +923,29 @@ impl BiliClient {
 
     pub(crate) fn endpoint_url(base: &str, path: &str) -> Result<Url> {
         let mut url = Url::parse(base)?;
-        let base_path = url.path().trim_end_matches('/');
-        let suffix = path.trim_start_matches('/');
-        let next_path = if base_path.is_empty() {
-            format!("/{suffix}")
-        } else {
-            format!("{base_path}/{suffix}")
-        };
-        url.set_path(&next_path);
+        set_endpoint_path(&mut url, path);
         url.set_query(None);
         url.set_fragment(None);
         Ok(url)
     }
+
+    fn endpoint_url_preserving_query(base: &str, path: &str) -> Result<Url> {
+        let mut url = Url::parse(base)?;
+        set_endpoint_path(&mut url, path);
+        url.set_fragment(None);
+        Ok(url)
+    }
+}
+
+fn set_endpoint_path(url: &mut Url, path: &str) {
+    let base_path = url.path().trim_end_matches('/');
+    let suffix = path.trim_start_matches('/');
+    let next_path = if base_path.is_empty() {
+        format!("/{suffix}")
+    } else {
+        format!("{base_path}/{suffix}")
+    };
+    url.set_path(&next_path);
 }
 
 fn season_from_pgc(result: PgcSeasonResult) -> SeasonMetadata {
@@ -1012,6 +1308,23 @@ struct PlanEntrySeed {
     source: StreamSource,
 }
 
+#[derive(Clone, Debug)]
+struct ResolvedStreamSet {
+    source: StreamSource,
+    streams: StreamSet,
+    diagnostics: StreamDiagnostics,
+}
+
+impl ResolvedStreamSet {
+    fn official(source: StreamSource, streams: StreamSet) -> Self {
+        Self {
+            source,
+            streams,
+            diagnostics: StreamDiagnostics::default(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TagPolicy {
     Fetch,
@@ -1023,6 +1336,337 @@ fn episode_display_title(title: &str, long_title: Option<&str>) -> String {
         Some(long_title) if title.is_empty() => long_title.to_owned(),
         Some(long_title) => format!("{title} {long_title}"),
         None => title.to_owned(),
+    }
+}
+
+fn append_pgc_playurl_params(
+    url: &mut Url,
+    aid: u64,
+    cid: u64,
+    epid: u64,
+    area: Option<RestrictedArea>,
+    access_key: Option<&str>,
+) {
+    let mut query = url.query_pairs_mut();
+    query
+        .append_pair("avid", &aid.to_string())
+        .append_pair("cid", &cid.to_string())
+        .append_pair("ep_id", &epid.to_string())
+        .append_pair("module", "bangumi")
+        .append_pair("qn", "0")
+        .append_pair("fnval", "4048")
+        .append_pair("fnver", "0")
+        .append_pair("fourk", "1")
+        .append_pair("otype", "json");
+    if let Some(area) = area {
+        query.append_pair("area", area.as_str());
+    }
+    if let Some(access_key) = access_key.filter(|value| !value.is_empty()) {
+        query.append_pair("access_key", access_key);
+    }
+}
+
+fn is_restricted_area_fallback_error(error: &Error) -> bool {
+    match error {
+        Error::Api { message, .. } | Error::AccessRestricted(message) => {
+            is_restricted_area_message(message)
+        }
+        _ => false,
+    }
+}
+
+fn is_restricted_area_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    [
+        "area restricted",
+        "area limit",
+        "region restricted",
+        "region limit",
+        "not available in your region",
+        "地区限制",
+        "地區限制",
+        "区域限制",
+        "區域限制",
+        "所在地区不可观看",
+        "所在地區不可觀看",
+        "所在地区无法观看",
+        "所在地區無法觀看",
+        "所在的地区不可观看",
+        "所在的地區不可觀看",
+        "所在的地区无法观看",
+        "所在的地區無法觀看",
+        "地区不可观看",
+        "地區不可觀看",
+        "地区无法观看",
+        "地區無法觀看",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+fn resolver_attempt(
+    source: StreamSource,
+    area: Option<RestrictedArea>,
+    endpoint: Option<String>,
+    outcome: StreamResolverOutcome,
+    message: Option<String>,
+) -> StreamResolverAttempt {
+    StreamResolverAttempt {
+        source,
+        outcome,
+        area: area.map(|area| area.as_str().to_owned()),
+        endpoint,
+        message,
+    }
+}
+
+fn resolver_error_message(error: &Error) -> String {
+    match error {
+        Error::Api { code, message } => {
+            format!("API code {code}: {}", sanitize_diagnostic_text(message))
+        }
+        Error::AccessRestricted(message) => {
+            format!("access restricted: {}", sanitize_diagnostic_text(message))
+        }
+        Error::MissingField(field) => format!("missing field: {field}"),
+        Error::Http(error) => format!(
+            "HTTP error: {}",
+            sanitize_diagnostic_text(&error.to_string())
+        ),
+        Error::Json(error) => format!(
+            "JSON error: {}",
+            sanitize_diagnostic_text(&error.to_string())
+        ),
+        Error::Url(error) => format!(
+            "URL error: {}",
+            sanitize_diagnostic_text(&error.to_string())
+        ),
+        Error::InvalidInput(message) => {
+            format!("invalid input: {}", sanitize_diagnostic_text(message))
+        }
+        Error::SelectionRequired { input_kind } => {
+            format!("{input_kind} links require an explicit selection")
+        }
+        Error::Unsupported(message) => {
+            format!("unsupported: {}", sanitize_diagnostic_text(message))
+        }
+        Error::Io(error) => format!(
+            "I/O error: {}",
+            sanitize_diagnostic_text(&error.to_string())
+        ),
+        Error::MuxFailed { status } => {
+            format!(
+                "ffmpeg mux failed with status {}",
+                sanitize_diagnostic_text(status)
+            )
+        }
+    }
+}
+
+fn summarize_resolver_attempts(attempts: &[StreamResolverAttempt]) -> String {
+    attempts
+        .iter()
+        .map(|attempt| {
+            let area = attempt
+                .area
+                .as_deref()
+                .map(|area| format!(" area={area}"))
+                .unwrap_or_default();
+            let message = attempt
+                .message
+                .as_deref()
+                .map(|message| format!(" ({message})"))
+                .unwrap_or_default();
+            format!("{:?}{area} {:?}{message}", attempt.source, attempt.outcome)
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn redact_url_for_diagnostics(url: &Url) -> String {
+    let mut redacted = url.clone();
+    let _ = redacted.set_username("");
+    let _ = redacted.set_password(None);
+    redacted.set_path("");
+    redacted.set_query(None);
+    redacted.set_fragment(None);
+    redacted.to_string().trim_end_matches('/').to_owned()
+}
+
+fn redact_url_string(raw: &str) -> String {
+    Url::parse(raw).map_or_else(
+        |_| redact_unparsed_url_for_diagnostics(raw),
+        |url| redact_url_for_diagnostics(&url),
+    )
+}
+
+fn sanitize_diagnostic_text(raw: &str) -> String {
+    let without_urls = redact_urls_in_text(raw);
+    let redacted = redact_sensitive_key_values(&without_urls);
+    let lower = redacted.to_ascii_lowercase();
+    if SENSITIVE_DIAGNOSTIC_KEYS
+        .iter()
+        .any(|key| lower.contains(key))
+    {
+        "redacted diagnostic message".to_owned()
+    } else {
+        redacted
+    }
+}
+
+const SENSITIVE_DIAGNOSTIC_KEYS: &[&str] = &[
+    "access_key",
+    "access_token",
+    "proxy_token",
+    "token",
+    "jwt",
+    "api_key",
+    "x-api-key",
+    "authorization",
+    "sessdata",
+    "bili_jct",
+    "cookie",
+];
+
+fn redact_urls_in_text(raw: &str) -> String {
+    let mut output = String::with_capacity(raw.len());
+    let mut index = 0;
+    while let Some(relative_start) = find_next_url_start(&raw[index..]) {
+        let start = index + relative_start;
+        output.push_str(&raw[index..start]);
+        let end = raw[start..]
+            .find(is_message_url_delimiter)
+            .map_or(raw.len(), |relative_end| start + relative_end);
+        let token = &raw[start..end];
+        let (url_token, trailing) = split_trailing_url_punctuation(token);
+        match Url::parse(url_token) {
+            Ok(url) => output.push_str(&redact_url_for_diagnostics(&url)),
+            Err(_) => output.push_str(&redact_unparsed_url_for_diagnostics(url_token)),
+        }
+        output.push_str(trailing);
+        index = end;
+    }
+    output.push_str(&raw[index..]);
+    output
+}
+
+fn find_next_url_start(raw: &str) -> Option<usize> {
+    let lower = raw.to_ascii_lowercase();
+    match (lower.find("http://"), lower.find("https://")) {
+        (Some(http), Some(https)) => Some(http.min(https)),
+        (Some(http), None) => Some(http),
+        (None, Some(https)) => Some(https),
+        (None, None) => None,
+    }
+}
+
+fn is_message_url_delimiter(character: char) -> bool {
+    character.is_whitespace() || matches!(character, '"' | '\'' | '<' | '>' | '(' | ')')
+}
+
+fn split_trailing_url_punctuation(token: &str) -> (&str, &str) {
+    let trimmed_len = token.trim_end_matches([',', '.', ';']).len();
+    token.split_at(trimmed_len)
+}
+
+fn redact_sensitive_key_values(raw: &str) -> String {
+    SENSITIVE_DIAGNOSTIC_KEYS
+        .iter()
+        .fold(raw.to_owned(), |value, key| {
+            redact_sensitive_key_value(&value, key)
+        })
+}
+
+fn redact_sensitive_key_value(raw: &str, key: &str) -> String {
+    let with_equals = redact_sensitive_key_value_with_separator(raw, key, '=');
+    redact_sensitive_key_value_with_separator(&with_equals, key, ':')
+}
+
+fn redact_sensitive_key_value_with_separator(raw: &str, key: &str, separator: char) -> String {
+    let mut output = String::with_capacity(raw.len());
+    let mut index = 0;
+    let pattern = format!("{key}{separator}");
+    let lower = raw.to_ascii_lowercase();
+    while let Some(relative_start) = lower[index..].find(&pattern) {
+        let start = index + relative_start;
+        output.push_str(&raw[index..start]);
+        output.push_str("<redacted>");
+        let value_start = skip_ascii_whitespace(raw, start + pattern.len());
+        let value_end = raw[value_start..]
+            .find(|character| is_sensitive_value_delimiter_for_key(key, character))
+            .map_or(raw.len(), |relative_end| value_start + relative_end);
+        index = value_end;
+    }
+    output.push_str(&raw[index..]);
+    output
+}
+
+fn skip_ascii_whitespace(raw: &str, mut index: usize) -> usize {
+    while let Some(character) = raw[index..].chars().next() {
+        if !character.is_ascii_whitespace() {
+            break;
+        }
+        index += character.len_utf8();
+    }
+    index
+}
+
+fn is_sensitive_value_delimiter_for_key(key: &str, character: char) -> bool {
+    if key == "authorization" {
+        matches!(
+            character,
+            '&' | '"' | '\'' | '<' | '>' | '(' | ')' | ',' | ';' | '\r' | '\n'
+        )
+    } else {
+        is_sensitive_value_delimiter(character)
+    }
+}
+
+fn is_sensitive_value_delimiter(character: char) -> bool {
+    character.is_whitespace()
+        || matches!(
+            character,
+            '&' | '"' | '\'' | '<' | '>' | '(' | ')' | ',' | ';' | '\r' | '\n'
+        )
+}
+
+fn redact_basic_auth_like_string(raw: &str) -> String {
+    let Some(scheme_end) = raw.find("//") else {
+        return raw.to_owned();
+    };
+    let after_scheme = &raw[(scheme_end + 2)..];
+    let Some(userinfo_end) = after_scheme.find('@') else {
+        return raw.to_owned();
+    };
+    format!(
+        "{}//<redacted>@{}",
+        &raw[..scheme_end],
+        &after_scheme[(userinfo_end + 1)..]
+    )
+    .trim_end_matches('/')
+    .to_owned()
+}
+
+fn redact_unparsed_url_for_diagnostics(raw: &str) -> String {
+    let basic_auth_redacted = redact_basic_auth_like_string(raw);
+    let Some(scheme_end) = basic_auth_redacted.find("//") else {
+        return "<invalid-url>".to_owned();
+    };
+    let prefix = &basic_auth_redacted[..scheme_end];
+    let after_scheme = &basic_auth_redacted[(scheme_end + 2)..];
+    let authority_end = after_scheme
+        .find(|character: char| character.is_whitespace() || matches!(character, '/' | '?' | '#'))
+        .unwrap_or(after_scheme.len());
+    let authority = &after_scheme[..authority_end];
+    let authority = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    if authority.is_empty() {
+        "<invalid-url>".to_owned()
+    } else {
+        format!("{prefix}//{authority}")
+            .trim_end_matches('/')
+            .to_owned()
     }
 }
 
@@ -1488,7 +2132,10 @@ pub(crate) fn sign_ordered_params(params: &[(&str, String)], secret: &str) -> St
 
 #[cfg(test)]
 mod tests {
-    use super::{BiliClient, ClientConfig, EndpointConfig, PlayUrlRoot, intl_ogv_playurl_params};
+    use super::{
+        BiliClient, ClientConfig, EndpointConfig, PlayUrlRoot, RestrictedArea,
+        RestrictedAreaConfig, RestrictedAreaProxy, intl_ogv_playurl_params,
+    };
     use crate::{
         Credentials, Error, Input, ResolvedContent, Selection, StreamSource, SubtitleFormat,
     };
@@ -1929,6 +2576,7 @@ mod tests {
                 access_key: Some("TOKEN_SHOULD_REDACT_12345".to_owned()),
                 tv_access_key: None,
             },
+            restricted_area: RestrictedAreaConfig::default(),
             user_agent: "test".to_owned(),
             request_timeout: Duration::from_secs(30),
         });
@@ -2037,6 +2685,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn plans_intl_download_with_access_key_for_subtitles() -> anyhow::Result<()> {
         let server = MockServer::start();
         server.mock(|when, then| {
@@ -2129,6 +2778,7 @@ mod tests {
                 access_key: Some("intl-token".to_owned()),
                 tv_access_key: None,
             },
+            restricted_area: RestrictedAreaConfig::default(),
             user_agent: "test".to_owned(),
             request_timeout: Duration::from_secs(30),
         });
@@ -2207,6 +2857,471 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn restricted_area_proxies_are_ordered_by_hint_then_generic_then_area() {
+        let config = RestrictedAreaConfig {
+            area_hint: Some(RestrictedArea::Hk),
+            proxies: vec![
+                RestrictedAreaProxy::playurl("https://generic.example/playurl", None),
+                RestrictedAreaProxy::bilibili_api(
+                    "https://tw.example/api",
+                    Some(RestrictedArea::Tw),
+                ),
+                RestrictedAreaProxy::bilibili_api(
+                    "https://hk.example/api",
+                    Some(RestrictedArea::Hk),
+                ),
+            ],
+        };
+
+        let ordered = config.ordered_proxies();
+        assert_eq!(ordered[0].area, Some(RestrictedArea::Hk));
+        assert_eq!(ordered[1].area, None);
+        assert_eq!(ordered[2].area, Some(RestrictedArea::Tw));
+    }
+
+    #[test]
+    fn restricted_area_message_accepts_common_chinese_unavailable_phrasing() {
+        for message in [
+            "您所在地区不可观看",
+            "所在地区无法观看",
+            "您所在地區不可觀看",
+            "您所在的地区无法观看",
+            "您所在的地區無法觀看",
+        ] {
+            assert!(super::is_restricted_area_message(message));
+        }
+    }
+
+    #[tokio::test]
+    async fn pgc_streams_fall_back_to_restricted_area_proxy() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/pgc/view/web/season")
+                .query_param("ep_id", "1000");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "result": {
+                    "season_id": 123,
+                    "title": "A Season",
+                    "episodes": [
+                        {"aid": 10, "bvid": "BV1aa", "cid": 100, "id": 1000, "ep_id": 1000, "title": "1", "long_title": "Start"}
+                    ]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/pgc/player/web/v2/playurl")
+                .query_param("ep_id", "1000");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": -40301,
+                "message": "您所在地区不可观看"
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/t/PATH_SECRET/proxy-playurl")
+                .query_param("proxy_token", "PROXY_SECRET")
+                .query_param("ep_id", "1000")
+                .query_param("area", "hk")
+                .query_param("access_key", "ACCESS_SECRET")
+                .header_missing("cookie");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "result": {
+                    "video_info": {
+                        "dash": {
+                            "duration": 456,
+                            "video": [{
+                                "id": 64,
+                                "baseUrl": "https://proxy.example/64.m4s",
+                                "base_url": "https://proxy.example/64.m4s"
+                            }],
+                            "audio": []
+                        }
+                    }
+                }
+            }));
+        });
+
+        let client = BiliClient::new(ClientConfig {
+            endpoints: EndpointConfig {
+                api_base: server.base_url(),
+                pgc_base: server.base_url(),
+                intl_base: server.base_url(),
+                comment_base: server.base_url(),
+                passport_base: server.base_url(),
+                tv_passport_base: server.base_url(),
+                tv_passport_poll_base: server.base_url(),
+            },
+            credentials: Credentials {
+                cookie: Some("SESSDATA=COOKIE_SECRET".to_owned()),
+                access_key: Some("ACCESS_SECRET".to_owned()),
+                tv_access_key: None,
+            },
+            restricted_area: RestrictedAreaConfig {
+                area_hint: Some(RestrictedArea::Hk),
+                proxies: vec![RestrictedAreaProxy::playurl(
+                    format!(
+                        "{}/t/PATH_SECRET/proxy-playurl?proxy_token=PROXY_SECRET",
+                        server.base_url()
+                    ),
+                    Some(RestrictedArea::Hk),
+                )],
+            },
+            user_agent: "test".to_owned(),
+            request_timeout: Duration::from_secs(30),
+        });
+        let plan = client.plan_download("ep1000", None).await?;
+
+        let entry = &plan.entries[0];
+        assert_eq!(entry.source, StreamSource::PgcProxy);
+        assert_eq!(
+            entry.streams.videos[0].base_url,
+            "https://proxy.example/64.m4s"
+        );
+        assert_eq!(entry.diagnostics.attempts.len(), 2);
+        assert_eq!(entry.diagnostics.attempts[0].source, StreamSource::PgcWeb);
+        assert_eq!(entry.diagnostics.attempts[1].area.as_deref(), Some("hk"));
+        let diagnostics = serde_json::to_string(&entry.diagnostics)?;
+        assert!(!diagnostics.contains("ACCESS_SECRET"));
+        assert!(!diagnostics.contains("COOKIE_SECRET"));
+        assert!(!diagnostics.contains("PATH_SECRET"));
+        assert!(!diagnostics.contains("PROXY_SECRET"));
+        assert!(!diagnostics.contains("access_key"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pgc_proxy_invalid_candidate_diagnostics_redact_endpoint() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/pgc/view/web/season")
+                .query_param("ep_id", "1000");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "result": {
+                    "season_id": 123,
+                    "title": "A Season",
+                    "episodes": [
+                        {"aid": 10, "bvid": "BV1aa", "cid": 100, "id": 1000, "ep_id": 1000, "title": "1"}
+                    ]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/pgc/player/web/v2/playurl")
+                .query_param("ep_id", "1000");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": -40301,
+                "message": "area restricted"
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/proxy-playurl")
+                .query_param("ep_id", "1000")
+                .header_missing("cookie");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "result": {
+                    "video_info": {
+                        "dash": {
+                            "video": [{
+                                "id": 64,
+                                "baseUrl": "https://proxy.example/64.m4s",
+                                "base_url": "https://proxy.example/64.m4s"
+                            }],
+                            "audio": []
+                        }
+                    }
+                }
+            }));
+        });
+
+        let client = BiliClient::new(ClientConfig {
+            endpoints: EndpointConfig {
+                api_base: server.base_url(),
+                pgc_base: server.base_url(),
+                intl_base: server.base_url(),
+                comment_base: server.base_url(),
+                passport_base: server.base_url(),
+                tv_passport_base: server.base_url(),
+                tv_passport_poll_base: server.base_url(),
+            },
+            credentials: Credentials::default(),
+            restricted_area: RestrictedAreaConfig {
+                area_hint: Some(RestrictedArea::Hk),
+                proxies: vec![
+                    RestrictedAreaProxy::playurl(
+                        "https://user:pass@proxy.example:bad/t/PATH_SECRET?proxy_token=PROXY_SECRET",
+                        Some(RestrictedArea::Hk),
+                    ),
+                    RestrictedAreaProxy::playurl(
+                        format!("{}/proxy-playurl", server.base_url()),
+                        Some(RestrictedArea::Hk),
+                    ),
+                ],
+            },
+            user_agent: "test".to_owned(),
+            request_timeout: Duration::from_secs(30),
+        });
+
+        let plan = client.plan_download("ep1000", None).await?;
+        let diagnostics = serde_json::to_string(&plan.entries[0].diagnostics)?;
+
+        assert!(diagnostics.contains("https://proxy.example:bad"));
+        for sensitive in ["user:pass", "PATH_SECRET", "PROXY_SECRET", "proxy_token"] {
+            assert!(
+                !diagnostics.contains(sensitive),
+                "diagnostics leaked {sensitive}: {diagnostics}"
+            );
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pgc_proxy_fallback_requires_area_restriction() -> anyhow::Result<()> {
+        for code in [403_i64, -40301_i64] {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/pgc/view/web/season")
+                    .query_param("ep_id", "1000");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "code": 0,
+                    "result": {
+                        "season_id": 123,
+                        "title": "A Season",
+                        "episodes": [
+                            {"aid": 10, "bvid": "BV1aa", "cid": 100, "id": 1000, "ep_id": 1000, "title": "1"}
+                        ]
+                    }
+                }));
+            });
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/pgc/player/web/v2/playurl")
+                    .query_param("ep_id", "1000");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "code": code,
+                    "message": "vip required"
+                }));
+            });
+            server.mock(|when, then| {
+                when.method(GET).path("/proxy-playurl");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "code": 0,
+                    "result": {
+                        "video_info": {
+                            "dash": {
+                                "video": [{
+                                    "id": 64,
+                                    "baseUrl": "https://proxy.example/64.m4s",
+                                    "base_url": "https://proxy.example/64.m4s"
+                                }],
+                                "audio": []
+                            }
+                        }
+                    }
+                }));
+            });
+
+            let client = BiliClient::new(ClientConfig {
+                endpoints: EndpointConfig {
+                    api_base: server.base_url(),
+                    pgc_base: server.base_url(),
+                    intl_base: server.base_url(),
+                    comment_base: server.base_url(),
+                    passport_base: server.base_url(),
+                    tv_passport_base: server.base_url(),
+                    tv_passport_poll_base: server.base_url(),
+                },
+                credentials: Credentials {
+                    cookie: None,
+                    access_key: Some("ACCESS_SECRET".to_owned()),
+                    tv_access_key: None,
+                },
+                restricted_area: RestrictedAreaConfig {
+                    area_hint: Some(RestrictedArea::Hk),
+                    proxies: vec![RestrictedAreaProxy::playurl(
+                        format!("{}/proxy-playurl", server.base_url()),
+                        Some(RestrictedArea::Hk),
+                    )],
+                },
+                user_agent: "test".to_owned(),
+                request_timeout: Duration::from_secs(30),
+            });
+
+            let Err(error) = client.plan_download("ep1000", None).await else {
+                return Err(anyhow::anyhow!("non-area PGC error should not use proxy"));
+            };
+            assert!(matches!(error, Error::Api { code: error_code, .. } if error_code == code));
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pgc_restricted_area_failure_redacts_sensitive_messages() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/pgc/view/web/season")
+                .query_param("ep_id", "1000");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "result": {
+                    "season_id": 123,
+                    "title": "A Season",
+                    "episodes": [
+                        {"aid": 10, "bvid": "BV1aa", "cid": 100, "id": 1000, "ep_id": 1000, "title": "1"}
+                    ]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/pgc/player/web/v2/playurl")
+                .query_param("ep_id", "1000");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": -40301,
+                "message": "area restricted access_key=OFFICIAL_SECRET"
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/proxy-playurl")
+                .query_param("ep_id", "1000")
+                .query_param("access_key", "ACCESS_SECRET")
+                .header_missing("cookie");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": -40301,
+                "message": "proxy rejected https://user:pass@proxy.example/api?proxy_token=PROXY_SECRET&access_key=ACCESS_SECRET cookie=SESSDATA=COOKIE_SECRET"
+            }));
+        });
+
+        let client = BiliClient::new(ClientConfig {
+            endpoints: EndpointConfig {
+                api_base: server.base_url(),
+                pgc_base: server.base_url(),
+                intl_base: server.base_url(),
+                comment_base: server.base_url(),
+                passport_base: server.base_url(),
+                tv_passport_base: server.base_url(),
+                tv_passport_poll_base: server.base_url(),
+            },
+            credentials: Credentials {
+                cookie: Some("SESSDATA=COOKIE_SECRET".to_owned()),
+                access_key: Some("ACCESS_SECRET".to_owned()),
+                tv_access_key: None,
+            },
+            restricted_area: RestrictedAreaConfig {
+                area_hint: Some(RestrictedArea::Hk),
+                proxies: vec![RestrictedAreaProxy::playurl(
+                    format!("{}/proxy-playurl", server.base_url()),
+                    None,
+                )],
+            },
+            user_agent: "test".to_owned(),
+            request_timeout: Duration::from_secs(30),
+        });
+
+        let Err(error) = client.plan_download("ep1000", None).await else {
+            return Err(anyhow::anyhow!("all resolver candidates should fail"));
+        };
+        let message = error.to_string();
+        assert!(message.contains("restricted-area resolver failed"));
+        for sensitive in [
+            "OFFICIAL_SECRET",
+            "ACCESS_SECRET",
+            "PROXY_SECRET",
+            "COOKIE_SECRET",
+            "access_key",
+            "proxy_token",
+            "cookie",
+            "user:pass",
+        ] {
+            assert!(
+                !message.contains(sensitive),
+                "message leaked {sensitive}: {message}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn pgc_bilibili_api_proxy_preserves_base_query() -> anyhow::Result<()> {
+        let client = BiliClient::new(ClientConfig {
+            credentials: Credentials {
+                cookie: None,
+                access_key: Some("ACCESS_SECRET".to_owned()),
+                tv_access_key: None,
+            },
+            ..ClientConfig::default()
+        });
+        let proxy = RestrictedAreaProxy::bilibili_api(
+            "https://proxy.example/base?proxy_token=a%3Db",
+            Some(RestrictedArea::Hk),
+        );
+
+        let url = client.pgc_proxy_playurl_url(&proxy, 10, 100, 1000)?;
+        assert_eq!(
+            url.as_str(),
+            "https://proxy.example/base/pgc/player/web/v2/playurl?proxy_token=a%3Db&avid=10&cid=100&ep_id=1000&module=bangumi&qn=0&fnval=4048&fnver=0&fourk=1&otype=json&area=hk&access_key=ACCESS_SECRET"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn resolver_error_message_redacts_sensitive_values() {
+        let message = super::resolver_error_message(&Error::Api {
+            code: -40301,
+            message: "proxy rejected https://user:pass@proxy.example/api?proxy_token=PROXY_SECRET&access_key=ACCESS_SECRET cookie=SESSDATA=COOKIE_SECRET token=TOKEN_SECRET jwt=JWT_SECRET x-api-key: API_KEY_SECRET authorization: Bearer AUTH_SECRET".to_owned(),
+        });
+
+        assert!(message.starts_with("API code -40301:"));
+        for sensitive in [
+            "ACCESS_SECRET",
+            "PROXY_SECRET",
+            "COOKIE_SECRET",
+            "TOKEN_SECRET",
+            "JWT_SECRET",
+            "API_KEY_SECRET",
+            "AUTH_SECRET",
+            "proxy_token",
+            "access_key",
+            "x-api-key",
+            "authorization",
+            "cookie",
+            "user:pass",
+        ] {
+            assert!(
+                !message.contains(sensitive),
+                "message leaked {sensitive}: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn resolver_error_message_redacts_mixed_case_urls() {
+        let message = super::resolver_error_message(&Error::Api {
+            code: -40301,
+            message: "proxy rejected HtTpS://user:pass@proxy.example/t/PATH_SECRET?x=1".to_owned(),
+        });
+
+        assert!(message.contains("https://proxy.example"));
+        for sensitive in ["user:pass", "PATH_SECRET", "?x=1"] {
+            assert!(
+                !message.contains(sensitive),
+                "message leaked {sensitive}: {message}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn request_timeout_bounds_hung_endpoint() -> anyhow::Result<()> {
         use std::net::TcpListener;
@@ -2230,6 +3345,7 @@ mod tests {
                 tv_passport_poll_base: "http://127.0.0.1:1".to_owned(),
             },
             credentials: Credentials::default(),
+            restricted_area: RestrictedAreaConfig::default(),
             user_agent: "test".to_owned(),
             request_timeout: Duration::from_millis(30),
         });
@@ -2444,6 +3560,7 @@ mod tests {
                 tv_passport_poll_base: server.base_url(),
             },
             credentials: Credentials::default(),
+            restricted_area: RestrictedAreaConfig::default(),
             user_agent: "test".to_owned(),
             request_timeout: Duration::from_secs(30),
         })

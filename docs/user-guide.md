@@ -44,6 +44,8 @@ The JSON output contains:
 Planning is side-effect free. It does not create files, download media, or call ffmpeg.
 PGC and intl planning may still require eligible account or region access. When intl metadata
 returns a region-limit payload, the CLI reports it as an access restriction.
+When configured, PGC playurl resolution falls back to restricted-area proxy candidates and includes
+resolver diagnostics in the entry JSON.
 
 ## Downloads
 
@@ -115,9 +117,41 @@ bbdown --tv-passport-base http://127.0.0.1:8080 auth login-tv
 bbdown --tv-passport-base http://127.0.0.1:8080 --tv-passport-poll-base http://127.0.0.1:8081 auth login-tv
 ```
 
-Restricted-area proxy ordering is not implemented yet. Current intl support uses official intl
-metadata/subtitle endpoints and the official signed intl OGV playurl endpoint with the configured
-access key when present. Danmaku XML downloads use the configurable comment endpoint. WEB QR login
-uses `--passport-base`; TV QR login uses TV-specific passport overrides. TV QR polling follows
-`--tv-passport-base` when that override is supplied; set `--tv-passport-poll-base` for split-host
-mocks or proxies.
+Current intl support uses official intl metadata/subtitle endpoints and the official signed intl OGV
+playurl endpoint with the configured access key when present. Danmaku XML downloads use the
+configurable comment endpoint. WEB QR login uses `--passport-base`; TV QR login uses TV-specific
+passport overrides. TV QR polling follows `--tv-passport-base` when that override is supplied; set
+`--tv-passport-poll-base` for split-host mocks or proxies.
+
+## Restricted-Area Proxies
+
+The tool does not include public proxy defaults. Configure only proxy hosts you operate or trust.
+PGC playurl fallback is attempted only after the official PGC playurl response reports a region/area
+restriction. Other official failures, such as VIP/paywall errors, parse failures, or network errors,
+keep their original error instead of trying proxy hosts.
+
+```bash
+bbdown --restricted-area hk --restricted-area-proxy hk=https://proxy.example/playurl plan ep267851 --json
+bbdown --restricted-api-proxy tw=https://proxy.example/bili/api plan ss26801 --select latest --json
+```
+
+Proxy specs use `area=url` or a bare URL. Supported areas are `cn`, `th`, `hk`, and `tw`. Bare URLs
+are generic candidates. `--restricted-area <area>` is a hint that moves matching candidates to the
+front. Without a hint, ordering is generic, `cn`, `th`, `hk`, then `tw`, with duplicates removed.
+Repeated command-line proxy flags preserve declaration order within the same area priority.
+When command-line and environment proxy values are both present, command-line candidates are tried
+first, followed by environment playurl proxies and then environment API-path proxies. Each source
+group is ordered by area hint, generic candidates, then fixed area order.
+
+`--restricted-area-proxy` targets BBDown/BiliPlus-style HTTP(S) playurl proxy endpoints where the
+original PGC playurl query is sent to the configured URL. `--restricted-api-proxy` targets HTTP(S)
+proxies that mirror `api.bilibili.com` path layout, so the CLI calls `/pgc/player/web/v2/playurl`
+below that base URL.
+If the configured API proxy base URL already contains a query string, that query is preserved before
+the PGC playurl parameters are appended. Both flags may be repeated.
+`BBDOWN_RESTRICTED_AREA_PROXY` and `BBDOWN_RESTRICTED_API_PROXY` also accept comma-separated lists.
+
+If a generic access key was imported with `auth import-access-key`, proxy playurl requests include
+it as `access_key`. Bilibili cookies are not forwarded to restricted-area proxy hosts. Resolver
+diagnostics record the official failure and proxy attempts, but endpoint fields are reduced to URL
+origins and sensitive error-message values are redacted so token values are not printed.

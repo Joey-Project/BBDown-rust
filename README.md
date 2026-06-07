@@ -7,7 +7,7 @@
 
 The current implementation establishes the crate/CLI/CI foundation, metadata resolver, stream
 planning, media downloads, sidecar downloads, retry/resume behavior, optional ffmpeg muxing, QR
-login, and opt-in live test harnesses. Restricted-area proxy ordering will land in a later PR slice.
+login, opt-in live test harnesses, and configured restricted-area proxy ordering with diagnostics.
 
 ## Current CLI
 
@@ -32,7 +32,8 @@ bbdown plan https://www.bilibili.tv/en/play/34613/341736 --json
 
 `plan` resolves the selected entries, available DASH or FLV stream URLs, subtitle URLs, and the
 danmaku XML URL for each `cid`. PGC and intl planning may still require eligible account or region
-access. It does not download files.
+access. PGC playurl resolution can fall back to user-configured restricted-area proxies. It does
+not download files.
 
 Download selected media files:
 
@@ -86,6 +87,25 @@ endpoint. Use `--passport-base` for WEB QR login mocks or proxies, and use `--tv
 `--tv-passport-base` only when that TV-specific override is supplied; otherwise it uses the upstream
 TV poll default unless `--tv-passport-poll-base` is set explicitly.
 
+Configure restricted-area PGC playurl fallback with explicit proxy hosts. Fallback runs only when the
+official PGC playurl response reports a region/area restriction:
+
+```bash
+bbdown --restricted-area hk --restricted-area-proxy hk=https://proxy.example/playurl plan ep267851 --json
+bbdown --restricted-api-proxy tw=https://proxy.example/bili/api plan ss26801 --select latest --json
+```
+
+`--restricted-area-proxy` targets BBDown/BiliPlus-style HTTP(S) playurl proxy endpoints.
+`--restricted-api-proxy` targets HTTP(S) proxies that mirror `api.bilibili.com` paths and preserves query
+parameters already present on the configured proxy base URL. Use repeated flags or comma-separated
+`BBDOWN_RESTRICTED_AREA_PROXY` / `BBDOWN_RESTRICTED_API_PROXY` values to configure multiple
+candidates. Repeated command-line flags preserve declaration order within the same area priority.
+When command-line and environment proxy values are both present, command-line candidates are tried
+first, followed by environment playurl proxies and then environment API-path proxies. Each source
+group is ordered by area hint, generic candidates, then fixed area order. Hosts are user supplied;
+the tool does not ship public proxy defaults. Proxy requests do not forward Bilibili cookies.
+Resolver diagnostics reduce endpoints to URL origins and redact sensitive error-message values.
+
 ## Developer Commands
 
 ```bash
@@ -103,6 +123,11 @@ excluded from default CI and fails fast unless `BBDOWN_LIVE_URL` is set. It also
 
 ## Documentation
 
+- Crate API note: this rewrite is still `0.1`; embedding projects should prefer
+  `ClientConfig::new(endpoints, credentials).with_*` over `ClientConfig { ... }` struct literals so
+  added configuration fields are less disruptive. Output model structs such as `DownloadEntry` are
+  intended to be consumed as returned values or through serde; their struct-literal construction is
+  not treated as a stable compatibility surface before the crate leaves `0.1`.
 - User guide: [docs/user-guide.md](docs/user-guide.md)
 - Architecture: [docs/architecture/rust-rewrite.md](docs/architecture/rust-rewrite.md)
 - Project state: [docs/PROJECT_STATE.md](docs/PROJECT_STATE.md)

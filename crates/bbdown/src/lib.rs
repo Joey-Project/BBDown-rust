@@ -11,7 +11,10 @@ mod login;
 mod models;
 mod selection;
 
-pub use client::{BiliClient, ClientConfig, EndpointConfig};
+pub use client::{
+    BiliClient, ClientConfig, EndpointConfig, RestrictedArea, RestrictedAreaConfig,
+    RestrictedAreaProxy, RestrictedAreaProxyKind,
+};
 pub use credentials::{CredentialSource, CredentialStore, Credentials};
 pub use download::{
     DownloadFileKind, DownloadOptions, DownloadReport, DownloadedFile, EntryDownloadReport,
@@ -22,7 +25,8 @@ pub use input::Input;
 pub use login::{QrLoginKind, QrLoginState, QrLoginTicket};
 pub use models::{
     DanmakuTrack, DownloadEntry, DownloadPlan, EpisodeMetadata, FlvSegment, MediaStream, Owner,
-    PageMetadata, ResolvedContent, SeasonMetadata, SeasonResolution, StreamSet, StreamSource,
-    SubtitleFormat, SubtitleTrack, Tag, VideoMetadata,
+    PageMetadata, ResolvedContent, SeasonMetadata, SeasonResolution, StreamDiagnostics,
+    StreamResolverAttempt, StreamResolverOutcome, StreamSet, StreamSource, SubtitleFormat,
+    SubtitleTrack, Tag, VideoMetadata,
 };
 pub use selection::Selection;

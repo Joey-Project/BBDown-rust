@@ -31,6 +31,7 @@ The library resolves media availability into `DownloadPlan`:
 
 - `DownloadEntry` records the selected `aid`, `bvid`, `cid`, optional `epid`, title, and source.
 - `StreamSet` keeps DASH video/audio tracks, FLV segments, accepted quality ids, and duration.
+- `StreamDiagnostics` records non-default resolver attempts such as restricted-area proxy fallback.
 - `SubtitleTrack` records language metadata, normalized URL, and basic format classification.
 - `DanmakuTrack` records the XML comment endpoint derived from `cid` and the configured comment
   endpoint base.
@@ -115,12 +116,42 @@ configured resolver chain:
 
 - official web and PGC APIs;
 - intl API using caller-provided access key when available;
-- user-configured proxy web or mobile resolver hosts;
+- user-configured BBDown/BiliPlus-style playurl proxy hosts;
+- user-configured proxies that mirror `api.bilibili.com` paths;
 - user-configured area hints such as `cn`, `hk`, `tw`, or `th`.
 
+`ClientConfig::restricted_area` holds a per-client `RestrictedAreaConfig`. Embedders can set an
+optional area hint and a list of `RestrictedAreaProxy` candidates. The crate is still pre-1.0, so
+embedding projects should prefer `ClientConfig::new(endpoints, credentials).with_*` construction over
+struct literals when they do not need every field. Output model structs are a consumed data surface
+rather than a stable struct-literal construction surface while the crate remains `0.1`. Candidate
+ordering follows the bilibili-helper approach without browser-local caches: matching area hint first,
+generic candidates, then `cn`, `th`, `hk`, and `tw`, with duplicate `(base_url, area, kind)`
+candidates removed. CLI-created configs also preserve source priority before area grouping, so
+explicit command-line proxy candidates are tried before environment-derived proxy candidates.
+
+PGC stream planning first calls the official PGC web playurl endpoint. If that response clearly
+reports a region/area restriction and restricted-area proxies are configured, the client tries
+ordered candidates until one returns a valid DASH or FLV stream shape. Non-area official failures keep
+their original error and do not contact proxy hosts. A BBDown/BiliPlus-style HTTP(S) playurl proxy
+receives the PGC playurl query at the configured URL. A Bilibili API HTTP(S) proxy receives the same
+query at `/pgc/player/web/v2/playurl` below the configured base URL and preserves any query
+parameters already present on that base URL. When a generic access key is present in
+`Credentials::access_key`, proxy requests include it as `access_key`; the TV-specific access key is
+not reused for this flow. Bilibili cookies are intentionally omitted from restricted-area proxy
+requests.
+
+When proxy fallback succeeds, `DownloadEntry.source` is `PgcProxy` and `DownloadEntry.diagnostics`
+contains the official failed attempt plus the successful proxy attempt. When all candidates fail,
+the returned access-restricted error summarizes the ordered attempts. Diagnostic endpoint fields
+are reduced to URL origins so path/query/userinfo secrets are not printed; diagnostic error messages
+also redact URL tokens and common sensitive key-value patterns before they are exposed through JSON or
+final errors.
+
 The current implementation supports endpoint override, intl metadata shape, official PGC stream
-planning, official intl OGV signed stream planning, typed source reporting, and download execution.
-Later slices will add configured proxy candidate ordering based on the same principles.
+planning, official intl OGV signed stream planning, configured PGC proxy fallback, typed source
+reporting, resolver diagnostics, and download execution. App-only/mobile proxy response conversion
+remains intentionally out of scope for this slice.
 
 ## Credentials
 
@@ -174,4 +205,4 @@ misbehaving official or proxy endpoints do not hang indefinitely.
 3. File download, retry/resume policy, ffmpeg mux integration, and mock e2e downloads. Completed
    in PR #3.
 4. QR login state machine and live-test opt-in harness. Completed in PR #4.
-5. Restricted-area proxy resolver ordering and diagnostics.
+5. Restricted-area proxy resolver ordering and diagnostics. Completed in PR #5.

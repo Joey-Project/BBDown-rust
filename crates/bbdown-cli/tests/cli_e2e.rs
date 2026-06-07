@@ -1,4 +1,5 @@
 use assert_cmd::Command;
+use bbdown::{CredentialStore, Credentials};
 use httpmock::MockServer;
 use httpmock::prelude::*;
 use serde_json::Value;
@@ -20,6 +21,9 @@ const CLI_OVERRIDE_ENV_VARS: &[&str] = &[
     "BBDOWN_PASSPORT_BASE",
     "BBDOWN_TV_PASSPORT_BASE",
     "BBDOWN_TV_PASSPORT_POLL_BASE",
+    "BBDOWN_RESTRICTED_AREA",
+    "BBDOWN_RESTRICTED_AREA_PROXY",
+    "BBDOWN_RESTRICTED_API_PROXY",
     "BBDOWN_CREDENTIAL_FILE",
     "BBDOWN_REQUEST_TIMEOUT_SECONDS",
     "BBDOWN_COOKIE",
@@ -154,6 +158,116 @@ fn plan_json_resolves_mock_video_streams() -> anyhow::Result<()> {
         json["entries"][0]["danmaku"]["xml_url"],
         "https://comment.bilibili.com/2.xml"
     );
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn plan_json_uses_restricted_area_proxy_after_official_pgc_failure() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    CredentialStore::new(credential_file.clone()).save(&Credentials {
+        cookie: Some("SESSDATA=COOKIE_SECRET".to_owned()),
+        access_key: Some("ACCESS_SECRET".to_owned()),
+        tv_access_key: None,
+    })?;
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/view/web/season")
+            .query_param("ep_id", "1000");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "result": {
+                "season_id": 123,
+                "title": "Restricted Season",
+                "episodes": [
+                    {"aid": 10, "bvid": "BV1aa", "cid": 100, "id": 1000, "ep_id": 1000, "title": "1", "long_title": "Start"}
+                ]
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/player/web/v2/playurl")
+            .query_param("ep_id", "1000");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -40301,
+            "message": "area restricted"
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/proxy-playurl")
+            .query_param("proxy_token", "a=b")
+            .query_param("ep_id", "1000")
+            .query_param("area", "hk")
+            .query_param("access_key", "ACCESS_SECRET")
+            .header_missing("cookie");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "result": {
+                "video_info": {
+                    "dash": {
+                        "duration": 3,
+                        "video": [{
+                            "id": 80,
+                            "baseUrl": "https://proxy.example/video.m4s",
+                            "base_url": "https://proxy.example/video.m4s"
+                        }],
+                        "audio": []
+                    }
+                }
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/v2")
+            .query_param("aid", "10")
+            .query_param("cid", "100");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {"subtitle": {"subtitles": []}}
+        }));
+    });
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--pgc-base")
+        .arg(server.base_url())
+        .arg("--restricted-area")
+        .arg("hk")
+        .arg("--restricted-area-proxy")
+        .arg(format!(
+            "hk={}/proxy-playurl?proxy_token=a%3Db",
+            server.base_url()
+        ))
+        .arg("plan")
+        .arg("ep1000")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+
+    assert_eq!(json["entries"][0]["source"], "pgc_proxy");
+    assert_eq!(json["entries"][0]["streams"]["videos"][0]["id"], 80);
+    assert_eq!(
+        json["entries"][0]["diagnostics"]["attempts"][0]["source"],
+        "pgc_web"
+    );
+    assert_eq!(
+        json["entries"][0]["diagnostics"]["attempts"][1]["area"],
+        "hk"
+    );
+    let output_text = String::from_utf8(output)?;
+    assert!(!output_text.contains("ACCESS_SECRET"));
+    assert!(!output_text.contains("COOKIE_SECRET"));
+    assert!(!output_text.contains("access_key"));
+    assert!(!output_text.contains("proxy_token"));
     Ok(())
 }
 

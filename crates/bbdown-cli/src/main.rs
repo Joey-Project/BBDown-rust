@@ -5,9 +5,11 @@ use anyhow::{Context, bail, ensure};
 use bbdown::{
     BiliClient, ClientConfig, CredentialStore, Credentials, DownloadOptions, DownloadReport,
     EndpointConfig, MuxOptions, QrLoginKind, QrLoginState, QrLoginTicket, ResolvedContent,
+    RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind,
     RetryPolicy, Selection,
 };
 use clap::{Args, Parser, Subcommand};
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{self, Read};
 use std::path::PathBuf;
@@ -51,6 +53,22 @@ struct Cli {
     tv_passport_base: Option<String>,
     #[arg(long, env = "BBDOWN_TV_PASSPORT_POLL_BASE")]
     tv_passport_poll_base: Option<String>,
+    #[arg(long, env = "BBDOWN_RESTRICTED_AREA")]
+    restricted_area: Option<String>,
+    #[arg(
+        long,
+        env = "BBDOWN_RESTRICTED_AREA_PROXY",
+        value_delimiter = ',',
+        value_name = "[AREA=]URL"
+    )]
+    restricted_area_proxy: Vec<String>,
+    #[arg(
+        long,
+        env = "BBDOWN_RESTRICTED_API_PROXY",
+        value_delimiter = ',',
+        value_name = "[AREA=]URL"
+    )]
+    restricted_api_proxy: Vec<String>,
     #[arg(long, env = "BBDOWN_CREDENTIAL_FILE")]
     credential_file: Option<PathBuf>,
     #[arg(long, env = "BBDOWN_REQUEST_TIMEOUT_SECONDS", default_value_t = 30)]
@@ -136,12 +154,14 @@ struct QrLoginArgs {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+    let raw_args = std::env::args_os().collect::<Vec<_>>();
+    let cli = Cli::parse_from(raw_args.clone());
     ensure!(
         cli.request_timeout_seconds > 0,
         "--request-timeout-seconds must be greater than 0"
     );
     let endpoints = endpoints_from_cli(&cli);
+    let restricted_area = restricted_area_from_cli_with_args(&cli, raw_args)?;
     let request_timeout = Duration::from_secs(cli.request_timeout_seconds);
     let store = CredentialStore::new(credential_path(cli.credential_file)?);
     match cli.command {
@@ -149,6 +169,7 @@ async fn main() -> anyhow::Result<()> {
             handle_info(
                 &store,
                 endpoints.clone(),
+                restricted_area.clone(),
                 request_timeout,
                 url,
                 select,
@@ -160,6 +181,7 @@ async fn main() -> anyhow::Result<()> {
             handle_plan(
                 &store,
                 endpoints.clone(),
+                restricted_area.clone(),
                 request_timeout,
                 url,
                 select,
@@ -210,10 +232,10 @@ async fn main() -> anyhow::Result<()> {
                     },
                 },
             };
-            handle_download(&store, endpoints, request_timeout, args).await?;
+            handle_download(&store, endpoints, restricted_area, request_timeout, args).await?;
         }
         Command::Auth { command } => {
-            handle_auth(command, &store, endpoints, request_timeout).await?;
+            handle_auth(command, &store, endpoints, restricted_area, request_timeout).await?;
         }
     }
     Ok(())
@@ -229,13 +251,19 @@ struct DownloadCommandArgs {
 async fn handle_info(
     store: &CredentialStore,
     endpoints: EndpointConfig,
+    restricted_area: RestrictedAreaConfig,
     request_timeout: Duration,
     url: String,
     select: Option<Selection>,
     json: bool,
 ) -> anyhow::Result<()> {
     let credentials = store.load().context("failed to load credentials")?;
-    let client = BiliClient::new(client_config(endpoints, request_timeout, credentials));
+    let client = BiliClient::new(client_config(
+        endpoints,
+        restricted_area,
+        request_timeout,
+        credentials,
+    ));
     let resolved = client.resolve_input(&url, select).await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&resolved)?);
@@ -248,13 +276,19 @@ async fn handle_info(
 async fn handle_plan(
     store: &CredentialStore,
     endpoints: EndpointConfig,
+    restricted_area: RestrictedAreaConfig,
     request_timeout: Duration,
     url: String,
     select: Option<Selection>,
     json: bool,
 ) -> anyhow::Result<()> {
     let credentials = store.load().context("failed to load credentials")?;
-    let client = BiliClient::new(client_config(endpoints, request_timeout, credentials));
+    let client = BiliClient::new(client_config(
+        endpoints,
+        restricted_area,
+        request_timeout,
+        credentials,
+    ));
     let plan = client.plan_download(&url, select).await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&plan)?);
@@ -282,11 +316,17 @@ async fn handle_plan(
 async fn handle_download(
     store: &CredentialStore,
     endpoints: EndpointConfig,
+    restricted_area: RestrictedAreaConfig,
     request_timeout: Duration,
     args: DownloadCommandArgs,
 ) -> anyhow::Result<()> {
     let credentials = store.load().context("failed to load credentials")?;
-    let client = BiliClient::new(client_config(endpoints, request_timeout, credentials));
+    let client = BiliClient::new(client_config(
+        endpoints,
+        restricted_area,
+        request_timeout,
+        credentials,
+    ));
     let report = client
         .download_input(&args.url, args.select, args.options)
         .await?;
@@ -300,21 +340,21 @@ async fn handle_download(
 
 fn client_config(
     endpoints: EndpointConfig,
+    restricted_area: RestrictedAreaConfig,
     request_timeout: Duration,
     credentials: Credentials,
 ) -> ClientConfig {
-    ClientConfig {
-        endpoints,
-        credentials,
-        user_agent: "bbdown-rs/0.1".to_owned(),
-        request_timeout,
-    }
+    ClientConfig::new(endpoints, credentials)
+        .with_restricted_area(restricted_area)
+        .with_user_agent("bbdown-rs/0.1")
+        .with_request_timeout(request_timeout)
 }
 
 async fn handle_auth(
     command: AuthCommand,
     store: &CredentialStore,
     endpoints: EndpointConfig,
+    restricted_area: RestrictedAreaConfig,
     request_timeout: Duration,
 ) -> anyhow::Result<()> {
     match command {
@@ -344,10 +384,26 @@ async fn handle_auth(
             println!("access key imported");
         }
         AuthCommand::LoginWeb(args) => {
-            handle_qr_login(QrLoginKind::Web, args, store, endpoints, request_timeout).await?;
+            handle_qr_login(
+                QrLoginKind::Web,
+                args,
+                store,
+                endpoints,
+                restricted_area,
+                request_timeout,
+            )
+            .await?;
         }
         AuthCommand::LoginTv(args) => {
-            handle_qr_login(QrLoginKind::Tv, args, store, endpoints, request_timeout).await?;
+            handle_qr_login(
+                QrLoginKind::Tv,
+                args,
+                store,
+                endpoints,
+                restricted_area,
+                request_timeout,
+            )
+            .await?;
         }
         AuthCommand::Logout => {
             store.clear().context("failed to clear credentials")?;
@@ -362,6 +418,7 @@ async fn handle_qr_login(
     args: QrLoginArgs,
     store: &CredentialStore,
     endpoints: EndpointConfig,
+    restricted_area: RestrictedAreaConfig,
     request_timeout: Duration,
 ) -> anyhow::Result<()> {
     ensure!(
@@ -374,6 +431,7 @@ async fn handle_qr_login(
     );
     let client = BiliClient::new(client_config(
         endpoints,
+        restricted_area,
         request_timeout,
         Credentials::default(),
     ));
@@ -540,6 +598,279 @@ fn endpoints_from_cli(cli: &Cli) -> EndpointConfig {
     }
 }
 
+#[derive(Clone, Debug)]
+struct RestrictedProxyArg {
+    kind: RestrictedAreaProxyKind,
+    spec: String,
+    order_priority: u8,
+}
+
+fn restricted_area_from_cli_with_args(
+    cli: &Cli,
+    raw_args: impl IntoIterator<Item = OsString>,
+) -> anyhow::Result<RestrictedAreaConfig> {
+    let env_area_proxy = std::env::var("BBDOWN_RESTRICTED_AREA_PROXY").ok();
+    let env_api_proxy = std::env::var("BBDOWN_RESTRICTED_API_PROXY").ok();
+    restricted_area_from_cli_with_env_values(
+        cli,
+        raw_args,
+        env_area_proxy.as_deref(),
+        env_api_proxy.as_deref(),
+    )
+}
+
+fn restricted_area_from_cli_with_env_values(
+    cli: &Cli,
+    raw_args: impl IntoIterator<Item = OsString>,
+    env_area_proxy: Option<&str>,
+    env_api_proxy: Option<&str>,
+) -> anyhow::Result<RestrictedAreaConfig> {
+    let area_hint = cli
+        .restricted_area
+        .as_deref()
+        .map(parse_restricted_area)
+        .transpose()?;
+    let proxy_args = proxy_args_from_sources(cli, raw_args, env_area_proxy, env_api_proxy)?;
+    let proxies = proxy_args
+        .iter()
+        .map(|arg| parse_restricted_proxy_spec(&arg.spec, arg.kind, arg.order_priority))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(RestrictedAreaConfig { area_hint, proxies })
+}
+
+fn proxy_args_from_sources(
+    cli: &Cli,
+    raw_args: impl IntoIterator<Item = OsString>,
+    env_area_proxy: Option<&str>,
+    env_api_proxy: Option<&str>,
+) -> anyhow::Result<Vec<RestrictedProxyArg>> {
+    let mut proxy_args = proxy_args_from_raw_args(raw_args)?;
+    proxy_args.extend(proxy_args_from_env_values(env_area_proxy, env_api_proxy));
+    if proxy_args.is_empty() {
+        proxy_args = proxy_args_from_cli_fields(cli);
+    }
+    Ok(proxy_args)
+}
+
+fn proxy_args_from_cli_fields(cli: &Cli) -> Vec<RestrictedProxyArg> {
+    cli.restricted_area_proxy
+        .iter()
+        .filter(|spec| !spec.trim().is_empty())
+        .map(|spec| RestrictedProxyArg {
+            kind: RestrictedAreaProxyKind::PlayUrl,
+            spec: spec.clone(),
+            order_priority: 0,
+        })
+        .chain(
+            cli.restricted_api_proxy
+                .iter()
+                .filter(|spec| !spec.trim().is_empty())
+                .map(|spec| RestrictedProxyArg {
+                    kind: RestrictedAreaProxyKind::BilibiliApi,
+                    spec: spec.clone(),
+                    order_priority: 0,
+                }),
+        )
+        .collect()
+}
+
+fn proxy_args_from_env_values(
+    area_proxy: Option<&str>,
+    api_proxy: Option<&str>,
+) -> Vec<RestrictedProxyArg> {
+    let mut proxy_args = Vec::new();
+    if let Some(value) = area_proxy.filter(|value| !value.trim().is_empty()) {
+        push_proxy_env_arg_values(&mut proxy_args, RestrictedAreaProxyKind::PlayUrl, value, 1);
+    }
+    if let Some(value) = api_proxy.filter(|value| !value.trim().is_empty()) {
+        push_proxy_env_arg_values(
+            &mut proxy_args,
+            RestrictedAreaProxyKind::BilibiliApi,
+            value,
+            2,
+        );
+    }
+    proxy_args
+}
+
+fn proxy_args_from_raw_args(
+    raw_args: impl IntoIterator<Item = OsString>,
+) -> anyhow::Result<Vec<RestrictedProxyArg>> {
+    let mut args = raw_args.into_iter().skip(1).peekable();
+    let mut proxy_args = Vec::new();
+    while let Some(arg) = args.next() {
+        if let Some(value) = os_str_strip_prefix(&arg, "--restricted-area-proxy=") {
+            push_proxy_arg_values(&mut proxy_args, RestrictedAreaProxyKind::PlayUrl, value, 0);
+        } else if let Some(value) = os_str_strip_prefix(&arg, "--restricted-api-proxy=") {
+            push_proxy_arg_values(
+                &mut proxy_args,
+                RestrictedAreaProxyKind::BilibiliApi,
+                value,
+                0,
+            );
+        } else if arg == OsStr::new("--restricted-area-proxy") {
+            if let Some(value) = args.next() {
+                let value = value.into_string().map_err(|_| {
+                    anyhow::anyhow!("restricted-area proxy URL must be valid UTF-8")
+                })?;
+                push_proxy_arg_values(&mut proxy_args, RestrictedAreaProxyKind::PlayUrl, &value, 0);
+            }
+        } else if arg == OsStr::new("--restricted-api-proxy")
+            && let Some(value) = args.next()
+        {
+            let value = value
+                .into_string()
+                .map_err(|_| anyhow::anyhow!("restricted-area proxy URL must be valid UTF-8"))?;
+            push_proxy_arg_values(
+                &mut proxy_args,
+                RestrictedAreaProxyKind::BilibiliApi,
+                &value,
+                0,
+            );
+        }
+    }
+    Ok(proxy_args)
+}
+
+fn os_str_strip_prefix<'a>(value: &'a OsStr, prefix: &str) -> Option<&'a str> {
+    value.to_str()?.strip_prefix(prefix)
+}
+
+fn push_proxy_arg_values(
+    proxy_args: &mut Vec<RestrictedProxyArg>,
+    kind: RestrictedAreaProxyKind,
+    value: &str,
+    order_priority: u8,
+) {
+    proxy_args.extend(value.split(',').map(|spec| RestrictedProxyArg {
+        kind,
+        spec: spec.to_owned(),
+        order_priority,
+    }));
+}
+
+fn push_proxy_env_arg_values(
+    proxy_args: &mut Vec<RestrictedProxyArg>,
+    kind: RestrictedAreaProxyKind,
+    value: &str,
+    order_priority: u8,
+) {
+    proxy_args.extend(
+        value
+            .split(',')
+            .filter(|spec| !spec.trim().is_empty())
+            .map(|spec| RestrictedProxyArg {
+                kind,
+                spec: spec.to_owned(),
+                order_priority,
+            }),
+    );
+}
+
+fn parse_restricted_proxy_spec(
+    spec: &str,
+    kind: RestrictedAreaProxyKind,
+    order_priority: u8,
+) -> anyhow::Result<RestrictedAreaProxy> {
+    let trimmed = spec.trim();
+    ensure!(!trimmed.is_empty(), "restricted-area proxy cannot be empty");
+    let (area, base_url) = if let Some((area, base_url)) = parse_area_prefixed_proxy(trimmed)? {
+        (Some(parse_restricted_area(area)?), base_url.trim())
+    } else {
+        (None, trimmed)
+    };
+    ensure!(
+        !base_url.is_empty(),
+        "restricted-area proxy URL cannot be empty"
+    );
+    let parsed = url::Url::parse(base_url).with_context(|| {
+        format!(
+            "failed to parse restricted-area proxy URL `{}`",
+            redact_cli_url_for_error(base_url)
+        )
+    })?;
+    ensure!(
+        matches!(parsed.scheme(), "http" | "https"),
+        "restricted-area proxy URL `{}` must use http or https",
+        redact_cli_url_for_error(base_url)
+    );
+    Ok(match kind {
+        RestrictedAreaProxyKind::PlayUrl => RestrictedAreaProxy::playurl(base_url, area),
+        RestrictedAreaProxyKind::BilibiliApi => RestrictedAreaProxy::bilibili_api(base_url, area),
+    }
+    .with_order_priority(order_priority))
+}
+
+fn parse_area_prefixed_proxy(spec: &str) -> anyhow::Result<Option<(&str, &str)>> {
+    if starts_with_url_scheme(spec) {
+        return Ok(None);
+    }
+    let Some((area, base_url)) = spec.split_once('=') else {
+        return Ok(None);
+    };
+    match area.trim().to_ascii_lowercase().as_str() {
+        "cn" | "th" | "hk" | "tw" => Ok(Some((area, base_url))),
+        other => bail!("unsupported restricted area `{other}`; expected cn, th, hk, or tw"),
+    }
+}
+
+fn starts_with_url_scheme(value: &str) -> bool {
+    let Some(scheme_end) = value.find("://") else {
+        return false;
+    };
+    let scheme = &value[..scheme_end];
+    scheme
+        .as_bytes()
+        .first()
+        .is_some_and(u8::is_ascii_alphabetic)
+        && scheme
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.'))
+}
+
+fn parse_restricted_area(value: &str) -> anyhow::Result<RestrictedArea> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "cn" => Ok(RestrictedArea::Cn),
+        "th" => Ok(RestrictedArea::Th),
+        "hk" => Ok(RestrictedArea::Hk),
+        "tw" => Ok(RestrictedArea::Tw),
+        other => bail!("unsupported restricted area `{other}`; expected cn, th, hk, or tw"),
+    }
+}
+
+fn redact_cli_url_for_error(raw: &str) -> String {
+    url::Url::parse(raw).map_or_else(
+        |_| redact_unparsed_cli_url_for_error(raw),
+        |mut url| {
+            let _ = url.set_username("");
+            let _ = url.set_password(None);
+            url.set_path("");
+            url.set_query(None);
+            url.set_fragment(None);
+            url.to_string().trim_end_matches('/').to_owned()
+        },
+    )
+}
+
+fn redact_unparsed_cli_url_for_error(raw: &str) -> String {
+    let without_query = raw
+        .split(|character: char| character.is_whitespace() || matches!(character, '?' | '#'))
+        .next()
+        .unwrap_or(raw);
+    let Some(scheme_end) = without_query.find("//") else {
+        return "<invalid-url>".to_owned();
+    };
+    let prefix = &without_query[..(scheme_end + 2)];
+    let after_scheme = &without_query[(scheme_end + 2)..];
+    let authority = after_scheme.split('/').next().unwrap_or(after_scheme);
+    let host = authority.rsplit('@').next().unwrap_or(authority);
+    if host.is_empty() {
+        "<invalid-url>".to_owned()
+    } else {
+        format!("{prefix}{host}")
+    }
+}
+
 fn read_secret(
     args: SecretImportArgs,
     env_key: &'static str,
@@ -623,7 +954,11 @@ fn _assert_credentials_send_sync(_: Credentials) {}
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, endpoints_from_cli, next_poll_sleep, remaining_until, save_qr_credentials};
+    use super::{
+        Cli, endpoints_from_cli, next_poll_sleep, remaining_until,
+        restricted_area_from_cli_with_args, restricted_area_from_cli_with_env_values,
+        save_qr_credentials,
+    };
     use bbdown::{CredentialStore, Credentials, EndpointConfig};
     use clap::Parser as _;
     use std::time::{Duration, Instant};
@@ -713,6 +1048,298 @@ mod tests {
 
         assert_eq!(endpoints.tv_passport_base, "http://127.0.0.1:8080");
         assert_eq!(endpoints.tv_passport_poll_base, "http://127.0.0.1:8081");
+    }
+
+    #[test]
+    fn restricted_area_cli_builds_proxy_chain() -> anyhow::Result<()> {
+        let args = [
+            "bbdown",
+            "--restricted-area",
+            "hk",
+            "--restricted-area-proxy",
+            "https://generic.example/playurl",
+            "--restricted-api-proxy",
+            "tw=https://tw.example/api",
+            "--restricted-api-proxy",
+            "hk=https://hk.example/api",
+            "auth",
+            "status",
+        ];
+        let cli = Cli::parse_from(args);
+        let config = restricted_area_from_cli_with_args(&cli, args.map(std::ffi::OsString::from))?;
+        let ordered = config.ordered_proxies();
+
+        assert_eq!(ordered[0].base_url, "https://hk.example/api");
+        assert_eq!(ordered[1].base_url, "https://generic.example/playurl");
+        assert_eq!(ordered[2].base_url, "https://tw.example/api");
+        Ok(())
+    }
+
+    #[test]
+    fn restricted_area_proxy_bare_url_may_contain_query_equals() -> anyhow::Result<()> {
+        let args = [
+            "bbdown",
+            "--restricted-area-proxy",
+            "https://generic.example/playurl?token=a=b",
+            "auth",
+            "status",
+        ];
+        let cli = Cli::parse_from(args);
+        let config = restricted_area_from_cli_with_args(&cli, args.map(std::ffi::OsString::from))?;
+
+        assert_eq!(config.proxies[0].area, None);
+        assert_eq!(
+            config.proxies[0].base_url,
+            "https://generic.example/playurl?token=a=b"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn restricted_area_proxy_uppercase_scheme_may_contain_query_equals() -> anyhow::Result<()> {
+        let args = [
+            "bbdown",
+            "--restricted-area-proxy",
+            "HTTPS://generic.example/playurl?token=a=b",
+            "auth",
+            "status",
+        ];
+        let cli = Cli::parse_from(args);
+        let config = restricted_area_from_cli_with_args(&cli, args.map(std::ffi::OsString::from))?;
+
+        assert_eq!(config.proxies[0].area, None);
+        assert_eq!(
+            config.proxies[0].base_url,
+            "HTTPS://generic.example/playurl?token=a=b"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn restricted_area_proxy_preserves_cross_flag_cli_order() -> anyhow::Result<()> {
+        let args = [
+            "bbdown",
+            "--restricted-area",
+            "hk",
+            "--restricted-api-proxy",
+            "hk=https://api.example/base",
+            "--restricted-area-proxy",
+            "hk=https://play.example/playurl",
+            "auth",
+            "status",
+        ];
+        let cli = Cli::parse_from(args);
+        let config = restricted_area_from_cli_with_args(&cli, args.map(std::ffi::OsString::from))?;
+        let ordered = config.ordered_proxies();
+
+        assert_eq!(ordered[0].base_url, "https://api.example/base");
+        assert_eq!(ordered[1].base_url, "https://play.example/playurl");
+        Ok(())
+    }
+
+    #[test]
+    fn restricted_area_proxy_merges_cli_and_env_values() -> anyhow::Result<()> {
+        let args = [
+            "bbdown",
+            "--restricted-area",
+            "hk",
+            "--restricted-area-proxy",
+            "hk=https://cli-play.example/playurl",
+            "auth",
+            "status",
+        ];
+        let cli = Cli::parse_from(args);
+        let config = restricted_area_from_cli_with_env_values(
+            &cli,
+            args.map(std::ffi::OsString::from),
+            None,
+            Some("hk=https://env-api.example/api"),
+        )?;
+        let ordered = config.ordered_proxies();
+
+        assert_eq!(ordered[0].base_url, "https://cli-play.example/playurl");
+        assert_eq!(ordered[1].base_url, "https://env-api.example/api");
+        Ok(())
+    }
+
+    #[test]
+    fn restricted_area_proxy_keeps_cli_source_before_env_area_match() -> anyhow::Result<()> {
+        let args = [
+            "bbdown",
+            "--restricted-area",
+            "hk",
+            "--restricted-area-proxy",
+            "https://cli-play.example/playurl",
+            "auth",
+            "status",
+        ];
+        let cli = Cli::parse_from(args);
+        let config = restricted_area_from_cli_with_env_values(
+            &cli,
+            args.map(std::ffi::OsString::from),
+            Some("hk=https://env-play.example/playurl"),
+            None,
+        )?;
+        let ordered = config.ordered_proxies();
+
+        assert_eq!(ordered[0].base_url, "https://cli-play.example/playurl");
+        assert_eq!(ordered[1].base_url, "https://env-play.example/playurl");
+        Ok(())
+    }
+
+    #[test]
+    fn restricted_area_proxy_keeps_env_playurl_before_env_api_area_match() -> anyhow::Result<()> {
+        let args = ["bbdown", "--restricted-area", "hk", "auth", "status"];
+        let cli = Cli::parse_from(args);
+        let config = restricted_area_from_cli_with_env_values(
+            &cli,
+            args.map(std::ffi::OsString::from),
+            Some("https://env-play.example/playurl"),
+            Some("hk=https://env-api.example/api"),
+        )?;
+        let ordered = config.ordered_proxies();
+
+        assert_eq!(ordered[0].base_url, "https://env-play.example/playurl");
+        assert_eq!(ordered[1].base_url, "https://env-api.example/api");
+        Ok(())
+    }
+
+    #[test]
+    fn restricted_area_proxy_ignores_empty_env_values() -> anyhow::Result<()> {
+        let args = ["bbdown", "auth", "status"];
+        let mut cli = Cli::parse_from(args);
+        cli.restricted_area_proxy = vec![String::new(), String::new()];
+        cli.restricted_api_proxy = vec![" ".to_owned(), " ".to_owned()];
+        let config = restricted_area_from_cli_with_env_values(
+            &cli,
+            args.map(std::ffi::OsString::from),
+            Some(","),
+            Some(" , "),
+        )?;
+
+        assert!(config.proxies.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn restricted_area_proxy_ignores_trailing_empty_env_segment() -> anyhow::Result<()> {
+        let args = ["bbdown", "auth", "status"];
+        let cli = Cli::parse_from(args);
+        let config = restricted_area_from_cli_with_env_values(
+            &cli,
+            args.map(std::ffi::OsString::from),
+            Some("https://env-play.example/playurl,"),
+            Some("hk=https://env-api.example/api, "),
+        )?;
+        let ordered = config.ordered_proxies();
+
+        assert_eq!(ordered.len(), 2);
+        assert_eq!(ordered[0].base_url, "https://env-play.example/playurl");
+        assert_eq!(ordered[1].base_url, "https://env-api.example/api");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restricted_area_raw_arg_scan_ignores_non_utf8_non_proxy_values() -> anyhow::Result<()> {
+        use std::os::unix::ffi::OsStringExt;
+
+        let cli = Cli::parse_from([
+            "bbdown",
+            "--credential-file",
+            "placeholder",
+            "auth",
+            "status",
+        ]);
+        let raw_args = vec![
+            std::ffi::OsString::from("bbdown"),
+            std::ffi::OsString::from("--credential-file"),
+            std::ffi::OsString::from_vec(vec![b'p', b'a', b't', b'h', 0xff]),
+            std::ffi::OsString::from("auth"),
+            std::ffi::OsString::from("status"),
+        ];
+        let config = restricted_area_from_cli_with_env_values(&cli, raw_args, None, None)?;
+
+        assert!(config.proxies.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn restricted_area_proxy_parse_error_redacts_spec() {
+        let args = [
+            "bbdown",
+            "--restricted-area-proxy",
+            "hk=https://user:pass@proxy.example token=TOKEN_SECRET/t/PATH_SECRET?token=QUERY_SECRET",
+            "auth",
+            "status",
+        ];
+        let cli = Cli::parse_from(args);
+        let error = restricted_area_from_cli_with_args(&cli, args.map(std::ffi::OsString::from))
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
+
+        assert!(error.contains("failed to parse restricted-area proxy URL"));
+        for sensitive in [
+            "user:pass",
+            "TOKEN_SECRET",
+            "PATH_SECRET",
+            "QUERY_SECRET",
+            "token=",
+        ] {
+            assert!(
+                !error.contains(sensitive),
+                "parse error leaked {sensitive}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn restricted_area_proxy_uppercase_scheme_parse_error_redacts_spec() {
+        let args = [
+            "bbdown",
+            "--restricted-area-proxy",
+            "HTTPS://user:pass@exa mple/t/PATH_SECRET?token=QUERY_SECRET",
+            "auth",
+            "status",
+        ];
+        let cli = Cli::parse_from(args);
+        let error = restricted_area_from_cli_with_args(&cli, args.map(std::ffi::OsString::from))
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
+
+        assert!(error.contains("failed to parse restricted-area proxy URL"));
+        for sensitive in ["user:pass", "PATH_SECRET", "QUERY_SECRET", "token="] {
+            assert!(
+                !error.contains(sensitive),
+                "parse error leaked {sensitive}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn restricted_area_proxy_invalid_scheme_parse_error_redacts_spec() {
+        let args = [
+            "bbdown",
+            "--restricted-area-proxy",
+            "HTPS://user:pass@proxy.example/t/PATH_SECRET?token=QUERY_SECRET",
+            "auth",
+            "status",
+        ];
+        let cli = Cli::parse_from(args);
+        let error = restricted_area_from_cli_with_args(&cli, args.map(std::ffi::OsString::from))
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
+
+        assert!(error.contains("must use http or https"));
+        for sensitive in ["user:pass", "PATH_SECRET", "QUERY_SECRET", "token="] {
+            assert!(
+                !error.contains(sensitive),
+                "parse error leaked {sensitive}: {error}"
+            );
+        }
     }
 
     #[test]

@@ -9,7 +9,8 @@
   - `docs/project_journal/2026/06/2026-06-07-stream-planning-019e9eab.md`.
   - `docs/project_journal/2026/06/2026-06-07-download-execution-019e9eab.md`.
   - `docs/project_journal/2026/06/2026-06-07-qr-login-live-tests-019e9eab.md`.
-- Next planned workstream: restricted-area proxy resolver ordering and diagnostics.
+  - `docs/project_journal/2026/06/2026-06-07-restricted-area-proxy-019e9eab.md`.
+- Next planned workstream: none currently recorded.
 
 ## Recovery Pointers
 

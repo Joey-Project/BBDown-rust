@@ -89,6 +89,8 @@ pub struct DownloadEntry {
     pub title: String,
     pub source: StreamSource,
     pub streams: StreamSet,
+    #[serde(default, skip_serializing_if = "StreamDiagnostics::is_empty")]
+    pub diagnostics: StreamDiagnostics,
     pub subtitles: Vec<SubtitleTrack>,
     pub danmaku: DanmakuTrack,
 }
@@ -98,7 +100,40 @@ pub struct DownloadEntry {
 pub enum StreamSource {
     NormalWeb,
     PgcWeb,
+    PgcProxy,
     IntlWeb,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct StreamDiagnostics {
+    pub attempts: Vec<StreamResolverAttempt>,
+}
+
+impl StreamDiagnostics {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.attempts.is_empty()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct StreamResolverAttempt {
+    pub source: StreamSource,
+    pub outcome: StreamResolverOutcome,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub area: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamResolverOutcome {
+    Succeeded,
+    Failed,
+    Skipped,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
