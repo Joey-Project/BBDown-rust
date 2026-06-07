@@ -685,7 +685,7 @@ fn proxy_args_from_env_values(
             &mut proxy_args,
             RestrictedAreaProxyKind::BilibiliApi,
             value,
-            1,
+            2,
         );
     }
     proxy_args
@@ -1161,6 +1161,23 @@ mod tests {
 
         assert_eq!(ordered[0].base_url, "https://cli-play.example/playurl");
         assert_eq!(ordered[1].base_url, "https://env-play.example/playurl");
+        Ok(())
+    }
+
+    #[test]
+    fn restricted_area_proxy_keeps_env_playurl_before_env_api_area_match() -> anyhow::Result<()> {
+        let args = ["bbdown", "--restricted-area", "hk", "auth", "status"];
+        let cli = Cli::parse_from(args);
+        let config = restricted_area_from_cli_with_env_values(
+            &cli,
+            args.map(std::ffi::OsString::from),
+            Some("https://env-play.example/playurl"),
+            Some("hk=https://env-api.example/api"),
+        )?;
+        let ordered = config.ordered_proxies();
+
+        assert_eq!(ordered[0].base_url, "https://env-play.example/playurl");
+        assert_eq!(ordered[1].base_url, "https://env-api.example/api");
         Ok(())
     }
 
