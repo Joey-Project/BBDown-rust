@@ -44,7 +44,8 @@ bbdown download av170001 --output-dir downloads --no-mux --json
 
 `download` resolves a plan, downloads the first DASH video/audio pair or FLV segments, writes
 subtitle and danmaku sidecars by default, resumes partial files with HTTP range requests, retries
-bounded transient failures, and runs `ffmpeg` unless `--no-mux` is supplied.
+bounded transient failures, validates advertised media sizes when present, and runs `ffmpeg` unless
+`--no-mux` is supplied.
 
 `ss` and `md` inputs require an explicit selection in non-interactive mode:
 
@@ -70,7 +71,8 @@ Credentials are stored in the platform config directory by default. Use
 Secret import commands also read `BBDOWN_COOKIE` or `BBDOWN_ACCESS_KEY` when no input flag is
 provided, so callers can avoid passing credentials through process arguments.
 
-Use `--request-timeout-seconds` or `BBDOWN_REQUEST_TIMEOUT_SECONDS` to tune HTTP request bounds.
+Use `--request-timeout-seconds` or `BBDOWN_REQUEST_TIMEOUT_SECONDS` to tune API request bounds.
+Media body reads use `--download-idle-timeout-seconds`; pass `0` to disable the idle timeout.
 
 ## Developer Commands
 

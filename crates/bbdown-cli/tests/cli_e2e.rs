@@ -3,6 +3,10 @@ use httpmock::MockServer;
 use httpmock::prelude::*;
 use serde_json::Value;
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
+use std::path::Path;
 
 #[test]
 fn info_json_resolves_mock_video() -> anyhow::Result<()> {
@@ -246,6 +250,103 @@ fn download_json_writes_mock_media_files() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+#[allow(clippy::too_many_lines)]
+fn download_json_default_mux_keeps_stdout_valid() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let ffmpeg = write_fake_ffmpeg(temp.path(), "printf 'mux noise\\n'\nexit 0")?;
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/view")
+            .query_param("aid", "170001");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "aid": 170_001,
+                "bvid": "BV1xx411c7mD",
+                "title": "Mock video",
+                "pages": [{"page": 1, "cid": 2, "part": "Main"}]
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/playurl")
+            .query_param("avid", "170001")
+            .query_param("cid", "2")
+            .query_param("try_look", "1");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "dash": {
+                    "duration": 3,
+                    "video": [{
+                        "id": 80,
+                        "baseUrl": format!("{}/video.m4s", server.base_url()),
+                        "base_url": format!("{}/video.m4s", server.base_url()),
+                        "size": 5
+                    }],
+                    "audio": [{
+                        "id": 30280,
+                        "baseUrl": format!("{}/audio.m4s", server.base_url()),
+                        "base_url": format!("{}/audio.m4s", server.base_url()),
+                        "size": 5
+                    }]
+                }
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/v2")
+            .query_param("aid", "170001")
+            .query_param("cid", "2");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {"subtitle": {"subtitles": []}}
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET).path("/video.m4s");
+        then.status(200).body("video");
+    });
+    server.mock(|when, then| {
+        when.method(GET).path("/audio.m4s");
+        then.status(200).body("audio");
+    });
+
+    let mut command = Command::cargo_bin("bbdown")?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("download")
+        .arg("av170001")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--ffmpeg")
+        .arg(&ffmpeg)
+        .arg("--no-danmaku")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    assert_eq!(
+        json["entries"][0]["files"].as_array().map(Vec::len),
+        Some(2)
+    );
+    assert!(
+        json["entries"][0]["mux"]["output_path"]
+            .as_str()
+            .is_some_and(|path| path.ends_with("Main.mp4"))
+    );
+    Ok(())
+}
+
 #[test]
 fn auth_import_status_and_logout_use_local_store() -> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;
@@ -290,4 +391,14 @@ fn auth_import_status_and_logout_use_local_store() -> anyhow::Result<()> {
     let status: Value = serde_json::from_slice(&output)?;
     assert_eq!(status["has_cookie"], false);
     Ok(())
+}
+
+#[cfg(unix)]
+fn write_fake_ffmpeg(dir: &Path, body: &str) -> anyhow::Result<std::path::PathBuf> {
+    let path = dir.join("fake-ffmpeg");
+    fs::write(&path, format!("#!/bin/sh\n{body}\n"))?;
+    let mut permissions = fs::metadata(&path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&path, permissions)?;
+    Ok(path)
 }

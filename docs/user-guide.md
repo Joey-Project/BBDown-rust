@@ -60,8 +60,12 @@ response only contains legacy FLV `durl` segments, it downloads those segments i
 and danmaku sidecars are enabled by default and can be disabled with `--no-subtitles` and
 `--no-danmaku`.
 
-Downloads resume partial files by default with HTTP range requests. Use `--no-resume` to force a
-fresh write. Retry behavior is bounded by `--retry-attempts` and `--retry-backoff-ms`.
+Downloads resume partial files by default with HTTP range requests and validate `Content-Range`
+plus advertised media sizes when the plan provides them. Use `--no-resume` to force a fresh write.
+Retry behavior is bounded by `--retry-attempts` and `--retry-backoff-ms`.
+
+`--request-timeout-seconds` applies to API requests. Media body reads use
+`--download-idle-timeout-seconds`; pass `0` to disable that idle timeout.
 
 Muxing is enabled by default through `ffmpeg`. Use `--ffmpeg <path>` to choose a binary or
 `--no-mux` to keep downloaded media files as sidecars only. The reusable crate keeps external

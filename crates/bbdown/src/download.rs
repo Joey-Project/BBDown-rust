@@ -8,6 +8,7 @@ use reqwest::header::{CONTENT_RANGE, RANGE};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::time::Duration;
 use tokio::fs::{self, OpenOptions};
 use tokio::io::AsyncWriteExt;
@@ -21,6 +22,7 @@ pub struct DownloadOptions {
     pub include_subtitles: bool,
     pub include_danmaku: bool,
     pub mux: MuxOptions,
+    pub download_idle_timeout: Option<Duration>,
 }
 
 impl Default for DownloadOptions {
@@ -32,6 +34,7 @@ impl Default for DownloadOptions {
             include_subtitles: true,
             include_danmaku: true,
             mux: MuxOptions::Disabled,
+            download_idle_timeout: Some(Duration::from_secs(30)),
         }
     }
 }
@@ -190,6 +193,7 @@ impl BiliClient {
                     &entry.danmaku.xml_url,
                     &entry_dir.join("danmaku.xml"),
                     DownloadFileKind::Danmaku,
+                    None,
                     options,
                 )
                 .await?,
@@ -228,6 +232,7 @@ impl BiliClient {
             &candidate_urls(&stream.base_url, &stream.backup_urls),
             &path,
             kind,
+            stream.size,
             options,
         )
         .await
@@ -244,6 +249,7 @@ impl BiliClient {
             &candidate_urls(&segment.url, &segment.backup_urls),
             &path,
             DownloadFileKind::FlvSegment,
+            segment.size,
             options,
         )
         .await
@@ -260,8 +266,14 @@ impl BiliClient {
             safe_file_name(&subtitle.language),
             subtitle_extension(subtitle)
         ));
-        self.download_url_to_file(&subtitle.url, &path, DownloadFileKind::Subtitle, options)
-            .await
+        self.download_url_to_file(
+            &subtitle.url,
+            &path,
+            DownloadFileKind::Subtitle,
+            None,
+            options,
+        )
+        .await
     }
 
     async fn download_url_to_file(
@@ -269,13 +281,14 @@ impl BiliClient {
         url: &str,
         path: &Path,
         kind: DownloadFileKind,
+        expected_size: Option<u64>,
         options: &DownloadOptions,
     ) -> Result<DownloadedFile> {
         let attempts = options.retry.max_attempts.max(1);
         let mut last_error = None;
         for attempt in 1..=attempts {
             match self
-                .try_download_url_to_file(url, path, kind.clone(), options)
+                .try_download_url_to_file(url, path, kind.clone(), expected_size, options)
                 .await
             {
                 Ok(file) => return Ok(file),
@@ -296,12 +309,13 @@ impl BiliClient {
         urls: &[String],
         path: &Path,
         kind: DownloadFileKind,
+        expected_size: Option<u64>,
         options: &DownloadOptions,
     ) -> Result<DownloadedFile> {
         let mut last_error = None;
         for url in urls {
             match self
-                .download_url_to_file(url, path, kind.clone(), options)
+                .download_url_to_file(url, path, kind.clone(), expected_size, options)
                 .await
             {
                 Ok(file) => return Ok(file),
@@ -316,6 +330,7 @@ impl BiliClient {
         url: &str,
         path: &Path,
         kind: DownloadFileKind,
+        expected_size: Option<u64>,
         options: &DownloadOptions,
     ) -> Result<DownloadedFile> {
         if let Some(parent) = path.parent() {
@@ -329,7 +344,9 @@ impl BiliClient {
         let response = self.send_download_request(url, resume_from).await?;
         let status = response.status();
         if resume_from > 0 && status == StatusCode::RANGE_NOT_SATISFIABLE {
-            if content_range_complete_len(response.headers()) == Some(resume_from) {
+            if content_range_complete_len(response.headers()) == Some(resume_from)
+                && expected_size.is_none_or(|size| size == resume_from)
+            {
                 return Ok(DownloadedFile {
                     kind,
                     path: path.to_path_buf(),
@@ -344,11 +361,20 @@ impl BiliClient {
         let response = response
             .error_for_status()
             .map_err(BiliClient::http_error_without_url)?;
+        let content_range = content_range(response.headers())?;
         let append = resume_from > 0 && status == StatusCode::PARTIAL_CONTENT;
-        if append && content_range_start(response.headers()) != Some(resume_from) {
-            return Err(Error::InvalidInput(
-                "server returned an unexpected Content-Range for resume".to_owned(),
-            ));
+        if status == StatusCode::PARTIAL_CONTENT {
+            let range = content_range.ok_or_else(|| {
+                Error::InvalidInput(
+                    "server returned partial content without Content-Range".to_owned(),
+                )
+            })?;
+            let expected_start = if append { resume_from } else { 0 };
+            if range.start != expected_start {
+                return Err(Error::InvalidInput(
+                    "server returned an unexpected Content-Range for resume".to_owned(),
+                ));
+            }
         }
         let start_offset = if append { resume_from } else { 0 };
         let mut file = OpenOptions::new()
@@ -360,12 +386,32 @@ impl BiliClient {
             .await?;
         let mut bytes_written = 0;
         let mut stream = response.bytes_stream();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(BiliClient::http_error_without_url)?;
+        while let Some(chunk) =
+            match next_download_chunk(&mut stream, options.download_idle_timeout).await {
+                Ok(chunk) => chunk,
+                Err(error) => {
+                    rollback_download_file(&file, start_offset).await?;
+                    return Err(error);
+                }
+            }
+        {
+            let chunk = match chunk {
+                Ok(chunk) => chunk,
+                Err(error) => {
+                    rollback_download_file(&file, start_offset).await?;
+                    return Err(BiliClient::http_error_without_url(error));
+                }
+            };
             file.write_all(&chunk).await?;
             bytes_written += u64::try_from(chunk.len()).unwrap_or(u64::MAX);
         }
         file.flush().await?;
+        if let Err(error) =
+            validate_download_completion(expected_size, content_range, start_offset, bytes_written)
+        {
+            rollback_download_file(&file, start_offset).await?;
+            return Err(error);
+        }
         Ok(DownloadedFile {
             kind,
             path: path.to_path_buf(),
@@ -379,17 +425,13 @@ impl BiliClient {
         url: &str,
         resume_from: u64,
     ) -> Result<reqwest::Response> {
-        let mut request = self
-            .http
-            .get(url)
-            .headers(self.media_headers()?)
-            .timeout(self.config.request_timeout);
+        let mut request = self.http.get(url).headers(self.media_headers()?);
         if resume_from > 0 {
             request = request.header(RANGE, format!("bytes={resume_from}-"));
         }
-        request
-            .send()
+        tokio::time::timeout(self.config.request_timeout, request.send())
             .await
+            .map_err(|_| Error::InvalidInput("download request timeout elapsed".to_owned()))?
             .map_err(BiliClient::http_error_without_url)
     }
 
@@ -436,7 +478,12 @@ impl BiliClient {
             "copy".to_owned(),
             output_path.to_string_lossy().into_owned(),
         ]);
-        let status = Command::new(binary).args(&args).status().await?;
+        let status = Command::new(binary)
+            .args(&args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await?;
         if !status.success() {
             return Err(Error::MuxFailed {
                 status: status.code().map_or_else(
@@ -476,11 +523,135 @@ fn candidate_urls(primary: &str, backups: &[String]) -> Vec<String> {
     urls
 }
 
-fn content_range_start(headers: &reqwest::header::HeaderMap) -> Option<u64> {
-    let value = headers.get(CONTENT_RANGE)?.to_str().ok()?;
-    let range = value.strip_prefix("bytes ")?;
-    let (start, _) = range.split_once('-')?;
-    start.parse().ok()
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ParsedContentRange {
+    start: u64,
+    end: u64,
+    complete_len: Option<u64>,
+}
+
+impl ParsedContentRange {
+    fn body_len(self) -> Result<u64> {
+        self.end
+            .checked_sub(self.start)
+            .and_then(|value| value.checked_add(1))
+            .ok_or_else(|| Error::InvalidInput("invalid Content-Range span".to_owned()))
+    }
+
+    fn final_len(self) -> Result<u64> {
+        self.end
+            .checked_add(1)
+            .ok_or_else(|| Error::InvalidInput("invalid Content-Range end".to_owned()))
+    }
+}
+
+async fn next_download_chunk<S>(
+    stream: &mut S,
+    idle_timeout: Option<Duration>,
+) -> Result<Option<S::Item>>
+where
+    S: futures_util::Stream + Unpin,
+{
+    match idle_timeout {
+        Some(timeout) => match tokio::time::timeout(timeout, stream.next()).await {
+            Ok(chunk) => Ok(chunk),
+            Err(_) => Err(Error::InvalidInput(
+                "download idle timeout elapsed".to_owned(),
+            )),
+        },
+        None => Ok(stream.next().await),
+    }
+}
+
+async fn rollback_download_file(file: &tokio::fs::File, len: u64) -> Result<()> {
+    file.set_len(len).await?;
+    Ok(())
+}
+
+fn validate_download_completion(
+    expected_size: Option<u64>,
+    content_range: Option<ParsedContentRange>,
+    start_offset: u64,
+    bytes_written: u64,
+) -> Result<()> {
+    if let Some(range) = content_range {
+        let range_body_len = range.body_len()?;
+        if bytes_written != range_body_len {
+            return Err(Error::InvalidInput(
+                "download body length did not match Content-Range".to_owned(),
+            ));
+        }
+        let final_len = range.final_len()?;
+        if let Some(total) = range.complete_len {
+            if final_len != total {
+                return Err(Error::InvalidInput(
+                    "download did not reach Content-Range total length".to_owned(),
+                ));
+            }
+            if expected_size.is_some_and(|size| size != total) {
+                return Err(Error::InvalidInput(
+                    "Content-Range total length did not match expected media size".to_owned(),
+                ));
+            }
+        }
+        if expected_size.is_some_and(|size| size != final_len) {
+            return Err(Error::InvalidInput(
+                "downloaded file length did not match expected media size".to_owned(),
+            ));
+        }
+        return Ok(());
+    }
+
+    if let Some(expected_size) = expected_size {
+        let final_len = start_offset
+            .checked_add(bytes_written)
+            .ok_or_else(|| Error::InvalidInput("downloaded file length overflowed".to_owned()))?;
+        if final_len != expected_size {
+            return Err(Error::InvalidInput(
+                "downloaded file length did not match expected media size".to_owned(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn content_range(headers: &reqwest::header::HeaderMap) -> Result<Option<ParsedContentRange>> {
+    let Some(value) = headers.get(CONTENT_RANGE) else {
+        return Ok(None);
+    };
+    let value = value
+        .to_str()
+        .map_err(|_| Error::InvalidInput("invalid Content-Range".to_owned()))?;
+    let range = value
+        .strip_prefix("bytes ")
+        .ok_or_else(|| Error::InvalidInput("invalid Content-Range".to_owned()))?;
+    if range.starts_with("*/") {
+        return Ok(None);
+    }
+    let (span, complete) = range
+        .split_once('/')
+        .ok_or_else(|| Error::InvalidInput("invalid Content-Range".to_owned()))?;
+    let (start, end) = span
+        .split_once('-')
+        .ok_or_else(|| Error::InvalidInput("invalid Content-Range".to_owned()))?;
+    let complete_len = if complete == "*" {
+        None
+    } else {
+        Some(
+            complete
+                .parse()
+                .map_err(|_| Error::InvalidInput("invalid Content-Range".to_owned()))?,
+        )
+    };
+    Ok(Some(ParsedContentRange {
+        start: start
+            .parse()
+            .map_err(|_| Error::InvalidInput("invalid Content-Range".to_owned()))?,
+        end: end
+            .parse()
+            .map_err(|_| Error::InvalidInput("invalid Content-Range".to_owned()))?,
+        complete_len,
+    }))
 }
 
 fn content_range_complete_len(headers: &reqwest::header::HeaderMap) -> Option<u64> {
@@ -639,6 +810,7 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let client = BiliClient::new(ClientConfig::default());
         let mut plan = test_plan(&server);
+        plan.entries[0].streams.videos[0].size = Some(6);
         plan.entries[0].streams.audios.clear();
         plan.entries[0].subtitles.clear();
         plan.entries[0].danmaku.xml_url = format!("{}/danmaku.xml", server.base_url());
@@ -754,7 +926,8 @@ mod tests {
         });
         let temp = tempfile::tempdir()?;
         let client = BiliClient::new(ClientConfig::default());
-        let plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
+        let mut plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
+        plan.entries[0].streams.videos[0].size = Some(3);
         let output_dir = temp.path().join("Mock video").join("P001-Main");
         tokio::fs::create_dir_all(&output_dir).await?;
         tokio::fs::write(output_dir.join("video-80.m4s"), "old").await?;
@@ -816,6 +989,215 @@ mod tests {
 
         assert!(error.to_string().contains("Content-Range"));
         assert_eq!(tokio::fs::read_to_string(&path).await?, "old");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rejects_short_content_range_body_on_resume() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/video.m4s")
+                .header("range", "bytes=3-");
+            then.status(206)
+                .header("Content-Range", "bytes 3-5/6")
+                .body("ne");
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let mut plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
+        plan.entries[0].streams.videos[0].size = Some(6);
+        let output_dir = temp.path().join("Mock video").join("P001-Main");
+        tokio::fs::create_dir_all(&output_dir).await?;
+        let path = output_dir.join("video-80.m4s");
+        tokio::fs::write(&path, "old").await?;
+
+        let Err(error) = client
+            .download_plan(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().to_path_buf(),
+                    retry: RetryPolicy::single_attempt(),
+                    include_danmaku: false,
+                    mux: MuxOptions::Disabled,
+                    ..DownloadOptions::default()
+                },
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!("short Content-Range body should fail"));
+        };
+
+        assert!(error.to_string().contains("Content-Range"));
+        assert_eq!(tokio::fs::read_to_string(&path).await?, "old");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rejects_content_range_total_mismatch_on_resume() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/video.m4s")
+                .header("range", "bytes=3-");
+            then.status(206)
+                .header("Content-Range", "bytes 3-5/999")
+                .body("new");
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let mut plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
+        plan.entries[0].streams.videos[0].size = Some(6);
+        let output_dir = temp.path().join("Mock video").join("P001-Main");
+        tokio::fs::create_dir_all(&output_dir).await?;
+        let path = output_dir.join("video-80.m4s");
+        tokio::fs::write(&path, "old").await?;
+
+        let Err(error) = client
+            .download_plan(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().to_path_buf(),
+                    retry: RetryPolicy::single_attempt(),
+                    include_danmaku: false,
+                    mux: MuxOptions::Disabled,
+                    ..DownloadOptions::default()
+                },
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!("Content-Range total mismatch should fail"));
+        };
+
+        assert!(error.to_string().contains("Content-Range total length"));
+        assert_eq!(tokio::fs::read_to_string(&path).await?, "old");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rejects_expected_media_size_mismatch() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/video.m4s");
+            then.status(200).body("video");
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let mut plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
+        plan.entries[0].streams.videos[0].size = Some(6);
+        let path = temp
+            .path()
+            .join("Mock video")
+            .join("P001-Main")
+            .join("video-80.m4s");
+
+        let Err(error) = client
+            .download_plan(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().to_path_buf(),
+                    retry: RetryPolicy::single_attempt(),
+                    include_danmaku: false,
+                    mux: MuxOptions::Disabled,
+                    ..DownloadOptions::default()
+                },
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!("media size mismatch should fail"));
+        };
+
+        assert!(error.to_string().contains("expected media size"));
+        assert_eq!(tokio::fs::metadata(&path).await?.len(), 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn media_download_uses_idle_timeout_instead_of_request_total_timeout()
+    -> anyhow::Result<()> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let address = listener.local_addr()?;
+        let handle = std::thread::spawn(move || -> anyhow::Result<()> {
+            let (mut stream, _) = listener.accept()?;
+            let mut buffer = [0; 1024];
+            let _ = stream.read(&mut buffer)?;
+            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n")?;
+            stream.flush()?;
+            std::thread::sleep(Duration::from_millis(100));
+            stream.write_all(b"ok")?;
+            Ok(())
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig {
+            request_timeout: Duration::from_millis(20),
+            ..ClientConfig::default()
+        });
+        let mut plan = single_video_plan(format!("http://{address}/video.m4s"));
+        plan.entries[0].streams.videos[0].size = Some(2);
+
+        let report = client
+            .download_plan(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().to_path_buf(),
+                    retry: RetryPolicy::single_attempt(),
+                    include_danmaku: false,
+                    mux: MuxOptions::Disabled,
+                    download_idle_timeout: Some(Duration::from_secs(1)),
+                    ..DownloadOptions::default()
+                },
+            )
+            .await?;
+
+        handle
+            .join()
+            .map_err(|_| anyhow::anyhow!("server thread panicked"))??;
+        assert_eq!(
+            tokio::fs::read_to_string(&report.entries[0].files[0].path).await?,
+            "ok"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn media_download_request_timeout_still_bounds_response_headers() -> anyhow::Result<()> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let address = listener.local_addr()?;
+        let handle = std::thread::spawn(move || -> anyhow::Result<()> {
+            let (mut stream, _) = listener.accept()?;
+            let mut buffer = [0; 1024];
+            let _ = stream.read(&mut buffer)?;
+            std::thread::sleep(Duration::from_millis(100));
+            Ok(())
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig {
+            request_timeout: Duration::from_millis(20),
+            ..ClientConfig::default()
+        });
+        let plan = single_video_plan(format!("http://{address}/video.m4s"));
+
+        let Err(error) = client
+            .download_plan(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().to_path_buf(),
+                    retry: RetryPolicy::single_attempt(),
+                    include_danmaku: false,
+                    mux: MuxOptions::Disabled,
+                    download_idle_timeout: Some(Duration::from_secs(1)),
+                    ..DownloadOptions::default()
+                },
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!("hung response headers should time out"));
+        };
+
+        handle
+            .join()
+            .map_err(|_| anyhow::anyhow!("server thread panicked"))??;
+        assert!(error.to_string().contains("download request timeout"));
         Ok(())
     }
 

@@ -73,6 +73,7 @@ Execution behavior is controlled by `DownloadOptions`:
 - output directory;
 - bounded retry policy;
 - HTTP range resume on or off;
+- media read idle timeout;
 - subtitle and danmaku sidecar inclusion;
 - disabled muxing or explicit `ffmpeg` binary path.
 
@@ -83,12 +84,16 @@ command plus output path in the report.
 
 Media and sidecar downloads use media headers without account cookies, because media URLs come from
 API payloads and can target CDN or proxy hosts. DASH and FLV backup URLs are part of the candidate
-list. Resume appends only when `Content-Range` matches the local file length; matching 416 responses
-are treated as already complete.
+list. Media body reads use a separate idle timeout instead of the metadata request timeout. Resume
+appends only when `Content-Range` starts at the local file length and completes at the advertised
+range total; matching 416 responses are treated as already complete. When a stream or FLV segment
+declares a size, the executor rejects mismatched final file lengths and rolls back failed writes to
+the pre-attempt length.
 
 The crate default keeps muxing disabled so embedding projects do not spawn external processes by
 surprise. The CLI `download` command enables ffmpeg by default and exposes `--no-mux` for users and
-mock e2e tests.
+mock e2e tests. Mux subprocess stdout and stderr are isolated from CLI stdout so JSON reports remain
+parseable.
 
 ## Restricted Area And Intl
 

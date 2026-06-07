@@ -70,6 +70,8 @@ enum Command {
         retry_attempts: u32,
         #[arg(long, default_value_t = 250)]
         retry_backoff_ms: u64,
+        #[arg(long, default_value_t = 30)]
+        download_idle_timeout_seconds: u64,
         #[arg(long)]
         no_resume: bool,
         #[arg(long)]
@@ -147,6 +149,7 @@ async fn main() -> anyhow::Result<()> {
             json,
             retry_attempts,
             retry_backoff_ms,
+            download_idle_timeout_seconds,
             no_resume,
             no_subtitles,
             no_danmaku,
@@ -166,6 +169,11 @@ async fn main() -> anyhow::Result<()> {
                     retry: RetryPolicy {
                         max_attempts: retry_attempts,
                         backoff: Duration::from_millis(retry_backoff_ms),
+                    },
+                    download_idle_timeout: if download_idle_timeout_seconds == 0 {
+                        None
+                    } else {
+                        Some(Duration::from_secs(download_idle_timeout_seconds))
                     },
                     resume: !no_resume,
                     include_subtitles: !no_subtitles,
