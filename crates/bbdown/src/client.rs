@@ -726,8 +726,8 @@ impl BiliClient {
                     Some(resolver_error_message(&error)),
                 )];
                 for proxy in self.config.restricted_area.ordered_proxies() {
-                    let request_url = match self.pgc_proxy_playurl_url(&proxy, aid, cid, epid) {
-                        Ok(url) => url,
+                    let request_urls = match self.pgc_proxy_playurl_urls(&proxy, aid, cid, epid) {
+                        Ok(urls) => urls,
                         Err(error) => {
                             attempts.push(resolver_attempt(
                                 StreamSource::PgcProxy,
@@ -739,31 +739,33 @@ impl BiliClient {
                             continue;
                         }
                     };
-                    match self
-                        .fetch_proxy_playurl_stream_set(request_url.clone())
-                        .await
-                    {
-                        Ok(streams) => {
-                            attempts.push(resolver_attempt(
+                    for request_url in request_urls {
+                        match self
+                            .fetch_proxy_playurl_stream_set(request_url.clone())
+                            .await
+                        {
+                            Ok(streams) => {
+                                attempts.push(resolver_attempt(
+                                    StreamSource::PgcProxy,
+                                    proxy.area,
+                                    Some(redact_url_for_diagnostics(&request_url)),
+                                    StreamResolverOutcome::Succeeded,
+                                    None,
+                                ));
+                                return Ok(ResolvedStreamSet {
+                                    source: StreamSource::PgcProxy,
+                                    streams,
+                                    diagnostics: StreamDiagnostics { attempts },
+                                });
+                            }
+                            Err(error) => attempts.push(resolver_attempt(
                                 StreamSource::PgcProxy,
                                 proxy.area,
                                 Some(redact_url_for_diagnostics(&request_url)),
-                                StreamResolverOutcome::Succeeded,
-                                None,
-                            ));
-                            return Ok(ResolvedStreamSet {
-                                source: StreamSource::PgcProxy,
-                                streams,
-                                diagnostics: StreamDiagnostics { attempts },
-                            });
+                                StreamResolverOutcome::Failed,
+                                Some(resolver_error_message(&error)),
+                            )),
                         }
-                        Err(error) => attempts.push(resolver_attempt(
-                            StreamSource::PgcProxy,
-                            proxy.area,
-                            Some(redact_url_for_diagnostics(&request_url)),
-                            StreamResolverOutcome::Failed,
-                            Some(resolver_error_message(&error)),
-                        )),
                     }
                 }
                 Err(Error::AccessRestricted(format!(
@@ -780,28 +782,31 @@ impl BiliClient {
         Ok(url)
     }
 
-    fn pgc_proxy_playurl_url(
+    fn pgc_proxy_playurl_urls(
         &self,
         proxy: &RestrictedAreaProxy,
         aid: u64,
         cid: u64,
         epid: u64,
-    ) -> Result<Url> {
-        let mut url = match proxy.kind {
-            RestrictedAreaProxyKind::PlayUrl => Url::parse(&proxy.base_url)?,
-            RestrictedAreaProxyKind::BilibiliApi => {
-                Self::endpoint_url_preserving_query(&proxy.base_url, "/pgc/player/web/v2/playurl")?
-            }
+    ) -> Result<Vec<Url>> {
+        let mut urls = match proxy.kind {
+            RestrictedAreaProxyKind::PlayUrl => vec![Url::parse(&proxy.base_url)?],
+            RestrictedAreaProxyKind::BilibiliApi => vec![
+                Self::endpoint_url_preserving_query(&proxy.base_url, "/pgc/player/web/playurl")?,
+                Self::endpoint_url_preserving_query(&proxy.base_url, "/pgc/player/web/v2/playurl")?,
+            ],
         };
-        append_pgc_playurl_params(
-            &mut url,
-            aid,
-            cid,
-            epid,
-            proxy.area,
-            self.config.credentials.access_key.as_deref(),
-        );
-        Ok(url)
+        for url in &mut urls {
+            append_pgc_playurl_params(
+                url,
+                aid,
+                cid,
+                epid,
+                proxy.area,
+                self.config.credentials.access_key.as_deref(),
+            );
+        }
+        Ok(urls)
     }
 
     async fn fetch_playurl_stream_set(&self, url: Url) -> Result<StreamSet> {
@@ -3254,7 +3259,7 @@ mod tests {
     }
 
     #[test]
-    fn pgc_bilibili_api_proxy_preserves_base_query() -> anyhow::Result<()> {
+    fn pgc_bilibili_api_proxy_preserves_base_query_for_web_and_v2_paths() -> anyhow::Result<()> {
         let client = BiliClient::new(ClientConfig {
             credentials: Credentials {
                 cookie: None,
@@ -3268,11 +3273,114 @@ mod tests {
             Some(RestrictedArea::Hk),
         );
 
-        let url = client.pgc_proxy_playurl_url(&proxy, 10, 100, 1000)?;
+        let urls = client.pgc_proxy_playurl_urls(&proxy, 10, 100, 1000)?;
+        let actual = urls.iter().map(url::Url::as_str).collect::<Vec<_>>();
         assert_eq!(
-            url.as_str(),
-            "https://proxy.example/base/pgc/player/web/v2/playurl?proxy_token=a%3Db&avid=10&cid=100&ep_id=1000&module=bangumi&qn=0&fnval=4048&fnver=0&fourk=1&otype=json&area=hk&access_key=ACCESS_SECRET"
+            actual,
+            vec![
+                "https://proxy.example/base/pgc/player/web/playurl?proxy_token=a%3Db&avid=10&cid=100&ep_id=1000&module=bangumi&qn=0&fnval=4048&fnver=0&fourk=1&otype=json&area=hk&access_key=ACCESS_SECRET",
+                "https://proxy.example/base/pgc/player/web/v2/playurl?proxy_token=a%3Db&avid=10&cid=100&ep_id=1000&module=bangumi&qn=0&fnval=4048&fnver=0&fourk=1&otype=json&area=hk&access_key=ACCESS_SECRET"
+            ]
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pgc_bilibili_api_proxy_falls_back_to_v2_path() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/pgc/view/web/season")
+                .query_param("ep_id", "1000");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "result": {
+                    "season_id": 123,
+                    "title": "A Season",
+                    "episodes": [
+                        {"aid": 10, "bvid": "BV1aa", "cid": 100, "id": 1000, "ep_id": 1000, "title": "1"}
+                    ]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/pgc/player/web/v2/playurl")
+                .query_param("ep_id", "1000")
+                .query_param("module", "bangumi");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": -40301,
+                "message": "area restricted"
+            }));
+        });
+        let web_proxy = server.mock(|when, then| {
+            when.method(GET)
+                .path("/proxy/pgc/player/web/playurl")
+                .query_param("ep_id", "1000")
+                .query_param("area", "hk");
+            then.status(404);
+        });
+        let v2_proxy = server.mock(|when, then| {
+            when.method(GET)
+                .path("/proxy/pgc/player/web/v2/playurl")
+                .query_param("ep_id", "1000")
+                .query_param("area", "hk");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "result": {
+                    "video_info": {
+                        "dash": {
+                            "duration": 3,
+                            "video": [{
+                                "id": 80,
+                                "baseUrl": "https://proxy.example/video.m4s",
+                                "base_url": "https://proxy.example/video.m4s"
+                            }],
+                            "audio": []
+                        }
+                    }
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/player/v2")
+                .query_param("aid", "10")
+                .query_param("cid", "100");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {"subtitle": {"subtitles": []}}
+            }));
+        });
+
+        let client = BiliClient::new(ClientConfig {
+            endpoints: EndpointConfig {
+                api_base: server.base_url(),
+                pgc_base: server.base_url(),
+                intl_base: server.base_url(),
+                comment_base: server.base_url(),
+                passport_base: server.base_url(),
+                tv_passport_base: server.base_url(),
+                tv_passport_poll_base: server.base_url(),
+            },
+            restricted_area: RestrictedAreaConfig {
+                area_hint: Some(RestrictedArea::Hk),
+                proxies: vec![RestrictedAreaProxy::bilibili_api(
+                    format!("{}/proxy", server.base_url()),
+                    Some(RestrictedArea::Hk),
+                )],
+            },
+            user_agent: "test".to_owned(),
+            request_timeout: Duration::from_secs(30),
+            ..ClientConfig::default()
+        });
+        let plan = client.plan_download("ep1000", None).await?;
+
+        web_proxy.assert();
+        v2_proxy.assert();
+        assert_eq!(plan.entries[0].source, StreamSource::PgcProxy);
+        assert_eq!(plan.entries[0].streams.videos[0].id, 80);
+        assert_eq!(plan.entries[0].diagnostics.attempts.len(), 3);
         Ok(())
     }
 

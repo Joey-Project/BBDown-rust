@@ -1,0 +1,60 @@
+{
+  "credential_file": "~/.local/state/telegram-video-downloader/bilibili-auth.json",
+  "access_key_file": "access_key.txt",
+  "request_timeout_seconds": 30,
+  "restricted_api_proxy_all_areas": ["https://proxy.example"],
+  "cases": [
+    {
+      "name": "normal-public",
+      "kind": "normal",
+      "url": "https://www.bilibili.com/video/BV15hdwBKEMG",
+      "actions": ["info", "plan"],
+      "expect": {
+        "info": "video",
+        "allowed_plan_sources": ["normal_web"],
+        "min_entries": 1,
+        "require_streams": true
+      }
+    },
+    {
+      "name": "pgc-hk-mo-tw",
+      "kind": "restricted_pgc",
+      "url": "https://www.bilibili.com/bangumi/play/ep664928",
+      "selection": "current",
+      "restricted_area": "hk",
+      "actions": ["info", "plan"],
+      "expect": {
+        "info": "season",
+        "allowed_plan_sources": ["pgc_web", "pgc_proxy"],
+        "allow_plan_error": true,
+        "plan_error_contains": [
+          "restricted-area resolver failed",
+          "PgcWeb Failed",
+          "PgcProxy area=hk Failed (API code"
+        ],
+        "min_entries": 1,
+        "require_streams": true
+      }
+    },
+    {
+      "name": "pgc-cn",
+      "kind": "restricted_pgc",
+      "url": "https://www.bilibili.com/bangumi/play/ep323085",
+      "selection": "current",
+      "restricted_area": "cn",
+      "actions": ["info", "plan"],
+      "expect": {
+        "info": "season",
+        "allowed_plan_sources": ["pgc_web", "pgc_proxy"],
+        "allow_plan_error": true,
+        "plan_error_contains": [
+          "restricted-area resolver failed",
+          "PgcWeb Failed",
+          "PgcProxy area=cn Failed (API code"
+        ],
+        "min_entries": 1,
+        "require_streams": true
+      }
+    }
+  ]
+}

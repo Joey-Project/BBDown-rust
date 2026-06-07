@@ -5,3 +5,9 @@
 - [completed] Add real file downloads, retry/resume policy, ffmpeg mux integration, and mock e2e download coverage.
 - [completed] Add QR login flow and live-test opt-in harness.
 - [completed] Add restricted-area proxy resolver ordering and diagnostics.
+- [completed] Strengthen local live e2e coverage with a manifest-driven sample matrix.
+- [pending] Add GitHub release binary packaging for tagged and manual builds.
+- [pending] Add crate publish readiness and dry-run validation.
+- [pending] Add clearer stream quality selection and listing support.
+- [pending] Expand restricted-area proxy response compatibility.
+- [pending] Harden integration APIs and embedding documentation.
