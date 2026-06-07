@@ -60,15 +60,21 @@ superseded_by:
   non-HTTP(S) schemes through the redacted URL error path, and covers typo-scheme leak regressions.
 - Final review fix keeps environment playurl proxies ahead of environment API-path proxies even when
   an area-matched API proxy and a generic playurl proxy are configured together.
+- Final review fixes also cover common Chinese "current region cannot watch" PGC playurl messages,
+  malformed CLI proxy URL redaction when whitespace follows the authority, and empty proxy env vars.
 - App-only/mobile proxy response conversion remains out of scope for this slice.
 
 ## Evidence
 
 - Targeted crate tests: `cargo test -p bbdown restricted_area`.
+- Targeted crate tests: `cargo test -p bbdown pgc_streams_fall_back_to_restricted_area_proxy`.
+- Targeted crate tests: `cargo test -p bbdown restricted_area_message_accepts_common_chinese_unavailable_phrasing`.
 - Targeted CLI unit test: `cargo test -p bbdown-cli restricted_area_cli_builds_proxy_chain`.
 - Targeted mock e2e test: `cargo test -p bbdown-cli --test cli_e2e plan_json_uses_restricted_area_proxy_after_official_pgc_failure`.
 - Targeted CLI proxy tests: `cargo test -p bbdown-cli restricted_area_proxy`.
-- Local gate: `just ci` with formatter check, clippy, 86 library tests, 17 CLI unit tests, 8 mock
+- Local repro check: malformed proxy URL parse error redacts whitespace-delimited token text.
+- Local repro check: `BBDOWN_RESTRICTED_AREA_PROXY=''` no longer blocks `auth status`.
+- Local gate: `just ci` with formatter check, clippy, 87 library tests, 18 CLI unit tests, 8 mock
   CLI e2e tests, and 2 ignored live e2e tests in the default workspace test run.
 - Live gate env preflight: `just live-e2e` without `BBDOWN_LIVE_URL` exits with code 2 before
   running tests.

@@ -655,6 +655,7 @@ fn proxy_args_from_sources(
 fn proxy_args_from_cli_fields(cli: &Cli) -> Vec<RestrictedProxyArg> {
     cli.restricted_area_proxy
         .iter()
+        .filter(|spec| !spec.trim().is_empty())
         .map(|spec| RestrictedProxyArg {
             kind: RestrictedAreaProxyKind::PlayUrl,
             spec: spec.clone(),
@@ -663,6 +664,7 @@ fn proxy_args_from_cli_fields(cli: &Cli) -> Vec<RestrictedProxyArg> {
         .chain(
             cli.restricted_api_proxy
                 .iter()
+                .filter(|spec| !spec.trim().is_empty())
                 .map(|spec| RestrictedProxyArg {
                     kind: RestrictedAreaProxyKind::BilibiliApi,
                     spec: spec.clone(),
@@ -833,7 +835,10 @@ fn redact_cli_url_for_error(raw: &str) -> String {
 }
 
 fn redact_unparsed_cli_url_for_error(raw: &str) -> String {
-    let without_query = raw.split(['?', '#']).next().unwrap_or(raw);
+    let without_query = raw
+        .split(|character: char| character.is_whitespace() || matches!(character, '?' | '#'))
+        .next()
+        .unwrap_or(raw);
     let Some(scheme_end) = without_query.find("//") else {
         return "<invalid-url>".to_owned();
     };
@@ -1181,6 +1186,23 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn restricted_area_proxy_ignores_empty_env_values() -> anyhow::Result<()> {
+        let args = ["bbdown", "auth", "status"];
+        let mut cli = Cli::parse_from(args);
+        cli.restricted_area_proxy = vec![String::new()];
+        cli.restricted_api_proxy = vec![" ".to_owned()];
+        let config = restricted_area_from_cli_with_env_values(
+            &cli,
+            args.map(std::ffi::OsString::from),
+            Some(""),
+            Some(" "),
+        )?;
+
+        assert!(config.proxies.is_empty());
+        Ok(())
+    }
+
     #[cfg(unix)]
     #[test]
     fn restricted_area_raw_arg_scan_ignores_non_utf8_non_proxy_values() -> anyhow::Result<()> {
@@ -1211,7 +1233,7 @@ mod tests {
         let args = [
             "bbdown",
             "--restricted-area-proxy",
-            "hk=https://user:pass@exa mple/t/PATH_SECRET?token=QUERY_SECRET",
+            "hk=https://user:pass@proxy.example token=TOKEN_SECRET/t/PATH_SECRET?token=QUERY_SECRET",
             "auth",
             "status",
         ];
@@ -1222,7 +1244,13 @@ mod tests {
             .unwrap_or_default();
 
         assert!(error.contains("failed to parse restricted-area proxy URL"));
-        for sensitive in ["user:pass", "PATH_SECRET", "QUERY_SECRET", "token="] {
+        for sensitive in [
+            "user:pass",
+            "TOKEN_SECRET",
+            "PATH_SECRET",
+            "QUERY_SECRET",
+            "token=",
+        ] {
             assert!(
                 !error.contains(sensitive),
                 "parse error leaked {sensitive}: {error}"

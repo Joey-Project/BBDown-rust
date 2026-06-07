@@ -1387,6 +1387,14 @@ fn is_restricted_area_message(message: &str) -> bool {
         "地區限制",
         "区域限制",
         "區域限制",
+        "所在地区不可观看",
+        "所在地區不可觀看",
+        "所在地区无法观看",
+        "所在地區無法觀看",
+        "地区不可观看",
+        "地區不可觀看",
+        "地区无法观看",
+        "地區無法觀看",
     ]
     .iter()
     .any(|needle| lower.contains(needle))
@@ -2868,6 +2876,17 @@ mod tests {
         assert_eq!(ordered[2].area, Some(RestrictedArea::Tw));
     }
 
+    #[test]
+    fn restricted_area_message_accepts_common_chinese_unavailable_phrasing() {
+        for message in [
+            "您所在地区不可观看",
+            "所在地区无法观看",
+            "您所在地區不可觀看",
+        ] {
+            assert!(super::is_restricted_area_message(message));
+        }
+    }
+
     #[tokio::test]
     async fn pgc_streams_fall_back_to_restricted_area_proxy() -> anyhow::Result<()> {
         let server = MockServer::start();
@@ -2892,7 +2911,7 @@ mod tests {
                 .query_param("ep_id", "1000");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": -40301,
-                "message": "area restricted"
+                "message": "您所在地区不可观看"
             }));
         });
         server.mock(|when, then| {
