@@ -46,9 +46,13 @@ superseded_by:
 - CLI mock e2e coverage verifies WEB QR cookie import and TV QR access-key import through a local
   credential file without overwriting a generic access key, plus expired and hung-poll failure paths
   that do not save credentials.
+- CLI mock e2e commands clear CLI override environment variables before injecting local mock endpoint
+  flags, and live e2e commands clear endpoint/request/credential overrides so ambient developer
+  environment does not silently reroute the test harness.
 - `crates/bbdown-cli/tests/live_e2e.rs` contains ignored opt-in live tests for `info --json` and
   `plan --json` using `BBDOWN_LIVE_URL`, optional `BBDOWN_LIVE_SELECTION`, `BBDOWN_LIVE_COOKIE`,
-  and `BBDOWN_LIVE_ACCESS_KEY`.
+  and `BBDOWN_LIVE_ACCESS_KEY`. Live test credentials are saved through `CredentialStore` so the
+  test harness uses the same private file permissions as the CLI.
 - `just live-e2e` fails fast unless `BBDOWN_LIVE_URL` is set, then runs the ignored live test
   target. Default CI remains formatter, clippy, unit tests, and mock e2e tests only.
 
@@ -62,6 +66,8 @@ superseded_by:
 - Targeted mock e2e tests: `cargo test -p bbdown-cli --test cli_e2e auth_qr_login`.
 - Targeted timeout helper test: `cargo test -p bbdown-cli next_poll_sleep_caps_interval_by_deadline`.
 - Targeted credential merge test: `cargo test -p bbdown-cli save_qr_credentials_merges_with_current_store`.
+- Mock endpoint env isolation regression: `env BBDOWN_COMMENT_BASE=http://127.0.0.1:9 cargo test -p
+  bbdown-cli --test cli_e2e plan_json_resolves_mock_video_streams`.
 - Local gate: `just ci` with 77 library tests, 3 CLI unit tests, 7 mock CLI e2e tests, and 2
   ignored live e2e tests in the default workspace test run.
 - Live gate env preflight: `just live-e2e` without `BBDOWN_LIVE_URL` exits with code 2 before

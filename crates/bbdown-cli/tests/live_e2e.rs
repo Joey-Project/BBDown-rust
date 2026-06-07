@@ -1,8 +1,22 @@
 use assert_cmd::Command;
+use bbdown::{CredentialStore, Credentials};
 use serde_json::Value;
 use std::env;
-use std::fs;
 use std::path::Path;
+
+const CLI_OVERRIDE_ENV_VARS: &[&str] = &[
+    "BBDOWN_API_BASE",
+    "BBDOWN_PGC_BASE",
+    "BBDOWN_INTL_BASE",
+    "BBDOWN_COMMENT_BASE",
+    "BBDOWN_PASSPORT_BASE",
+    "BBDOWN_TV_PASSPORT_BASE",
+    "BBDOWN_TV_PASSPORT_POLL_BASE",
+    "BBDOWN_CREDENTIAL_FILE",
+    "BBDOWN_REQUEST_TIMEOUT_SECONDS",
+    "BBDOWN_COOKIE",
+    "BBDOWN_ACCESS_KEY",
+];
 
 #[test]
 #[ignore = "requires BBDOWN_LIVE_URL and optional live credentials"]
@@ -50,6 +64,9 @@ fn live_plan_json_for_sample_url() -> anyhow::Result<()> {
 
 fn live_command(credential_file: &Path) -> anyhow::Result<Command> {
     let mut command = Command::cargo_bin("bbdown")?;
+    for name in CLI_OVERRIDE_ENV_VARS {
+        command.env_remove(name);
+    }
     command.arg("--credential-file").arg(credential_file);
     Ok(command)
 }
@@ -61,11 +78,11 @@ fn add_live_selection(command: &mut Command) {
 }
 
 fn write_live_credentials(path: &Path) -> anyhow::Result<()> {
-    let credentials = serde_json::json!({
-        "cookie": live_var("BBDOWN_LIVE_COOKIE"),
-        "access_key": live_var("BBDOWN_LIVE_ACCESS_KEY"),
-    });
-    fs::write(path, serde_json::to_vec_pretty(&credentials)?)?;
+    CredentialStore::new(path.to_owned()).save(&Credentials {
+        cookie: live_var("BBDOWN_LIVE_COOKIE"),
+        access_key: live_var("BBDOWN_LIVE_ACCESS_KEY"),
+        tv_access_key: None,
+    })?;
     Ok(())
 }
 

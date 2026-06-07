@@ -12,6 +12,20 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+const CLI_OVERRIDE_ENV_VARS: &[&str] = &[
+    "BBDOWN_API_BASE",
+    "BBDOWN_PGC_BASE",
+    "BBDOWN_INTL_BASE",
+    "BBDOWN_COMMENT_BASE",
+    "BBDOWN_PASSPORT_BASE",
+    "BBDOWN_TV_PASSPORT_BASE",
+    "BBDOWN_TV_PASSPORT_POLL_BASE",
+    "BBDOWN_CREDENTIAL_FILE",
+    "BBDOWN_REQUEST_TIMEOUT_SECONDS",
+    "BBDOWN_COOKIE",
+    "BBDOWN_ACCESS_KEY",
+];
+
 #[test]
 fn info_json_resolves_mock_video() -> anyhow::Result<()> {
     let server = MockServer::start();
@@ -43,7 +57,7 @@ fn info_json_resolves_mock_video() -> anyhow::Result<()> {
         }));
     });
 
-    let mut command = Command::cargo_bin("bbdown")?;
+    let mut command = bbdown_command()?;
     command
         .arg("--credential-file")
         .arg(&credential_file)
@@ -123,7 +137,7 @@ fn plan_json_resolves_mock_video_streams() -> anyhow::Result<()> {
         }));
     });
 
-    let mut command = Command::cargo_bin("bbdown")?;
+    let mut command = bbdown_command()?;
     command
         .arg("--credential-file")
         .arg(&credential_file)
@@ -224,7 +238,7 @@ fn download_json_writes_mock_media_files() -> anyhow::Result<()> {
         then.status(200).body("<i/>");
     });
 
-    let mut command = Command::cargo_bin("bbdown")?;
+    let mut command = bbdown_command()?;
     command
         .arg("--credential-file")
         .arg(&credential_file)
@@ -335,7 +349,7 @@ fn download_json_default_mux_keeps_stdout_valid() -> anyhow::Result<()> {
         then.status(200).body("audio");
     });
 
-    let mut command = Command::cargo_bin("bbdown")?;
+    let mut command = bbdown_command()?;
     command
         .arg("--credential-file")
         .arg(&credential_file)
@@ -368,7 +382,7 @@ fn auth_import_status_and_logout_use_local_store() -> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;
     let credential_file = temp.path().join("credentials.json");
 
-    Command::cargo_bin("bbdown")?
+    bbdown_command()?
         .arg("--credential-file")
         .arg(&credential_file)
         .env("BBDOWN_COOKIE", "SESSDATA=secret")
@@ -376,7 +390,7 @@ fn auth_import_status_and_logout_use_local_store() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    let output = Command::cargo_bin("bbdown")?
+    let output = bbdown_command()?
         .arg("--credential-file")
         .arg(&credential_file)
         .args(["auth", "status"])
@@ -388,14 +402,14 @@ fn auth_import_status_and_logout_use_local_store() -> anyhow::Result<()> {
     let status: Value = serde_json::from_slice(&output)?;
     assert_eq!(status["has_cookie"], true);
 
-    Command::cargo_bin("bbdown")?
+    bbdown_command()?
         .arg("--credential-file")
         .arg(&credential_file)
         .args(["auth", "logout"])
         .assert()
         .success();
 
-    let output = Command::cargo_bin("bbdown")?
+    let output = bbdown_command()?
         .arg("--credential-file")
         .arg(&credential_file)
         .args(["auth", "status"])
@@ -453,10 +467,7 @@ fn auth_qr_login_failures_do_not_save_credentials() -> anyhow::Result<()> {
     let expired_credential_file = temp.path().join("expired-credentials.json");
     mock_expired_web_qr_login(&expired_server);
 
-    let expired_output = Command::cargo_bin("bbdown")?
-        .env_remove("BBDOWN_PASSPORT_BASE")
-        .env_remove("BBDOWN_TV_PASSPORT_BASE")
-        .env_remove("BBDOWN_TV_PASSPORT_POLL_BASE")
+    let expired_output = bbdown_command()?
         .arg("--credential-file")
         .arg(&expired_credential_file)
         .arg("--passport-base")
@@ -484,10 +495,7 @@ fn auth_qr_login_failures_do_not_save_credentials() -> anyhow::Result<()> {
     mock_tv_qr_create(&tv_server);
 
     let started = Instant::now();
-    let timeout_output = Command::cargo_bin("bbdown")?
-        .env_remove("BBDOWN_PASSPORT_BASE")
-        .env_remove("BBDOWN_TV_PASSPORT_BASE")
-        .env_remove("BBDOWN_TV_PASSPORT_POLL_BASE")
+    let timeout_output = bbdown_command()?
         .arg("--credential-file")
         .arg(&timeout_credential_file)
         .arg("--request-timeout-seconds")
@@ -589,10 +597,7 @@ fn run_web_qr_login(
     credential_file: &std::path::Path,
     web_server: &MockServer,
 ) -> anyhow::Result<Vec<u8>> {
-    Ok(Command::cargo_bin("bbdown")?
-        .env_remove("BBDOWN_PASSPORT_BASE")
-        .env_remove("BBDOWN_TV_PASSPORT_BASE")
-        .env_remove("BBDOWN_TV_PASSPORT_POLL_BASE")
+    Ok(bbdown_command()?
         .arg("--credential-file")
         .arg(credential_file)
         .arg("--passport-base")
@@ -651,10 +656,7 @@ fn run_tv_qr_login(
     unused_passport_server: &MockServer,
     tv_server: &MockServer,
 ) -> anyhow::Result<Vec<u8>> {
-    Ok(Command::cargo_bin("bbdown")?
-        .env_remove("BBDOWN_PASSPORT_BASE")
-        .env_remove("BBDOWN_TV_PASSPORT_BASE")
-        .env_remove("BBDOWN_TV_PASSPORT_POLL_BASE")
+    Ok(bbdown_command()?
         .arg("--credential-file")
         .arg(credential_file)
         .arg("--passport-base")
@@ -732,4 +734,12 @@ fn json_lines(output: &[u8]) -> anyhow::Result<Vec<Value>> {
         .lines()
         .map(|line| serde_json::from_str(line).map_err(Into::into))
         .collect()
+}
+
+fn bbdown_command() -> anyhow::Result<Command> {
+    let mut command = Command::cargo_bin("bbdown")?;
+    for name in CLI_OVERRIDE_ENV_VARS {
+        command.env_remove(name);
+    }
+    Ok(command)
 }
