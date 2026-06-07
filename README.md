@@ -6,8 +6,8 @@
 - provide a CLI that can serve as the e2e surface for metadata resolution and downloads.
 
 The current implementation establishes the crate/CLI/CI foundation, metadata resolver, stream
-planning, subtitle discovery, and danmaku discovery. File downloads, muxing, QR login execution,
-and restricted-area proxy ordering will land in later PR slices.
+planning, media downloads, sidecar downloads, retry/resume behavior, and optional ffmpeg muxing. QR
+login execution and restricted-area proxy ordering will land in later PR slices.
 
 ## Current CLI
 
@@ -32,7 +32,19 @@ bbdown plan https://www.bilibili.tv/en/play/34613/341736 --json
 
 `plan` resolves the selected entries, available DASH or FLV stream URLs, subtitle URLs, and the
 danmaku XML URL for each `cid`. PGC and intl planning may still require eligible account or region
-access. It does not download files yet.
+access. It does not download files.
+
+Download selected media files:
+
+```bash
+bbdown download av170001 --output-dir downloads
+bbdown download ss26801 --select latest --output-dir downloads
+bbdown download av170001 --output-dir downloads --no-mux --json
+```
+
+`download` resolves a plan, downloads the first DASH video/audio pair or FLV segments, writes
+subtitle and danmaku sidecars by default, resumes partial files with HTTP range requests, retries
+bounded transient failures, and runs `ffmpeg` unless `--no-mux` is supplied.
 
 `ss` and `md` inputs require an explicit selection in non-interactive mode:
 

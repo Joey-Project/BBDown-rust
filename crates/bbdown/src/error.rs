@@ -24,4 +24,6 @@ pub enum Error {
     Json(#[from] serde_json::Error),
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("ffmpeg mux failed with status {status}")]
+    MuxFailed { status: String },
 }

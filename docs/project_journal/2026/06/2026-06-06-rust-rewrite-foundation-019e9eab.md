@@ -1,7 +1,7 @@
 ---
 id: 20260606-019e9eab
 title: Rust Rewrite Foundation
-status: active
+status: completed
 created: 2026-06-06
 updated: 2026-06-06
 branch: wip/rust-rewrite-foundation
@@ -32,8 +32,7 @@ superseded_by:
 
 ## Next Steps
 
-- Complete PR readiness gates for PR #1.
-- After PR #1 lands, start the stream/download planning slice.
+- Continue with later rewrite slices tracked in their own workstream journals.
 
 ## Evidence
 

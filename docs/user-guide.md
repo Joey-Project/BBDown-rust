@@ -2,8 +2,8 @@
 
 ## Scope
 
-BBDown Rust currently exposes a reusable `bbdown` crate and a CLI for deterministic metadata and
-download-plan resolution. The CLI does not download or mux media yet.
+BBDown Rust currently exposes a reusable `bbdown` crate and a CLI for deterministic metadata,
+download-plan resolution, media download execution, sidecar downloads, and optional ffmpeg muxing.
 
 ## Metadata
 
@@ -44,6 +44,28 @@ The JSON output contains:
 Planning is side-effect free. It does not create files, download media, or call ffmpeg.
 PGC and intl planning may still require eligible account or region access. When intl metadata
 returns a region-limit payload, the CLI reports it as an access restriction.
+
+## Downloads
+
+Use `download` to resolve a plan and write files:
+
+```bash
+bbdown download av170001 --output-dir downloads
+bbdown download ss26801 --select latest --output-dir downloads
+bbdown download av170001 --output-dir downloads --no-mux --json
+```
+
+The command downloads the first available DASH video/audio pair for each entry. When a playurl
+response only contains legacy FLV `durl` segments, it downloads those segments instead. Subtitle
+and danmaku sidecars are enabled by default and can be disabled with `--no-subtitles` and
+`--no-danmaku`.
+
+Downloads resume partial files by default with HTTP range requests. Use `--no-resume` to force a
+fresh write. Retry behavior is bounded by `--retry-attempts` and `--retry-backoff-ms`.
+
+Muxing is enabled by default through `ffmpeg`. Use `--ffmpeg <path>` to choose a binary or
+`--no-mux` to keep downloaded media files as sidecars only. The reusable crate keeps external
+process execution explicit through `DownloadOptions::mux`.
 
 ## Credentials
 

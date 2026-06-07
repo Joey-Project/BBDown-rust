@@ -48,8 +48,8 @@ impl Default for ClientConfig {
 
 #[derive(Clone, Debug)]
 pub struct BiliClient {
-    http: reqwest::Client,
-    config: ClientConfig,
+    pub(crate) http: reqwest::Client,
+    pub(crate) config: ClientConfig,
 }
 
 impl BiliClient {
@@ -569,27 +569,10 @@ impl BiliClient {
     where
         T: for<'de> Deserialize<'de>,
     {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            USER_AGENT,
-            HeaderValue::from_str(&self.config.user_agent)
-                .unwrap_or_else(|_| HeaderValue::from_static("bbdown-rs/0.1")),
-        );
-        headers.insert(
-            REFERER,
-            HeaderValue::from_static("https://www.bilibili.com/"),
-        );
-        if let Some(cookie) = self.config.credentials.cookie.as_deref()
-            && !cookie.is_empty()
-        {
-            let value = HeaderValue::from_str(cookie)
-                .map_err(|_| Error::InvalidInput("invalid cookie header".to_owned()))?;
-            headers.insert(COOKIE, value);
-        }
         let response = self
             .http
             .get(url)
-            .headers(headers)
+            .headers(self.request_headers()?)
             .timeout(self.config.request_timeout)
             .send()
             .await
@@ -603,7 +586,37 @@ impl BiliClient {
             .map_err(Self::http_error_without_url)
     }
 
-    fn http_error_without_url(error: reqwest::Error) -> Error {
+    pub(crate) fn request_headers(&self) -> Result<HeaderMap> {
+        self.headers(true)
+    }
+
+    pub(crate) fn media_headers(&self) -> Result<HeaderMap> {
+        self.headers(false)
+    }
+
+    fn headers(&self, include_cookie: bool) -> Result<HeaderMap> {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            USER_AGENT,
+            HeaderValue::from_str(&self.config.user_agent)
+                .unwrap_or_else(|_| HeaderValue::from_static("bbdown-rs/0.1")),
+        );
+        headers.insert(
+            REFERER,
+            HeaderValue::from_static("https://www.bilibili.com/"),
+        );
+        if include_cookie
+            && let Some(cookie) = self.config.credentials.cookie.as_deref()
+            && !cookie.is_empty()
+        {
+            let value = HeaderValue::from_str(cookie)
+                .map_err(|_| Error::InvalidInput("invalid cookie header".to_owned()))?;
+            headers.insert(COOKIE, value);
+        }
+        Ok(headers)
+    }
+
+    pub(crate) fn http_error_without_url(error: reqwest::Error) -> Error {
         Error::Http(error.without_url())
     }
 

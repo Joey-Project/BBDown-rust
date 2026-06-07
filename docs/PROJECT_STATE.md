@@ -2,13 +2,13 @@
 
 ## Current State
 
-- The Rust BBDown rewrite has a crate/CLI/CI foundation plus typed metadata and download-planning
-  APIs.
+- The Rust BBDown rewrite has a crate/CLI/CI foundation plus typed metadata, download planning, and
+  download execution APIs.
 - Latest completed workstreams:
   - `docs/project_journal/2026/06/2026-06-06-rust-rewrite-foundation-019e9eab.md`.
   - `docs/project_journal/2026/06/2026-06-07-stream-planning-019e9eab.md`.
-- Next planned workstream: file download execution, retry/resume policy, ffmpeg mux integration,
-  and mock e2e download coverage.
+  - `docs/project_journal/2026/06/2026-06-07-download-execution-019e9eab.md`.
+- Next planned workstream: QR login state machine and live-test opt-in harness.
 
 ## Recovery Pointers
 
