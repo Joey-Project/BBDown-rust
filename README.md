@@ -6,8 +6,8 @@
 - provide a CLI that can serve as the e2e surface for metadata resolution and downloads.
 
 The current implementation establishes the crate/CLI/CI foundation, metadata resolver, stream
-planning, media downloads, sidecar downloads, retry/resume behavior, and optional ffmpeg muxing. QR
-login execution and restricted-area proxy ordering will land in later PR slices.
+planning, media downloads, sidecar downloads, retry/resume behavior, optional ffmpeg muxing, QR
+login, and opt-in live test harnesses. Restricted-area proxy ordering will land in a later PR slice.
 
 ## Current CLI
 
@@ -62,6 +62,8 @@ Manage local credentials:
 bbdown auth import-cookie --stdin
 bbdown auth import-cookie --file cookie.txt
 bbdown auth import-access-key --stdin
+bbdown auth login-web
+bbdown auth login-tv
 bbdown auth status
 bbdown auth logout
 ```
@@ -69,12 +71,20 @@ bbdown auth logout
 Credentials are stored in the platform config directory by default. Use
 `--credential-file <path>` to override this path for integration tests or local experiments.
 Secret import commands also read `BBDOWN_COOKIE` or `BBDOWN_ACCESS_KEY` when no input flag is
-provided, so callers can avoid passing credentials through process arguments.
+provided, so callers can avoid passing credentials through process arguments. QR login commands poll
+the Bilibili QR state machine and save only the resulting credential. WEB QR login saves a cookie;
+TV QR login saves a TV-specific access key without overwriting the generic intl/Bstar access key.
+With `--json`, QR login emits newline-delimited JSON events: a `ticket` event with the scan URL
+before polling, then a `saved` event after credentials are stored. Treat the scan URL as a temporary
+login secret; status output and the `saved` event expose redacted booleans only.
 
 Use `--request-timeout-seconds` or `BBDOWN_REQUEST_TIMEOUT_SECONDS` to tune API request bounds.
 Media body reads use `--download-idle-timeout-seconds`; pass `0` to disable the idle timeout.
 Use `--comment-base` or `BBDOWN_COMMENT_BASE` to point danmaku XML downloads at a mock or proxy
-endpoint.
+endpoint. Use `--passport-base` for WEB QR login mocks or proxies, and use `--tv-passport-base` /
+`--tv-passport-poll-base` for TV QR login mocks or proxies. TV QR polling follows
+`--tv-passport-base` only when that TV-specific override is supplied; otherwise it uses the upstream
+TV poll default unless `--tv-passport-poll-base` is set explicitly.
 
 ## Developer Commands
 
@@ -83,11 +93,13 @@ just fmt-check
 just lint
 just test
 just e2e
+just live-e2e
 just ci
 ```
 
-Default CI runs formatter, clippy, unit tests, and mock e2e tests. Live Bilibili tests are
-intentionally excluded from default CI and will be added behind explicit environment variables.
+Default CI runs formatter, clippy, unit tests, and mock e2e tests. `just live-e2e` is intentionally
+excluded from default CI and fails fast unless `BBDOWN_LIVE_URL` is set. It also accepts
+`BBDOWN_LIVE_SELECTION`, `BBDOWN_LIVE_COOKIE`, and `BBDOWN_LIVE_ACCESS_KEY`.
 
 ## Documentation
 

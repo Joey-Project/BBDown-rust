@@ -16,6 +16,9 @@ pub struct EndpointConfig {
     pub pgc_base: String,
     pub intl_base: String,
     pub comment_base: String,
+    pub passport_base: String,
+    pub tv_passport_base: String,
+    pub tv_passport_poll_base: String,
 }
 
 impl Default for EndpointConfig {
@@ -25,6 +28,9 @@ impl Default for EndpointConfig {
             pgc_base: "https://api.bilibili.com".to_owned(),
             intl_base: "https://api.bilibili.tv".to_owned(),
             comment_base: "https://comment.bilibili.com".to_owned(),
+            passport_base: "https://passport.bilibili.com".to_owned(),
+            tv_passport_base: "https://passport.snm0516.aisee.tv".to_owned(),
+            tv_passport_poll_base: "https://passport.bilibili.com".to_owned(),
         }
     }
 }
@@ -596,6 +602,10 @@ impl BiliClient {
         self.headers(true)
     }
 
+    pub(crate) fn anonymous_headers(&self) -> Result<HeaderMap> {
+        self.headers(false)
+    }
+
     pub(crate) fn media_headers(&self) -> Result<HeaderMap> {
         self.headers(false)
     }
@@ -626,7 +636,7 @@ impl BiliClient {
         Error::Http(error.without_url())
     }
 
-    fn endpoint_url(base: &str, path: &str) -> Result<Url> {
+    pub(crate) fn endpoint_url(base: &str, path: &str) -> Result<Url> {
         let mut url = Url::parse(base)?;
         let base_path = url.path().trim_end_matches('/');
         let suffix = path.trim_start_matches('/');
@@ -1462,7 +1472,7 @@ fn intl_ogv_playurl_params(
     params
 }
 
-fn sign_ordered_params(params: &[(&str, String)], secret: &str) -> String {
+pub(crate) fn sign_ordered_params(params: &[(&str, String)], secret: &str) -> String {
     let mut plaintext = String::new();
     for (index, (key, value)) in params.iter().enumerate() {
         if index > 0 {
@@ -1910,10 +1920,14 @@ mod tests {
                 pgc_base: server.base_url(),
                 intl_base: server.base_url(),
                 comment_base: server.base_url(),
+                passport_base: server.base_url(),
+                tv_passport_base: server.base_url(),
+                tv_passport_poll_base: server.base_url(),
             },
             credentials: Credentials {
                 cookie: None,
                 access_key: Some("TOKEN_SHOULD_REDACT_12345".to_owned()),
+                tv_access_key: None,
             },
             user_agent: "test".to_owned(),
             request_timeout: Duration::from_secs(30),
@@ -2106,10 +2120,14 @@ mod tests {
                 pgc_base: server.base_url(),
                 intl_base: server.base_url(),
                 comment_base: server.base_url(),
+                passport_base: server.base_url(),
+                tv_passport_base: server.base_url(),
+                tv_passport_poll_base: server.base_url(),
             },
             credentials: Credentials {
                 cookie: None,
                 access_key: Some("intl-token".to_owned()),
+                tv_access_key: None,
             },
             user_agent: "test".to_owned(),
             request_timeout: Duration::from_secs(30),
@@ -2207,6 +2225,9 @@ mod tests {
                 pgc_base: "http://127.0.0.1:1".to_owned(),
                 intl_base: "http://127.0.0.1:1".to_owned(),
                 comment_base: "http://127.0.0.1:1".to_owned(),
+                passport_base: "http://127.0.0.1:1".to_owned(),
+                tv_passport_base: "http://127.0.0.1:1".to_owned(),
+                tv_passport_poll_base: "http://127.0.0.1:1".to_owned(),
             },
             credentials: Credentials::default(),
             user_agent: "test".to_owned(),
@@ -2418,6 +2439,9 @@ mod tests {
                 pgc_base: server.base_url(),
                 intl_base: server.base_url(),
                 comment_base: server.base_url(),
+                passport_base: server.base_url(),
+                tv_passport_base: server.base_url(),
+                tv_passport_poll_base: server.base_url(),
             },
             credentials: Credentials::default(),
             user_agent: "test".to_owned(),

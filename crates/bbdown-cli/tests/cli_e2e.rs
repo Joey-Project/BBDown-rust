@@ -3,10 +3,28 @@ use httpmock::MockServer;
 use httpmock::prelude::*;
 use serde_json::Value;
 use std::fs;
+use std::net::TcpListener;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 #[cfg(unix)]
 use std::path::Path;
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
+
+const CLI_OVERRIDE_ENV_VARS: &[&str] = &[
+    "BBDOWN_API_BASE",
+    "BBDOWN_PGC_BASE",
+    "BBDOWN_INTL_BASE",
+    "BBDOWN_COMMENT_BASE",
+    "BBDOWN_PASSPORT_BASE",
+    "BBDOWN_TV_PASSPORT_BASE",
+    "BBDOWN_TV_PASSPORT_POLL_BASE",
+    "BBDOWN_CREDENTIAL_FILE",
+    "BBDOWN_REQUEST_TIMEOUT_SECONDS",
+    "BBDOWN_COOKIE",
+    "BBDOWN_ACCESS_KEY",
+];
 
 #[test]
 fn info_json_resolves_mock_video() -> anyhow::Result<()> {
@@ -39,7 +57,7 @@ fn info_json_resolves_mock_video() -> anyhow::Result<()> {
         }));
     });
 
-    let mut command = Command::cargo_bin("bbdown")?;
+    let mut command = bbdown_command()?;
     command
         .arg("--credential-file")
         .arg(&credential_file)
@@ -119,7 +137,7 @@ fn plan_json_resolves_mock_video_streams() -> anyhow::Result<()> {
         }));
     });
 
-    let mut command = Command::cargo_bin("bbdown")?;
+    let mut command = bbdown_command()?;
     command
         .arg("--credential-file")
         .arg(&credential_file)
@@ -220,7 +238,7 @@ fn download_json_writes_mock_media_files() -> anyhow::Result<()> {
         then.status(200).body("<i/>");
     });
 
-    let mut command = Command::cargo_bin("bbdown")?;
+    let mut command = bbdown_command()?;
     command
         .arg("--credential-file")
         .arg(&credential_file)
@@ -331,7 +349,7 @@ fn download_json_default_mux_keeps_stdout_valid() -> anyhow::Result<()> {
         then.status(200).body("audio");
     });
 
-    let mut command = Command::cargo_bin("bbdown")?;
+    let mut command = bbdown_command()?;
     command
         .arg("--credential-file")
         .arg(&credential_file)
@@ -364,7 +382,7 @@ fn auth_import_status_and_logout_use_local_store() -> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;
     let credential_file = temp.path().join("credentials.json");
 
-    Command::cargo_bin("bbdown")?
+    bbdown_command()?
         .arg("--credential-file")
         .arg(&credential_file)
         .env("BBDOWN_COOKIE", "SESSDATA=secret")
@@ -372,7 +390,7 @@ fn auth_import_status_and_logout_use_local_store() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    let output = Command::cargo_bin("bbdown")?
+    let output = bbdown_command()?
         .arg("--credential-file")
         .arg(&credential_file)
         .args(["auth", "status"])
@@ -384,14 +402,14 @@ fn auth_import_status_and_logout_use_local_store() -> anyhow::Result<()> {
     let status: Value = serde_json::from_slice(&output)?;
     assert_eq!(status["has_cookie"], true);
 
-    Command::cargo_bin("bbdown")?
+    bbdown_command()?
         .arg("--credential-file")
         .arg(&credential_file)
         .args(["auth", "logout"])
         .assert()
         .success();
 
-    let output = Command::cargo_bin("bbdown")?
+    let output = bbdown_command()?
         .arg("--credential-file")
         .arg(&credential_file)
         .args(["auth", "status"])
@@ -403,6 +421,291 @@ fn auth_import_status_and_logout_use_local_store() -> anyhow::Result<()> {
     let status: Value = serde_json::from_slice(&output)?;
     assert_eq!(status["has_cookie"], false);
     Ok(())
+}
+
+#[test]
+fn auth_qr_login_web_and_tv_use_local_store() -> anyhow::Result<()> {
+    let web_server = MockServer::start();
+    let tv_server = MockServer::start();
+    let unused_passport_server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    mock_web_qr_login(&web_server);
+    mock_tv_qr_login(&tv_server);
+
+    let output = run_web_qr_login(&credential_file, &web_server)?;
+    let events = json_lines(&output)?;
+    assert_eq!(events[0]["event"], "ticket");
+    assert_eq!(
+        events[0]["url"],
+        "https://passport.example/scan?qrcode_key=WEBKEY"
+    );
+    assert_eq!(events[1]["event"], "saved");
+    assert_eq!(events[1]["saved"]["has_cookie"], true);
+    assert_eq!(events[1]["saved"]["has_access_key"], false);
+    assert!(!String::from_utf8_lossy(&output).contains("sess"));
+
+    let output = run_tv_qr_login(&credential_file, &unused_passport_server, &tv_server)?;
+    let events = json_lines(&output)?;
+    assert_eq!(events[0]["event"], "ticket");
+    assert_eq!(events[0]["url"], "https://tv.example/scan");
+    assert_eq!(events[1]["event"], "saved");
+    assert_eq!(events[1]["saved"]["has_cookie"], true);
+    assert_eq!(events[1]["saved"]["has_access_key"], false);
+    assert_eq!(events[1]["saved"]["has_tv_access_key"], true);
+    assert!(!String::from_utf8_lossy(&output).contains("ACCESS"));
+    let saved: Value = serde_json::from_slice(&fs::read(&credential_file)?)?;
+    assert_eq!(saved["access_key"], Value::Null);
+    assert_eq!(saved["tv_access_key"], "ACCESS");
+    Ok(())
+}
+
+#[test]
+fn auth_qr_login_failures_do_not_save_credentials() -> anyhow::Result<()> {
+    let expired_server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let expired_credential_file = temp.path().join("expired-credentials.json");
+    mock_expired_web_qr_login(&expired_server);
+
+    let expired_output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&expired_credential_file)
+        .arg("--passport-base")
+        .arg(expired_server.base_url())
+        .args([
+            "auth",
+            "login-web",
+            "--timeout-seconds",
+            "2",
+            "--poll-interval-seconds",
+            "1",
+            "--json",
+        ])
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+    assert!(String::from_utf8_lossy(&expired_output).contains("QR code expired"));
+    assert!(!expired_credential_file.exists());
+
+    let tv_server = MockServer::start();
+    let timeout_credential_file = temp.path().join("timeout-credentials.json");
+    let (slow_poll_base, shutdown, handle) = slow_poll_server()?;
+    mock_tv_qr_create(&tv_server);
+
+    let started = Instant::now();
+    let timeout_output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&timeout_credential_file)
+        .arg("--request-timeout-seconds")
+        .arg("5")
+        .arg("--tv-passport-base")
+        .arg(tv_server.base_url())
+        .arg("--tv-passport-poll-base")
+        .arg(slow_poll_base)
+        .args([
+            "auth",
+            "login-tv",
+            "--timeout-seconds",
+            "1",
+            "--poll-interval-seconds",
+            "1",
+            "--json",
+        ])
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+    let elapsed = started.elapsed();
+    let _ = shutdown.send(());
+    handle
+        .join()
+        .map_err(|_| anyhow::anyhow!("slow poll server thread panicked"))?;
+
+    assert!(String::from_utf8_lossy(&timeout_output).contains("QR login timed out"));
+    assert!(
+        elapsed < Duration::from_secs(4),
+        "QR timeout should bound a hung poll request, elapsed: {elapsed:?}"
+    );
+    assert!(!timeout_credential_file.exists());
+    Ok(())
+}
+
+fn mock_web_qr_login(web_server: &MockServer) {
+    web_server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/passport-login/web/qrcode/generate")
+            .query_param("source", "main-fe-header")
+            .header_missing("cookie");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "url": "https://passport.example/scan?qrcode_key=WEBKEY",
+                "qrcode_key": "WEBKEY"
+            }
+        }));
+    });
+    web_server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/passport-login/web/qrcode/poll")
+            .query_param("qrcode_key", "WEBKEY")
+            .query_param("source", "main-fe-header")
+            .header_missing("cookie");
+        then.status(200)
+            .header("Set-Cookie", "SESSDATA=sess; Path=/; Domain=.bilibili.com")
+            .json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "code": 0,
+                    "url": "https://passport.biligame.com/crossDomain?source=main_web&go_url=https%3A%2F%2Fpassport.bilibili.com"
+                }
+            }));
+    });
+}
+
+fn mock_expired_web_qr_login(web_server: &MockServer) {
+    web_server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/passport-login/web/qrcode/generate")
+            .query_param("source", "main-fe-header")
+            .header_missing("cookie");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "url": "https://passport.example/scan?qrcode_key=EXPIRED",
+                "qrcode_key": "EXPIRED"
+            }
+        }));
+    });
+    web_server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/passport-login/web/qrcode/poll")
+            .query_param("qrcode_key", "EXPIRED")
+            .query_param("source", "main-fe-header")
+            .header_missing("cookie");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "code": 86038,
+                "message": "expired"
+            }
+        }));
+    });
+}
+
+fn run_web_qr_login(
+    credential_file: &std::path::Path,
+    web_server: &MockServer,
+) -> anyhow::Result<Vec<u8>> {
+    Ok(bbdown_command()?
+        .arg("--credential-file")
+        .arg(credential_file)
+        .arg("--passport-base")
+        .arg(web_server.base_url())
+        .args([
+            "auth",
+            "login-web",
+            "--timeout-seconds",
+            "2",
+            "--poll-interval-seconds",
+            "1",
+            "--json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone())
+}
+
+fn mock_tv_qr_create(tv_server: &MockServer) {
+    tv_server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/qrcode/auth_code")
+            .header_missing("cookie")
+            .form_urlencoded_tuple("auth_code", "")
+            .form_urlencoded_tuple("mobi_app", "android_tv_yst")
+            .form_urlencoded_tuple_exists("sign");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "url": "https://tv.example/scan",
+                "auth_code": "AUTH"
+            }
+        }));
+    });
+}
+
+fn mock_tv_qr_login(tv_server: &MockServer) {
+    mock_tv_qr_create(tv_server);
+    tv_server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/qrcode/poll")
+            .header_missing("cookie")
+            .form_urlencoded_tuple("auth_code", "AUTH")
+            .form_urlencoded_tuple_exists("sign");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {"access_token": "ACCESS"}
+        }));
+    });
+}
+
+fn run_tv_qr_login(
+    credential_file: &std::path::Path,
+    unused_passport_server: &MockServer,
+    tv_server: &MockServer,
+) -> anyhow::Result<Vec<u8>> {
+    Ok(bbdown_command()?
+        .arg("--credential-file")
+        .arg(credential_file)
+        .arg("--passport-base")
+        .arg(unused_passport_server.base_url())
+        .arg("--tv-passport-base")
+        .arg(tv_server.base_url())
+        .arg("--tv-passport-poll-base")
+        .arg(tv_server.base_url())
+        .args([
+            "auth",
+            "login-tv",
+            "--timeout-seconds",
+            "2",
+            "--poll-interval-seconds",
+            "1",
+            "--json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone())
+}
+
+fn slow_poll_server() -> anyhow::Result<(String, mpsc::Sender<()>, thread::JoinHandle<()>)> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    listener.set_nonblocking(true)?;
+    let base_url = format!("http://{}", listener.local_addr()?);
+    let (shutdown_sender, shutdown_receiver) = mpsc::channel();
+    let handle = thread::spawn(move || {
+        loop {
+            if shutdown_receiver.try_recv().is_ok() {
+                break;
+            }
+            match listener.accept() {
+                Ok((_stream, _address)) => {
+                    let _ = shutdown_receiver.recv_timeout(Duration::from_secs(10));
+                    break;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    Ok((base_url, shutdown_sender, handle))
 }
 
 #[cfg(unix)]
@@ -426,4 +729,19 @@ fn downloaded_file_path<'a>(json: &'a Value, kind: &str) -> anyhow::Result<&'a s
             })
         })
         .ok_or_else(|| anyhow::anyhow!("missing downloaded {kind} path"))
+}
+
+fn json_lines(output: &[u8]) -> anyhow::Result<Vec<Value>> {
+    String::from_utf8(output.to_vec())?
+        .lines()
+        .map(|line| serde_json::from_str(line).map_err(Into::into))
+        .collect()
+}
+
+fn bbdown_command() -> anyhow::Result<Command> {
+    let mut command = Command::cargo_bin("bbdown")?;
+    for name in CLI_OVERRIDE_ENV_VARS {
+        command.env_remove(name);
+    }
+    Ok(command)
 }

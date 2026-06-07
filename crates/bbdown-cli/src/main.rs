@@ -4,13 +4,14 @@
 use anyhow::{Context, bail, ensure};
 use bbdown::{
     BiliClient, ClientConfig, CredentialStore, Credentials, DownloadOptions, DownloadReport,
-    EndpointConfig, MuxOptions, ResolvedContent, RetryPolicy, Selection,
+    EndpointConfig, MuxOptions, QrLoginKind, QrLoginState, QrLoginTicket, ResolvedContent,
+    RetryPolicy, Selection,
 };
 use clap::{Args, Parser, Subcommand};
 use std::fs;
 use std::io::{self, Read};
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Parser)]
 #[command(name = "bbdown")]
@@ -40,6 +41,16 @@ struct Cli {
         default_value = "https://comment.bilibili.com"
     )]
     comment_base: String,
+    #[arg(
+        long,
+        env = "BBDOWN_PASSPORT_BASE",
+        default_value = "https://passport.bilibili.com"
+    )]
+    passport_base: String,
+    #[arg(long, env = "BBDOWN_TV_PASSPORT_BASE")]
+    tv_passport_base: Option<String>,
+    #[arg(long, env = "BBDOWN_TV_PASSPORT_POLL_BASE")]
+    tv_passport_poll_base: Option<String>,
     #[arg(long, env = "BBDOWN_CREDENTIAL_FILE")]
     credential_file: Option<PathBuf>,
     #[arg(long, env = "BBDOWN_REQUEST_TIMEOUT_SECONDS", default_value_t = 30)]
@@ -100,6 +111,8 @@ enum AuthCommand {
     Status,
     ImportCookie(SecretImportArgs),
     ImportAccessKey(SecretImportArgs),
+    LoginWeb(QrLoginArgs),
+    LoginTv(QrLoginArgs),
     Logout,
 }
 
@@ -111,6 +124,16 @@ struct SecretImportArgs {
     file: Option<PathBuf>,
 }
 
+#[derive(Debug, Args)]
+struct QrLoginArgs {
+    #[arg(long)]
+    json: bool,
+    #[arg(long, default_value_t = 180)]
+    timeout_seconds: u64,
+    #[arg(long, default_value_t = 1)]
+    poll_interval_seconds: u64,
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -118,12 +141,7 @@ async fn main() -> anyhow::Result<()> {
         cli.request_timeout_seconds > 0,
         "--request-timeout-seconds must be greater than 0"
     );
-    let endpoints = EndpointConfig {
-        api_base: cli.api_base.clone(),
-        pgc_base: cli.pgc_base.clone(),
-        intl_base: cli.intl_base.clone(),
-        comment_base: cli.comment_base.clone(),
-    };
+    let endpoints = endpoints_from_cli(&cli);
     let request_timeout = Duration::from_secs(cli.request_timeout_seconds);
     let store = CredentialStore::new(credential_path(cli.credential_file)?);
     match cli.command {
@@ -194,7 +212,9 @@ async fn main() -> anyhow::Result<()> {
             };
             handle_download(&store, endpoints, request_timeout, args).await?;
         }
-        Command::Auth { command } => handle_auth(command, &store)?,
+        Command::Auth { command } => {
+            handle_auth(command, &store, endpoints, request_timeout).await?;
+        }
     }
     Ok(())
 }
@@ -291,7 +311,12 @@ fn client_config(
     }
 }
 
-fn handle_auth(command: AuthCommand, store: &CredentialStore) -> anyhow::Result<()> {
+async fn handle_auth(
+    command: AuthCommand,
+    store: &CredentialStore,
+    endpoints: EndpointConfig,
+    request_timeout: Duration,
+) -> anyhow::Result<()> {
     match command {
         AuthCommand::Status => {
             let credentials = store.load().context("failed to load credentials")?;
@@ -318,12 +343,201 @@ fn handle_auth(command: AuthCommand, store: &CredentialStore) -> anyhow::Result<
                 .context("failed to save credentials")?;
             println!("access key imported");
         }
+        AuthCommand::LoginWeb(args) => {
+            handle_qr_login(QrLoginKind::Web, args, store, endpoints, request_timeout).await?;
+        }
+        AuthCommand::LoginTv(args) => {
+            handle_qr_login(QrLoginKind::Tv, args, store, endpoints, request_timeout).await?;
+        }
         AuthCommand::Logout => {
             store.clear().context("failed to clear credentials")?;
             println!("credentials cleared");
         }
     }
     Ok(())
+}
+
+async fn handle_qr_login(
+    kind: QrLoginKind,
+    args: QrLoginArgs,
+    store: &CredentialStore,
+    endpoints: EndpointConfig,
+    request_timeout: Duration,
+) -> anyhow::Result<()> {
+    ensure!(
+        args.timeout_seconds > 0,
+        "--timeout-seconds must be greater than 0"
+    );
+    ensure!(
+        args.poll_interval_seconds > 0,
+        "--poll-interval-seconds must be greater than 0"
+    );
+    let client = BiliClient::new(client_config(
+        endpoints,
+        request_timeout,
+        Credentials::default(),
+    ));
+    let ticket = match kind {
+        QrLoginKind::Web => client.create_web_qr_login().await?,
+        QrLoginKind::Tv => client.create_tv_qr_login().await?,
+    };
+    if args.json {
+        print_json_line(&serde_json::json!({
+            "event": "ticket",
+            "kind": kind,
+            "url": ticket.url,
+        }))?;
+    } else {
+        print_human_line(format_args!("scan: {}", ticket.url))?;
+    }
+    let credentials = wait_for_qr_login(&client, &ticket, &args).await?;
+    let summary = save_qr_credentials(store, credentials)?;
+    if args.json {
+        print_json_line(&serde_json::json!({
+            "event": "saved",
+            "kind": kind,
+            "saved": summary,
+        }))?;
+    } else {
+        print_human_line("credentials saved")?;
+    }
+    Ok(())
+}
+
+fn save_qr_credentials(
+    store: &CredentialStore,
+    credentials: Credentials,
+) -> anyhow::Result<bbdown::CredentialSource> {
+    let mut stored = store.load().context("failed to load credentials")?;
+    merge_credentials(&mut stored, credentials);
+    store.save(&stored).context("failed to save credentials")?;
+    Ok(stored.redacted_summary())
+}
+
+fn merge_credentials(stored: &mut Credentials, credentials: Credentials) {
+    if credentials.cookie.is_some() {
+        stored.cookie = credentials.cookie;
+    }
+    if credentials.access_key.is_some() {
+        stored.access_key = credentials.access_key;
+    }
+    if credentials.tv_access_key.is_some() {
+        stored.tv_access_key = credentials.tv_access_key;
+    }
+}
+
+async fn wait_for_qr_login(
+    client: &BiliClient,
+    ticket: &QrLoginTicket,
+    args: &QrLoginArgs,
+) -> anyhow::Result<Credentials> {
+    let interval = Duration::from_secs(args.poll_interval_seconds);
+    let deadline = Instant::now()
+        .checked_add(Duration::from_secs(args.timeout_seconds))
+        .context("--timeout-seconds is too large")?;
+    let mut last_waiting_state: Option<&'static str> = None;
+    loop {
+        let poll_timeout =
+            remaining_until(Instant::now(), deadline).context("QR login timed out")?;
+        let state = poll_qr_login(client, ticket, poll_timeout).await?;
+        match state {
+            QrLoginState::WaitingForScan => {
+                if !args.json && last_waiting_state != Some("waiting_for_scan") {
+                    print_human_line("waiting for scan")?;
+                }
+                last_waiting_state = Some("waiting_for_scan");
+            }
+            QrLoginState::WaitingForConfirm => {
+                if !args.json && last_waiting_state != Some("waiting_for_confirm") {
+                    print_human_line("waiting for confirmation")?;
+                }
+                last_waiting_state = Some("waiting_for_confirm");
+            }
+            QrLoginState::Expired => bail!("QR code expired"),
+            QrLoginState::Succeeded { credentials } => return Ok(credentials),
+        }
+        let sleep_duration =
+            next_poll_sleep(Instant::now(), deadline, interval).context("QR login timed out")?;
+        tokio::time::sleep(sleep_duration).await;
+    }
+}
+
+async fn poll_qr_login(
+    client: &BiliClient,
+    ticket: &QrLoginTicket,
+    timeout: Duration,
+) -> anyhow::Result<QrLoginState> {
+    tokio::time::timeout(timeout, async {
+        match ticket.kind {
+            QrLoginKind::Web => client.poll_web_qr_login(&ticket.key).await,
+            QrLoginKind::Tv => client.poll_tv_qr_login(ticket).await,
+        }
+    })
+    .await
+    .context("QR login timed out")?
+    .map_err(Into::into)
+}
+
+fn remaining_until(now: Instant, deadline: Instant) -> Option<Duration> {
+    let remaining = deadline.checked_duration_since(now)?;
+    if remaining.is_zero() {
+        None
+    } else {
+        Some(remaining)
+    }
+}
+
+fn next_poll_sleep(now: Instant, deadline: Instant, interval: Duration) -> Option<Duration> {
+    let remaining = deadline.checked_duration_since(now)?;
+    if remaining.is_zero() {
+        None
+    } else {
+        Some(remaining.min(interval))
+    }
+}
+
+fn print_json_line(value: &serde_json::Value) -> anyhow::Result<()> {
+    println!("{}", serde_json::to_string(value)?);
+    flush_stdout()?;
+    Ok(())
+}
+
+fn print_human_line(message: impl std::fmt::Display) -> anyhow::Result<()> {
+    println!("{message}");
+    flush_stdout()?;
+    Ok(())
+}
+
+fn flush_stdout() -> anyhow::Result<()> {
+    use std::io::Write as _;
+    std::io::stdout()
+        .flush()
+        .context("failed to flush stdout")?;
+    Ok(())
+}
+
+fn endpoints_from_cli(cli: &Cli) -> EndpointConfig {
+    let default_endpoints = EndpointConfig::default();
+    let tv_passport_base = cli
+        .tv_passport_base
+        .clone()
+        .unwrap_or(default_endpoints.tv_passport_base);
+    let tv_passport_poll_base = cli.tv_passport_poll_base.clone().unwrap_or_else(|| {
+        if cli.tv_passport_base.is_some() {
+            tv_passport_base.clone()
+        } else {
+            default_endpoints.tv_passport_poll_base
+        }
+    });
+    EndpointConfig {
+        api_base: cli.api_base.clone(),
+        pgc_base: cli.pgc_base.clone(),
+        intl_base: cli.intl_base.clone(),
+        comment_base: cli.comment_base.clone(),
+        passport_base: cli.passport_base.clone(),
+        tv_passport_base,
+        tv_passport_poll_base,
+    }
 }
 
 fn read_secret(
@@ -406,3 +620,132 @@ fn print_download_report(report: &DownloadReport) {
 
 #[allow(dead_code)]
 fn _assert_credentials_send_sync(_: Credentials) {}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cli, endpoints_from_cli, next_poll_sleep, remaining_until, save_qr_credentials};
+    use bbdown::{CredentialStore, Credentials, EndpointConfig};
+    use clap::Parser as _;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn next_poll_sleep_caps_interval_by_deadline() {
+        let now = Instant::now();
+        assert_eq!(
+            next_poll_sleep(now, now + Duration::from_secs(119), Duration::from_secs(61)),
+            Some(Duration::from_secs(61))
+        );
+        assert_eq!(
+            next_poll_sleep(
+                now + Duration::from_secs(61),
+                now + Duration::from_secs(119),
+                Duration::from_secs(61),
+            ),
+            Some(Duration::from_secs(58))
+        );
+        assert_eq!(
+            next_poll_sleep(
+                now + Duration::from_secs(119),
+                now + Duration::from_secs(119),
+                Duration::from_secs(61),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn remaining_until_uses_total_deadline_without_poll_interval_cap() {
+        let now = Instant::now();
+        assert_eq!(
+            remaining_until(now, now + Duration::from_secs(119)),
+            Some(Duration::from_secs(119))
+        );
+        assert_eq!(remaining_until(now, now), None);
+    }
+
+    #[test]
+    fn passport_base_does_not_override_default_tv_poll_base() {
+        let cli = Cli::parse_from([
+            "bbdown",
+            "--passport-base",
+            "http://127.0.0.1:8080",
+            "auth",
+            "status",
+        ]);
+        let endpoints = endpoints_from_cli(&cli);
+        let defaults = EndpointConfig::default();
+
+        assert_eq!(endpoints.passport_base, "http://127.0.0.1:8080");
+        assert_eq!(endpoints.tv_passport_base, defaults.tv_passport_base);
+        assert_eq!(
+            endpoints.tv_passport_poll_base,
+            defaults.tv_passport_poll_base
+        );
+    }
+
+    #[test]
+    fn tv_passport_base_controls_tv_poll_when_poll_base_is_implicit() {
+        let cli = Cli::parse_from([
+            "bbdown",
+            "--tv-passport-base",
+            "http://127.0.0.1:8080",
+            "auth",
+            "status",
+        ]);
+        let endpoints = endpoints_from_cli(&cli);
+
+        assert_eq!(endpoints.tv_passport_base, "http://127.0.0.1:8080");
+        assert_eq!(endpoints.tv_passport_poll_base, "http://127.0.0.1:8080");
+    }
+
+    #[test]
+    fn explicit_tv_passport_poll_base_wins() {
+        let cli = Cli::parse_from([
+            "bbdown",
+            "--tv-passport-base",
+            "http://127.0.0.1:8080",
+            "--tv-passport-poll-base",
+            "http://127.0.0.1:8081",
+            "auth",
+            "status",
+        ]);
+        let endpoints = endpoints_from_cli(&cli);
+
+        assert_eq!(endpoints.tv_passport_base, "http://127.0.0.1:8080");
+        assert_eq!(endpoints.tv_passport_poll_base, "http://127.0.0.1:8081");
+    }
+
+    #[test]
+    fn save_qr_credentials_merges_with_current_store() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let store = CredentialStore::new(temp.path().join("credentials.json"));
+        store.save(&Credentials {
+            cookie: Some("SESSDATA=fresh".to_owned()),
+            access_key: Some("BSTAR".to_owned()),
+            tv_access_key: None,
+        })?;
+
+        let summary = save_qr_credentials(
+            &store,
+            Credentials {
+                cookie: None,
+                access_key: None,
+                tv_access_key: Some("TV".to_owned()),
+            },
+        )?;
+        let saved = store.load()?;
+
+        assert_eq!(
+            saved,
+            Credentials {
+                cookie: Some("SESSDATA=fresh".to_owned()),
+                access_key: Some("BSTAR".to_owned()),
+                tv_access_key: Some("TV".to_owned()),
+            }
+        );
+        assert!(summary.has_cookie);
+        assert!(summary.has_access_key);
+        assert!(summary.has_tv_access_key);
+        Ok(())
+    }
+}
