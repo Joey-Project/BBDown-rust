@@ -61,10 +61,12 @@ neither shape is complete, the download fails before writing media. Subtitle and
 are enabled by default and can be disabled with `--no-subtitles` and `--no-danmaku`.
 
 Downloads resume partial files by default with HTTP range requests and validate `Content-Range`
-plus advertised media sizes when the plan provides them. Use `--no-resume` to force a fresh write.
-Retry behavior is bounded by `--retry-attempts` and `--retry-backoff-ms`. Entry directories include
-content identity, and DASH media filenames include stream metadata identity, so same-title videos
-and different codec variants do not share the same resume target.
+plus advertised media sizes when the plan provides them. Use `--no-resume` to force a fresh write;
+failed fresh writes preserve any existing target. If a server ignores a resume range, the old
+partial is only replaced when the full retry can be length-validated. Retry behavior is bounded by
+`--retry-attempts` and `--retry-backoff-ms`. Entry directories include content identity, and DASH
+media filenames include stream metadata identity, so same-title videos and different codec variants
+do not share the same resume target.
 
 `--request-timeout-seconds` applies to API requests. Media body reads use
 `--download-idle-timeout-seconds`; pass `0` to disable that idle timeout.

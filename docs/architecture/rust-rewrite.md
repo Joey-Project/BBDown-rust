@@ -94,8 +94,11 @@ the pre-attempt length. Entry directories include content identity so same-title
 resume targets, subtitle sidecar names include track identity, and filename components are bounded
 by UTF-8 byte length. If a server ignores `Range` and returns `200 OK` for a partial file, the
 executor writes the full retry to a temporary file and only replaces the old partial after
-validation succeeds. DASH media output names prefer stable stream metadata and only fall back to URL
-path hashing when metadata is absent, so CDN host or query changes do not split resume targets.
+validation succeeds; without an advertised size or `Content-Range`, the old partial is preserved.
+Forced fresh writes also use temporary files when replacing an existing target, so failed
+`--no-resume` retries do not clear previous output. DASH media output names prefer stable stream
+metadata and only fall back to URL path hashing when metadata is absent, so CDN host or query
+changes do not split resume targets.
 
 The crate default keeps muxing disabled so embedding projects do not spawn external processes by
 surprise. The CLI `download` command enables ffmpeg by default and exposes `--no-mux` for users and

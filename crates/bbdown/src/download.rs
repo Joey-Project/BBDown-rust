@@ -344,11 +344,8 @@ impl BiliClient {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).await?;
         }
-        let resume_from = if options.resume {
-            existing_file_len(path).await?
-        } else {
-            0
-        };
+        let existing_len = existing_file_len(path).await?;
+        let resume_from = if options.resume { existing_len } else { 0 };
         let response = self.send_download_request(url, resume_from).await?;
         let status = response.status();
         if resume_from > 0 && status == StatusCode::RANGE_NOT_SATISFIABLE {
@@ -391,7 +388,8 @@ impl BiliClient {
             }
         }
         let start_offset = if append { resume_from } else { 0 };
-        let replace_existing = resume_from > 0 && !append;
+        let full_retry_after_ignored_range = resume_from > 0 && !append;
+        let replace_existing = existing_len > 0 && !append;
         let write_path = if replace_existing {
             temporary_download_path(path)
         } else {
@@ -423,6 +421,12 @@ impl BiliClient {
                 return Err(error);
             }
         };
+        if full_retry_after_ignored_range && expected_size.is_none() && content_range.is_none() {
+            let _ = fs::remove_file(&write_path).await;
+            return Err(Error::InvalidInput(
+                "server ignored resume range without length validation".to_owned(),
+            ));
+        }
         if replace_existing {
             replace_file(&write_path, path).await?;
         }
@@ -1664,6 +1668,120 @@ mod tests {
         assert_eq!(file.bytes_written, 6);
         assert_eq!(file.resumed_from, 0);
         assert_eq!(tokio::fs::read_to_string(&path).await?, "oldnew");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rejects_unvalidated_full_retry_after_ignored_range() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/video.m4s")
+                .header("range", "bytes=3-");
+            then.status(200).body("maybe-full");
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
+        let output_dir = test_entry_dir(temp.path(), &plan);
+        tokio::fs::create_dir_all(&output_dir).await?;
+        let path = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
+        tokio::fs::write(&path, "old").await?;
+
+        let Err(error) = client
+            .download_plan(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().to_path_buf(),
+                    retry: RetryPolicy::single_attempt(),
+                    include_danmaku: false,
+                    mux: MuxOptions::Disabled,
+                    ..DownloadOptions::default()
+                },
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!("unvalidated full retry should fail"));
+        };
+
+        assert!(error.to_string().contains("length validation"));
+        assert_eq!(tokio::fs::read_to_string(&path).await?, "old");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn no_resume_preserves_existing_file_when_fresh_write_fails() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/video.m4s");
+            then.status(200).body("new");
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let mut plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
+        plan.entries[0].streams.videos[0].size = Some(6);
+        let output_dir = test_entry_dir(temp.path(), &plan);
+        tokio::fs::create_dir_all(&output_dir).await?;
+        let path = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
+        tokio::fs::write(&path, "old").await?;
+
+        let Err(error) = client
+            .download_plan(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().to_path_buf(),
+                    retry: RetryPolicy::single_attempt(),
+                    resume: false,
+                    include_danmaku: false,
+                    mux: MuxOptions::Disabled,
+                    ..DownloadOptions::default()
+                },
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!("invalid fresh write should fail"));
+        };
+
+        assert!(error.to_string().contains("expected media size"));
+        assert_eq!(tokio::fs::read_to_string(&path).await?, "old");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn no_resume_replaces_existing_file_after_fresh_write_validates() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/video.m4s");
+            then.status(200).body("new");
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/audio.m4s");
+            then.status(200).body("audio");
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let mut plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
+        plan.entries[0].streams.videos[0].size = Some(3);
+        let output_dir = test_entry_dir(temp.path(), &plan);
+        tokio::fs::create_dir_all(&output_dir).await?;
+        let path = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
+        tokio::fs::write(&path, "old").await?;
+
+        client
+            .download_plan(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().to_path_buf(),
+                    retry: RetryPolicy::single_attempt(),
+                    resume: false,
+                    include_danmaku: false,
+                    mux: MuxOptions::Disabled,
+                    ..DownloadOptions::default()
+                },
+            )
+            .await?;
+
+        assert_eq!(tokio::fs::read_to_string(&path).await?, "new");
         Ok(())
     }
 

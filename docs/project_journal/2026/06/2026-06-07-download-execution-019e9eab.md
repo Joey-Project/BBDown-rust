@@ -45,7 +45,9 @@ superseded_by:
   failed write attempts to the pre-attempt file length.
 - Ignored `Range` full-retry writes use temporary files so failed full retries preserve the
   previous partial file, and successful full retries replace the partial through a cross-platform
-  replace path.
+  replace path only when length validation is available.
+- Forced fresh writes use temporary files when replacing existing targets, so failed `--no-resume`
+  attempts preserve previous output.
 - Entry directories include content identity, and DASH media filenames include stable stream
   identity material so same-title videos and different codec variants do not reuse the same resume
   target, while CDN host/query changes do not split targets.
@@ -59,12 +61,12 @@ superseded_by:
 - Safety coverage verifies media downloads do not send cookies, backup URLs are used, matching 416
   responses are treated as complete, mismatched `Content-Range` responses are rejected, range body
   lengths are checked, non-partial `Content-Range` responses including `bytes */N` are rejected,
-  ignored `Range` full retries preserve old partial files, expected media sizes are enforced, and
-  stream identity is reflected in output filenames, same-title content identities get distinct
-  entry directories, duplicate-language subtitle tracks get distinct filenames, duplicate subtitle
-  URLs are skipped, unknown subtitle extensions are bounded, filename byte limits are enforced,
-  incomplete DASH media uses FLV fallback when available, and incomplete DASH media without FLV
-  fallback fails.
+  ignored `Range` full retries preserve old partial files without length validation, `--no-resume`
+  failures preserve existing targets, expected media sizes are enforced, and stream identity is
+  reflected in output filenames, same-title content identities get distinct entry directories,
+  duplicate-language subtitle tracks get distinct filenames, duplicate subtitle URLs are skipped,
+  unknown subtitle extensions are bounded, filename byte limits are enforced, incomplete DASH media
+  uses FLV fallback when available, and incomplete DASH media without FLV fallback fails.
 - Retry coverage verifies a failed first request can be retried and then written successfully.
 - Mux coverage verifies fake ffmpeg success reports, missing, empty, or stale mux output failures,
   stdin isolation, temporary mux output validation, existing output preservation on failed reruns,
@@ -84,4 +86,4 @@ superseded_by:
 
 - Local type gate: `cargo check --workspace`.
 - Local lint gate: `cargo clippy --workspace --all-targets -- -D warnings`.
-- Local tests: `cargo test --workspace` with 62 library tests and 5 CLI e2e tests.
+- Local tests: `cargo test --workspace` with 65 library tests and 5 CLI e2e tests.
