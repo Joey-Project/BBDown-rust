@@ -1,0 +1,56 @@
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$BinaryPath,
+
+    [Parameter(Mandatory = $true)]
+    [string]$PackageName,
+
+    [Parameter(Mandatory = $true)]
+    [string]$OutputDir
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+if ($PackageName -notmatch '^[A-Za-z0-9._-]+$') {
+    throw "package name must contain only letters, numbers, dot, underscore, or dash: $PackageName"
+}
+
+if (-not (Test-Path -LiteralPath $BinaryPath -PathType Leaf)) {
+    throw "binary path does not exist: $BinaryPath"
+}
+
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repoRoot = Split-Path -Parent $scriptDir
+$outputFullPath = [System.IO.Path]::GetFullPath($OutputDir)
+New-Item -ItemType Directory -Path $outputFullPath -Force | Out-Null
+
+$stagingParent = Join-Path ([System.IO.Path]::GetTempPath()) ("bbdown-release-" + [System.Guid]::NewGuid().ToString("N"))
+$stagingDir = Join-Path $stagingParent $PackageName
+$archivePath = Join-Path $outputFullPath "$PackageName.zip"
+$checksumPath = "$archivePath.sha256"
+
+try {
+    New-Item -ItemType Directory -Path (Join-Path $stagingDir "docs") -Force | Out-Null
+    Copy-Item -LiteralPath $BinaryPath -Destination (Join-Path $stagingDir "bbdown.exe")
+    Copy-Item -LiteralPath (Join-Path $repoRoot "README.md") -Destination (Join-Path $stagingDir "README.md")
+    Copy-Item -LiteralPath (Join-Path $repoRoot "docs/user-guide.md") -Destination (Join-Path $stagingDir "docs/user-guide.md")
+    $licensePath = Join-Path $repoRoot "LICENSE"
+    if (Test-Path -LiteralPath $licensePath -PathType Leaf) {
+        Copy-Item -LiteralPath $licensePath -Destination (Join-Path $stagingDir "LICENSE")
+    }
+
+    if (Test-Path -LiteralPath $archivePath) {
+        Remove-Item -LiteralPath $archivePath -Force
+    }
+    Compress-Archive -Path $stagingDir -DestinationPath $archivePath
+    $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archivePath).Hash.ToLowerInvariant()
+    $archiveName = Split-Path -Leaf $archivePath
+    Set-Content -LiteralPath $checksumPath -Value "$hash  $archiveName" -Encoding ascii
+    Write-Output $archivePath
+}
+finally {
+    if (Test-Path -LiteralPath $stagingParent) {
+        Remove-Item -LiteralPath $stagingParent -Recurse -Force
+    }
+}

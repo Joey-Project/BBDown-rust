@@ -1,0 +1,127 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to build. Defaults to the workflow ref."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.package_suffix }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            binary: target/x86_64-unknown-linux-gnu/release/bbdown
+            package_suffix: linux-x86_64
+            archive_ext: tar.gz
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            binary: target/x86_64-apple-darwin/release/bbdown
+            package_suffix: macos-x86_64
+            archive_ext: tar.gz
+          - os: macos-15
+            target: aarch64-apple-darwin
+            binary: target/aarch64-apple-darwin/release/bbdown
+            package_suffix: macos-aarch64
+            archive_ext: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary: target/x86_64-pc-windows-msvc/release/bbdown.exe
+            package_suffix: windows-x86_64
+            archive_ext: zip
+
+    steps:
+      # actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      # dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+        with:
+          toolchain: 1.95.0
+          targets: ${{ matrix.target }}
+
+      # Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+
+      - name: Build CLI
+        run: cargo build -p bbdown-cli --bin bbdown --release --locked --target ${{ matrix.target }}
+
+      - name: Compute package name
+        id: package
+        shell: bash
+        env:
+          PACKAGE_VERSION: ${{ inputs.ref || github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${PACKAGE_VERSION#refs/tags/}"
+          version="${version#refs/heads/}"
+          version="${version//\//-}"
+          safe_version=$(printf '%s' "${version}" | LC_ALL=C tr -cs 'A-Za-z0-9._-' '-')
+          if [[ -z "${safe_version}" ]]; then
+            echo "package version is empty after normalization" >&2
+            exit 2
+          fi
+          echo "name=bbdown-${safe_version}-${{ matrix.package_suffix }}" >> "${GITHUB_OUTPUT}"
+
+      - name: Package Unix archive
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/package-release.sh "${{ matrix.binary }}" "${{ steps.package.outputs.name }}" dist
+
+      - name: Package Windows archive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./scripts/package-release.ps1 `
+            -BinaryPath "${{ matrix.binary }}" `
+            -PackageName "${{ steps.package.outputs.name }}" `
+            -OutputDir dist
+
+      - name: Upload archive artifact
+        # actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: |
+            dist/${{ steps.package.outputs.name }}.${{ matrix.archive_ext }}
+            dist/${{ steps.package.outputs.name }}.${{ matrix.archive_ext }}.sha256
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release assets
+        # softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
+        with:
+          files: dist/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true

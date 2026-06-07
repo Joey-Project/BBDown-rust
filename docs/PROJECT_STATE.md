@@ -11,7 +11,8 @@
   - `docs/project_journal/2026/06/2026-06-07-qr-login-live-tests-019e9eab.md`.
   - `docs/project_journal/2026/06/2026-06-07-restricted-area-proxy-019e9eab.md`.
   - `docs/project_journal/2026/06/2026-06-07-live-e2e-matrix-019e9eab.md`.
-- Next planned workstream: GitHub binary release packaging, followed by crate publish readiness.
+  - `docs/project_journal/2026/06/2026-06-07-release-packaging-019e9eab.md`.
+- Next planned workstream: crate publish readiness and dry-run validation.
 
 ## Recovery Pointers
 

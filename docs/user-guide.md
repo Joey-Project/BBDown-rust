@@ -5,6 +5,13 @@
 BBDown Rust currently exposes a reusable `bbdown` crate and a CLI for deterministic metadata,
 download-plan resolution, media download execution, sidecar downloads, and optional ffmpeg muxing.
 
+## Release Archives
+
+GitHub releases provide prepackaged `bbdown` CLI archives for Linux x86_64, macOS x86_64,
+macOS aarch64, and Windows x86_64. Download the archive for your platform, verify it against the
+adjacent `.sha256` file if needed, extract it, and place the `bbdown` or `bbdown.exe` binary on your
+`PATH`. Archives also include `README.md`, this user guide, and `LICENSE`.
+
 ## Metadata
 
 Use `info` to resolve metadata:
