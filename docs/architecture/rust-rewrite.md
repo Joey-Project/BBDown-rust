@@ -79,9 +79,10 @@ Execution behavior is controlled by `DownloadOptions`:
 - disabled muxing or explicit `ffmpeg` binary path.
 
 For each entry, execution prefers the first complete DASH video/audio pair from the plan. If DASH
-media is incomplete and FLV `durl` segments are available, it downloads the FLV segments instead.
-Subtitle and danmaku files remain sidecars. When muxing is enabled, the executor invokes `ffmpeg`
-with explicit argv and returns the command plus output path in the report.
+media is incomplete and FLV `durl` segments are available, it downloads the FLV segments instead;
+otherwise the entry fails before media writes. Subtitle and danmaku files remain sidecars. When
+muxing is enabled, the executor invokes `ffmpeg` with explicit argv and returns the command plus
+output path in the report.
 
 Media and sidecar downloads use media headers without account cookies, because media URLs come from
 API payloads and can target CDN or proxy hosts. DASH and FLV backup URLs are part of the candidate
@@ -90,15 +91,17 @@ appends only when `Content-Range` starts at the local file length and completes 
 range total; matching 416 responses are treated as already complete. When a stream or FLV segment
 declares a size, the executor rejects mismatched final file lengths and rolls back failed writes to
 the pre-attempt length. Entry directories include content identity so same-title videos do not share
-resume targets. If a server ignores `Range` and returns `200 OK` for a partial file, the executor
-writes the full retry to a temporary file and only replaces the old partial after validation
-succeeds. DASH media output names prefer stable stream metadata and only fall back to URL path
-hashing when metadata is absent, so CDN host or query changes do not split resume targets.
+resume targets, subtitle sidecar names include track identity, and filename components are bounded
+by UTF-8 byte length. If a server ignores `Range` and returns `200 OK` for a partial file, the
+executor writes the full retry to a temporary file and only replaces the old partial after
+validation succeeds. DASH media output names prefer stable stream metadata and only fall back to URL
+path hashing when metadata is absent, so CDN host or query changes do not split resume targets.
 
 The crate default keeps muxing disabled so embedding projects do not spawn external processes by
 surprise. The CLI `download` command enables ffmpeg by default and exposes `--no-mux` for users and
-mock e2e tests. Mux subprocess stdin, stdout, and stderr are isolated from CLI stdio, and successful
-mux reports require a non-empty output file, so JSON reports remain parseable and accurate.
+mock e2e tests. Mux subprocess stdin, stdout, and stderr are isolated from CLI stdio, old mux output
+is removed before invocation, and successful mux reports require a non-empty output file, so JSON
+reports remain parseable and accurate.
 
 ## Restricted Area And Intl
 

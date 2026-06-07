@@ -56,9 +56,9 @@ bbdown download av170001 --output-dir downloads --no-mux --json
 ```
 
 The command downloads the first complete DASH video/audio pair for each entry. When DASH media is
-incomplete and legacy FLV `durl` segments are available, it downloads those segments instead.
-Subtitle and danmaku sidecars are enabled by default and can be disabled with `--no-subtitles` and
-`--no-danmaku`.
+incomplete and legacy FLV `durl` segments are available, it downloads those segments instead; if
+neither shape is complete, the download fails before writing media. Subtitle and danmaku sidecars
+are enabled by default and can be disabled with `--no-subtitles` and `--no-danmaku`.
 
 Downloads resume partial files by default with HTTP range requests and validate `Content-Range`
 plus advertised media sizes when the plan provides them. Use `--no-resume` to force a fresh write.

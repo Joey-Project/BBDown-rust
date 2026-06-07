@@ -44,8 +44,8 @@ bbdown download av170001 --output-dir downloads --no-mux --json
 
 `download` resolves a plan, downloads the first complete DASH video/audio pair or FLV segments,
 writes subtitle and danmaku sidecars by default, resumes partial files with HTTP range requests,
-retries bounded transient failures, validates advertised media sizes when present, and runs
-`ffmpeg` unless `--no-mux` is supplied.
+retries bounded transient failures, validates advertised media sizes when present, fails incomplete
+media shapes, and runs `ffmpeg` unless `--no-mux` is supplied.
 
 `ss` and `md` inputs require an explicit selection in non-interactive mode:
 
