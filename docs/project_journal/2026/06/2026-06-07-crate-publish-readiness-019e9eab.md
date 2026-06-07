@@ -5,7 +5,7 @@ status: completed
 created: 2026-06-07
 updated: 2026-06-07
 branch: wip/crate-publish-readiness
-pr:
+pr: https://github.com/Joey-Project/BBDown-rust/pull/9
 supersedes: []
 superseded_by:
 ---
