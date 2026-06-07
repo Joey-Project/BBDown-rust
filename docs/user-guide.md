@@ -64,8 +64,8 @@ Downloads resume partial files by default with HTTP range requests and validate 
 plus advertised media sizes when the plan provides them. Use `--no-resume` to force a fresh write;
 failed fresh writes preserve any existing target. If a server ignores a resume range, the old
 partial is replaced from a temporary full retry after available length checks pass; without a
-length signal, a shorter retry response is rejected so the existing file is preserved. Retry behavior
-is bounded by `--retry-attempts` and `--retry-backoff-ms`. Entry directories include content
+length signal, the full retry is rejected so the existing file is preserved. Retry behavior is
+bounded by `--retry-attempts` and `--retry-backoff-ms`. Entry directories include content
 identity, and DASH media filenames include stream metadata identity, so same-title videos and
 different codec variants do not share the same resume target. Media downloads that complete without
 writing any bytes are rejected.

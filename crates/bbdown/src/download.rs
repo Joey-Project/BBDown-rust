@@ -379,6 +379,11 @@ impl BiliClient {
             response_content_len,
             full_retry_after_ignored_range,
         );
+        if full_retry_after_ignored_range && validation_expected_size.is_none() {
+            return Err(Error::InvalidInput(
+                "server ignored resume range without a verifiable full response length".to_owned(),
+            ));
+        }
         let replace_existing = existing_len > 0 && !append;
         let write_path = if replace_existing {
             temporary_download_path(path)
@@ -411,24 +416,11 @@ impl BiliClient {
                 return Err(error);
             }
         };
-        if is_empty_unexpected_media_response(&kind, expected_size, bytes_written) {
+        if is_empty_unexpected_media_response(&kind, bytes_written) {
             if !append {
                 let _ = fs::remove_file(&write_path).await;
             }
             return Err(Error::InvalidInput("empty media response".to_owned()));
-        }
-        if full_retry_after_ignored_range
-            && is_short_unvalidated_full_retry(
-                expected_size,
-                content_range,
-                bytes_written,
-                existing_len,
-            )
-        {
-            let _ = fs::remove_file(&write_path).await;
-            return Err(Error::InvalidInput(
-                "server ignored resume range with shorter full response".to_owned(),
-            ));
         }
         if replace_existing {
             replace_file(&write_path, path).await?;
@@ -761,21 +753,8 @@ fn validation_size_for_full_retry(
     })
 }
 
-fn is_short_unvalidated_full_retry(
-    expected_size: Option<u64>,
-    content_range: Option<ParsedContentRange>,
-    bytes_written: u64,
-    existing_len: u64,
-) -> bool {
-    expected_size.is_none() && content_range.is_none() && bytes_written < existing_len
-}
-
-fn is_empty_unexpected_media_response(
-    kind: &DownloadFileKind,
-    expected_size: Option<u64>,
-    bytes_written: u64,
-) -> bool {
-    kind.is_media() && expected_size != Some(0) && bytes_written == 0
+fn is_empty_unexpected_media_response(kind: &DownloadFileKind, bytes_written: u64) -> bool {
+    kind.is_media() && bytes_written == 0
 }
 
 fn validate_download_completion(
@@ -1784,15 +1763,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn preserves_existing_file_when_unvalidated_ignored_range_is_shorter()
-    -> anyhow::Result<()> {
+    async fn rejects_ignored_range_without_length_proof() -> anyhow::Result<()> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let address = listener.local_addr()?;
         let handle = std::thread::spawn(move || -> anyhow::Result<()> {
             let (mut stream, _) = listener.accept()?;
             let mut buffer = [0; 1024];
             let _ = stream.read(&mut buffer)?;
-            stream.write_all(b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nnew")?;
+            stream.write_all(b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nmaybe-full")?;
             Ok(())
         });
         let temp = tempfile::tempdir()?;
@@ -1816,13 +1794,17 @@ mod tests {
             )
             .await
         else {
-            return Err(anyhow::anyhow!("short full retry should fail"));
+            return Err(anyhow::anyhow!("unverified full retry should fail"));
         };
 
         handle
             .join()
             .map_err(|_| anyhow::anyhow!("server thread panicked"))??;
-        assert!(error.to_string().contains("shorter full response"));
+        assert!(
+            error
+                .to_string()
+                .contains("verifiable full response length")
+        );
         assert_eq!(tokio::fs::read_to_string(&path).await?, "existing");
         Ok(())
     }
@@ -2141,6 +2123,43 @@ mod tests {
             .await
         else {
             return Err(anyhow::anyhow!("empty media response should fail"));
+        };
+
+        assert!(error.to_string().contains("empty media response"));
+        assert!(!path.exists());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rejects_empty_zero_size_media_response() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/video.m4s");
+            then.status(200).body("");
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let path = temp.path().join("video.m4s");
+        let options = DownloadOptions {
+            retry: RetryPolicy::single_attempt(),
+            include_danmaku: false,
+            mux: MuxOptions::Disabled,
+            ..DownloadOptions::default()
+        };
+
+        let Err(error) = client
+            .download_url_to_file(
+                &format!("{}/video.m4s", server.base_url()),
+                &path,
+                DownloadFileKind::Video,
+                Some(0),
+                &options,
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!(
+                "empty zero-size media response should fail"
+            ));
         };
 
         assert!(error.to_string().contains("empty media response"));

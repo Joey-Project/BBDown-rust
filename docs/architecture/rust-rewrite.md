@@ -97,8 +97,7 @@ resume targets, subtitle sidecar names include track identity, and filename comp
 by UTF-8 byte length. If a server ignores `Range` and returns `200 OK` for a partial file, the
 executor writes the full retry to a temporary file and only replaces the old partial after available
 validation succeeds. Without an advertised size, `Content-Length`, or `Content-Range`, a full retry
-may still replace the old file only when the successfully written response is not shorter than the
-existing file; shorter unvalidated responses preserve the old file. Forced fresh writes also use
+is rejected and the old file is preserved. Forced fresh writes also use
 temporary files when replacing an existing target, so failed `--no-resume` retries do not clear
 previous output. DASH media output names prefer stable stream metadata and only fall back to URL
 path hashing when metadata is absent, so CDN host or query changes do not split resume targets.
