@@ -1213,15 +1213,11 @@ struct IntlMediaResource {
 
 impl IntlMediaResource {
     fn into_media_stream(self, fallback_id: u32) -> Option<MediaStream> {
-        let base_url = self
-            .url
-            .or(self.base_url)
-            .or(self.base_url_camel)
-            .filter(|value| !value.is_empty())?;
+        let base_url = first_non_empty([self.url, self.base_url, self.base_url_camel])?;
         Some(MediaStream {
             id: self.id.unwrap_or(fallback_id),
             base_url: normalize_media_url(&base_url),
-            backup_urls: normalize_media_urls(self.backup_url.or(self.backup_url_camel)),
+            backup_urls: normalize_media_urls([self.backup_url, self.backup_url_camel]),
             codecs: self.codecs,
             bandwidth: self.bandwidth,
             width: self.width,
@@ -1276,20 +1272,17 @@ struct DashTrack {
 
 impl DashTrack {
     fn into_media_stream(self) -> Option<MediaStream> {
-        let base_url = self
-            .base_url
-            .or(self.base_url_camel)
-            .filter(|value| !value.is_empty())?;
+        let base_url = first_non_empty([self.base_url, self.base_url_camel])?;
         Some(MediaStream {
             id: self.id?,
             base_url: normalize_media_url(&base_url),
-            backup_urls: normalize_media_urls(self.backup_url.or(self.backup_url_camel)),
+            backup_urls: normalize_media_urls([self.backup_url, self.backup_url_camel]),
             codecs: self.codecs,
             bandwidth: self.bandwidth,
             width: self.width,
             height: self.height,
-            frame_rate: self.frame_rate.or(self.frame_rate_camel),
-            mime_type: self.mime_type.or(self.mime_type_camel),
+            frame_rate: first_non_empty([self.frame_rate, self.frame_rate_camel]),
+            mime_type: first_non_empty([self.mime_type, self.mime_type_camel]),
             size: self.size,
         })
     }
@@ -1314,7 +1307,7 @@ impl DurlSegment {
                 .or_else(|| u32::try_from(index + 1).ok())
                 .unwrap_or(1),
             url: normalize_media_url(&url),
-            backup_urls: normalize_media_urls(self.backup_url),
+            backup_urls: normalize_media_urls([self.backup_url]),
             size: self.size,
             length_ms: self.length,
         })
@@ -1400,9 +1393,15 @@ fn normalize_media_url(url: &str) -> String {
     }
 }
 
-fn normalize_media_urls(urls: Option<Vec<String>>) -> Vec<String> {
-    urls.unwrap_or_default()
+fn first_non_empty<const N: usize>(values: [Option<String>; N]) -> Option<String> {
+    values.into_iter().flatten().find(|value| !value.is_empty())
+}
+
+fn normalize_media_urls<const N: usize>(url_groups: [Option<Vec<String>>; N]) -> Vec<String> {
+    url_groups
         .into_iter()
+        .flatten()
+        .flatten()
         .filter(|url| !url.is_empty())
         .map(|url| normalize_media_url(&url))
         .collect()
@@ -1670,6 +1669,46 @@ mod tests {
         assert_eq!(streams.videos[0].id, 80);
         assert_eq!(streams.audios[0].id, 30280);
         assert!(streams.flv_segments.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn playurl_uses_non_empty_camel_media_fields_when_snake_fields_are_empty() -> anyhow::Result<()>
+    {
+        let response: PlayUrlRoot = serde_json::from_value(serde_json::json!({
+            "code": 0,
+            "data": {
+                "dash": {
+                    "duration": 9,
+                    "video": [{
+                        "id": 80,
+                        "base_url": "",
+                        "baseUrl": "//video.example/80.m4s",
+                        "backup_url": [],
+                        "backupUrl": ["//backup.example/80.m4s"],
+                        "frame_rate": "",
+                        "frameRate": "30",
+                        "mime_type": "",
+                        "mimeType": "video/mp4"
+                    }],
+                    "audio": [{
+                        "id": 30280,
+                        "base_url": "",
+                        "baseUrl": "//audio.example/30280.m4s"
+                    }]
+                }
+            }
+        }))?;
+
+        let streams = response.into_stream_set()?;
+
+        assert_eq!(streams.videos[0].base_url, "https://video.example/80.m4s");
+        assert_eq!(
+            streams.videos[0].backup_urls,
+            vec!["https://backup.example/80.m4s"]
+        );
+        assert_eq!(streams.videos[0].frame_rate.as_deref(), Some("30"));
+        assert_eq!(streams.videos[0].mime_type.as_deref(), Some("video/mp4"));
         Ok(())
     }
 

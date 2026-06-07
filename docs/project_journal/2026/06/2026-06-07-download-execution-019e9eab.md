@@ -50,8 +50,9 @@ superseded_by:
   identity material so same-title videos and different codec variants do not reuse the same resume
   target, while CDN host/query changes do not split targets.
 - Subtitle sidecar filenames include track identity so duplicate-language tracks do not share a
-  path.
-- Filename components are bounded by UTF-8 byte length to avoid oversized path components.
+  path, and duplicate subtitle URLs are downloaded once.
+- Filename components and temporary sibling names are bounded by UTF-8 byte length to avoid
+  oversized path components.
 - Media body reads use a separate idle timeout instead of the metadata request timeout.
 - Subtitle and danmaku downloads are sidecars; muxing only combines media tracks.
 - Resume coverage verifies HTTP `Range` requests and appending to a partial file.
@@ -60,12 +61,14 @@ superseded_by:
   lengths are checked, non-partial `Content-Range` responses including `bytes */N` are rejected,
   ignored `Range` full retries preserve old partial files, expected media sizes are enforced, and
   stream identity is reflected in output filenames, same-title content identities get distinct
-  entry directories, duplicate-language subtitle tracks get distinct filenames, filename byte
-  limits are enforced, incomplete DASH media uses FLV fallback when available, and incomplete DASH
-  media without FLV fallback fails.
+  entry directories, duplicate-language subtitle tracks get distinct filenames, duplicate subtitle
+  URLs are skipped, unknown subtitle extensions are bounded, filename byte limits are enforced,
+  incomplete DASH media uses FLV fallback when available, and incomplete DASH media without FLV
+  fallback fails.
 - Retry coverage verifies a failed first request can be retried and then written successfully.
 - Mux coverage verifies fake ffmpeg success reports, missing, empty, or stale mux output failures,
-  stdin isolation, and failed ffmpeg status propagation.
+  stdin isolation, temporary mux output validation, existing output preservation on failed reruns,
+  and failed ffmpeg status propagation.
 - FLV mux coverage verifies concat list paths are relative to the entry directory.
 - CLI e2e coverage verifies a mock `download --no-mux --json` run writes media, subtitle, and
   danmaku files to disk through mock API and comment endpoints.
@@ -81,4 +84,4 @@ superseded_by:
 
 - Local type gate: `cargo check --workspace`.
 - Local lint gate: `cargo clippy --workspace --all-targets -- -D warnings`.
-- Local tests: `cargo test --workspace` with 55 library tests and 5 CLI e2e tests.
+- Local tests: `cargo test --workspace` with 62 library tests and 5 CLI e2e tests.

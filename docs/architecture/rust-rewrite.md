@@ -99,9 +99,9 @@ path hashing when metadata is absent, so CDN host or query changes do not split 
 
 The crate default keeps muxing disabled so embedding projects do not spawn external processes by
 surprise. The CLI `download` command enables ffmpeg by default and exposes `--no-mux` for users and
-mock e2e tests. Mux subprocess stdin, stdout, and stderr are isolated from CLI stdio, old mux output
-is removed before invocation, and successful mux reports require a non-empty output file, so JSON
-reports remain parseable and accurate.
+mock e2e tests. Mux subprocess stdin, stdout, and stderr are isolated from CLI stdio. Muxing writes
+to a temporary output first, validates that output, and then replaces the final file, so a failed
+rerun preserves an existing muxed file and JSON reports remain parseable and accurate.
 
 ## Restricted Area And Intl
 

@@ -7,6 +7,7 @@ use md5::{Digest, Md5};
 use reqwest::StatusCode;
 use reqwest::header::{CONTENT_RANGE, RANGE};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -18,6 +19,7 @@ use tokio::process::Command;
 
 const MAX_FILE_NAME_BYTES: usize = 80;
 const MAX_FILE_COMPONENT_BYTES: usize = 240;
+const MAX_SUBTITLE_EXTENSION_BYTES: usize = 16;
 
 #[derive(Clone, Debug)]
 pub struct DownloadOptions {
@@ -189,7 +191,11 @@ impl BiliClient {
             return Err(Error::MissingField("complete DASH media or FLV segments"));
         }
         if options.include_subtitles {
+            let mut seen_subtitles = HashSet::new();
             for (index, subtitle) in entry.subtitles.iter().enumerate() {
+                if !seen_subtitles.insert(subtitle_dedup_key(&subtitle.url)) {
+                    continue;
+                }
                 files.push(
                     self.download_subtitle(index, subtitle, &entry_dir, options)
                         .await?,
@@ -462,31 +468,32 @@ impl BiliClient {
             return Ok(None);
         }
         let output_path = entry_dir.join(format!("{}.mp4", safe_file_name(&entry.title)));
-        remove_file_if_exists(&output_path).await?;
+        let mux_output_path = temporary_mux_path(&output_path);
+        remove_file_if_exists(&mux_output_path).await?;
         let mut args = Vec::new();
-        args.push("-y".to_owned());
-        args.push("-nostdin".to_owned());
+        args.push(OsString::from("-y"));
+        args.push(OsString::from("-nostdin"));
         if only_flv_segments(files) {
             let list_path = entry_dir.join("ffmpeg-concat.txt");
             fs::write(&list_path, concat_file_list(&media_files, entry_dir)).await?;
             args.extend([
-                "-f".to_owned(),
-                "concat".to_owned(),
-                "-safe".to_owned(),
-                "0".to_owned(),
-                "-i".to_owned(),
-                list_path.to_string_lossy().into_owned(),
+                OsString::from("-f"),
+                OsString::from("concat"),
+                OsString::from("-safe"),
+                OsString::from("0"),
+                OsString::from("-i"),
+                list_path.into_os_string(),
             ]);
         } else {
             for media_file in &media_files {
-                args.push("-i".to_owned());
-                args.push(media_file.to_string_lossy().into_owned());
+                args.push(OsString::from("-i"));
+                args.push(media_file.as_os_str().to_os_string());
             }
         }
         args.extend([
-            "-c".to_owned(),
-            "copy".to_owned(),
-            output_path.to_string_lossy().into_owned(),
+            OsString::from("-c"),
+            OsString::from("copy"),
+            mux_output_path.as_os_str().to_os_string(),
         ]);
         let status = Command::new(binary)
             .args(&args)
@@ -496,6 +503,7 @@ impl BiliClient {
             .status()
             .await?;
         if !status.success() {
+            let _ = fs::remove_file(&mux_output_path).await;
             return Err(Error::MuxFailed {
                 status: status.code().map_or_else(
                     || "terminated by signal".to_owned(),
@@ -503,27 +511,28 @@ impl BiliClient {
                 ),
             });
         }
-        let metadata = fs::metadata(&output_path)
-            .await
-            .map_err(|_| Error::MuxFailed {
+        let Ok(metadata) = fs::metadata(&mux_output_path).await else {
+            let _ = fs::remove_file(&mux_output_path).await;
+            return Err(Error::MuxFailed {
                 status: "missing output file".to_owned(),
-            })?;
+            });
+        };
         if !metadata.is_file() {
+            let _ = fs::remove_file(&mux_output_path).await;
             return Err(Error::MuxFailed {
                 status: "missing output file".to_owned(),
             });
         }
         if metadata.len() == 0 {
+            let _ = fs::remove_file(&mux_output_path).await;
             return Err(Error::MuxFailed {
                 status: "empty output file".to_owned(),
             });
         }
-        let mut command = Vec::with_capacity(args.len() + 1);
-        command.push(binary.to_string_lossy().into_owned());
-        command.extend(args);
+        replace_file(&mux_output_path, &output_path).await?;
         Ok(Some(MuxReport {
             output_path,
-            command,
+            command: command_report(binary, &args),
         }))
     }
 }
@@ -532,6 +541,13 @@ impl DownloadFileKind {
     fn is_media(&self) -> bool {
         matches!(self, Self::Video | Self::Audio | Self::FlvSegment)
     }
+}
+
+fn command_report(binary: &Path, args: &[OsString]) -> Vec<String> {
+    let mut command = Vec::with_capacity(args.len() + 1);
+    command.push(binary.to_string_lossy().into_owned());
+    command.extend(args.iter().map(|arg| arg.to_string_lossy().into_owned()));
+    command
 }
 
 async fn write_response_body_to_file(
@@ -586,19 +602,27 @@ async fn existing_file_len(path: &Path) -> Result<u64> {
 }
 
 fn temporary_download_path(path: &Path) -> PathBuf {
-    let mut file_name = path
-        .file_name()
-        .map_or_else(|| OsString::from("download"), std::ffi::OsStr::to_os_string);
-    file_name.push(".bbdown-download");
-    path.with_file_name(file_name)
+    temporary_path_with_suffix(path, ".bbdown-download")
 }
 
 fn temporary_replace_path(path: &Path) -> PathBuf {
-    let mut file_name = path
+    temporary_path_with_suffix(path, ".bbdown-replace")
+}
+
+fn temporary_mux_path(path: &Path) -> PathBuf {
+    temporary_path_with_suffix(path, ".bbdown-mux")
+}
+
+fn temporary_path_with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let base = path
         .file_name()
-        .map_or_else(|| OsString::from("download"), std::ffi::OsStr::to_os_string);
-    file_name.push(".bbdown-replace");
-    path.with_file_name(file_name)
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or("download");
+    let budget = MAX_FILE_COMPONENT_BYTES.saturating_sub(suffix.len()).max(1);
+    path.with_file_name(format!(
+        "{}{suffix}",
+        safe_file_name_with_budget(base, budget)
+    ))
 }
 
 async fn replace_file(source: &Path, target: &Path) -> Result<()> {
@@ -808,10 +832,11 @@ fn entry_dir_name(entry: &DownloadEntry) -> String {
 fn format_file_component(prefix: &str, variable: &str, suffix: &str) -> String {
     let used = prefix.len().saturating_add(suffix.len());
     let variable_budget = MAX_FILE_COMPONENT_BYTES.saturating_sub(used).max(1);
-    format!(
+    let component = format!(
         "{prefix}{}{suffix}",
         safe_file_name_with_budget(variable, variable_budget)
-    )
+    );
+    truncate_utf8_component(&component, MAX_FILE_COMPONENT_BYTES)
 }
 
 fn entry_content_identity(entry: &DownloadEntry) -> String {
@@ -867,9 +892,17 @@ fn truncate_utf8_component(value: &str, max_bytes: usize) -> String {
     }
     let truncated = value[..end].trim().trim_matches(['-', '.', '_']).to_owned();
     if truncated.is_empty() {
-        "untitled".to_owned()
+        fallback_file_component(limit)
     } else {
         truncated
+    }
+}
+
+fn fallback_file_component(max_bytes: usize) -> String {
+    if max_bytes >= "untitled".len() {
+        "untitled".to_owned()
+    } else {
+        "u".repeat(max_bytes.max(1))
     }
 }
 
@@ -951,13 +984,20 @@ fn url_identity_source(url: &str) -> String {
 }
 
 fn subtitle_extension(subtitle: &SubtitleTrack) -> String {
-    match subtitle.format {
+    let extension = match subtitle.format {
         SubtitleFormat::Json => "json".to_owned(),
         SubtitleFormat::Ass => "ass".to_owned(),
         SubtitleFormat::Unknown => {
             url_path_extension(&subtitle.url).unwrap_or_else(|| "subtitle".to_owned())
         }
-    }
+    };
+    let sanitized = file_name_token(&extension);
+    let extension = if sanitized.is_empty() {
+        "subtitle".to_owned()
+    } else {
+        sanitized
+    };
+    safe_file_name_with_budget(&extension, MAX_SUBTITLE_EXTENSION_BYTES)
 }
 
 fn subtitle_file_name(index: usize, subtitle: &SubtitleTrack) -> String {
@@ -983,11 +1023,23 @@ fn url_path_extension(url: &str) -> Option<String> {
         .filter(|extension| !extension.is_empty())
 }
 
+fn subtitle_dedup_key(url: &str) -> String {
+    url::Url::parse(url).map_or_else(
+        |_| url.split('#').next().unwrap_or(url).to_owned(),
+        |mut parsed| {
+            parsed.set_fragment(None);
+            parsed.to_string()
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        DownloadOptions, MAX_FILE_COMPONENT_BYTES, MAX_FILE_NAME_BYTES, MuxOptions, RetryPolicy,
-        entry_dir_name, media_file_name, safe_file_name, subtitle_file_name,
+        DownloadOptions, MAX_FILE_COMPONENT_BYTES, MAX_FILE_NAME_BYTES,
+        MAX_SUBTITLE_EXTENSION_BYTES, MuxOptions, RetryPolicy, entry_dir_name, media_file_name,
+        safe_file_name, safe_file_name_with_budget, subtitle_dedup_key, subtitle_extension,
+        subtitle_file_name, temporary_download_path, temporary_mux_path, temporary_replace_path,
     };
     use crate::models::{
         DanmakuTrack, DownloadEntry, DownloadPlan, FlvSegment, MediaStream, StreamSet,
@@ -1039,6 +1091,14 @@ mod tests {
     }
 
     #[test]
+    fn safe_file_name_with_tiny_budget_stays_in_budget() {
+        let name = safe_file_name_with_budget("界", 1);
+
+        assert!(name.len() <= 1);
+        assert_eq!(name, "u");
+    }
+
+    #[test]
     fn entry_dir_name_limits_final_component_bytes() {
         let server = MockServer::start();
         let mut plan = test_plan(&server);
@@ -1080,6 +1140,45 @@ mod tests {
         assert_ne!(
             subtitle_file_name(0, &first),
             subtitle_file_name(1, &second)
+        );
+    }
+
+    #[test]
+    fn subtitle_file_name_limits_unknown_extension_bytes() {
+        let subtitle = SubtitleTrack {
+            language: "en".to_owned(),
+            language_doc: Some("English".to_owned()),
+            url: format!("https://subtitle.example/file.{}", "x".repeat(200)),
+            format: SubtitleFormat::Unknown,
+        };
+
+        assert!(subtitle_extension(&subtitle).len() <= MAX_SUBTITLE_EXTENSION_BYTES);
+        assert!(subtitle_file_name(0, &subtitle).len() <= MAX_FILE_COMPONENT_BYTES);
+    }
+
+    #[test]
+    fn temporary_file_names_reserve_suffix_budget() {
+        let path = std::path::PathBuf::from("a".repeat(MAX_FILE_COMPONENT_BYTES));
+
+        for temporary in [
+            temporary_download_path(&path),
+            temporary_replace_path(&path),
+            temporary_mux_path(&path),
+        ] {
+            assert!(
+                temporary
+                    .file_name()
+                    .and_then(std::ffi::OsStr::to_str)
+                    .is_some_and(|name| name.len() <= MAX_FILE_COMPONENT_BYTES)
+            );
+        }
+    }
+
+    #[test]
+    fn subtitle_dedup_key_ignores_url_fragment() {
+        assert_eq!(
+            subtitle_dedup_key("https://subtitle.example/track.ass#first"),
+            subtitle_dedup_key("https://subtitle.example/track.ass#second")
         );
     }
 
@@ -1127,6 +1226,59 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("missing video"))?;
         assert_eq!(tokio::fs::read_to_string(&video.path).await?, "video");
         assert!(entry.mux.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn skips_duplicate_subtitle_urls() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/video.m4s");
+            then.status(200).body("video");
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/audio.m4s");
+            then.status(200).body("audio");
+        });
+        let subtitle_mock = server.mock(|when, then| {
+            when.method(GET).path("/subtitle.ass");
+            then.status(200).body("[Script Info]");
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/danmaku.xml");
+            then.status(200).body("<i/>");
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let mut plan = test_plan(&server);
+        plan.entries[0].subtitles.push(SubtitleTrack {
+            language: "en".to_owned(),
+            language_doc: Some("English duplicate".to_owned()),
+            url: format!("{}/subtitle.ass#duplicate", server.base_url()),
+            format: SubtitleFormat::Ass,
+        });
+
+        let report = client
+            .download_plan(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().to_path_buf(),
+                    retry: RetryPolicy::single_attempt(),
+                    mux: MuxOptions::Disabled,
+                    ..DownloadOptions::default()
+                },
+            )
+            .await?;
+
+        assert_eq!(subtitle_mock.calls(), 1);
+        assert_eq!(
+            report.entries[0]
+                .files
+                .iter()
+                .filter(|file| file.kind == DownloadFileKind::Subtitle)
+                .count(),
+            1
+        );
         Ok(())
     }
 
@@ -1874,12 +2026,16 @@ mod tests {
         let ffmpeg = write_fake_ffmpeg(temp.path(), fake_ffmpeg_creates_output_body())?;
         let client = BiliClient::new(ClientConfig::default());
         let plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
+        let output_dir = temp.path().join("downloads");
+        let entry_dir = test_entry_dir(&output_dir, &plan);
+        tokio::fs::create_dir_all(&entry_dir).await?;
+        tokio::fs::write(entry_dir.join("Main.mp4"), "stale").await?;
 
         let report = client
             .download_plan(
                 &plan,
                 DownloadOptions {
-                    output_dir: temp.path().join("downloads"),
+                    output_dir,
                     retry: RetryPolicy::single_attempt(),
                     include_danmaku: false,
                     mux: MuxOptions::Ffmpeg { binary: ffmpeg },
@@ -1896,6 +2052,7 @@ mod tests {
         assert!(mux.command.iter().any(|arg| arg == "-nostdin"));
         assert!(mux.command.iter().any(|arg| arg == "-c"));
         assert!(mux.output_path.ends_with("Main.mp4"));
+        assert_eq!(tokio::fs::read_to_string(&mux.output_path).await?, "muxed");
         Ok(())
     }
 
@@ -2013,6 +2170,10 @@ mod tests {
         };
 
         assert!(error.to_string().contains("missing output file"));
+        assert_eq!(
+            tokio::fs::read_to_string(entry_dir.join("Main.mp4")).await?,
+            "stale"
+        );
         Ok(())
     }
 
@@ -2050,6 +2211,49 @@ mod tests {
         };
 
         assert!(error.to_string().contains("status 7"));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ffmpeg_mux_failure_preserves_existing_output() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/video.m4s");
+            then.status(200).body("video");
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/audio.m4s");
+            then.status(200).body("audio");
+        });
+        let temp = tempfile::tempdir()?;
+        let ffmpeg = write_fake_ffmpeg(temp.path(), "exit 7")?;
+        let output_dir = temp.path().join("downloads");
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
+        let entry_dir = test_entry_dir(&output_dir, &plan);
+        tokio::fs::create_dir_all(&entry_dir).await?;
+        let output_path = entry_dir.join("Main.mp4");
+        tokio::fs::write(&output_path, "existing").await?;
+
+        let Err(error) = client
+            .download_plan(
+                &plan,
+                DownloadOptions {
+                    output_dir,
+                    retry: RetryPolicy::single_attempt(),
+                    include_danmaku: false,
+                    mux: MuxOptions::Ffmpeg { binary: ffmpeg },
+                    ..DownloadOptions::default()
+                },
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!("ffmpeg failure should propagate"));
+        };
+
+        assert!(error.to_string().contains("status 7"));
+        assert_eq!(tokio::fs::read_to_string(output_path).await?, "existing");
         Ok(())
     }
 

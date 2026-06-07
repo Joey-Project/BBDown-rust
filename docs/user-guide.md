@@ -71,7 +71,8 @@ and different codec variants do not share the same resume target.
 
 Muxing is enabled by default through `ffmpeg`. Use `--ffmpeg <path>` to choose a binary or
 `--no-mux` to keep downloaded media files as sidecars only. The reusable crate keeps external
-process execution explicit through `DownloadOptions::mux`.
+process execution explicit through `DownloadOptions::mux`. A mux rerun writes and validates a
+temporary output before replacing the final file, so a failed mux keeps any existing muxed file.
 
 ## Credentials
 
