@@ -25,8 +25,11 @@ superseded_by:
 - `BiliClient::plan` returns `DownloadPlan` values for parsed normal video, PGC, and intl episode
   inputs; `BiliClient::plan_download` remains a raw-string wrapper for CLI-style callers.
 - `DownloadEntry` records stream source, selected ids, stream sets, subtitles, and danmaku XML URL.
-- Intl planning uses the intl web playurl/subtitle endpoints and keeps mobile `video_info`
-  `stream_list`/`dash_audio` parsing support for proxy or future resolver responses.
+- Intl planning uses the official intl metadata/subtitle endpoints and the signed intl OGV mobile
+  playurl endpoint. It keeps mobile `video_info` `stream_list`/`dash_audio` parsing support for
+  official and future proxy resolver responses.
+- Review follow-up switched intl playurl away from the UGC-style web path and made intl module
+  grouping reuse the same `ep_id`/`episode_id`/`id` episode alias handling as metadata conversion.
 - Normal-video planning skips tag metadata so unrelated tag API failures do not block stream
   planning; `info` still treats tag API failures as metadata errors.
 - Normal web playurl planning includes `try_look=1` so anonymous plans can report available trial

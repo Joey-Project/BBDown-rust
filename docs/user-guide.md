@@ -69,4 +69,5 @@ bbdown --intl-base http://127.0.0.1:8080 plan https://www.bilibili.tv/en/play/34
 ```
 
 Restricted-area proxy ordering is not implemented yet. Current intl support uses official intl
-metadata, playurl, and subtitle endpoints with the configured access key when present.
+metadata/subtitle endpoints and the official signed intl OGV playurl endpoint with the configured
+access key when present.

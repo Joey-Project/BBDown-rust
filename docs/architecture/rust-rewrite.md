@@ -46,8 +46,8 @@ wrapper for CLI-style callers. Planning currently supports three official source
 
 - `NormalWeb` uses the normal web playurl endpoint for `aid`/`bvid` inputs.
 - `PgcWeb` uses the PGC web playurl endpoint for `ep`, `ss`, and `md` inputs.
-- `IntlWeb` uses the intl web playurl endpoint for `bilibili.tv` episode inputs and includes the
-  caller-provided access key when configured.
+- `IntlWeb` uses the intl OGV playurl endpoint with BiliIntl mobile signing parameters for
+  `bilibili.tv` episode inputs and includes the caller-provided access key when configured.
 
 Subtitle discovery follows the selected source. Normal and PGC entries use the player subtitle
 endpoint. Intl entries use the intl subtitle endpoint. Subtitle failures are treated as missing
@@ -68,9 +68,9 @@ configured resolver chain:
 - user-configured proxy web or mobile resolver hosts;
 - user-configured area hints such as `cn`, `hk`, `tw`, or `th`.
 
-The current implementation supports endpoint override, intl metadata shape, official PGC/intl web
-stream planning, and typed source reporting. Later slices will add download retry policy and
-configured proxy candidate ordering based on the same principles.
+The current implementation supports endpoint override, intl metadata shape, official PGC stream
+planning, official intl OGV signed stream planning, and typed source reporting. Later slices will
+add download retry policy and configured proxy candidate ordering based on the same principles.
 
 ## Credentials
 

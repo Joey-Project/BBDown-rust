@@ -4,9 +4,10 @@ use crate::models::{
     SubtitleFormat, SubtitleTrack, Tag, VideoMetadata,
 };
 use crate::{Credentials, Error, Input, Result, Selection};
+use md5::{Digest, Md5};
 use reqwest::header::{COOKIE, HeaderMap, HeaderValue, REFERER, USER_AGENT};
 use serde::Deserialize;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use url::Url;
 
 #[derive(Clone, Debug)]
@@ -476,7 +477,7 @@ impl BiliClient {
             )?,
             StreamSource::IntlWeb => Self::endpoint_url(
                 &self.config.endpoints.intl_base,
-                "/intl/gateway/web/playurl",
+                "/intl/gateway/v2/ogv/playurl",
             )?,
         };
         {
@@ -508,11 +509,13 @@ impl BiliClient {
                 }
                 StreamSource::IntlWeb => {
                     let epid = epid.ok_or(Error::MissingField("epid"))?;
-                    query
-                        .append_pair("ep_id", &epid.to_string())
-                        .append_pair("platform", "web");
-                    if let Some(access_key) = self.config.credentials.access_key.as_deref() {
-                        query.append_pair("access_key", access_key);
+                    for (key, value) in intl_ogv_playurl_params(
+                        epid,
+                        cid,
+                        self.config.credentials.access_key.as_deref(),
+                        current_unix_timestamp(),
+                    ) {
+                        query.append_pair(key, &value);
                     }
                 }
             }
@@ -673,7 +676,7 @@ fn season_from_intl(result: IntlSeasonResult, current_epid: Option<u64>) -> Seas
         .and_then(|epid| {
             module_episode_groups
                 .iter()
-                .find(|episodes| episodes.iter().any(|episode| episode.id == Some(epid)))
+                .find(|episodes| episodes.iter().any(|episode| episode.epid() == Some(epid)))
                 .cloned()
         })
         .unwrap_or_else(|| module_episode_groups.drain(..).flatten().collect());
@@ -1362,9 +1365,60 @@ fn fallback_id(index: usize) -> u32 {
     u32::try_from(index).unwrap_or(u32::MAX)
 }
 
+fn current_unix_timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs())
+}
+
+fn intl_ogv_playurl_params(
+    epid: u64,
+    cid: u64,
+    access_key: Option<&str>,
+    timestamp: u64,
+) -> Vec<(&'static str, String)> {
+    let mut params = Vec::new();
+    if let Some(access_key) = access_key.filter(|value| !value.is_empty()) {
+        params.push(("access_key", access_key.to_owned()));
+    }
+    params.extend([
+        ("appkey", "7d089525d3611b1c".to_owned()),
+        ("area", "th".to_owned()),
+        ("build", "1001310".to_owned()),
+        ("cid", cid.to_string()),
+        ("ep_id", epid.to_string()),
+        ("fnval", "4048".to_owned()),
+        ("fnver", "0".to_owned()),
+        ("force_host", "2".to_owned()),
+        ("fourk", "1".to_owned()),
+        ("mobi_app", "bstar_a".to_owned()),
+        ("platform", "android".to_owned()),
+        ("qn", "0".to_owned()),
+        ("s_locale", "zh_SG".to_owned()),
+        ("ts", timestamp.to_string()),
+    ]);
+    let sign = sign_ordered_params(&params, "acd495b248ec528c2eed1e862d393126");
+    params.push(("sign", sign));
+    params
+}
+
+fn sign_ordered_params(params: &[(&str, String)], secret: &str) -> String {
+    let mut plaintext = String::new();
+    for (index, (key, value)) in params.iter().enumerate() {
+        if index > 0 {
+            plaintext.push('&');
+        }
+        plaintext.push_str(key);
+        plaintext.push('=');
+        plaintext.push_str(value);
+    }
+    plaintext.push_str(secret);
+    format!("{:x}", Md5::digest(plaintext.as_bytes()))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{BiliClient, ClientConfig, EndpointConfig, PlayUrlRoot};
+    use super::{BiliClient, ClientConfig, EndpointConfig, PlayUrlRoot, intl_ogv_playurl_params};
     use crate::{
         Credentials, Error, Input, ResolvedContent, Selection, StreamSource, SubtitleFormat,
     };
@@ -1593,6 +1647,33 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn intl_ogv_playurl_params_are_signed_in_helper_order() {
+        let params = intl_ogv_playurl_params(341_736, 70, Some("intl-token"), 1_234_567_890);
+
+        assert_eq!(
+            params,
+            vec![
+                ("access_key", "intl-token".to_owned()),
+                ("appkey", "7d089525d3611b1c".to_owned()),
+                ("area", "th".to_owned()),
+                ("build", "1001310".to_owned()),
+                ("cid", "70".to_owned()),
+                ("ep_id", "341736".to_owned()),
+                ("fnval", "4048".to_owned()),
+                ("fnver", "0".to_owned()),
+                ("force_host", "2".to_owned()),
+                ("fourk", "1".to_owned()),
+                ("mobi_app", "bstar_a".to_owned()),
+                ("platform", "android".to_owned()),
+                ("qn", "0".to_owned()),
+                ("s_locale", "zh_SG".to_owned()),
+                ("ts", "1234567890".to_owned()),
+                ("sign", "8b320aef0eac5b957c3cab1f98bb9b6d".to_owned()),
+            ]
+        );
+    }
+
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn plans_video_download_with_streams_subtitles_and_danmaku() -> anyhow::Result<()> {
@@ -1764,7 +1845,13 @@ mod tests {
                     "modules": [{
                         "data": {
                             "episodes": [
-                                {"aid": 7, "cid": 70, "id": 341_736, "title": "1", "long_title": "Start"}
+                                {"aid": 7, "cid": 70, "episode_id": 341_736, "title": "1", "long_title": "Start"}
+                            ]
+                        }
+                    }, {
+                        "data": {
+                            "episodes": [
+                                {"aid": 8, "cid": 80, "id": 341_737, "title": "2", "long_title": "Wrong module"}
                             ]
                         }
                     }],
@@ -1776,7 +1863,10 @@ mod tests {
 
         let client = test_client(&server);
         let resolved = client
-            .resolve_input("https://www.bilibili.tv/en/play/34613/341736", None)
+            .resolve_input(
+                "https://www.bilibili.tv/en/play/34613/341736",
+                Some(Selection::Latest),
+            )
             .await?;
         match resolved {
             ResolvedContent::Season(season) => {
@@ -1814,27 +1904,33 @@ mod tests {
         });
         server.mock(|when, then| {
             when.method(GET)
-                .path("/intl/gateway/web/playurl")
+                .path("/intl/gateway/v2/ogv/playurl")
                 .query_param("ep_id", "341736")
-                .query_param("platform", "web")
-                .query_param("access_key", "intl-token");
+                .query_param("cid", "70")
+                .query_param("platform", "android")
+                .query_param("mobi_app", "bstar_a")
+                .query_param("area", "th")
+                .query_param("s_locale", "zh_SG")
+                .query_param("access_key", "intl-token")
+                .query_param_exists("sign");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {
-                    "playurl": {
-                        "video": [{
+                    "video_info": {
+                        "timelength": 42_000,
+                        "stream_list": [{
                             "stream_info": {"quality": 80},
-                            "video_resource": {
-                                "url": "https://intl.example/video.m4s",
+                            "dash_video": {
+                                "base_url": "https://intl.example/video.m4s",
                                 "width": 1280,
                                 "height": 720,
                                 "bandwidth": 900,
                                 "codecs": "avc1"
                             }
                         }],
-                        "audio_resource": [{
+                        "dash_audio": [{
                             "id": 30280,
-                            "url": "https://intl.example/audio.m4s",
+                            "base_url": "https://intl.example/audio.m4s",
                             "bandwidth": 128_000,
                             "codecs": "mp4a.40.2"
                         }]
