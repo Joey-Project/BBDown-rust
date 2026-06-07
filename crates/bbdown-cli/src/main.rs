@@ -388,7 +388,7 @@ async fn handle_qr_login(
             "url": ticket.url,
         }))?;
     } else {
-        println!("scan: {}", ticket.url);
+        print_human_line(format_args!("scan: {}", ticket.url))?;
     }
     let credentials = wait_for_qr_login(&client, &ticket, &args).await?;
     let summary = save_qr_credentials(store, credentials)?;
@@ -399,7 +399,7 @@ async fn handle_qr_login(
             "saved": summary,
         }))?;
     } else {
-        println!("credentials saved");
+        print_human_line("credentials saved")?;
     }
     Ok(())
 }
@@ -421,6 +421,9 @@ fn merge_credentials(stored: &mut Credentials, credentials: Credentials) {
     if credentials.access_key.is_some() {
         stored.access_key = credentials.access_key;
     }
+    if credentials.tv_access_key.is_some() {
+        stored.tv_access_key = credentials.tv_access_key;
+    }
 }
 
 async fn wait_for_qr_login(
@@ -429,7 +432,9 @@ async fn wait_for_qr_login(
     args: &QrLoginArgs,
 ) -> anyhow::Result<Credentials> {
     let interval = Duration::from_secs(args.poll_interval_seconds);
-    let deadline = Instant::now() + Duration::from_secs(args.timeout_seconds);
+    let deadline = Instant::now()
+        .checked_add(Duration::from_secs(args.timeout_seconds))
+        .context("--timeout-seconds is too large")?;
     let mut last_waiting_state: Option<&'static str> = None;
     loop {
         let poll_timeout =
@@ -438,13 +443,13 @@ async fn wait_for_qr_login(
         match state {
             QrLoginState::WaitingForScan => {
                 if !args.json && last_waiting_state != Some("waiting_for_scan") {
-                    println!("waiting for scan");
+                    print_human_line("waiting for scan")?;
                 }
                 last_waiting_state = Some("waiting_for_scan");
             }
             QrLoginState::WaitingForConfirm => {
                 if !args.json && last_waiting_state != Some("waiting_for_confirm") {
-                    println!("waiting for confirmation");
+                    print_human_line("waiting for confirmation")?;
                 }
                 last_waiting_state = Some("waiting_for_confirm");
             }
@@ -493,6 +498,21 @@ fn next_poll_sleep(now: Instant, deadline: Instant, interval: Duration) -> Optio
 
 fn print_json_line(value: &serde_json::Value) -> anyhow::Result<()> {
     println!("{}", serde_json::to_string(value)?);
+    flush_stdout()?;
+    Ok(())
+}
+
+fn print_human_line(message: impl std::fmt::Display) -> anyhow::Result<()> {
+    println!("{message}");
+    flush_stdout()?;
+    Ok(())
+}
+
+fn flush_stdout() -> anyhow::Result<()> {
+    use std::io::Write as _;
+    std::io::stdout()
+        .flush()
+        .context("failed to flush stdout")?;
     Ok(())
 }
 
@@ -648,14 +668,16 @@ mod tests {
         let store = CredentialStore::new(temp.path().join("credentials.json"));
         store.save(&Credentials {
             cookie: Some("SESSDATA=fresh".to_owned()),
-            access_key: None,
+            access_key: Some("BSTAR".to_owned()),
+            tv_access_key: None,
         })?;
 
         let summary = save_qr_credentials(
             &store,
             Credentials {
                 cookie: None,
-                access_key: Some("ACCESS".to_owned()),
+                access_key: None,
+                tv_access_key: Some("TV".to_owned()),
             },
         )?;
         let saved = store.load()?;
@@ -664,11 +686,13 @@ mod tests {
             saved,
             Credentials {
                 cookie: Some("SESSDATA=fresh".to_owned()),
-                access_key: Some("ACCESS".to_owned()),
+                access_key: Some("BSTAR".to_owned()),
+                tv_access_key: Some("TV".to_owned()),
             }
         );
         assert!(summary.has_cookie);
         assert!(summary.has_access_key);
+        assert!(summary.has_tv_access_key);
         Ok(())
     }
 }

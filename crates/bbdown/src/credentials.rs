@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 pub struct Credentials {
     pub cookie: Option<String>,
     pub access_key: Option<String>,
+    #[serde(default)]
+    pub tv_access_key: Option<String>,
 }
 
 impl fmt::Debug for Credentials {
@@ -18,6 +20,7 @@ impl fmt::Debug for Credentials {
             .debug_struct("Credentials")
             .field("has_cookie", &summary.has_cookie)
             .field("has_access_key", &summary.has_access_key)
+            .field("has_tv_access_key", &summary.has_tv_access_key)
             .finish()
     }
 }
@@ -27,6 +30,7 @@ impl Credentials {
     pub fn is_empty(&self) -> bool {
         self.cookie.as_deref().unwrap_or_default().is_empty()
             && self.access_key.as_deref().unwrap_or_default().is_empty()
+            && self.tv_access_key.as_deref().unwrap_or_default().is_empty()
     }
 
     #[must_use]
@@ -40,6 +44,10 @@ impl Credentials {
                 .access_key
                 .as_deref()
                 .is_some_and(|value| !value.is_empty()),
+            has_tv_access_key: self
+                .tv_access_key
+                .as_deref()
+                .is_some_and(|value| !value.is_empty()),
         }
     }
 }
@@ -48,6 +56,7 @@ impl Credentials {
 pub struct CredentialSource {
     pub has_cookie: bool,
     pub has_access_key: bool,
+    pub has_tv_access_key: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -150,15 +159,18 @@ mod tests {
         store.save(&Credentials {
             cookie: Some("SESSDATA=secret".to_owned()),
             access_key: Some("token".to_owned()),
+            tv_access_key: Some("tv-token".to_owned()),
         })?;
 
         let loaded = store.load()?;
         assert_eq!(loaded.cookie.as_deref(), Some("SESSDATA=secret"));
+        assert_eq!(loaded.tv_access_key.as_deref(), Some("tv-token"));
         assert_eq!(
             loaded.redacted_summary(),
             super::CredentialSource {
                 has_cookie: true,
                 has_access_key: true,
+                has_tv_access_key: true,
             }
         );
         Ok(())
@@ -171,13 +183,16 @@ mod tests {
             Credentials {
                 cookie: Some("SESSDATA=secret".to_owned()),
                 access_key: Some("access-token".to_owned()),
+                tv_access_key: Some("tv-access-token".to_owned()),
             }
         );
 
         assert!(debug.contains("has_cookie: true"));
         assert!(debug.contains("has_access_key: true"));
+        assert!(debug.contains("has_tv_access_key: true"));
         assert!(!debug.contains("SESSDATA=secret"));
         assert!(!debug.contains("access-token"));
+        assert!(!debug.contains("tv-access-token"));
     }
 
     #[cfg(unix)]
@@ -198,6 +213,7 @@ mod tests {
         store.save(&Credentials {
             cookie: Some("SESSDATA=secret".to_owned()),
             access_key: None,
+            tv_access_key: None,
         })?;
 
         let mode = std::fs::metadata(path)?.permissions().mode() & 0o777;
@@ -223,6 +239,7 @@ mod tests {
             CredentialStore::new(std::path::PathBuf::from("credentials.json")).save(&Credentials {
                 cookie: Some("SESSDATA=secret".to_owned()),
                 access_key: None,
+                tv_access_key: None,
             });
         std::env::set_current_dir(original)?;
         save_result?;

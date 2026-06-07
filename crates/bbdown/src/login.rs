@@ -114,6 +114,7 @@ impl BiliClient {
                     credentials: Credentials {
                         cookie: Some(cookie_from_success_url(&url)?),
                         access_key: None,
+                        tv_access_key: None,
                     },
                 })
             }
@@ -193,7 +194,8 @@ impl BiliClient {
                 Ok(QrLoginState::Succeeded {
                     credentials: Credentials {
                         cookie: None,
-                        access_key: Some(data.access_token),
+                        access_key: None,
+                        tv_access_key: Some(data.access_token),
                     },
                 })
             }
@@ -519,6 +521,7 @@ mod tests {
                 credentials: Credentials {
                     cookie: Some("SESSDATA=sess;bili_jct=csrf".to_owned()),
                     access_key: None,
+                    tv_access_key: None,
                 }
             }
         );
@@ -616,7 +619,8 @@ mod tests {
             QrLoginState::Succeeded {
                 credentials: Credentials {
                     cookie: None,
-                    access_key: Some("ACCESS".to_owned()),
+                    access_key: None,
+                    tv_access_key: Some("ACCESS".to_owned()),
                 }
             }
         );
@@ -637,6 +641,7 @@ mod tests {
             credentials: Credentials {
                 cookie: Some("SESSDATA=old".to_owned()),
                 access_key: None,
+                tv_access_key: None,
             },
             user_agent: "test".to_owned(),
             request_timeout: std::time::Duration::from_secs(30),

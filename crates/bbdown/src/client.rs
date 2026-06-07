@@ -1927,6 +1927,7 @@ mod tests {
             credentials: Credentials {
                 cookie: None,
                 access_key: Some("TOKEN_SHOULD_REDACT_12345".to_owned()),
+                tv_access_key: None,
             },
             user_agent: "test".to_owned(),
             request_timeout: Duration::from_secs(30),
@@ -2126,6 +2127,7 @@ mod tests {
             credentials: Credentials {
                 cookie: None,
                 access_key: Some("intl-token".to_owned()),
+                tv_access_key: None,
             },
             user_agent: "test".to_owned(),
             request_timeout: Duration::from_secs(30),

@@ -72,10 +72,11 @@ Credentials are stored in the platform config directory by default. Use
 `--credential-file <path>` to override this path for integration tests or local experiments.
 Secret import commands also read `BBDOWN_COOKIE` or `BBDOWN_ACCESS_KEY` when no input flag is
 provided, so callers can avoid passing credentials through process arguments. QR login commands poll
-the Bilibili QR state machine and save only the resulting credential. With `--json`, QR login emits
-newline-delimited JSON events: a `ticket` event with the scan URL before polling, then a `saved`
-event after credentials are stored. Treat the scan URL as a temporary login secret; status output and
-the `saved` event expose redacted booleans only.
+the Bilibili QR state machine and save only the resulting credential. WEB QR login saves a cookie;
+TV QR login saves a TV-specific access key without overwriting the generic intl/Bstar access key.
+With `--json`, QR login emits newline-delimited JSON events: a `ticket` event with the scan URL
+before polling, then a `saved` event after credentials are stored. Treat the scan URL as a temporary
+login secret; status output and the `saved` event expose redacted booleans only.
 
 Use `--request-timeout-seconds` or `BBDOWN_REQUEST_TIMEOUT_SECONDS` to tune API request bounds.
 Media body reads use `--download-idle-timeout-seconds`; pass `0` to disable the idle timeout.

@@ -437,8 +437,12 @@ fn auth_qr_login_web_and_tv_use_local_store() -> anyhow::Result<()> {
     assert_eq!(events[0]["url"], "https://tv.example/scan");
     assert_eq!(events[1]["event"], "saved");
     assert_eq!(events[1]["saved"]["has_cookie"], true);
-    assert_eq!(events[1]["saved"]["has_access_key"], true);
+    assert_eq!(events[1]["saved"]["has_access_key"], false);
+    assert_eq!(events[1]["saved"]["has_tv_access_key"], true);
     assert!(!String::from_utf8_lossy(&output).contains("ACCESS"));
+    let saved: Value = serde_json::from_slice(&fs::read(&credential_file)?)?;
+    assert_eq!(saved["access_key"], Value::Null);
+    assert_eq!(saved["tv_access_key"], "ACCESS");
     Ok(())
 }
 

@@ -29,21 +29,23 @@ superseded_by:
   waiting for scan, waiting for confirmation, expired, and succeeded cookie credential.
 - `BiliClient::create_tv_qr_login` and `BiliClient::poll_tv_qr_login` model the TV QR flow using
   BBDown-compatible signed app parameters, waiting-for-scan, waiting-for-confirmation, expired, and
-  succeeded access-key credential output. TV QR tickets retain the generated device session context
-  so polling reuses the same device identity.
+  succeeded TV-specific access-key credential output. TV QR tickets retain the generated device
+  session context so polling reuses the same device identity.
 - QR login HTTP requests use anonymous headers even when the caller has stored credentials.
 - QR ticket debug output is redacted because ticket keys and scan URL query strings can act as
   pre-authentication secrets.
 - CLI `auth login-web` and `auth login-tv` print the scan URL in human mode, poll with
   deadline-based timeout handling, and save resulting credentials without printing token values.
 - QR login JSON output is newline-delimited event output: `ticket` exposes the scan URL before
-  polling and must be treated as a temporary login secret, while `saved` reports only `has_cookie`
-  and `has_access_key` booleans.
+  polling and must be treated as a temporary login secret, while `saved` reports only redacted
+  credential-presence booleans.
 - QR login saves reload the current credential store after scan success before merging returned
   credentials, so long QR waits do not overwrite another command's fresh credential update with a
-  stale pre-wait snapshot.
+  stale pre-wait snapshot. TV QR tokens are stored separately from the generic intl/Bstar
+  `access_key` because app tokens are appkey-bound.
 - CLI mock e2e coverage verifies WEB QR cookie import and TV QR access-key import through a local
-  credential file, plus expired and hung-poll failure paths that do not save credentials.
+  credential file without overwriting a generic access key, plus expired and hung-poll failure paths
+  that do not save credentials.
 - `crates/bbdown-cli/tests/live_e2e.rs` contains ignored opt-in live tests for `info --json` and
   `plan --json` using `BBDOWN_LIVE_URL`, optional `BBDOWN_LIVE_SELECTION`, `BBDOWN_LIVE_COOKIE`,
   and `BBDOWN_LIVE_ACCESS_KEY`.

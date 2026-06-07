@@ -1406,6 +1406,7 @@ mod tests {
             credentials: Credentials {
                 cookie: Some("SESSDATA=secret".to_owned()),
                 access_key: None,
+                tv_access_key: None,
             },
             ..ClientConfig::default()
         });
