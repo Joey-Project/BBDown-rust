@@ -39,10 +39,13 @@ superseded_by:
   without FLV fallback fails before writing media.
 - Media and sidecar download requests use media headers without account cookies.
 - DASH and FLV backup URLs are used as fallback candidates after the primary URL fails.
-- Resume appends only when `Content-Range` starts at the local file length and completes at the
-  advertised total length. Matching 416 responses are reported as already complete instead of failed.
+- Resume appends only when `Content-Range` starts at the local file length and either completes at
+  the advertised total length or an expected media size proves the final length. Matching 416
+  responses are reported as already complete instead of failed. Wildcard `Content-Range` totals are
+  rejected when no expected size is available.
 - Media downloads validate stream or FLV segment sizes when the plan provides them and roll back
-  failed write attempts to the pre-attempt file length.
+  failed write attempts to the pre-attempt file length. Empty media responses are rejected when no
+  stronger size signal exists.
 - Ignored `Range` full-retry writes use temporary files so failed full retries preserve the
   previous partial file, and successful full retries replace the partial through a cross-platform
   replace path after available length checks pass. `Content-Length` is used as a validation signal
@@ -63,9 +66,10 @@ superseded_by:
 - Safety coverage verifies media downloads do not send cookies, backup URLs are used, matching 416
   responses are treated as complete, mismatched `Content-Range` responses are rejected, range body
   lengths are checked, non-partial `Content-Range` responses including `bytes */N` are rejected,
-  ignored `Range` full retries use `Content-Length` when available and preserve old files when an
-  unvalidated response is shorter, `--no-resume` failures preserve existing targets, expected media
-  sizes are enforced, and stream identity is reflected in output filenames, same-title content
+  wildcard `Content-Range` totals require expected-size proof, ignored `Range` full retries use
+  `Content-Length` when available and preserve old files when an unvalidated response is shorter,
+  empty media responses are rejected, `--no-resume` failures preserve existing targets, expected
+  media sizes are enforced, and stream identity is reflected in output filenames, same-title content
   identities get distinct entry directories, duplicate-language subtitle tracks get distinct
   filenames, duplicate subtitle URLs are skipped, unknown subtitle extensions are bounded, filename
   byte limits are enforced, incomplete DASH media uses FLV fallback when available, and incomplete
@@ -89,4 +93,4 @@ superseded_by:
 
 - Local type gate: `cargo check --workspace`.
 - Local lint gate: `cargo clippy --workspace --all-targets -- -D warnings`.
-- Local tests: `cargo test --workspace` with 66 library tests and 5 CLI e2e tests.
+- Local tests: `cargo test --workspace` with 69 library tests and 5 CLI e2e tests.

@@ -67,7 +67,8 @@ partial is replaced from a temporary full retry after available length checks pa
 length signal, a shorter retry response is rejected so the existing file is preserved. Retry behavior
 is bounded by `--retry-attempts` and `--retry-backoff-ms`. Entry directories include content
 identity, and DASH media filenames include stream metadata identity, so same-title videos and
-different codec variants do not share the same resume target.
+different codec variants do not share the same resume target. Media downloads that complete without
+writing any bytes are rejected.
 
 `--request-timeout-seconds` applies to API requests. Media body reads use
 `--download-idle-timeout-seconds`; pass `0` to disable that idle timeout.

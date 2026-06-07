@@ -411,6 +411,12 @@ impl BiliClient {
                 return Err(error);
             }
         };
+        if is_empty_unexpected_media_response(&kind, expected_size, bytes_written) {
+            if !append {
+                let _ = fs::remove_file(&write_path).await;
+            }
+            return Err(Error::InvalidInput("empty media response".to_owned()));
+        }
         if full_retry_after_ignored_range
             && is_short_unvalidated_full_retry(
                 expected_size,
@@ -764,6 +770,14 @@ fn is_short_unvalidated_full_retry(
     expected_size.is_none() && content_range.is_none() && bytes_written < existing_len
 }
 
+fn is_empty_unexpected_media_response(
+    kind: &DownloadFileKind,
+    expected_size: Option<u64>,
+    bytes_written: u64,
+) -> bool {
+    kind.is_media() && expected_size != Some(0) && bytes_written == 0
+}
+
 fn validate_download_completion(
     expected_size: Option<u64>,
     content_range: Option<ParsedContentRange>,
@@ -789,6 +803,16 @@ fn validate_download_completion(
                     "Content-Range total length did not match expected media size".to_owned(),
                 ));
             }
+        } else if let Some(size) = expected_size {
+            if size != final_len {
+                return Err(Error::InvalidInput(
+                    "downloaded file length did not match expected media size".to_owned(),
+                ));
+            }
+        } else {
+            return Err(Error::InvalidInput(
+                "Content-Range total length is unknown".to_owned(),
+            ));
         }
         if expected_size.is_some_and(|size| size != final_len) {
             return Err(Error::InvalidInput(
@@ -1921,6 +1945,90 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rejects_unknown_total_content_range_without_expected_size() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/video.m4s")
+                .header("range", "bytes=3-");
+            then.status(206)
+                .header("Content-Range", "bytes 3-5/*")
+                .body("new");
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
+        let output_dir = test_entry_dir(temp.path(), &plan);
+        tokio::fs::create_dir_all(&output_dir).await?;
+        let path = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
+        tokio::fs::write(&path, "old").await?;
+
+        let Err(error) = client
+            .download_plan(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().to_path_buf(),
+                    retry: RetryPolicy::single_attempt(),
+                    include_danmaku: false,
+                    mux: MuxOptions::Disabled,
+                    ..DownloadOptions::default()
+                },
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!(
+                "unknown total Content-Range should fail without expected size"
+            ));
+        };
+
+        assert!(error.to_string().contains("Content-Range total length"));
+        assert_eq!(tokio::fs::read_to_string(&path).await?, "old");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn accepts_unknown_total_content_range_when_expected_size_matches() -> anyhow::Result<()>
+    {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/video.m4s")
+                .header("range", "bytes=3-");
+            then.status(206)
+                .header("Content-Range", "bytes 3-5/*")
+                .body("new");
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/audio.m4s");
+            then.status(200).body("audio");
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let mut plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
+        plan.entries[0].streams.videos[0].size = Some(6);
+        let output_dir = test_entry_dir(temp.path(), &plan);
+        tokio::fs::create_dir_all(&output_dir).await?;
+        let path = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
+        tokio::fs::write(&path, "old").await?;
+
+        client
+            .download_plan(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().to_path_buf(),
+                    retry: RetryPolicy::single_attempt(),
+                    include_danmaku: false,
+                    mux: MuxOptions::Disabled,
+                    ..DownloadOptions::default()
+                },
+            )
+            .await?;
+
+        assert_eq!(tokio::fs::read_to_string(&path).await?, "oldnew");
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn rejects_content_range_total_mismatch_on_resume() -> anyhow::Result<()> {
         let server = MockServer::start();
         server.mock(|when, then| {
@@ -2000,6 +2108,43 @@ mod tests {
 
         assert!(error.to_string().contains("expected media size"));
         assert_eq!(tokio::fs::metadata(&path).await?.len(), 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rejects_empty_unknown_size_media_response() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/video.m4s");
+            then.status(200).body("");
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
+        let path = temp
+            .path()
+            .join(safe_file_name(&plan.title))
+            .join(entry_dir_name(&plan.entries[0]))
+            .join(media_file_name("video", &plan.entries[0].streams.videos[0]));
+
+        let Err(error) = client
+            .download_plan(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().to_path_buf(),
+                    retry: RetryPolicy::single_attempt(),
+                    include_danmaku: false,
+                    mux: MuxOptions::Disabled,
+                    ..DownloadOptions::default()
+                },
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!("empty media response should fail"));
+        };
+
+        assert!(error.to_string().contains("empty media response"));
+        assert!(!path.exists());
         Ok(())
     }
 

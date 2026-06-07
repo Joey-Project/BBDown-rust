@@ -88,18 +88,20 @@ Media and sidecar downloads use media headers without account cookies, because m
 API payloads and can target CDN or proxy hosts. DASH and FLV backup URLs are part of the candidate
 list. Media body reads use a separate idle timeout instead of the metadata request timeout. Resume
 appends only when `Content-Range` starts at the local file length and completes at the advertised
-range total; matching 416 responses are treated as already complete. When a stream or FLV segment
-declares a size, the executor rejects mismatched final file lengths and rolls back failed writes to
-the pre-attempt length. Entry directories include content identity so same-title videos do not share
+range total or an expected media size proves the final length; matching 416 responses are treated as
+already complete. Wildcard `Content-Range` totals are rejected when no expected size is available.
+When a stream or FLV segment declares a size, the executor rejects mismatched final file lengths and
+rolls back failed writes to the pre-attempt length. Media responses that complete without writing
+bytes are rejected. Entry directories include content identity so same-title videos do not share
 resume targets, subtitle sidecar names include track identity, and filename components are bounded
 by UTF-8 byte length. If a server ignores `Range` and returns `200 OK` for a partial file, the
-executor writes the full retry to a temporary file and only replaces the old partial after
-available validation succeeds. Without an advertised size, `Content-Length`, or `Content-Range`, a
-full retry may still replace the old file only when the successfully written response is not shorter
-than the existing file; shorter unvalidated responses preserve the old file. Forced fresh writes
-also use temporary files when replacing an existing target, so failed `--no-resume` retries do not
-clear previous output. DASH media output names prefer stable stream metadata and only fall back to
-URL path hashing when metadata is absent, so CDN host or query changes do not split resume targets.
+executor writes the full retry to a temporary file and only replaces the old partial after available
+validation succeeds. Without an advertised size, `Content-Length`, or `Content-Range`, a full retry
+may still replace the old file only when the successfully written response is not shorter than the
+existing file; shorter unvalidated responses preserve the old file. Forced fresh writes also use
+temporary files when replacing an existing target, so failed `--no-resume` retries do not clear
+previous output. DASH media output names prefer stable stream metadata and only fall back to URL
+path hashing when metadata is absent, so CDN host or query changes do not split resume targets.
 
 The crate default keeps muxing disabled so embedding projects do not spawn external processes by
 surprise. The CLI `download` command enables ffmpeg by default and exposes `--no-mux` for users and
