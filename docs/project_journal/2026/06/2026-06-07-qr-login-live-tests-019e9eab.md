@@ -5,7 +5,7 @@ status: completed
 created: 2026-06-07
 updated: 2026-06-07
 branch: wip/qr-login-live-tests
-pr:
+pr: https://github.com/Joey-Project/BBDown-rust/pull/4
 supersedes: []
 superseded_by:
 ---
