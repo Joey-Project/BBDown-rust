@@ -1019,18 +1019,21 @@ impl PlayUrlRoot {
         videos.extend(
             payload
                 .stream_list
+                .unwrap_or_default()
                 .into_iter()
                 .filter_map(IntlStreamItem::into_video_stream),
         );
         audios.extend(
             payload
                 .dash_audio
+                .unwrap_or_default()
                 .into_iter()
                 .enumerate()
                 .filter_map(|(index, resource)| resource.into_media_stream(fallback_id(index))),
         );
         let flv_segments = payload
             .durl
+            .unwrap_or_default()
             .into_iter()
             .enumerate()
             .filter_map(|(index, segment)| segment.into_flv_segment(index))
@@ -1053,12 +1056,9 @@ struct PlayPayload {
     video_info: Option<Box<PlayPayload>>,
     playurl: Option<IntlPlayUrlPayload>,
     dash: Option<DashPayload>,
-    #[serde(default)]
-    stream_list: Vec<IntlStreamItem>,
-    #[serde(default)]
-    dash_audio: Vec<IntlMediaResource>,
-    #[serde(default)]
-    durl: Vec<DurlSegment>,
+    stream_list: Option<Vec<IntlStreamItem>>,
+    dash_audio: Option<Vec<IntlMediaResource>>,
+    durl: Option<Vec<DurlSegment>>,
     #[serde(default)]
     accept_quality: Vec<u32>,
     timelength: Option<u64>,
@@ -1066,10 +1066,8 @@ struct PlayPayload {
 
 #[derive(Debug, Deserialize)]
 struct IntlPlayUrlPayload {
-    #[serde(default)]
-    video: Vec<IntlStreamItem>,
-    #[serde(default)]
-    audio_resource: Vec<IntlMediaResource>,
+    video: Option<Vec<IntlStreamItem>>,
+    audio_resource: Option<Vec<IntlMediaResource>>,
     timelength: Option<u64>,
 }
 
@@ -1077,11 +1075,13 @@ impl IntlPlayUrlPayload {
     fn into_stream_set(self, fallback_timelength: Option<u64>) -> Result<StreamSet> {
         let videos = self
             .video
+            .unwrap_or_default()
             .into_iter()
             .filter_map(IntlStreamItem::into_video_stream)
             .collect::<Vec<_>>();
         let audios = self
             .audio_resource
+            .unwrap_or_default()
             .into_iter()
             .enumerate()
             .filter_map(|(index, resource)| resource.into_media_stream(fallback_id(index)))
@@ -1527,6 +1527,34 @@ mod tests {
             streams.flv_segments[0].url,
             "https://flv.example/segment.flv"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn playurl_accepts_null_durl_with_dash_streams() -> anyhow::Result<()> {
+        let response: PlayUrlRoot = serde_json::from_value(serde_json::json!({
+            "code": 0,
+            "data": {
+                "dash": {
+                    "duration": 9,
+                    "video": [{
+                        "id": 80,
+                        "baseUrl": "https://video.example/80.m4s"
+                    }],
+                    "audio": [{
+                        "id": 30280,
+                        "baseUrl": "https://audio.example/30280.m4s"
+                    }]
+                },
+                "durl": null
+            }
+        }))?;
+
+        let streams = response.into_stream_set()?;
+
+        assert_eq!(streams.videos[0].id, 80);
+        assert_eq!(streams.audios[0].id, 30280);
+        assert!(streams.flv_segments.is_empty());
         Ok(())
     }
 
