@@ -10,7 +10,7 @@ documentation = "https://docs.rs/bbdown"
 readme = "README.md"
 rust-version.workspace = true
 keywords = ["bbdown", "bilibili", "download", "video", "async"]
-categories = ["api-bindings", "multimedia", "web-programming"]
+categories = ["api-bindings", "multimedia::video", "web-programming"]
 
 [dependencies]
 futures-util.workspace = true

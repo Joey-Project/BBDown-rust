@@ -27,6 +27,8 @@ superseded_by:
 - `crates/bbdown/LICENSE` keeps the MIT license text inside the publishable crate package.
 - `crates/bbdown-cli/Cargo.toml` is marked `publish = false` and keeps a versioned path dependency
   on `bbdown`.
+- Crate categories use crates.io category slugs, including `multimedia::video` rather than the
+  parent `multimedia` label.
 - `just publish-dry-run` runs a locked dry run with `--allow-dirty` for local pre-commit validation.
 - `just publish-dry-run-strict` and GitHub CI run the clean-checkout strict `bbdown` publish dry-run
   gate.
