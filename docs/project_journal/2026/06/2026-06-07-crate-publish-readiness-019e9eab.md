@@ -34,3 +34,6 @@ superseded_by:
 - Current-name probe: `cargo search bbdown --limit 5`.
 - Baseline publish probe: `cargo publish --dry-run -p bbdown`.
 - Baseline CLI publish probe: `cargo publish --dry-run -p bbdown-cli`.
+- Package content check: `cargo package --list -p bbdown --allow-dirty`.
+- Pre-commit publish dry run: `cargo publish --dry-run -p bbdown --locked --allow-dirty`.
+- Strict local default gate after commit: `just ci`.
