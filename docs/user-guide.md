@@ -55,16 +55,16 @@ bbdown download ss26801 --select latest --output-dir downloads
 bbdown download av170001 --output-dir downloads --no-mux --json
 ```
 
-The command downloads the first available DASH video/audio pair for each entry. When a playurl
-response only contains legacy FLV `durl` segments, it downloads those segments instead. Subtitle
-and danmaku sidecars are enabled by default and can be disabled with `--no-subtitles` and
+The command downloads the first complete DASH video/audio pair for each entry. When DASH media is
+incomplete and legacy FLV `durl` segments are available, it downloads those segments instead.
+Subtitle and danmaku sidecars are enabled by default and can be disabled with `--no-subtitles` and
 `--no-danmaku`.
 
 Downloads resume partial files by default with HTTP range requests and validate `Content-Range`
 plus advertised media sizes when the plan provides them. Use `--no-resume` to force a fresh write.
-Retry behavior is bounded by `--retry-attempts` and `--retry-backoff-ms`.
-DASH media filenames include stream identity, so different codec or source variants do not share
-the same resume target.
+Retry behavior is bounded by `--retry-attempts` and `--retry-backoff-ms`. Entry directories include
+content identity, and DASH media filenames include stream metadata identity, so same-title videos
+and different codec variants do not share the same resume target.
 
 `--request-timeout-seconds` applies to API requests. Media body reads use
 `--download-idle-timeout-seconds`; pass `0` to disable that idle timeout.

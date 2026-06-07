@@ -249,7 +249,7 @@ fn download_json_writes_mock_media_files() -> anyhow::Result<()> {
         "audio"
     );
     assert_eq!(
-        fs::read_to_string(output_dir.join("Mock video/P001-Main/subtitle-en.ass"))?,
+        fs::read_to_string(downloaded_file_path(&json, "subtitle")?)?,
         "[Script Info]"
     );
     assert_eq!(
@@ -269,7 +269,7 @@ fn download_json_default_mux_keeps_stdout_valid() -> anyhow::Result<()> {
     let output_dir = temp.path().join("downloads");
     let ffmpeg = write_fake_ffmpeg(
         temp.path(),
-        "printf 'mux noise\\n'\nlast=\nfor arg do last=$arg; done\n: > \"$last\"\nexit 0",
+        "printf 'mux noise\\n'\nlast=\nfor arg do last=$arg; done\nprintf 'muxed' > \"$last\"\nexit 0",
     )?;
     server.mock(|when, then| {
         when.method(GET)

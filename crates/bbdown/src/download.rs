@@ -160,14 +160,16 @@ impl BiliClient {
         let entry_dir = output_dir.join(entry_dir_name(entry));
         fs::create_dir_all(&entry_dir).await?;
         let mut files = Vec::new();
-        if entry.streams.videos.is_empty() && entry.streams.audios.is_empty() {
+        let has_dash_pair = !entry.streams.videos.is_empty() && !entry.streams.audios.is_empty();
+        let use_flv_fallback = !has_dash_pair && !entry.streams.flv_segments.is_empty();
+        if use_flv_fallback {
             for segment in &entry.streams.flv_segments {
                 files.push(
                     self.download_flv_segment(segment, &entry_dir, options)
                         .await?,
                 );
             }
-        } else {
+        } else if !entry.streams.videos.is_empty() || !entry.streams.audios.is_empty() {
             if let Some(video) = entry.streams.videos.first() {
                 files.push(
                     self.download_media_stream(video, DownloadFileKind::Video, &entry_dir, options)
@@ -180,6 +182,8 @@ impl BiliClient {
                         .await?,
                 );
             }
+        } else {
+            return Err(Error::MissingField("complete DASH media or FLV segments"));
         }
         if options.include_subtitles {
             for subtitle in &entry.subtitles {
@@ -414,7 +418,7 @@ impl BiliClient {
             }
         };
         if replace_existing {
-            fs::rename(&write_path, path).await?;
+            replace_file(&write_path, path).await?;
         }
         Ok(DownloadedFile {
             kind,
@@ -508,6 +512,11 @@ impl BiliClient {
                 status: "missing output file".to_owned(),
             });
         }
+        if metadata.len() == 0 {
+            return Err(Error::MuxFailed {
+                status: "empty output file".to_owned(),
+            });
+        }
         let mut command = Vec::with_capacity(args.len() + 1);
         command.push(binary.to_string_lossy().into_owned());
         command.extend(args);
@@ -581,6 +590,42 @@ fn temporary_download_path(path: &Path) -> PathBuf {
         .map_or_else(|| OsString::from("download"), std::ffi::OsStr::to_os_string);
     file_name.push(".bbdown-download");
     path.with_file_name(file_name)
+}
+
+fn temporary_replace_path(path: &Path) -> PathBuf {
+    let mut file_name = path
+        .file_name()
+        .map_or_else(|| OsString::from("download"), std::ffi::OsStr::to_os_string);
+    file_name.push(".bbdown-replace");
+    path.with_file_name(file_name)
+}
+
+async fn replace_file(source: &Path, target: &Path) -> Result<()> {
+    match fs::rename(source, target).await {
+        Ok(()) => return Ok(()),
+        Err(error) if error.kind() != std::io::ErrorKind::AlreadyExists => {
+            return Err(Error::Io(error));
+        }
+        Err(_) => {}
+    }
+
+    let backup = temporary_replace_path(target);
+    match fs::remove_file(&backup).await {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(Error::Io(error)),
+    }
+    fs::rename(target, &backup).await?;
+    match fs::rename(source, target).await {
+        Ok(()) => {
+            let _ = fs::remove_file(&backup).await;
+            Ok(())
+        }
+        Err(error) => {
+            let _ = fs::rename(&backup, target).await;
+            Err(Error::Io(error))
+        }
+    }
 }
 
 fn candidate_urls(primary: &str, backups: &[String]) -> Vec<String> {
@@ -747,7 +792,28 @@ fn concat_file_list(paths: &[PathBuf], base: &Path) -> String {
 }
 
 fn entry_dir_name(entry: &DownloadEntry) -> String {
-    format!("P{:03}-{}", entry.index, safe_file_name(&entry.title))
+    format!(
+        "P{:03}-{}-{}",
+        entry.index,
+        entry_content_identity(entry),
+        safe_file_name(&entry.title)
+    )
+}
+
+fn entry_content_identity(entry: &DownloadEntry) -> String {
+    let primary = entry
+        .bvid
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .map_or_else(
+            || {
+                entry
+                    .epid
+                    .map_or_else(|| format!("av{}", entry.aid), |epid| format!("ep{epid}"))
+            },
+            safe_file_name,
+        );
+    format!("{primary}-cid{}", entry.cid)
 }
 
 fn safe_file_name(raw: &str) -> String {
@@ -868,7 +934,9 @@ fn url_path_extension(url: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{DownloadOptions, MuxOptions, RetryPolicy, media_file_name};
+    use super::{
+        DownloadOptions, MuxOptions, RetryPolicy, entry_dir_name, media_file_name, safe_file_name,
+    };
     use crate::models::{
         DanmakuTrack, DownloadEntry, DownloadPlan, FlvSegment, MediaStream, StreamSet,
         StreamSource, SubtitleFormat, SubtitleTrack,
@@ -907,6 +975,21 @@ mod tests {
         stream.codecs = None;
         stream.mime_type = None;
         assert!(media_file_name("video", &stream).starts_with("video-80-h"));
+    }
+
+    #[test]
+    fn entry_dir_name_distinguishes_content_identity() {
+        let server = MockServer::start();
+        let first = test_plan(&server);
+        let mut second = test_plan(&server);
+        second.entries[0].aid = 170_002;
+        second.entries[0].bvid = Some("BV1yy411c7mD".to_owned());
+        second.entries[0].cid = 3;
+
+        assert_ne!(
+            entry_dir_name(&first.entries[0]),
+            entry_dir_name(&second.entries[0])
+        );
     }
 
     #[tokio::test]
@@ -974,7 +1057,7 @@ mod tests {
         plan.entries[0].streams.audios.clear();
         plan.entries[0].subtitles.clear();
         plan.entries[0].danmaku.xml_url = format!("{}/danmaku.xml", server.base_url());
-        let output_dir = temp.path().join("Mock video").join("P001-Main");
+        let output_dir = test_entry_dir(temp.path(), &plan);
         tokio::fs::create_dir_all(&output_dir).await?;
         tokio::fs::write(
             output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0])),
@@ -1092,7 +1175,7 @@ mod tests {
         let client = BiliClient::new(ClientConfig::default());
         let mut plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
         plan.entries[0].streams.videos[0].size = Some(3);
-        let output_dir = temp.path().join("Mock video").join("P001-Main");
+        let output_dir = test_entry_dir(temp.path(), &plan);
         tokio::fs::create_dir_all(&output_dir).await?;
         tokio::fs::write(
             output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0])),
@@ -1134,7 +1217,7 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let client = BiliClient::new(ClientConfig::default());
         let plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
-        let output_dir = temp.path().join("Mock video").join("P001-Main");
+        let output_dir = test_entry_dir(temp.path(), &plan);
         tokio::fs::create_dir_all(&output_dir).await?;
         let path = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
         tokio::fs::write(&path, "old").await?;
@@ -1175,7 +1258,7 @@ mod tests {
         let client = BiliClient::new(ClientConfig::default());
         let mut plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
         plan.entries[0].streams.videos[0].size = Some(6);
-        let output_dir = temp.path().join("Mock video").join("P001-Main");
+        let output_dir = test_entry_dir(temp.path(), &plan);
         tokio::fs::create_dir_all(&output_dir).await?;
         let path = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
         tokio::fs::write(&path, "old").await?;
@@ -1215,7 +1298,7 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let client = BiliClient::new(ClientConfig::default());
         let plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
-        let output_dir = temp.path().join("Mock video").join("P001-Main");
+        let output_dir = test_entry_dir(temp.path(), &plan);
         tokio::fs::create_dir_all(&output_dir).await?;
         let path = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
         tokio::fs::write(&path, "old").await?;
@@ -1257,7 +1340,7 @@ mod tests {
         let client = BiliClient::new(ClientConfig::default());
         let mut plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
         plan.entries[0].streams.videos[0].size = Some(6);
-        let output_dir = temp.path().join("Mock video").join("P001-Main");
+        let output_dir = test_entry_dir(temp.path(), &plan);
         tokio::fs::create_dir_all(&output_dir).await?;
         let path = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
         tokio::fs::write(&path, "old").await?;
@@ -1284,6 +1367,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn replaces_partial_file_when_full_retry_succeeds_after_ignored_range()
+    -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/video.m4s")
+                .header("range", "bytes=3-");
+            then.status(200).body("oldnew");
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let mut plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
+        plan.entries[0].streams.videos[0].size = Some(6);
+        let output_dir = test_entry_dir(temp.path(), &plan);
+        tokio::fs::create_dir_all(&output_dir).await?;
+        let path = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
+        tokio::fs::write(&path, "old").await?;
+
+        let report = client
+            .download_plan(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().to_path_buf(),
+                    retry: RetryPolicy::single_attempt(),
+                    include_danmaku: false,
+                    mux: MuxOptions::Disabled,
+                    ..DownloadOptions::default()
+                },
+            )
+            .await?;
+
+        let file = &report.entries[0].files[0];
+        assert_eq!(file.bytes_written, 6);
+        assert_eq!(file.resumed_from, 0);
+        assert_eq!(tokio::fs::read_to_string(&path).await?, "oldnew");
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn rejects_short_content_range_body_on_resume() -> anyhow::Result<()> {
         let server = MockServer::start();
         server.mock(|when, then| {
@@ -1298,7 +1420,7 @@ mod tests {
         let client = BiliClient::new(ClientConfig::default());
         let mut plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
         plan.entries[0].streams.videos[0].size = Some(6);
-        let output_dir = temp.path().join("Mock video").join("P001-Main");
+        let output_dir = test_entry_dir(temp.path(), &plan);
         tokio::fs::create_dir_all(&output_dir).await?;
         let path = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
         tokio::fs::write(&path, "old").await?;
@@ -1339,7 +1461,7 @@ mod tests {
         let client = BiliClient::new(ClientConfig::default());
         let mut plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
         plan.entries[0].streams.videos[0].size = Some(6);
-        let output_dir = temp.path().join("Mock video").join("P001-Main");
+        let output_dir = test_entry_dir(temp.path(), &plan);
         tokio::fs::create_dir_all(&output_dir).await?;
         let path = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
         tokio::fs::write(&path, "old").await?;
@@ -1378,8 +1500,8 @@ mod tests {
         plan.entries[0].streams.videos[0].size = Some(6);
         let path = temp
             .path()
-            .join("Mock video")
-            .join("P001-Main")
+            .join(safe_file_name(&plan.title))
+            .join(entry_dir_name(&plan.entries[0]))
             .join(media_file_name("video", &plan.entries[0].streams.videos[0]));
 
         let Err(error) = client
@@ -1400,6 +1522,56 @@ mod tests {
 
         assert!(error.to_string().contains("expected media size"));
         assert_eq!(tokio::fs::metadata(&path).await?.len(), 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn uses_flv_segments_when_dash_pair_is_incomplete() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let video_mock = server.mock(|when, then| {
+            when.method(GET).path("/video.m4s");
+            then.status(500);
+        });
+        let flv_mock = server.mock(|when, then| {
+            when.method(GET).path("/segment.flv");
+            then.status(200).body("segment");
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let mut plan = test_plan(&server);
+        plan.entries[0].streams.audios.clear();
+        plan.entries[0].streams.flv_segments = vec![FlvSegment {
+            order: 1,
+            url: format!("{}/segment.flv", server.base_url()),
+            backup_urls: Vec::new(),
+            size: Some(7),
+            length_ms: Some(1000),
+        }];
+        plan.entries[0].subtitles.clear();
+
+        let report = client
+            .download_plan(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().to_path_buf(),
+                    retry: RetryPolicy::single_attempt(),
+                    include_danmaku: false,
+                    mux: MuxOptions::Disabled,
+                    ..DownloadOptions::default()
+                },
+            )
+            .await?;
+
+        assert_eq!(video_mock.calls(), 0);
+        assert_eq!(flv_mock.calls(), 1);
+        assert_eq!(
+            report.entries[0].files[0].kind,
+            DownloadFileKind::FlvSegment
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(&report.entries[0].files[0].path).await?,
+            "segment"
+        );
         Ok(())
     }
 
@@ -1613,6 +1785,42 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn ffmpeg_mux_rejects_empty_output_file() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/video.m4s");
+            then.status(200).body("video");
+        });
+        let temp = tempfile::tempdir()?;
+        let ffmpeg = write_fake_ffmpeg(
+            temp.path(),
+            "last=\nfor arg do last=$arg; done\n: > \"$last\"\nexit 0",
+        )?;
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
+
+        let Err(error) = client
+            .download_plan(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().join("downloads"),
+                    retry: RetryPolicy::single_attempt(),
+                    include_danmaku: false,
+                    mux: MuxOptions::Ffmpeg { binary: ffmpeg },
+                    ..DownloadOptions::default()
+                },
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!("empty mux output should fail"));
+        };
+
+        assert!(error.to_string().contains("empty output file"));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn ffmpeg_mux_failure_is_reported() -> anyhow::Result<()> {
         let server = MockServer::start();
         server.mock(|when, then| {
@@ -1684,8 +1892,8 @@ mod tests {
             .await?;
 
         let concat_path = output_dir
-            .join("Mock video")
-            .join("P001-Main")
+            .join(safe_file_name(&plan.title))
+            .join(entry_dir_name(&plan.entries[0]))
             .join("ffmpeg-concat.txt");
         assert_eq!(
             tokio::fs::read_to_string(concat_path).await?,
@@ -1756,6 +1964,11 @@ mod tests {
         plan
     }
 
+    fn test_entry_dir(base: &Path, plan: &DownloadPlan) -> std::path::PathBuf {
+        base.join(safe_file_name(&plan.title))
+            .join(entry_dir_name(&plan.entries[0]))
+    }
+
     #[cfg(unix)]
     fn write_fake_ffmpeg(dir: &Path, body: &str) -> anyhow::Result<std::path::PathBuf> {
         let path = dir.join("fake-ffmpeg");
@@ -1768,6 +1981,6 @@ mod tests {
 
     #[cfg(unix)]
     fn fake_ffmpeg_creates_output_body() -> &'static str {
-        "last=\nfor arg do last=$arg; done\n: > \"$last\"\nexit 0"
+        "last=\nfor arg do last=$arg; done\nprintf 'muxed' > \"$last\"\nexit 0"
     }
 }
