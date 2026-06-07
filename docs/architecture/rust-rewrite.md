@@ -32,7 +32,8 @@ The library resolves media availability into `DownloadPlan`:
 - `DownloadEntry` records the selected `aid`, `bvid`, `cid`, optional `epid`, title, and source.
 - `StreamSet` keeps DASH video/audio tracks, FLV segments, accepted quality ids, and duration.
 - `SubtitleTrack` records language metadata, normalized URL, and basic format classification.
-- `DanmakuTrack` records the XML comment endpoint derived from `cid`.
+- `DanmakuTrack` records the XML comment endpoint derived from `cid` and the configured comment
+  endpoint base.
 
 `ss` and `md` require a `Selection` in non-interactive contexts. The CLI will later add
 interactive prompting, but the library keeps the contract explicit so integrations cannot
@@ -62,6 +63,51 @@ The CLI exposes this layer through `bbdown plan`. The command is intentionally a
 it prints typed JSON or a short human summary, but it does not download, merge, or mutate output
 files.
 
+## Download Execution
+
+`BiliClient::download_plan` executes a caller-provided `DownloadPlan`. `BiliClient::download` and
+`BiliClient::download_input` are convenience wrappers that plan first, then execute. The executor
+returns a typed `DownloadReport` instead of scraping CLI output.
+
+Execution behavior is controlled by `DownloadOptions`:
+
+- output directory;
+- bounded retry policy;
+- HTTP range resume on or off;
+- media read idle timeout;
+- subtitle and danmaku sidecar inclusion;
+- disabled muxing or explicit `ffmpeg` binary path.
+
+For each entry, execution prefers the first complete DASH video/audio pair from the plan. If DASH
+media is incomplete and FLV `durl` segments are available, it downloads the FLV segments instead;
+otherwise the entry fails before media writes. Subtitle and danmaku files remain sidecars. When
+muxing is enabled, the executor invokes `ffmpeg` with explicit argv and returns the command plus
+output path in the report.
+
+Media and sidecar downloads use media headers without account cookies, because media URLs come from
+API payloads and can target CDN or proxy hosts. DASH and FLV backup URLs are part of the candidate
+list. Media body reads use a separate idle timeout instead of the metadata request timeout. Resume
+appends only when `Content-Range` starts at the local file length and completes at the advertised
+range total or an expected media size proves the final length; matching 416 responses are treated as
+already complete. Wildcard `Content-Range` totals are rejected when no expected size is available.
+When a stream or FLV segment declares a size, the executor rejects mismatched final file lengths and
+rolls back failed writes to the pre-attempt length. Media responses that complete without writing
+bytes are rejected. Entry directories include content identity so same-title videos do not share
+resume targets, subtitle sidecar names include track identity, and filename components are bounded
+by UTF-8 byte length. If a server ignores `Range` and returns `200 OK` for a partial file, the
+executor writes the full retry to a temporary file and only replaces the old partial after available
+validation succeeds. Without an advertised size, `Content-Length`, or `Content-Range`, a full retry
+is rejected and the old file is preserved. Forced fresh writes also use
+temporary files when replacing an existing target, so failed `--no-resume` retries do not clear
+previous output. DASH media output names prefer stable stream metadata and only fall back to URL
+path hashing when metadata is absent, so CDN host or query changes do not split resume targets.
+
+The crate default keeps muxing disabled so embedding projects do not spawn external processes by
+surprise. The CLI `download` command enables ffmpeg by default and exposes `--no-mux` for users and
+mock e2e tests. Mux subprocess stdin, stdout, and stderr are isolated from CLI stdio. Muxing writes
+to a temporary output first, validates that output, and then replaces the final file, so a failed
+rerun preserves an existing muxed file and JSON reports remain parseable and accurate.
+
 ## Restricted Area And Intl
 
 The project must not hard-code public proxy services. Restricted-area support is designed as a
@@ -73,8 +119,8 @@ configured resolver chain:
 - user-configured area hints such as `cn`, `hk`, `tw`, or `th`.
 
 The current implementation supports endpoint override, intl metadata shape, official PGC stream
-planning, official intl OGV signed stream planning, and typed source reporting. Later slices will
-add download retry policy and configured proxy candidate ordering based on the same principles.
+planning, official intl OGV signed stream planning, typed source reporting, and download execution.
+Later slices will add configured proxy candidate ordering based on the same principles.
 
 ## Credentials
 
@@ -105,6 +151,7 @@ misbehaving official or proxy endpoints do not hang indefinitely.
 1. Workspace, CI, docs, metadata resolver, credential store, and CLI `info/auth`. Completed in
    PR #1.
 2. Stream resolver chain, download planning, subtitle and danmaku discovery. Completed in PR #2.
-3. File download, retry/resume policy, ffmpeg mux integration, and mock e2e downloads.
+3. File download, retry/resume policy, ffmpeg mux integration, and mock e2e downloads. Completed
+   in PR #3.
 4. QR login state machine and live-test opt-in harness.
 5. Restricted-area proxy resolver ordering and diagnostics.

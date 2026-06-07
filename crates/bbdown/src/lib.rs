@@ -4,6 +4,7 @@
 mod bv;
 mod client;
 mod credentials;
+mod download;
 mod error;
 mod input;
 mod models;
@@ -11,6 +12,10 @@ mod selection;
 
 pub use client::{BiliClient, ClientConfig, EndpointConfig};
 pub use credentials::{CredentialSource, CredentialStore, Credentials};
+pub use download::{
+    DownloadFileKind, DownloadOptions, DownloadReport, DownloadedFile, EntryDownloadReport,
+    MuxOptions, MuxReport, RetryPolicy,
+};
 pub use error::{Error, Result};
 pub use input::Input;
 pub use models::{

@@ -3,8 +3,8 @@
 
 use anyhow::{Context, bail, ensure};
 use bbdown::{
-    BiliClient, ClientConfig, CredentialStore, Credentials, EndpointConfig, ResolvedContent,
-    Selection,
+    BiliClient, ClientConfig, CredentialStore, Credentials, DownloadOptions, DownloadReport,
+    EndpointConfig, MuxOptions, ResolvedContent, RetryPolicy, Selection,
 };
 use clap::{Args, Parser, Subcommand};
 use std::fs;
@@ -34,6 +34,12 @@ struct Cli {
         default_value = "https://api.bilibili.tv"
     )]
     intl_base: String,
+    #[arg(
+        long,
+        env = "BBDOWN_COMMENT_BASE",
+        default_value = "https://comment.bilibili.com"
+    )]
+    comment_base: String,
     #[arg(long, env = "BBDOWN_CREDENTIAL_FILE")]
     credential_file: Option<PathBuf>,
     #[arg(long, env = "BBDOWN_REQUEST_TIMEOUT_SECONDS", default_value_t = 30)]
@@ -57,6 +63,31 @@ enum Command {
         select: Option<Selection>,
         #[arg(long)]
         json: bool,
+    },
+    Download {
+        url: String,
+        #[arg(long)]
+        select: Option<Selection>,
+        #[arg(long, default_value = ".")]
+        output_dir: PathBuf,
+        #[arg(long)]
+        json: bool,
+        #[arg(long, default_value_t = 3)]
+        retry_attempts: u32,
+        #[arg(long, default_value_t = 250)]
+        retry_backoff_ms: u64,
+        #[arg(long, default_value_t = 30)]
+        download_idle_timeout_seconds: u64,
+        #[arg(long)]
+        no_resume: bool,
+        #[arg(long)]
+        no_subtitles: bool,
+        #[arg(long)]
+        no_danmaku: bool,
+        #[arg(long)]
+        no_mux: bool,
+        #[arg(long, default_value = "ffmpeg")]
+        ffmpeg: PathBuf,
     },
     Auth {
         #[command(subcommand)]
@@ -87,64 +118,177 @@ async fn main() -> anyhow::Result<()> {
         cli.request_timeout_seconds > 0,
         "--request-timeout-seconds must be greater than 0"
     );
+    let endpoints = EndpointConfig {
+        api_base: cli.api_base.clone(),
+        pgc_base: cli.pgc_base.clone(),
+        intl_base: cli.intl_base.clone(),
+        comment_base: cli.comment_base.clone(),
+    };
+    let request_timeout = Duration::from_secs(cli.request_timeout_seconds);
     let store = CredentialStore::new(credential_path(cli.credential_file)?);
     match cli.command {
         Command::Info { url, select, json } => {
-            let credentials = store.load().context("failed to load credentials")?;
-            let client = BiliClient::new(ClientConfig {
-                endpoints: EndpointConfig {
-                    api_base: cli.api_base,
-                    pgc_base: cli.pgc_base,
-                    intl_base: cli.intl_base,
-                },
-                credentials,
-                user_agent: "bbdown-rs/0.1".to_owned(),
-                request_timeout: Duration::from_secs(cli.request_timeout_seconds),
-            });
-            let resolved = client.resolve_input(&url, select).await?;
-            if json {
-                println!("{}", serde_json::to_string_pretty(&resolved)?);
-            } else {
-                print_human_summary(&resolved);
-            }
+            handle_info(
+                &store,
+                endpoints.clone(),
+                request_timeout,
+                url,
+                select,
+                json,
+            )
+            .await?;
         }
         Command::Plan { url, select, json } => {
-            let credentials = store.load().context("failed to load credentials")?;
-            let client = BiliClient::new(ClientConfig {
-                endpoints: EndpointConfig {
-                    api_base: cli.api_base,
-                    pgc_base: cli.pgc_base,
-                    intl_base: cli.intl_base,
+            handle_plan(
+                &store,
+                endpoints.clone(),
+                request_timeout,
+                url,
+                select,
+                json,
+            )
+            .await?;
+        }
+        Command::Download {
+            url,
+            select,
+            output_dir,
+            json,
+            retry_attempts,
+            retry_backoff_ms,
+            download_idle_timeout_seconds,
+            no_resume,
+            no_subtitles,
+            no_danmaku,
+            no_mux,
+            ffmpeg,
+        } => {
+            ensure!(
+                retry_attempts > 0,
+                "--retry-attempts must be greater than 0"
+            );
+            let args = DownloadCommandArgs {
+                url,
+                select,
+                json,
+                options: DownloadOptions {
+                    output_dir,
+                    retry: RetryPolicy {
+                        max_attempts: retry_attempts,
+                        backoff: Duration::from_millis(retry_backoff_ms),
+                    },
+                    download_idle_timeout: if download_idle_timeout_seconds == 0 {
+                        None
+                    } else {
+                        Some(Duration::from_secs(download_idle_timeout_seconds))
+                    },
+                    resume: !no_resume,
+                    include_subtitles: !no_subtitles,
+                    include_danmaku: !no_danmaku,
+                    mux: if no_mux {
+                        MuxOptions::Disabled
+                    } else {
+                        MuxOptions::Ffmpeg { binary: ffmpeg }
+                    },
                 },
-                credentials,
-                user_agent: "bbdown-rs/0.1".to_owned(),
-                request_timeout: Duration::from_secs(cli.request_timeout_seconds),
-            });
-            let plan = client.plan_download(&url, select).await?;
-            if json {
-                println!("{}", serde_json::to_string_pretty(&plan)?);
-            } else {
-                println!("title: {}", plan.title);
-                println!("entries: {}", plan.entries.len());
-                for entry in plan.entries {
-                    println!(
-                        "- P{} aid={} cid={} title={} video={} audio={} flv={} subtitles={} danmaku={}",
-                        entry.index,
-                        entry.aid,
-                        entry.cid,
-                        entry.title,
-                        entry.streams.videos.len(),
-                        entry.streams.audios.len(),
-                        entry.streams.flv_segments.len(),
-                        entry.subtitles.len(),
-                        entry.danmaku.xml_url
-                    );
-                }
-            }
+            };
+            handle_download(&store, endpoints, request_timeout, args).await?;
         }
         Command::Auth { command } => handle_auth(command, &store)?,
     }
     Ok(())
+}
+
+struct DownloadCommandArgs {
+    url: String,
+    select: Option<Selection>,
+    json: bool,
+    options: DownloadOptions,
+}
+
+async fn handle_info(
+    store: &CredentialStore,
+    endpoints: EndpointConfig,
+    request_timeout: Duration,
+    url: String,
+    select: Option<Selection>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let credentials = store.load().context("failed to load credentials")?;
+    let client = BiliClient::new(client_config(endpoints, request_timeout, credentials));
+    let resolved = client.resolve_input(&url, select).await?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&resolved)?);
+    } else {
+        print_human_summary(&resolved);
+    }
+    Ok(())
+}
+
+async fn handle_plan(
+    store: &CredentialStore,
+    endpoints: EndpointConfig,
+    request_timeout: Duration,
+    url: String,
+    select: Option<Selection>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let credentials = store.load().context("failed to load credentials")?;
+    let client = BiliClient::new(client_config(endpoints, request_timeout, credentials));
+    let plan = client.plan_download(&url, select).await?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&plan)?);
+    } else {
+        println!("title: {}", plan.title);
+        println!("entries: {}", plan.entries.len());
+        for entry in plan.entries {
+            println!(
+                "- P{} aid={} cid={} title={} video={} audio={} flv={} subtitles={} danmaku={}",
+                entry.index,
+                entry.aid,
+                entry.cid,
+                entry.title,
+                entry.streams.videos.len(),
+                entry.streams.audios.len(),
+                entry.streams.flv_segments.len(),
+                entry.subtitles.len(),
+                entry.danmaku.xml_url
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn handle_download(
+    store: &CredentialStore,
+    endpoints: EndpointConfig,
+    request_timeout: Duration,
+    args: DownloadCommandArgs,
+) -> anyhow::Result<()> {
+    let credentials = store.load().context("failed to load credentials")?;
+    let client = BiliClient::new(client_config(endpoints, request_timeout, credentials));
+    let report = client
+        .download_input(&args.url, args.select, args.options)
+        .await?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        print_download_report(&report);
+    }
+    Ok(())
+}
+
+fn client_config(
+    endpoints: EndpointConfig,
+    request_timeout: Duration,
+    credentials: Credentials,
+) -> ClientConfig {
+    ClientConfig {
+        endpoints,
+        credentials,
+        user_agent: "bbdown-rs/0.1".to_owned(),
+        request_timeout,
+    }
 }
 
 fn handle_auth(command: AuthCommand, store: &CredentialStore) -> anyhow::Result<()> {
@@ -239,6 +383,23 @@ fn print_human_summary(resolved: &ResolvedContent) {
             println!("title: {}", season.season.title);
             println!("episodes: {}", season.season.episodes.len());
             println!("selected: {}", season.selected_episodes.len());
+        }
+    }
+}
+
+fn print_download_report(report: &DownloadReport) {
+    println!("title: {}", report.title);
+    println!("output: {}", report.output_dir.display());
+    println!("entries: {}", report.entries.len());
+    for entry in &report.entries {
+        println!(
+            "- P{} files={} dir={}",
+            entry.index,
+            entry.files.len(),
+            entry.directory.display()
+        );
+        if let Some(mux) = &entry.mux {
+            println!("  mux: {}", mux.output_path.display());
         }
     }
 }
