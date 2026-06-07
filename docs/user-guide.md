@@ -18,7 +18,8 @@ bbdown info md22718131 --select episode:267851 --json
 ```
 
 Season and media inputs require `--select` in non-interactive mode. Supported selectors are
-`current`, `latest`, `all`, `episode:<epid>`, and `page:<index>`.
+`latest`, `all`, `episode:<epid>`, and `page:<index>`. `current` is only meaningful for `ep` and
+`bilibili.tv` episode URLs, where the input already identifies the current episode.
 
 ## Download Plans
 
