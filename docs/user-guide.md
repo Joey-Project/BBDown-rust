@@ -140,7 +140,8 @@ are generic candidates. `--restricted-area <area>` is a hint that moves matching
 front. Without a hint, ordering is generic, `cn`, `th`, `hk`, then `tw`, with duplicates removed.
 Repeated command-line proxy flags preserve declaration order within the same area priority.
 When command-line and environment proxy values are both present, command-line candidates are tried
-first, followed by environment playurl proxies and then environment API-path proxies.
+first, followed by environment playurl proxies and then environment API-path proxies. Each source
+group is ordered by area hint, generic candidates, then fixed area order.
 
 `--restricted-area-proxy` targets BBDown/BiliPlus-style playurl proxy endpoints where the original
 PGC playurl query is sent to the configured URL. `--restricted-api-proxy` targets proxies that mirror

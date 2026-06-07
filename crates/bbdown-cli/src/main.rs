@@ -602,6 +602,7 @@ fn endpoints_from_cli(cli: &Cli) -> EndpointConfig {
 struct RestrictedProxyArg {
     kind: RestrictedAreaProxyKind,
     spec: String,
+    order_priority: u8,
 }
 
 fn restricted_area_from_cli_with_args(
@@ -632,7 +633,7 @@ fn restricted_area_from_cli_with_env_values(
     let proxy_args = proxy_args_from_sources(cli, raw_args, env_area_proxy, env_api_proxy)?;
     let proxies = proxy_args
         .iter()
-        .map(|arg| parse_restricted_proxy_spec(&arg.spec, arg.kind))
+        .map(|arg| parse_restricted_proxy_spec(&arg.spec, arg.kind, arg.order_priority))
         .collect::<anyhow::Result<Vec<_>>>()?;
     Ok(RestrictedAreaConfig { area_hint, proxies })
 }
@@ -657,6 +658,7 @@ fn proxy_args_from_cli_fields(cli: &Cli) -> Vec<RestrictedProxyArg> {
         .map(|spec| RestrictedProxyArg {
             kind: RestrictedAreaProxyKind::PlayUrl,
             spec: spec.clone(),
+            order_priority: 0,
         })
         .chain(
             cli.restricted_api_proxy
@@ -664,6 +666,7 @@ fn proxy_args_from_cli_fields(cli: &Cli) -> Vec<RestrictedProxyArg> {
                 .map(|spec| RestrictedProxyArg {
                     kind: RestrictedAreaProxyKind::BilibiliApi,
                     spec: spec.clone(),
+                    order_priority: 0,
                 }),
         )
         .collect()
@@ -675,10 +678,15 @@ fn proxy_args_from_env_values(
 ) -> Vec<RestrictedProxyArg> {
     let mut proxy_args = Vec::new();
     if let Some(value) = area_proxy.filter(|value| !value.trim().is_empty()) {
-        push_proxy_arg_values(&mut proxy_args, RestrictedAreaProxyKind::PlayUrl, value);
+        push_proxy_arg_values(&mut proxy_args, RestrictedAreaProxyKind::PlayUrl, value, 1);
     }
     if let Some(value) = api_proxy.filter(|value| !value.trim().is_empty()) {
-        push_proxy_arg_values(&mut proxy_args, RestrictedAreaProxyKind::BilibiliApi, value);
+        push_proxy_arg_values(
+            &mut proxy_args,
+            RestrictedAreaProxyKind::BilibiliApi,
+            value,
+            1,
+        );
     }
     proxy_args
 }
@@ -690,15 +698,20 @@ fn proxy_args_from_raw_args(
     let mut proxy_args = Vec::new();
     while let Some(arg) = args.next() {
         if let Some(value) = os_str_strip_prefix(&arg, "--restricted-area-proxy=") {
-            push_proxy_arg_values(&mut proxy_args, RestrictedAreaProxyKind::PlayUrl, value);
+            push_proxy_arg_values(&mut proxy_args, RestrictedAreaProxyKind::PlayUrl, value, 0);
         } else if let Some(value) = os_str_strip_prefix(&arg, "--restricted-api-proxy=") {
-            push_proxy_arg_values(&mut proxy_args, RestrictedAreaProxyKind::BilibiliApi, value);
+            push_proxy_arg_values(
+                &mut proxy_args,
+                RestrictedAreaProxyKind::BilibiliApi,
+                value,
+                0,
+            );
         } else if arg == OsStr::new("--restricted-area-proxy") {
             if let Some(value) = args.next() {
                 let value = value.into_string().map_err(|_| {
                     anyhow::anyhow!("restricted-area proxy URL must be valid UTF-8")
                 })?;
-                push_proxy_arg_values(&mut proxy_args, RestrictedAreaProxyKind::PlayUrl, &value);
+                push_proxy_arg_values(&mut proxy_args, RestrictedAreaProxyKind::PlayUrl, &value, 0);
             }
         } else if arg == OsStr::new("--restricted-api-proxy")
             && let Some(value) = args.next()
@@ -710,6 +723,7 @@ fn proxy_args_from_raw_args(
                 &mut proxy_args,
                 RestrictedAreaProxyKind::BilibiliApi,
                 &value,
+                0,
             );
         }
     }
@@ -724,16 +738,19 @@ fn push_proxy_arg_values(
     proxy_args: &mut Vec<RestrictedProxyArg>,
     kind: RestrictedAreaProxyKind,
     value: &str,
+    order_priority: u8,
 ) {
     proxy_args.extend(value.split(',').map(|spec| RestrictedProxyArg {
         kind,
         spec: spec.to_owned(),
+        order_priority,
     }));
 }
 
 fn parse_restricted_proxy_spec(
     spec: &str,
     kind: RestrictedAreaProxyKind,
+    order_priority: u8,
 ) -> anyhow::Result<RestrictedAreaProxy> {
     let trimmed = spec.trim();
     ensure!(!trimmed.is_empty(), "restricted-area proxy cannot be empty");
@@ -755,7 +772,8 @@ fn parse_restricted_proxy_spec(
     Ok(match kind {
         RestrictedAreaProxyKind::PlayUrl => RestrictedAreaProxy::playurl(base_url, area),
         RestrictedAreaProxyKind::BilibiliApi => RestrictedAreaProxy::bilibili_api(base_url, area),
-    })
+    }
+    .with_order_priority(order_priority))
 }
 
 fn parse_area_prefixed_proxy(spec: &str) -> anyhow::Result<Option<(&str, &str)>> {
@@ -1108,6 +1126,31 @@ mod tests {
 
         assert_eq!(ordered[0].base_url, "https://cli-play.example/playurl");
         assert_eq!(ordered[1].base_url, "https://env-api.example/api");
+        Ok(())
+    }
+
+    #[test]
+    fn restricted_area_proxy_keeps_cli_source_before_env_area_match() -> anyhow::Result<()> {
+        let args = [
+            "bbdown",
+            "--restricted-area",
+            "hk",
+            "--restricted-area-proxy",
+            "https://cli-play.example/playurl",
+            "auth",
+            "status",
+        ];
+        let cli = Cli::parse_from(args);
+        let config = restricted_area_from_cli_with_env_values(
+            &cli,
+            args.map(std::ffi::OsString::from),
+            Some("hk=https://env-play.example/playurl"),
+            None,
+        )?;
+        let ordered = config.ordered_proxies();
+
+        assert_eq!(ordered[0].base_url, "https://cli-play.example/playurl");
+        assert_eq!(ordered[1].base_url, "https://env-play.example/playurl");
         Ok(())
     }
 

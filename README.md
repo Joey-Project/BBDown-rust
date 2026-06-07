@@ -101,8 +101,9 @@ parameters already present on the configured proxy base URL. Use repeated flags 
 `BBDOWN_RESTRICTED_AREA_PROXY` / `BBDOWN_RESTRICTED_API_PROXY` values to configure multiple
 candidates. Repeated command-line flags preserve declaration order within the same area priority.
 When command-line and environment proxy values are both present, command-line candidates are tried
-first, followed by environment playurl proxies and then environment API-path proxies. Hosts are user
-supplied; the tool does not ship public proxy defaults. Proxy requests do not forward Bilibili cookies.
+first, followed by environment playurl proxies and then environment API-path proxies. Each source
+group is ordered by area hint, generic candidates, then fixed area order. Hosts are user supplied;
+the tool does not ship public proxy defaults. Proxy requests do not forward Bilibili cookies.
 Resolver diagnostics reduce endpoints to URL origins and redact sensitive error-message values.
 
 ## Developer Commands
@@ -124,7 +125,9 @@ excluded from default CI and fails fast unless `BBDOWN_LIVE_URL` is set. It also
 
 - Crate API note: this rewrite is still `0.1`; embedding projects should prefer
   `ClientConfig::new(endpoints, credentials).with_*` over `ClientConfig { ... }` struct literals so
-  added configuration fields are less disruptive.
+  added configuration fields are less disruptive. Output model structs such as `DownloadEntry` are
+  intended to be consumed as returned values or through serde; their struct-literal construction is
+  not treated as a stable compatibility surface before the crate leaves `0.1`.
 - User guide: [docs/user-guide.md](docs/user-guide.md)
 - Architecture: [docs/architecture/rust-rewrite.md](docs/architecture/rust-rewrite.md)
 - Project state: [docs/PROJECT_STATE.md](docs/PROJECT_STATE.md)

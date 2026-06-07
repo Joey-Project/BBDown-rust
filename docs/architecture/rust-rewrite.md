@@ -123,9 +123,12 @@ configured resolver chain:
 `ClientConfig::restricted_area` holds a per-client `RestrictedAreaConfig`. Embedders can set an
 optional area hint and a list of `RestrictedAreaProxy` candidates. The crate is still pre-1.0, so
 embedding projects should prefer `ClientConfig::new(endpoints, credentials).with_*` construction over
-struct literals when they do not need every field. Candidate ordering follows the bilibili-helper
-approach without browser-local caches: matching area hint first, generic candidates, then `cn`, `th`,
-`hk`, and `tw`, with duplicate `(base_url, area, kind)` candidates removed.
+struct literals when they do not need every field. Output model structs are a consumed data surface
+rather than a stable struct-literal construction surface while the crate remains `0.1`. Candidate
+ordering follows the bilibili-helper approach without browser-local caches: matching area hint first,
+generic candidates, then `cn`, `th`, `hk`, and `tw`, with duplicate `(base_url, area, kind)`
+candidates removed. CLI-created configs also preserve source priority before area grouping, so
+explicit command-line proxy candidates are tried before environment-derived proxy candidates.
 
 PGC stream planning first calls the official PGC web playurl endpoint. If that response clearly
 reports a region/area restriction and restricted-area proxies are configured, the client tries

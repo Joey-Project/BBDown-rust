@@ -97,19 +97,34 @@ impl RestrictedAreaConfig {
     #[must_use]
     pub fn ordered_proxies(&self) -> Vec<RestrictedAreaProxy> {
         let mut ordered = Vec::new();
-        if let Some(area_hint) = self.area_hint {
-            self.push_matching(&mut ordered, |proxy| proxy.area == Some(area_hint));
+        let mut priorities = self
+            .proxies
+            .iter()
+            .map(|proxy| proxy.order_priority)
+            .collect::<Vec<_>>();
+        priorities.sort_unstable();
+        priorities.dedup();
+        for priority in priorities {
+            if let Some(area_hint) = self.area_hint {
+                self.push_matching(&mut ordered, |proxy| {
+                    proxy.order_priority == priority && proxy.area == Some(area_hint)
+                });
+            }
+            self.push_matching(&mut ordered, |proxy| {
+                proxy.order_priority == priority && proxy.area.is_none()
+            });
+            for area in [
+                RestrictedArea::Cn,
+                RestrictedArea::Th,
+                RestrictedArea::Hk,
+                RestrictedArea::Tw,
+            ] {
+                self.push_matching(&mut ordered, |proxy| {
+                    proxy.order_priority == priority && proxy.area == Some(area)
+                });
+            }
+            self.push_matching(&mut ordered, |proxy| proxy.order_priority == priority);
         }
-        self.push_matching(&mut ordered, |proxy| proxy.area.is_none());
-        for area in [
-            RestrictedArea::Cn,
-            RestrictedArea::Th,
-            RestrictedArea::Hk,
-            RestrictedArea::Tw,
-        ] {
-            self.push_matching(&mut ordered, |proxy| proxy.area == Some(area));
-        }
-        self.push_matching(&mut ordered, |_| true);
         ordered
     }
 
@@ -152,11 +167,18 @@ pub enum RestrictedAreaProxyKind {
     BilibiliApi,
 }
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Eq)]
 pub struct RestrictedAreaProxy {
     pub base_url: String,
     pub area: Option<RestrictedArea>,
     pub kind: RestrictedAreaProxyKind,
+    order_priority: u8,
+}
+
+impl PartialEq for RestrictedAreaProxy {
+    fn eq(&self, other: &Self) -> bool {
+        self.base_url == other.base_url && self.area == other.area && self.kind == other.kind
+    }
 }
 
 impl fmt::Debug for RestrictedAreaProxy {
@@ -166,6 +188,7 @@ impl fmt::Debug for RestrictedAreaProxy {
             .field("base_url", &redact_url_string(&self.base_url))
             .field("area", &self.area.map(RestrictedArea::as_str))
             .field("kind", &self.kind)
+            .field("order_priority", &self.order_priority)
             .finish()
     }
 }
@@ -177,6 +200,7 @@ impl RestrictedAreaProxy {
             base_url: base_url.into(),
             area,
             kind: RestrictedAreaProxyKind::PlayUrl,
+            order_priority: 0,
         }
     }
 
@@ -186,7 +210,15 @@ impl RestrictedAreaProxy {
             base_url: base_url.into(),
             area,
             kind: RestrictedAreaProxyKind::BilibiliApi,
+            order_priority: 0,
         }
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_order_priority(mut self, order_priority: u8) -> Self {
+        self.order_priority = order_priority;
+        self
     }
 }
 
@@ -1507,7 +1539,8 @@ fn redact_urls_in_text(raw: &str) -> String {
 }
 
 fn find_next_url_start(raw: &str) -> Option<usize> {
-    match (raw.find("http://"), raw.find("https://")) {
+    let lower = raw.to_ascii_lowercase();
+    match (lower.find("http://"), lower.find("https://")) {
         (Some(http), Some(https)) => Some(http.min(https)),
         (Some(http), None) => Some(http),
         (None, Some(https)) => Some(https),
@@ -3241,6 +3274,22 @@ mod tests {
             "cookie",
             "user:pass",
         ] {
+            assert!(
+                !message.contains(sensitive),
+                "message leaked {sensitive}: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn resolver_error_message_redacts_mixed_case_urls() {
+        let message = super::resolver_error_message(&Error::Api {
+            code: -40301,
+            message: "proxy rejected HtTpS://user:pass@proxy.example/t/PATH_SECRET?x=1".to_owned(),
+        });
+
+        assert!(message.contains("https://proxy.example"));
+        for sensitive in ["user:pass", "PATH_SECRET", "?x=1"] {
             assert!(
                 !message.contains(sensitive),
                 "message leaked {sensitive}: {message}"
