@@ -14,9 +14,11 @@ adjacent `.sha256` file if needed, extract it, and place the `bbdown` or `bbdown
 
 ## Crate Publishing
 
-The crates.io publish target is the reusable `bbdown` library crate. Use `just publish-dry-run` to
-run the same locked `cargo publish --dry-run -p bbdown` gate used by CI. The `bbdown-cli` package is
-marked `publish = false`; install or distribute the CLI through GitHub release archives instead.
+The crates.io publish target is the reusable `bbdown` library crate. Use `just publish-dry-run` for a
+local locked dry run that tolerates an uncommitted worktree, and use
+`just publish-dry-run-strict` or `cargo publish --dry-run -p bbdown --locked` to reproduce the clean
+CI gate. The `bbdown-cli` package is marked `publish = false`; install or distribute the CLI through
+GitHub release archives instead.
 
 ## Metadata
 

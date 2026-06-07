@@ -204,9 +204,9 @@ normalize release refs to the packager-safe `[A-Za-z0-9._-]` character set, so t
 build metadata do not fail at packaging time.
 
 Crate publishing is intentionally scoped to the reusable `bbdown` library crate. The crate has
-crates.io metadata, a package-local README, and CI-backed `cargo publish --dry-run -p bbdown --locked`
-validation. `bbdown-cli` remains `publish = false` because CLI distribution is handled by GitHub
-release archives.
+crates.io metadata, a package-local README and LICENSE, dirty-tree-friendly local publish dry-run
+validation, and CI-backed `cargo publish --dry-run -p bbdown --locked` validation. `bbdown-cli`
+remains `publish = false` because CLI distribution is handled by GitHub release archives.
 
 Live tests against Bilibili are opt-in only through `just live-e2e`. The recipe fails fast unless an
 ignored `live-e2e.samples.json` manifest exists, so branch CI is not blocked by network, account, or

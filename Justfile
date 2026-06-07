@@ -19,6 +19,9 @@ e2e:
     cargo test -p bbdown-cli --test cli_e2e
 
 publish-dry-run:
+    cargo publish --dry-run -p bbdown --locked --allow-dirty
+
+publish-dry-run-strict:
     cargo publish --dry-run -p bbdown --locked
 
 live-e2e:

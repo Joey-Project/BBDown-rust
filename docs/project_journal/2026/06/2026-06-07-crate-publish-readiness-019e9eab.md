@@ -24,16 +24,19 @@ superseded_by:
   keywords, categories, repository, homepage, license, and rust-version.
 - `crates/bbdown/README.md` gives embedding callers the crate scope, pre-1.0 API guidance, and a
   minimal `BiliClient` example.
+- `crates/bbdown/LICENSE` keeps the MIT license text inside the publishable crate package.
 - `crates/bbdown-cli/Cargo.toml` is marked `publish = false` and keeps a versioned path dependency
   on `bbdown`.
-- `just publish-dry-run` runs `cargo publish --dry-run -p bbdown --locked`.
-- Default CI now includes the same `bbdown` publish dry-run gate.
+- `just publish-dry-run` runs a locked dry run with `--allow-dirty` for local pre-commit validation.
+- `just publish-dry-run-strict` and GitHub CI run the clean-checkout strict `bbdown` publish dry-run
+  gate.
 
 ## Evidence
 
 - Current-name probe: `cargo search bbdown --limit 5`.
 - Baseline publish probe: `cargo publish --dry-run -p bbdown`.
-- Baseline CLI publish probe: `cargo publish --dry-run -p bbdown-cli`.
+- Expected CLI publish rejection probe: `cargo publish --dry-run -p bbdown-cli`.
 - Package content check: `cargo package --list -p bbdown --allow-dirty`.
 - Pre-commit publish dry run: `cargo publish --dry-run -p bbdown --locked --allow-dirty`.
-- Strict local default gate after commit: `just ci`.
+- Strict publish dry-run gate after commit: `cargo publish --dry-run -p bbdown --locked`.
+- Local default gate with dirty-tree-compatible publish dry run: `just ci`.
