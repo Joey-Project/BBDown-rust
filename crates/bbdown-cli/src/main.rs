@@ -9,6 +9,7 @@ use bbdown::{
     RetryPolicy, Selection,
 };
 use clap::{Args, Parser, Subcommand};
+use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Read};
 use std::path::PathBuf;
@@ -153,13 +154,14 @@ struct QrLoginArgs {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+    let raw_args = std::env::args_os().collect::<Vec<_>>();
+    let cli = Cli::parse_from(raw_args.clone());
     ensure!(
         cli.request_timeout_seconds > 0,
         "--request-timeout-seconds must be greater than 0"
     );
     let endpoints = endpoints_from_cli(&cli);
-    let restricted_area = restricted_area_from_cli(&cli)?;
+    let restricted_area = restricted_area_from_cli_with_args(&cli, raw_args)?;
     let request_timeout = Duration::from_secs(cli.request_timeout_seconds);
     let store = CredentialStore::new(credential_path(cli.credential_file)?);
     match cli.command {
@@ -596,26 +598,97 @@ fn endpoints_from_cli(cli: &Cli) -> EndpointConfig {
     }
 }
 
-fn restricted_area_from_cli(cli: &Cli) -> anyhow::Result<RestrictedAreaConfig> {
+#[derive(Clone, Debug)]
+struct RestrictedProxyArg {
+    kind: RestrictedAreaProxyKind,
+    spec: String,
+}
+
+fn restricted_area_from_cli_with_args(
+    cli: &Cli,
+    raw_args: impl IntoIterator<Item = OsString>,
+) -> anyhow::Result<RestrictedAreaConfig> {
     let area_hint = cli
         .restricted_area
         .as_deref()
         .map(parse_restricted_area)
         .transpose()?;
-    let mut proxies = Vec::new();
-    for spec in &cli.restricted_area_proxy {
-        proxies.push(parse_restricted_proxy_spec(
-            spec,
-            RestrictedAreaProxyKind::PlayUrl,
-        )?);
-    }
-    for spec in &cli.restricted_api_proxy {
-        proxies.push(parse_restricted_proxy_spec(
-            spec,
-            RestrictedAreaProxyKind::BilibiliApi,
-        )?);
-    }
+    let proxy_args = proxy_args_from_raw_args(raw_args)?;
+    let proxy_args = if proxy_args.is_empty() {
+        proxy_args_from_cli_fields(cli)
+    } else {
+        proxy_args
+    };
+    let proxies = proxy_args
+        .iter()
+        .map(|arg| parse_restricted_proxy_spec(&arg.spec, arg.kind))
+        .collect::<anyhow::Result<Vec<_>>>()?;
     Ok(RestrictedAreaConfig { area_hint, proxies })
+}
+
+fn proxy_args_from_cli_fields(cli: &Cli) -> Vec<RestrictedProxyArg> {
+    cli.restricted_area_proxy
+        .iter()
+        .map(|spec| RestrictedProxyArg {
+            kind: RestrictedAreaProxyKind::PlayUrl,
+            spec: spec.clone(),
+        })
+        .chain(
+            cli.restricted_api_proxy
+                .iter()
+                .map(|spec| RestrictedProxyArg {
+                    kind: RestrictedAreaProxyKind::BilibiliApi,
+                    spec: spec.clone(),
+                }),
+        )
+        .collect()
+}
+
+fn proxy_args_from_raw_args(
+    raw_args: impl IntoIterator<Item = OsString>,
+) -> anyhow::Result<Vec<RestrictedProxyArg>> {
+    let mut args = raw_args.into_iter().skip(1).peekable();
+    let mut proxy_args = Vec::new();
+    while let Some(arg) = args.next() {
+        let arg = arg
+            .into_string()
+            .map_err(|_| anyhow::anyhow!("CLI arguments must be valid UTF-8"))?;
+        if let Some(value) = arg.strip_prefix("--restricted-area-proxy=") {
+            push_proxy_arg_values(&mut proxy_args, RestrictedAreaProxyKind::PlayUrl, value);
+        } else if let Some(value) = arg.strip_prefix("--restricted-api-proxy=") {
+            push_proxy_arg_values(&mut proxy_args, RestrictedAreaProxyKind::BilibiliApi, value);
+        } else if arg == "--restricted-area-proxy" {
+            if let Some(value) = args.next() {
+                let value = value.into_string().map_err(|_| {
+                    anyhow::anyhow!("restricted-area proxy URL must be valid UTF-8")
+                })?;
+                push_proxy_arg_values(&mut proxy_args, RestrictedAreaProxyKind::PlayUrl, &value);
+            }
+        } else if arg == "--restricted-api-proxy"
+            && let Some(value) = args.next()
+        {
+            let value = value
+                .into_string()
+                .map_err(|_| anyhow::anyhow!("restricted-area proxy URL must be valid UTF-8"))?;
+            push_proxy_arg_values(
+                &mut proxy_args,
+                RestrictedAreaProxyKind::BilibiliApi,
+                &value,
+            );
+        }
+    }
+    Ok(proxy_args)
+}
+
+fn push_proxy_arg_values(
+    proxy_args: &mut Vec<RestrictedProxyArg>,
+    kind: RestrictedAreaProxyKind,
+    value: &str,
+) {
+    proxy_args.extend(value.split(',').map(|spec| RestrictedProxyArg {
+        kind,
+        spec: spec.to_owned(),
+    }));
 }
 
 fn parse_restricted_proxy_spec(
@@ -633,8 +706,12 @@ fn parse_restricted_proxy_spec(
         !base_url.is_empty(),
         "restricted-area proxy URL cannot be empty"
     );
-    url::Url::parse(base_url)
-        .with_context(|| format!("failed to parse restricted-area proxy URL from `{trimmed}`"))?;
+    url::Url::parse(base_url).with_context(|| {
+        format!(
+            "failed to parse restricted-area proxy URL `{}`",
+            redact_cli_url_for_error(base_url)
+        )
+    })?;
     Ok(match kind {
         RestrictedAreaProxyKind::PlayUrl => RestrictedAreaProxy::playurl(base_url, area),
         RestrictedAreaProxyKind::BilibiliApi => RestrictedAreaProxy::bilibili_api(base_url, area),
@@ -661,6 +738,36 @@ fn parse_restricted_area(value: &str) -> anyhow::Result<RestrictedArea> {
         "hk" => Ok(RestrictedArea::Hk),
         "tw" => Ok(RestrictedArea::Tw),
         other => bail!("unsupported restricted area `{other}`; expected cn, th, hk, or tw"),
+    }
+}
+
+fn redact_cli_url_for_error(raw: &str) -> String {
+    url::Url::parse(raw).map_or_else(
+        |_| redact_unparsed_cli_url_for_error(raw),
+        |mut url| {
+            let _ = url.set_username("");
+            let _ = url.set_password(None);
+            url.set_path("");
+            url.set_query(None);
+            url.set_fragment(None);
+            url.to_string().trim_end_matches('/').to_owned()
+        },
+    )
+}
+
+fn redact_unparsed_cli_url_for_error(raw: &str) -> String {
+    let without_query = raw.split(['?', '#']).next().unwrap_or(raw);
+    let Some(scheme_end) = without_query.find("//") else {
+        return "<invalid-url>".to_owned();
+    };
+    let prefix = &without_query[..(scheme_end + 2)];
+    let after_scheme = &without_query[(scheme_end + 2)..];
+    let authority = after_scheme.split('/').next().unwrap_or(after_scheme);
+    let host = authority.rsplit('@').next().unwrap_or(authority);
+    if host.is_empty() {
+        "<invalid-url>".to_owned()
+    } else {
+        format!("{prefix}{host}")
     }
 }
 
@@ -748,8 +855,8 @@ fn _assert_credentials_send_sync(_: Credentials) {}
 #[cfg(test)]
 mod tests {
     use super::{
-        Cli, endpoints_from_cli, next_poll_sleep, remaining_until, restricted_area_from_cli,
-        save_qr_credentials,
+        Cli, endpoints_from_cli, next_poll_sleep, remaining_until,
+        restricted_area_from_cli_with_args, save_qr_credentials,
     };
     use bbdown::{CredentialStore, Credentials, EndpointConfig};
     use clap::Parser as _;
@@ -844,7 +951,7 @@ mod tests {
 
     #[test]
     fn restricted_area_cli_builds_proxy_chain() -> anyhow::Result<()> {
-        let cli = Cli::parse_from([
+        let args = [
             "bbdown",
             "--restricted-area",
             "hk",
@@ -856,8 +963,9 @@ mod tests {
             "hk=https://hk.example/api",
             "auth",
             "status",
-        ]);
-        let config = restricted_area_from_cli(&cli)?;
+        ];
+        let cli = Cli::parse_from(args);
+        let config = restricted_area_from_cli_with_args(&cli, args.map(std::ffi::OsString::from))?;
         let ordered = config.ordered_proxies();
 
         assert_eq!(ordered[0].base_url, "https://hk.example/api");
@@ -868,14 +976,15 @@ mod tests {
 
     #[test]
     fn restricted_area_proxy_bare_url_may_contain_query_equals() -> anyhow::Result<()> {
-        let cli = Cli::parse_from([
+        let args = [
             "bbdown",
             "--restricted-area-proxy",
             "https://generic.example/playurl?token=a=b",
             "auth",
             "status",
-        ]);
-        let config = restricted_area_from_cli(&cli)?;
+        ];
+        let cli = Cli::parse_from(args);
+        let config = restricted_area_from_cli_with_args(&cli, args.map(std::ffi::OsString::from))?;
 
         assert_eq!(config.proxies[0].area, None);
         assert_eq!(
@@ -883,6 +992,52 @@ mod tests {
             "https://generic.example/playurl?token=a=b"
         );
         Ok(())
+    }
+
+    #[test]
+    fn restricted_area_proxy_preserves_cross_flag_cli_order() -> anyhow::Result<()> {
+        let args = [
+            "bbdown",
+            "--restricted-area",
+            "hk",
+            "--restricted-api-proxy",
+            "hk=https://api.example/base",
+            "--restricted-area-proxy",
+            "hk=https://play.example/playurl",
+            "auth",
+            "status",
+        ];
+        let cli = Cli::parse_from(args);
+        let config = restricted_area_from_cli_with_args(&cli, args.map(std::ffi::OsString::from))?;
+        let ordered = config.ordered_proxies();
+
+        assert_eq!(ordered[0].base_url, "https://api.example/base");
+        assert_eq!(ordered[1].base_url, "https://play.example/playurl");
+        Ok(())
+    }
+
+    #[test]
+    fn restricted_area_proxy_parse_error_redacts_spec() {
+        let args = [
+            "bbdown",
+            "--restricted-area-proxy",
+            "hk=https://user:pass@exa mple/t/PATH_SECRET?token=QUERY_SECRET",
+            "auth",
+            "status",
+        ];
+        let cli = Cli::parse_from(args);
+        let error = restricted_area_from_cli_with_args(&cli, args.map(std::ffi::OsString::from))
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
+
+        assert!(error.contains("failed to parse restricted-area proxy URL"));
+        for sensitive in ["user:pass", "PATH_SECRET", "QUERY_SECRET", "token="] {
+            assert!(
+                !error.contains(sensitive),
+                "parse error leaked {sensitive}: {error}"
+            );
+        }
     }
 
     #[test]

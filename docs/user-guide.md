@@ -126,7 +126,9 @@ passport overrides. TV QR polling follows `--tv-passport-base` when that overrid
 ## Restricted-Area Proxies
 
 The tool does not include public proxy defaults. Configure only proxy hosts you operate or trust.
-PGC playurl fallback is attempted only after the official PGC playurl request fails.
+PGC playurl fallback is attempted only after the official PGC playurl response reports a region/area
+restriction. Other official failures, such as VIP/paywall errors, parse failures, or network errors,
+keep their original error instead of trying proxy hosts.
 
 ```bash
 bbdown --restricted-area hk --restricted-area-proxy hk=https://proxy.example/playurl plan ep267851 --json
@@ -136,6 +138,8 @@ bbdown --restricted-api-proxy tw=https://proxy.example/bili/api plan ss26801 --s
 Proxy specs use `area=url` or a bare URL. Supported areas are `cn`, `th`, `hk`, and `tw`. Bare URLs
 are generic candidates. `--restricted-area <area>` is a hint that moves matching candidates to the
 front. Without a hint, ordering is generic, `cn`, `th`, `hk`, then `tw`, with duplicates removed.
+Repeated command-line proxy flags preserve declaration order within the same area priority.
+Environment lists are read as playurl proxies first, then API-path proxies.
 
 `--restricted-area-proxy` targets BBDown/BiliPlus-style playurl proxy endpoints where the original
 PGC playurl query is sent to the configured URL. `--restricted-api-proxy` targets proxies that mirror
@@ -146,6 +150,5 @@ the PGC playurl parameters are appended. Both flags may be repeated.
 
 If a generic access key was imported with `auth import-access-key`, proxy playurl requests include
 it as `access_key`. Bilibili cookies are not forwarded to restricted-area proxy hosts. Resolver
-diagnostics record the official failure and proxy attempts, but they strip query strings and URL
-userinfo from endpoint fields and redact sensitive error-message values so token values are not
-printed.
+diagnostics record the official failure and proxy attempts, but endpoint fields are reduced to URL
+origins and sensitive error-message values are redacted so token values are not printed.

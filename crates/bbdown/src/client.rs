@@ -679,7 +679,12 @@ impl BiliClient {
         let official_url = Self::pgc_playurl_url(&self.config.endpoints.pgc_base, aid, cid, epid)?;
         match self.fetch_playurl_stream_set(official_url.clone()).await {
             Ok(streams) => Ok(ResolvedStreamSet::official(StreamSource::PgcWeb, streams)),
-            Err(error) if self.config.restricted_area.proxies.is_empty() => Err(error),
+            Err(error)
+                if self.config.restricted_area.proxies.is_empty()
+                    || !is_restricted_area_fallback_error(&error) =>
+            {
+                Err(error)
+            }
             Err(error) => {
                 let mut attempts = vec![resolver_attempt(
                     StreamSource::PgcWeb,
@@ -1329,6 +1334,33 @@ fn append_pgc_playurl_params(
     }
 }
 
+fn is_restricted_area_fallback_error(error: &Error) -> bool {
+    match error {
+        Error::Api { code, message } => {
+            matches!(*code, 403 | -40301) || is_restricted_area_message(message)
+        }
+        Error::AccessRestricted(message) => is_restricted_area_message(message),
+        _ => false,
+    }
+}
+
+fn is_restricted_area_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    [
+        "area restricted",
+        "area limit",
+        "region restricted",
+        "region limit",
+        "not available in your region",
+        "地区限制",
+        "地區限制",
+        "区域限制",
+        "區域限制",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
 fn resolver_attempt(
     source: StreamSource,
     area: Option<RestrictedArea>,
@@ -1412,6 +1444,7 @@ fn redact_url_for_diagnostics(url: &Url) -> String {
     let mut redacted = url.clone();
     let _ = redacted.set_username("");
     let _ = redacted.set_password(None);
+    redacted.set_path("");
     redacted.set_query(None);
     redacted.set_fragment(None);
     redacted.to_string().trim_end_matches('/').to_owned()
@@ -1442,6 +1475,11 @@ const SENSITIVE_DIAGNOSTIC_KEYS: &[&str] = &[
     "access_key",
     "access_token",
     "proxy_token",
+    "token",
+    "jwt",
+    "api_key",
+    "x-api-key",
+    "authorization",
     "sessdata",
     "bili_jct",
     "cookie",
@@ -1496,22 +1534,48 @@ fn redact_sensitive_key_values(raw: &str) -> String {
 }
 
 fn redact_sensitive_key_value(raw: &str, key: &str) -> String {
+    let with_equals = redact_sensitive_key_value_with_separator(raw, key, '=');
+    redact_sensitive_key_value_with_separator(&with_equals, key, ':')
+}
+
+fn redact_sensitive_key_value_with_separator(raw: &str, key: &str, separator: char) -> String {
     let mut output = String::with_capacity(raw.len());
     let mut index = 0;
-    let pattern = format!("{key}=");
+    let pattern = format!("{key}{separator}");
     let lower = raw.to_ascii_lowercase();
     while let Some(relative_start) = lower[index..].find(&pattern) {
         let start = index + relative_start;
         output.push_str(&raw[index..start]);
         output.push_str("<redacted>");
-        let value_start = start + pattern.len();
+        let value_start = skip_ascii_whitespace(raw, start + pattern.len());
         let value_end = raw[value_start..]
-            .find(is_sensitive_value_delimiter)
+            .find(|character| is_sensitive_value_delimiter_for_key(key, character))
             .map_or(raw.len(), |relative_end| value_start + relative_end);
         index = value_end;
     }
     output.push_str(&raw[index..]);
     output
+}
+
+fn skip_ascii_whitespace(raw: &str, mut index: usize) -> usize {
+    while let Some(character) = raw[index..].chars().next() {
+        if !character.is_ascii_whitespace() {
+            break;
+        }
+        index += character.len_utf8();
+    }
+    index
+}
+
+fn is_sensitive_value_delimiter_for_key(key: &str, character: char) -> bool {
+    if key == "authorization" {
+        matches!(
+            character,
+            '&' | '"' | '\'' | '<' | '>' | '(' | ')' | ',' | ';' | '\r' | '\n'
+        )
+    } else {
+        is_sensitive_value_delimiter(character)
+    }
 }
 
 fn is_sensitive_value_delimiter(character: char) -> bool {
@@ -2778,7 +2842,8 @@ mod tests {
         });
         server.mock(|when, then| {
             when.method(GET)
-                .path("/proxy-playurl")
+                .path("/t/PATH_SECRET/proxy-playurl")
+                .query_param("proxy_token", "PROXY_SECRET")
                 .query_param("ep_id", "1000")
                 .query_param("area", "hk")
                 .query_param("access_key", "ACCESS_SECRET")
@@ -2819,7 +2884,10 @@ mod tests {
             restricted_area: RestrictedAreaConfig {
                 area_hint: Some(RestrictedArea::Hk),
                 proxies: vec![RestrictedAreaProxy::playurl(
-                    format!("{}/proxy-playurl", server.base_url()),
+                    format!(
+                        "{}/t/PATH_SECRET/proxy-playurl?proxy_token=PROXY_SECRET",
+                        server.base_url()
+                    ),
                     Some(RestrictedArea::Hk),
                 )],
             },
@@ -2840,7 +2908,88 @@ mod tests {
         let diagnostics = serde_json::to_string(&entry.diagnostics)?;
         assert!(!diagnostics.contains("ACCESS_SECRET"));
         assert!(!diagnostics.contains("COOKIE_SECRET"));
+        assert!(!diagnostics.contains("PATH_SECRET"));
+        assert!(!diagnostics.contains("PROXY_SECRET"));
         assert!(!diagnostics.contains("access_key"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pgc_proxy_fallback_requires_area_restriction() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/pgc/view/web/season")
+                .query_param("ep_id", "1000");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "result": {
+                    "season_id": 123,
+                    "title": "A Season",
+                    "episodes": [
+                        {"aid": 10, "bvid": "BV1aa", "cid": 100, "id": 1000, "ep_id": 1000, "title": "1"}
+                    ]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/pgc/player/web/v2/playurl")
+                .query_param("ep_id", "1000");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": -10403,
+                "message": "vip required"
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/proxy-playurl");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "result": {
+                    "video_info": {
+                        "dash": {
+                            "video": [{
+                                "id": 64,
+                                "baseUrl": "https://proxy.example/64.m4s",
+                                "base_url": "https://proxy.example/64.m4s"
+                            }],
+                            "audio": []
+                        }
+                    }
+                }
+            }));
+        });
+
+        let client = BiliClient::new(ClientConfig {
+            endpoints: EndpointConfig {
+                api_base: server.base_url(),
+                pgc_base: server.base_url(),
+                intl_base: server.base_url(),
+                comment_base: server.base_url(),
+                passport_base: server.base_url(),
+                tv_passport_base: server.base_url(),
+                tv_passport_poll_base: server.base_url(),
+            },
+            credentials: Credentials {
+                cookie: None,
+                access_key: Some("ACCESS_SECRET".to_owned()),
+                tv_access_key: None,
+            },
+            restricted_area: RestrictedAreaConfig {
+                area_hint: Some(RestrictedArea::Hk),
+                proxies: vec![RestrictedAreaProxy::playurl(
+                    format!("{}/proxy-playurl", server.base_url()),
+                    Some(RestrictedArea::Hk),
+                )],
+            },
+            user_agent: "test".to_owned(),
+            request_timeout: Duration::from_secs(30),
+        });
+
+        let Err(error) = client.plan_download("ep1000", None).await else {
+            return Err(anyhow::anyhow!("non-area PGC error should not use proxy"));
+        };
+        assert!(matches!(error, Error::Api { code: -10403, .. }));
         Ok(())
     }
 
@@ -2959,7 +3108,7 @@ mod tests {
     fn resolver_error_message_redacts_sensitive_values() {
         let message = super::resolver_error_message(&Error::Api {
             code: -40301,
-            message: "proxy rejected https://user:pass@proxy.example/api?proxy_token=PROXY_SECRET&access_key=ACCESS_SECRET cookie=SESSDATA=COOKIE_SECRET".to_owned(),
+            message: "proxy rejected https://user:pass@proxy.example/api?proxy_token=PROXY_SECRET&access_key=ACCESS_SECRET cookie=SESSDATA=COOKIE_SECRET token=TOKEN_SECRET jwt=JWT_SECRET x-api-key: API_KEY_SECRET authorization: Bearer AUTH_SECRET".to_owned(),
         });
 
         assert!(message.starts_with("API code -40301:"));
@@ -2967,8 +3116,14 @@ mod tests {
             "ACCESS_SECRET",
             "PROXY_SECRET",
             "COOKIE_SECRET",
+            "TOKEN_SECRET",
+            "JWT_SECRET",
+            "API_KEY_SECRET",
+            "AUTH_SECRET",
             "proxy_token",
             "access_key",
+            "x-api-key",
+            "authorization",
             "cookie",
             "user:pass",
         ] {

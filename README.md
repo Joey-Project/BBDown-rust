@@ -87,7 +87,8 @@ endpoint. Use `--passport-base` for WEB QR login mocks or proxies, and use `--tv
 `--tv-passport-base` only when that TV-specific override is supplied; otherwise it uses the upstream
 TV poll default unless `--tv-passport-poll-base` is set explicitly.
 
-Configure restricted-area PGC playurl fallback with explicit proxy hosts:
+Configure restricted-area PGC playurl fallback with explicit proxy hosts. Fallback runs only when the
+official PGC playurl response reports a region/area restriction:
 
 ```bash
 bbdown --restricted-area hk --restricted-area-proxy hk=https://proxy.example/playurl plan ep267851 --json
@@ -98,9 +99,10 @@ bbdown --restricted-api-proxy tw=https://proxy.example/bili/api plan ss26801 --s
 `--restricted-api-proxy` targets proxies that mirror `api.bilibili.com` paths and preserves query
 parameters already present on the configured proxy base URL. Use repeated flags or comma-separated
 `BBDOWN_RESTRICTED_AREA_PROXY` / `BBDOWN_RESTRICTED_API_PROXY` values to configure multiple
-candidates. Hosts are user supplied; the tool does not ship public proxy defaults. Proxy requests do
-not forward Bilibili cookies. Resolver diagnostics redact endpoint query strings, URL userinfo, and
-sensitive error-message values.
+candidates. Repeated command-line flags preserve declaration order within the same area priority.
+Environment lists are read as playurl proxies first, then API-path proxies. Hosts are user supplied;
+the tool does not ship public proxy defaults. Proxy requests do not forward Bilibili cookies.
+Resolver diagnostics reduce endpoints to URL origins and redact sensitive error-message values.
 
 ## Developer Commands
 
@@ -119,6 +121,9 @@ excluded from default CI and fails fast unless `BBDOWN_LIVE_URL` is set. It also
 
 ## Documentation
 
+- Crate API note: this rewrite is still `0.1`; embedding projects should prefer
+  `ClientConfig::new(endpoints, credentials).with_*` over `ClientConfig { ... }` struct literals so
+  added configuration fields are less disruptive.
 - User guide: [docs/user-guide.md](docs/user-guide.md)
 - Architecture: [docs/architecture/rust-rewrite.md](docs/architecture/rust-rewrite.md)
 - Project state: [docs/PROJECT_STATE.md](docs/PROJECT_STATE.md)
