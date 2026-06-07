@@ -62,6 +62,8 @@ superseded_by:
   an area-matched API proxy and a generic playurl proxy are configured together.
 - Final review fixes also cover common Chinese "current region cannot watch" PGC playurl messages,
   malformed CLI proxy URL redaction when whitespace follows the authority, and empty proxy env vars.
+- Follow-up review fixes ignore empty comma-separated env segments, including trailing commas, and
+  include the "current region" Chinese phrasing variant with an inserted possessive particle.
 - App-only/mobile proxy response conversion remains out of scope for this slice.
 
 ## Evidence
@@ -74,7 +76,9 @@ superseded_by:
 - Targeted CLI proxy tests: `cargo test -p bbdown-cli restricted_area_proxy`.
 - Local repro check: malformed proxy URL parse error redacts whitespace-delimited token text.
 - Local repro check: `BBDOWN_RESTRICTED_AREA_PROXY=''` no longer blocks `auth status`.
-- Local gate: `just ci` with formatter check, clippy, 87 library tests, 18 CLI unit tests, 8 mock
+- Local repro check: comma-only and trailing-comma restricted proxy env values no longer block
+  `auth status`.
+- Local gate: `just ci` with formatter check, clippy, 87 library tests, 19 CLI unit tests, 8 mock
   CLI e2e tests, and 2 ignored live e2e tests in the default workspace test run.
 - Live gate env preflight: `just live-e2e` without `BBDOWN_LIVE_URL` exits with code 2 before
   running tests.

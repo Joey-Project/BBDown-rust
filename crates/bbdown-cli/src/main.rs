@@ -680,10 +680,10 @@ fn proxy_args_from_env_values(
 ) -> Vec<RestrictedProxyArg> {
     let mut proxy_args = Vec::new();
     if let Some(value) = area_proxy.filter(|value| !value.trim().is_empty()) {
-        push_proxy_arg_values(&mut proxy_args, RestrictedAreaProxyKind::PlayUrl, value, 1);
+        push_proxy_env_arg_values(&mut proxy_args, RestrictedAreaProxyKind::PlayUrl, value, 1);
     }
     if let Some(value) = api_proxy.filter(|value| !value.trim().is_empty()) {
-        push_proxy_arg_values(
+        push_proxy_env_arg_values(
             &mut proxy_args,
             RestrictedAreaProxyKind::BilibiliApi,
             value,
@@ -747,6 +747,24 @@ fn push_proxy_arg_values(
         spec: spec.to_owned(),
         order_priority,
     }));
+}
+
+fn push_proxy_env_arg_values(
+    proxy_args: &mut Vec<RestrictedProxyArg>,
+    kind: RestrictedAreaProxyKind,
+    value: &str,
+    order_priority: u8,
+) {
+    proxy_args.extend(
+        value
+            .split(',')
+            .filter(|spec| !spec.trim().is_empty())
+            .map(|spec| RestrictedProxyArg {
+                kind,
+                spec: spec.to_owned(),
+                order_priority,
+            }),
+    );
 }
 
 fn parse_restricted_proxy_spec(
@@ -1190,16 +1208,34 @@ mod tests {
     fn restricted_area_proxy_ignores_empty_env_values() -> anyhow::Result<()> {
         let args = ["bbdown", "auth", "status"];
         let mut cli = Cli::parse_from(args);
-        cli.restricted_area_proxy = vec![String::new()];
-        cli.restricted_api_proxy = vec![" ".to_owned()];
+        cli.restricted_area_proxy = vec![String::new(), String::new()];
+        cli.restricted_api_proxy = vec![" ".to_owned(), " ".to_owned()];
         let config = restricted_area_from_cli_with_env_values(
             &cli,
             args.map(std::ffi::OsString::from),
-            Some(""),
-            Some(" "),
+            Some(","),
+            Some(" , "),
         )?;
 
         assert!(config.proxies.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn restricted_area_proxy_ignores_trailing_empty_env_segment() -> anyhow::Result<()> {
+        let args = ["bbdown", "auth", "status"];
+        let cli = Cli::parse_from(args);
+        let config = restricted_area_from_cli_with_env_values(
+            &cli,
+            args.map(std::ffi::OsString::from),
+            Some("https://env-play.example/playurl,"),
+            Some("hk=https://env-api.example/api, "),
+        )?;
+        let ordered = config.ordered_proxies();
+
+        assert_eq!(ordered.len(), 2);
+        assert_eq!(ordered[0].base_url, "https://env-play.example/playurl");
+        assert_eq!(ordered[1].base_url, "https://env-api.example/api");
         Ok(())
     }
 
