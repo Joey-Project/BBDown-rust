@@ -4,7 +4,7 @@
 use anyhow::{Context, bail, ensure};
 use bbdown::{
     BiliClient, ClientConfig, CredentialStore, Credentials, DownloadOptions, DownloadReport,
-    EndpointConfig, MuxOptions, ResolvedContent, RetryPolicy, Selection,
+    EndpointConfig, MuxOptions, QrLoginKind, QrLoginState, ResolvedContent, RetryPolicy, Selection,
 };
 use clap::{Args, Parser, Subcommand};
 use std::fs;
@@ -40,6 +40,18 @@ struct Cli {
         default_value = "https://comment.bilibili.com"
     )]
     comment_base: String,
+    #[arg(
+        long,
+        env = "BBDOWN_PASSPORT_BASE",
+        default_value = "https://passport.bilibili.com"
+    )]
+    passport_base: String,
+    #[arg(
+        long,
+        env = "BBDOWN_TV_PASSPORT_BASE",
+        default_value = "https://passport.snm0516.aisee.tv"
+    )]
+    tv_passport_base: String,
     #[arg(long, env = "BBDOWN_CREDENTIAL_FILE")]
     credential_file: Option<PathBuf>,
     #[arg(long, env = "BBDOWN_REQUEST_TIMEOUT_SECONDS", default_value_t = 30)]
@@ -100,6 +112,8 @@ enum AuthCommand {
     Status,
     ImportCookie(SecretImportArgs),
     ImportAccessKey(SecretImportArgs),
+    LoginWeb(QrLoginArgs),
+    LoginTv(QrLoginArgs),
     Logout,
 }
 
@@ -109,6 +123,16 @@ struct SecretImportArgs {
     stdin: bool,
     #[arg(long, value_name = "PATH")]
     file: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct QrLoginArgs {
+    #[arg(long)]
+    json: bool,
+    #[arg(long, default_value_t = 180)]
+    timeout_seconds: u64,
+    #[arg(long, default_value_t = 1)]
+    poll_interval_seconds: u64,
 }
 
 #[tokio::main]
@@ -123,6 +147,8 @@ async fn main() -> anyhow::Result<()> {
         pgc_base: cli.pgc_base.clone(),
         intl_base: cli.intl_base.clone(),
         comment_base: cli.comment_base.clone(),
+        passport_base: cli.passport_base.clone(),
+        tv_passport_base: cli.tv_passport_base.clone(),
     };
     let request_timeout = Duration::from_secs(cli.request_timeout_seconds);
     let store = CredentialStore::new(credential_path(cli.credential_file)?);
@@ -194,7 +220,9 @@ async fn main() -> anyhow::Result<()> {
             };
             handle_download(&store, endpoints, request_timeout, args).await?;
         }
-        Command::Auth { command } => handle_auth(command, &store)?,
+        Command::Auth { command } => {
+            handle_auth(command, &store, endpoints, request_timeout).await?;
+        }
     }
     Ok(())
 }
@@ -291,7 +319,12 @@ fn client_config(
     }
 }
 
-fn handle_auth(command: AuthCommand, store: &CredentialStore) -> anyhow::Result<()> {
+async fn handle_auth(
+    command: AuthCommand,
+    store: &CredentialStore,
+    endpoints: EndpointConfig,
+    request_timeout: Duration,
+) -> anyhow::Result<()> {
     match command {
         AuthCommand::Status => {
             let credentials = store.load().context("failed to load credentials")?;
@@ -318,12 +351,106 @@ fn handle_auth(command: AuthCommand, store: &CredentialStore) -> anyhow::Result<
                 .context("failed to save credentials")?;
             println!("access key imported");
         }
+        AuthCommand::LoginWeb(args) => {
+            handle_qr_login(QrLoginKind::Web, args, store, endpoints, request_timeout).await?;
+        }
+        AuthCommand::LoginTv(args) => {
+            handle_qr_login(QrLoginKind::Tv, args, store, endpoints, request_timeout).await?;
+        }
         AuthCommand::Logout => {
             store.clear().context("failed to clear credentials")?;
             println!("credentials cleared");
         }
     }
     Ok(())
+}
+
+async fn handle_qr_login(
+    kind: QrLoginKind,
+    args: QrLoginArgs,
+    store: &CredentialStore,
+    endpoints: EndpointConfig,
+    request_timeout: Duration,
+) -> anyhow::Result<()> {
+    ensure!(
+        args.timeout_seconds > 0,
+        "--timeout-seconds must be greater than 0"
+    );
+    ensure!(
+        args.poll_interval_seconds > 0,
+        "--poll-interval-seconds must be greater than 0"
+    );
+    let client = BiliClient::new(client_config(
+        endpoints,
+        request_timeout,
+        store.load().context("failed to load credentials")?,
+    ));
+    let ticket = match kind {
+        QrLoginKind::Web => client.create_web_qr_login().await?,
+        QrLoginKind::Tv => client.create_tv_qr_login().await?,
+    };
+    if !args.json {
+        println!("scan: {}", ticket.url);
+    }
+    let credentials = wait_for_qr_login(&client, kind, &ticket.key, &args).await?;
+    let mut stored = store.load().context("failed to load credentials")?;
+    if credentials.cookie.is_some() {
+        stored.cookie = credentials.cookie;
+    }
+    if credentials.access_key.is_some() {
+        stored.access_key = credentials.access_key;
+    }
+    store.save(&stored).context("failed to save credentials")?;
+    let summary = stored.redacted_summary();
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "kind": kind,
+                "saved": summary,
+            }))?
+        );
+    } else {
+        println!("credentials saved");
+    }
+    Ok(())
+}
+
+async fn wait_for_qr_login(
+    client: &BiliClient,
+    kind: QrLoginKind,
+    key: &str,
+    args: &QrLoginArgs,
+) -> anyhow::Result<Credentials> {
+    let interval = Duration::from_secs(args.poll_interval_seconds);
+    let max_attempts = args.timeout_seconds / args.poll_interval_seconds + 1;
+    let mut last_waiting_state: Option<&'static str> = None;
+    for attempt in 0..max_attempts {
+        let state = match kind {
+            QrLoginKind::Web => client.poll_web_qr_login(key).await?,
+            QrLoginKind::Tv => client.poll_tv_qr_login(key).await?,
+        };
+        match state {
+            QrLoginState::WaitingForScan => {
+                if !args.json && last_waiting_state != Some("waiting_for_scan") {
+                    println!("waiting for scan");
+                }
+                last_waiting_state = Some("waiting_for_scan");
+            }
+            QrLoginState::WaitingForConfirm => {
+                if !args.json && last_waiting_state != Some("waiting_for_confirm") {
+                    println!("waiting for confirmation");
+                }
+                last_waiting_state = Some("waiting_for_confirm");
+            }
+            QrLoginState::Expired => bail!("QR code expired"),
+            QrLoginState::Succeeded { credentials } => return Ok(credentials),
+        }
+        if attempt + 1 < max_attempts {
+            tokio::time::sleep(interval).await;
+        }
+    }
+    bail!("QR login timed out")
 }
 
 fn read_secret(

@@ -128,7 +128,14 @@ The CLI stores credentials in a local JSON file under the platform config direct
 permissions on Unix. The crate exposes `Credentials` and `CredentialStore` so other projects can
 inject their own storage or keep credentials in memory.
 
-Secrets are never included in status output; `auth status` reports only booleans.
+QR login is modeled as an explicit state machine in the crate. WEB QR login creates a
+`QrLoginTicket`, polls waiting-for-scan, waiting-for-confirmation, expired, and succeeded states,
+then returns a cookie credential. TV QR login uses the BBDown-compatible app signed form flow and
+returns an access-key credential. The CLI `auth login-web` and `auth login-tv` commands update the
+local credential store after a succeeded state.
+
+Secrets are never included in status output; `auth status` and QR login JSON output report only
+booleans.
 HTTP request errors are converted without retaining full URLs so query secrets such as intl
 `access_key` do not appear in user-facing errors.
 
@@ -141,10 +148,11 @@ Default CI is deterministic:
 - unit tests
 - CLI mock e2e tests
 
-Live tests against Bilibili will be opt-in only. They must require explicit environment variables
-for credentials and sample URLs so branch CI is not blocked by network, account, or regional state.
-Network requests have a configurable timeout through `ClientConfig` and CLI/env settings so
-misbehaving official or proxy endpoints do not hang indefinitely.
+Live tests against Bilibili are opt-in only through `just live-e2e`. They require explicit
+environment variables such as `BBDOWN_LIVE_URL`, optional `BBDOWN_LIVE_SELECTION`,
+`BBDOWN_LIVE_COOKIE`, and `BBDOWN_LIVE_ACCESS_KEY`, so branch CI is not blocked by network,
+account, or regional state. Network requests have a configurable timeout through `ClientConfig` and
+CLI/env settings so misbehaving official or proxy endpoints do not hang indefinitely.
 
 ## Planned PR Slices
 
@@ -153,5 +161,5 @@ misbehaving official or proxy endpoints do not hang indefinitely.
 2. Stream resolver chain, download planning, subtitle and danmaku discovery. Completed in PR #2.
 3. File download, retry/resume policy, ffmpeg mux integration, and mock e2e downloads. Completed
    in PR #3.
-4. QR login state machine and live-test opt-in harness.
+4. QR login state machine and live-test opt-in harness. Completed in PR #4.
 5. Restricted-area proxy resolver ordering and diagnostics.

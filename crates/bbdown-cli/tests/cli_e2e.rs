@@ -405,6 +405,108 @@ fn auth_import_status_and_logout_use_local_store() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test]
+fn auth_qr_login_web_and_tv_use_local_store() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/passport-login/web/qrcode/generate")
+            .query_param("source", "main-fe-header");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "url": "https://passport.example/scan?qrcode_key=WEBKEY",
+                "qrcode_key": "WEBKEY"
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/passport-login/web/qrcode/poll")
+            .query_param("qrcode_key", "WEBKEY")
+            .query_param("source", "main-fe-header");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "code": 0,
+                "url": "https://www.bilibili.com/?SESSDATA=sess&bili_jct=csrf"
+            }
+        }));
+    });
+
+    let output = Command::cargo_bin("bbdown")?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .args([
+            "auth",
+            "login-web",
+            "--timeout-seconds",
+            "2",
+            "--poll-interval-seconds",
+            "1",
+            "--json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    assert_eq!(json["saved"]["has_cookie"], true);
+    assert_eq!(json["saved"]["has_access_key"], false);
+    assert!(!String::from_utf8_lossy(&output).contains("sess"));
+
+    server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/qrcode/auth_code");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "url": "https://tv.example/scan",
+                "auth_code": "AUTH"
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(POST).path("/x/passport-tv-login/qrcode/poll");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {"access_token": "ACCESS"}
+        }));
+    });
+
+    let output = Command::cargo_bin("bbdown")?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--tv-passport-base")
+        .arg(server.base_url())
+        .args([
+            "auth",
+            "login-tv",
+            "--timeout-seconds",
+            "2",
+            "--poll-interval-seconds",
+            "1",
+            "--json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    assert_eq!(json["saved"]["has_cookie"], true);
+    assert_eq!(json["saved"]["has_access_key"], true);
+    assert!(!String::from_utf8_lossy(&output).contains("ACCESS"));
+    Ok(())
+}
+
 #[cfg(unix)]
 fn write_fake_ffmpeg(dir: &Path, body: &str) -> anyhow::Result<std::path::PathBuf> {
     let path = dir.join("fake-ffmpeg");

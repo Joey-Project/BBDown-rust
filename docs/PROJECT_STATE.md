@@ -8,7 +8,8 @@
   - `docs/project_journal/2026/06/2026-06-06-rust-rewrite-foundation-019e9eab.md`.
   - `docs/project_journal/2026/06/2026-06-07-stream-planning-019e9eab.md`.
   - `docs/project_journal/2026/06/2026-06-07-download-execution-019e9eab.md`.
-- Next planned workstream: QR login state machine and live-test opt-in harness.
+  - `docs/project_journal/2026/06/2026-06-07-qr-login-live-tests-019e9eab.md`.
+- Next planned workstream: restricted-area proxy resolver ordering and diagnostics.
 
 ## Recovery Pointers
 
