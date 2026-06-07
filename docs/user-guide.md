@@ -138,9 +138,11 @@ Each case declares a `kind`, `url`, optional `selection`, optional restricted-ar
 such as `info` or `plan`, and expected JSON shape. The harness copies only cookie/access-key fields
 into a temporary credential file for the case and strips CLI override environment variables before
 running the real `bbdown` binary.
-For restricted samples that depend on mutable account or regional eligibility, a case may include
-both `plan_sources` and `plan_error_contains`: a successful `plan` must match the stream assertions,
-while a restricted failure must contain the listed diagnostics.
+Use `allowed_plan_sources` to reject unexpected sources, and `required_plan_sources` when a source
+must appear at least once. For restricted samples that depend on mutable account or regional
+eligibility, a case may set `allow_plan_error: true` with `plan_error_contains`: a successful `plan`
+must still match the stream assertions, while a restricted failure must be an access-restricted
+failure and must contain the listed diagnostics.
 
 ## Restricted-Area Proxies
 
@@ -165,7 +167,8 @@ group is ordered by area hint, generic candidates, then fixed area order.
 `--restricted-area-proxy` targets BBDown/BiliPlus-style HTTP(S) playurl proxy endpoints where the
 original PGC playurl query is sent to the configured URL. `--restricted-api-proxy` targets HTTP(S)
 proxies that mirror `api.bilibili.com` path layout, so the CLI calls `/pgc/player/web/playurl`
-below that base URL, matching common BALH-style API proxy hosts.
+below that base URL first, matching common BALH-style API proxy hosts, then falls back to
+`/pgc/player/web/v2/playurl` for API proxies that implemented the older path.
 If the configured API proxy base URL already contains a query string, that query is preserved before
 the PGC playurl parameters are appended. Both flags may be repeated.
 `BBDOWN_RESTRICTED_AREA_PROXY` and `BBDOWN_RESTRICTED_API_PROXY` also accept comma-separated lists.

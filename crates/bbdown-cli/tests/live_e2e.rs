@@ -92,8 +92,12 @@ enum LiveAction {
 #[derive(Debug, Default, Deserialize)]
 struct LiveExpect {
     info: Option<String>,
+    #[serde(default, alias = "plan_sources")]
+    allowed_plan_sources: Vec<String>,
     #[serde(default)]
-    plan_sources: Vec<String>,
+    required_plan_sources: Vec<String>,
+    #[serde(default)]
+    allow_plan_error: bool,
     #[serde(default)]
     plan_error_contains: Vec<String>,
     min_entries: Option<usize>,
@@ -215,6 +219,94 @@ fn credentials_support_telegram_auth_state_and_access_key_file() -> anyhow::Resu
     assert_eq!(credentials.access_key.as_deref(), Some("ACCESS_SECRET"));
     assert_eq!(credentials.tv_access_key, None);
     Ok(())
+}
+
+#[test]
+fn plan_error_allowance_requires_explicit_restricted_access() -> anyhow::Result<()> {
+    let mut case = live_case_for_assertions();
+    let stderr = "Error: access restricted: restricted-area resolver failed";
+
+    let Err(error) = assert_plan_error(stderr, &case) else {
+        bail!("error allowance must be explicit");
+    };
+    assert!(error.to_string().contains("plan failed unexpectedly"));
+
+    case.kind = LiveCaseKind::Normal;
+    case.expect.allow_plan_error = true;
+    let Err(error) = assert_plan_error(stderr, &case) else {
+        bail!("only restricted PGC may allow errors");
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("only valid for restricted_pgc cases")
+    );
+
+    case.kind = LiveCaseKind::RestrictedPgc;
+    let Err(error) = assert_plan_error("Error: network timeout", &case) else {
+        bail!("allowed failures must still be access restrictions");
+    };
+    assert!(error.to_string().contains("only accepts access-restricted"));
+
+    case.expect.plan_error_contains = vec!["PgcProxy area=hk Failed (API code".to_owned()];
+    assert_plan_error(
+        "Error: access restricted: PgcProxy area=hk Failed (API code 400)",
+        &case,
+    )?;
+    Ok(())
+}
+
+#[test]
+fn required_plan_sources_must_appear() -> anyhow::Result<()> {
+    let mut case = live_case_for_assertions();
+    case.expect.allowed_plan_sources = vec!["pgc_web".to_owned(), "pgc_proxy".to_owned()];
+    case.expect.required_plan_sources = vec!["pgc_proxy".to_owned()];
+    let json = serde_json::json!({
+        "entries": [{
+            "source": "pgc_web",
+            "streams": {"videos": [{"id": 80}], "flv_segments": []}
+        }]
+    });
+
+    let Err(error) = assert_plan(&json, &case) else {
+        bail!("required source must be enforced");
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("expected at least one plan entry from source `pgc_proxy`")
+    );
+
+    case.expect.required_plan_sources = vec!["pgc_web".to_owned()];
+    assert_plan(&json, &case)?;
+    Ok(())
+}
+
+fn live_case_for_assertions() -> LiveCase {
+    LiveCase {
+        name: "assertion".to_owned(),
+        kind: LiveCaseKind::RestrictedPgc,
+        url: "ep1".to_owned(),
+        selection: None,
+        actions: Vec::new(),
+        credential_file: None,
+        access_key_file: None,
+        request_timeout_seconds: None,
+        restricted_area: None,
+        restricted_area_proxy: Vec::new(),
+        restricted_api_proxy: Vec::new(),
+        restricted_area_proxy_all_areas: Vec::new(),
+        restricted_api_proxy_all_areas: Vec::new(),
+        expect: LiveExpect {
+            info: None,
+            allowed_plan_sources: Vec::new(),
+            required_plan_sources: Vec::new(),
+            allow_plan_error: false,
+            plan_error_contains: Vec::new(),
+            min_entries: None,
+            require_streams: None,
+        },
+    }
 }
 
 impl LiveManifest {
@@ -358,20 +450,29 @@ fn assert_plan(json: &Value, case: &LiveCase) -> anyhow::Result<()> {
         entries.len()
     );
 
-    if !case.expect.plan_sources.is_empty() {
+    if !case.expect.allowed_plan_sources.is_empty() {
         for entry in entries {
             let source = entry["source"]
                 .as_str()
                 .with_context(|| "plan entry must contain source")?;
             ensure!(
                 case.expect
-                    .plan_sources
+                    .allowed_plan_sources
                     .iter()
                     .any(|expected| expected == source),
                 "unexpected plan source `{source}`; expected one of {:?}",
-                case.expect.plan_sources
+                case.expect.allowed_plan_sources
             );
         }
+    }
+    for expected in &case.expect.required_plan_sources {
+        ensure!(
+            entries
+                .iter()
+                .filter_map(|entry| entry["source"].as_str())
+                .any(|source| source == expected),
+            "expected at least one plan entry from source `{expected}`"
+        );
     }
 
     if case.expect.require_streams.unwrap_or(true) {
@@ -394,6 +495,18 @@ fn assert_plan(json: &Value, case: &LiveCase) -> anyhow::Result<()> {
 }
 
 fn assert_plan_error(stderr: &str, case: &LiveCase) -> anyhow::Result<()> {
+    ensure!(
+        case.expect.allow_plan_error,
+        "plan failed unexpectedly: {stderr}"
+    );
+    ensure!(
+        case.kind == LiveCaseKind::RestrictedPgc,
+        "plan error allowance is only valid for restricted_pgc cases"
+    );
+    ensure!(
+        stderr.contains("access restricted"),
+        "plan error allowance only accepts access-restricted failures: {stderr}"
+    );
     ensure!(
         !case.expect.plan_error_contains.is_empty(),
         "plan failed unexpectedly: {stderr}"

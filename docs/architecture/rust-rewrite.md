@@ -136,8 +136,9 @@ ordered candidates until one returns a valid DASH or FLV stream shape. Non-area 
 their original error and do not contact proxy hosts. A BBDown/BiliPlus-style HTTP(S) playurl proxy
 receives the PGC playurl query at the configured URL. A Bilibili API HTTP(S) proxy receives the same
 query at `/pgc/player/web/playurl` below the configured base URL, matching common BALH-style API
-proxy hosts, and preserves any query parameters already present on that base URL. When a generic
-access key is present in
+proxy hosts, and then tries `/pgc/player/web/v2/playurl` as a compatibility fallback for existing
+API proxy deployments. Both paths preserve any query parameters already present on the configured
+base URL. When a generic access key is present in
 `Credentials::access_key`, proxy requests include it as `access_key`; the TV-specific access key is
 not reused for this flow. Bilibili cookies are intentionally omitted from restricted-area proxy
 requests.
@@ -196,12 +197,13 @@ Live tests against Bilibili are opt-in only through `just live-e2e`. The recipe 
 ignored `live-e2e.samples.json` manifest exists, so branch CI is not blocked by network, account, or
 regional state. The tracked `live-e2e.samples.example.json` documents the manifest shape. Each live
 case can run `info`, `plan`, or both against normal, PGC, intl, or restricted PGC inputs; can set a
-case-specific selection and area hint; and can assert the expected JSON kind, plan source, minimum
-entry count, and stream presence. The harness writes a temporary credential store per case from
-configured credential and access-key files, removes CLI override environment variables, and expands
-all-area restricted proxy shortcuts into the fixed `cn`, `th`, `hk`, and `tw` ordering. Network
-requests have a configurable timeout through `ClientConfig` and CLI/settings so misbehaving official
-or proxy endpoints do not hang indefinitely.
+case-specific selection and area hint; and can assert the expected JSON kind, allowed or required
+plan sources, minimum entry count, and stream presence. Restricted PGC cases can explicitly allow an
+access-restricted plan failure with required diagnostic fragments. The harness writes a temporary
+credential store per case from configured credential and access-key files, removes CLI override
+environment variables, and expands all-area restricted proxy shortcuts into the fixed `cn`, `th`,
+`hk`, and `tw` ordering. Network requests have a configurable timeout through `ClientConfig` and
+CLI/settings so misbehaving official or proxy endpoints do not hang indefinitely.
 
 ## Planned PR Slices
 

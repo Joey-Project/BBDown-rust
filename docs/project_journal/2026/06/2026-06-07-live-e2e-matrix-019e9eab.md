@@ -32,26 +32,28 @@ superseded_by:
 - Telegram Video Downloader's `bilibili-auth.json` shape is accepted because it contains a `cookie`
   field; `access_key.txt` remains ignored.
 - Cases can run `info`, `plan`, or both; set `selection`; set a restricted-area hint; configure
-  per-case or manifest-level restricted proxy candidates; and assert JSON info kind, plan source,
-  minimum entries, and stream presence.
-- Restricted `plan` cases can also declare expected diagnostic fragments. This lets the local gate
-  accept either a successful proxy/official stream plan or a deterministic access-restricted failure
-  that proves the official and proxy resolver attempts were exercised.
+  per-case or manifest-level restricted proxy candidates; and assert JSON info kind, allowed or
+  required plan sources, minimum entries, and stream presence.
+- Restricted `plan` cases can explicitly set `allow_plan_error` and declare expected diagnostic
+  fragments. This lets the local gate accept either a successful proxy/official stream plan or a
+  deterministic access-restricted failure that proves the official and proxy resolver attempts were
+  exercised without accepting unrelated plan failures.
 - `restricted_api_proxy_all_areas` and `restricted_area_proxy_all_areas` expand each configured URL
   into `cn`, `th`, `hk`, and `tw` proxy specs.
 - The live harness removes CLI override environment variables before each command so manifest data,
   not inherited shell state, controls the run.
-- API-path restricted proxy fallback now calls `/pgc/player/web/playurl` below the proxy base,
-  matching the BALH-style host-only proxy path used by `https://atri.ink`; the official PGC playurl
-  request remains on the upstream v2 endpoint.
+- API-path restricted proxy fallback now tries `/pgc/player/web/playurl` below the proxy base first,
+  matching the BALH-style host-only proxy path used by `https://atri.ink`, and then falls back to
+  `/pgc/player/web/v2/playurl` for existing API proxies. The official PGC playurl request remains on
+  the upstream v2 endpoint.
 
 ## Evidence
 
 - Targeted live harness tests: `cargo test -p bbdown-cli --test live_e2e`.
-- Targeted API proxy URL test: `cargo test -p bbdown pgc_bilibili_api_proxy_preserves_base_query`.
+- Targeted API proxy URL and compatibility tests: `cargo test -p bbdown pgc_bilibili_api_proxy`.
 - Local live gate: `just live-e2e` with the ignored manifest containing Joey's public sample,
   Hong Kong/Macau/Taiwan-restricted PGC sample, Mainland-restricted PGC sample, Telegram Video
   Downloader credential path, `access_key.txt`, and `https://atri.ink`.
-- Local default gate: `just ci` with formatter check, clippy, 87 library tests, 19 CLI unit tests,
-  8 mock CLI e2e tests, 2 live harness unit tests, and 1 ignored live case in the default workspace
+- Local default gate: `just ci` with formatter check, clippy, 88 library tests, 19 CLI unit tests,
+  8 mock CLI e2e tests, 4 live harness unit tests, and 1 ignored live case in the default workspace
   test run.
