@@ -12,6 +12,8 @@ pub enum Error {
     Unsupported(String),
     #[error("API returned code {code}: {message}")]
     Api { code: i64, message: String },
+    #[error("access restricted: {0}")]
+    AccessRestricted(String),
     #[error("API response did not contain {0}")]
     MissingField(&'static str),
     #[error("failed to parse URL: {0}")]
