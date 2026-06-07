@@ -1,5 +1,6 @@
 use crate::{BiliClient, Credentials, Error, Result};
 use md5::Digest;
+use reqwest::header::{HeaderMap, SET_COOKIE};
 use serde::{Deserialize, Serialize};
 use std::{
     fmt,
@@ -99,7 +100,9 @@ impl BiliClient {
             .await
             .map_err(BiliClient::http_error_without_url)?
             .error_for_status()
-            .map_err(BiliClient::http_error_without_url)?
+            .map_err(BiliClient::http_error_without_url)?;
+        let header_cookie = cookie_from_set_cookie_headers(response.headers());
+        let response = response
             .json::<ApiData<WebQrPollData>>()
             .await
             .map_err(BiliClient::http_error_without_url)?;
@@ -109,10 +112,15 @@ impl BiliClient {
             WEB_QR_WAITING_CONFIRM => Ok(QrLoginState::WaitingForConfirm),
             WEB_QR_EXPIRED => Ok(QrLoginState::Expired),
             0 => {
-                let url = data.url.ok_or(Error::MissingField("url"))?;
+                let cookie = if let Some(cookie) = header_cookie {
+                    cookie
+                } else {
+                    let url = data.url.ok_or(Error::MissingField("url"))?;
+                    cookie_from_success_url(&url)?
+                };
                 Ok(QrLoginState::Succeeded {
                     credentials: Credentials {
-                        cookie: Some(cookie_from_success_url(&url)?),
+                        cookie: Some(cookie),
                         access_key: None,
                         tv_access_key: None,
                     },
@@ -320,6 +328,21 @@ fn cookie_from_success_url(raw: &str) -> Result<String> {
     Ok(query.replace('&', ";").replace(',', "%2C"))
 }
 
+fn cookie_from_set_cookie_headers(headers: &HeaderMap) -> Option<String> {
+    let pairs = headers
+        .get_all(SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .filter_map(cookie_pair_from_set_cookie)
+        .collect::<Vec<_>>();
+    (!pairs.is_empty()).then(|| pairs.join(";"))
+}
+
+fn cookie_pair_from_set_cookie(raw: &str) -> Option<String> {
+    let pair = raw.split(';').next()?.trim();
+    (!pair.is_empty()).then(|| pair.replace(',', "%2C"))
+}
+
 #[cfg(test)]
 fn tv_login_params(auth_code: &str, timestamp: u64) -> Vec<(&'static str, String)> {
     TvLoginContext::new(timestamp).params(auth_code, timestamp)
@@ -345,12 +368,13 @@ fn current_timestamp_seconds() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        QrLoginState, QrLoginTicket, TvLoginContext, cookie_from_success_url, qrcode_key_from_url,
-        tv_login_params,
+        QrLoginState, QrLoginTicket, TvLoginContext, cookie_from_set_cookie_headers,
+        cookie_from_success_url, qrcode_key_from_url, tv_login_params,
     };
     use crate::{BiliClient, ClientConfig, Credentials, EndpointConfig};
     use httpmock::MockServer;
     use httpmock::prelude::*;
+    use reqwest::header::{HeaderMap, HeaderValue, SET_COOKIE};
 
     #[test]
     fn extracts_qrcode_key_from_login_url() {
@@ -369,6 +393,24 @@ mod tests {
             "SESSDATA=abc%2Cdef;bili_jct=csrf;DedeUserID=1"
         );
         Ok(())
+    }
+
+    #[test]
+    fn converts_set_cookie_headers_to_cookie() {
+        let mut headers = HeaderMap::new();
+        headers.append(
+            SET_COOKIE,
+            HeaderValue::from_static("SESSDATA=abc,def; Path=/; Domain=.bilibili.com"),
+        );
+        headers.append(
+            SET_COOKIE,
+            HeaderValue::from_static("bili_jct=csrf; Path=/; Domain=.bilibili.com"),
+        );
+
+        assert_eq!(
+            cookie_from_set_cookie_headers(&headers).as_deref(),
+            Some("SESSDATA=abc%2Cdef;bili_jct=csrf")
+        );
     }
 
     #[test]
@@ -484,13 +526,15 @@ mod tests {
                 .path("/x/passport-login/web/qrcode/poll")
                 .query_param("qrcode_key", "DONE")
                 .header_missing("cookie");
-            then.status(200).json_body_obj(&serde_json::json!({
-                "code": 0,
-                "data": {
+            then.status(200)
+                .header("Set-Cookie", "SESSDATA=sess; Path=/; Domain=.bilibili.com")
+                .json_body_obj(&serde_json::json!({
                     "code": 0,
-                    "url": "https://www.bilibili.com/?SESSDATA=sess&bili_jct=csrf"
-                }
-            }));
+                    "data": {
+                        "code": 0,
+                        "url": "https://passport.biligame.com/crossDomain?source=main_web&go_url=https%3A%2F%2Fpassport.bilibili.com"
+                    }
+                }));
         });
         server.mock(|when, then| {
             when.method(GET)
@@ -519,7 +563,7 @@ mod tests {
             client.poll_web_qr_login("DONE").await?,
             QrLoginState::Succeeded {
                 credentials: Credentials {
-                    cookie: Some("SESSDATA=sess;bili_jct=csrf".to_owned()),
+                    cookie: Some("SESSDATA=sess".to_owned()),
                     access_key: None,
                     tv_access_key: None,
                 }

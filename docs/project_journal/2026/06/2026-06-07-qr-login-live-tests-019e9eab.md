@@ -26,7 +26,9 @@ superseded_by:
   TV split-host default.
 - The crate exposes `QrLoginTicket`, `QrLoginKind`, and `QrLoginState`.
 - `BiliClient::create_web_qr_login` and `BiliClient::poll_web_qr_login` model the WEB QR flow:
-  waiting for scan, waiting for confirmation, expired, and succeeded cookie credential.
+  waiting for scan, waiting for confirmation, expired, and succeeded cookie credential. WEB success
+  prefers `Set-Cookie` response headers and falls back to BBDown-compatible cross-domain success URL
+  query extraction.
 - `BiliClient::create_tv_qr_login` and `BiliClient::poll_tv_qr_login` model the TV QR flow using
   BBDown-compatible signed app parameters, waiting-for-scan, waiting-for-confirmation, expired, and
   succeeded TV-specific access-key credential output. TV QR tickets retain the generated device
@@ -66,6 +68,7 @@ superseded_by:
 - Targeted mock e2e tests: `cargo test -p bbdown-cli --test cli_e2e auth_qr_login`.
 - Targeted timeout helper test: `cargo test -p bbdown-cli next_poll_sleep_caps_interval_by_deadline`.
 - Targeted credential merge test: `cargo test -p bbdown-cli save_qr_credentials_merges_with_current_store`.
+- Targeted endpoint fallback tests: `cargo test -p bbdown-cli passport_base_does_not_override_default_tv_poll_base`.
 - Mock endpoint env isolation regression: `env BBDOWN_COMMENT_BASE=http://127.0.0.1:9 cargo test -p
   bbdown-cli --test cli_e2e plan_json_resolves_mock_video_streams`.
 - Local gate: `just ci` with 77 library tests, 3 CLI unit tests, 7 mock CLI e2e tests, and 2

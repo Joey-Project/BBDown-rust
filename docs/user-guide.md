@@ -110,12 +110,14 @@ bbdown --api-base http://127.0.0.1:8080 plan av170001 --json
 bbdown --pgc-base http://127.0.0.1:8080 --api-base http://127.0.0.1:8080 plan ep267851 --json
 bbdown --intl-base http://127.0.0.1:8080 plan https://www.bilibili.tv/en/play/34613/341736 --json
 bbdown --comment-base http://127.0.0.1:8080 download av170001 --output-dir downloads
-bbdown --passport-base http://127.0.0.1:8080 --tv-passport-base http://127.0.0.1:8080 auth login-tv
+bbdown --passport-base http://127.0.0.1:8080 auth login-web
+bbdown --tv-passport-base http://127.0.0.1:8080 auth login-tv
 bbdown --tv-passport-base http://127.0.0.1:8080 --tv-passport-poll-base http://127.0.0.1:8081 auth login-tv
 ```
 
 Restricted-area proxy ordering is not implemented yet. Current intl support uses official intl
 metadata/subtitle endpoints and the official signed intl OGV playurl endpoint with the configured
-access key when present. Danmaku XML downloads use the configurable comment endpoint. QR login uses
-the configurable passport endpoints. TV QR polling follows `--tv-passport-base` when that override
-is supplied; set `--tv-passport-poll-base` for split-host mocks or proxies.
+access key when present. Danmaku XML downloads use the configurable comment endpoint. WEB QR login
+uses `--passport-base`; TV QR login uses TV-specific passport overrides. TV QR polling follows
+`--tv-passport-base` when that override is supplied; set `--tv-passport-poll-base` for split-host
+mocks or proxies.

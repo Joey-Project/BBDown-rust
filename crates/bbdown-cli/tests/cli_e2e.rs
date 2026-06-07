@@ -553,13 +553,15 @@ fn mock_web_qr_login(web_server: &MockServer) {
             .query_param("qrcode_key", "WEBKEY")
             .query_param("source", "main-fe-header")
             .header_missing("cookie");
-        then.status(200).json_body_obj(&serde_json::json!({
-            "code": 0,
-            "data": {
+        then.status(200)
+            .header("Set-Cookie", "SESSDATA=sess; Path=/; Domain=.bilibili.com")
+            .json_body_obj(&serde_json::json!({
                 "code": 0,
-                "url": "https://www.bilibili.com/?SESSDATA=sess&bili_jct=csrf"
-            }
-        }));
+                "data": {
+                    "code": 0,
+                    "url": "https://passport.biligame.com/crossDomain?source=main_web&go_url=https%3A%2F%2Fpassport.bilibili.com"
+                }
+            }));
     });
 }
 

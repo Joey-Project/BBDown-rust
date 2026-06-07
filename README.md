@@ -81,9 +81,10 @@ login secret; status output and the `saved` event expose redacted booleans only.
 Use `--request-timeout-seconds` or `BBDOWN_REQUEST_TIMEOUT_SECONDS` to tune API request bounds.
 Media body reads use `--download-idle-timeout-seconds`; pass `0` to disable the idle timeout.
 Use `--comment-base` or `BBDOWN_COMMENT_BASE` to point danmaku XML downloads at a mock or proxy
-endpoint. Use `--passport-base` / `--tv-passport-base` and their env equivalents for QR login mock
-tests or controlled proxies. TV QR creation uses `--tv-passport-base`; TV QR polling follows that
-override unless `--tv-passport-poll-base` is set explicitly.
+endpoint. Use `--passport-base` for WEB QR login mocks or proxies, and use `--tv-passport-base` /
+`--tv-passport-poll-base` for TV QR login mocks or proxies. TV QR polling follows
+`--tv-passport-base` only when that TV-specific override is supplied; otherwise it uses the upstream
+TV poll default unless `--tv-passport-poll-base` is set explicitly.
 
 ## Developer Commands
 

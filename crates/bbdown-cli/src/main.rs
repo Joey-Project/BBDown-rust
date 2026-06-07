@@ -526,7 +526,7 @@ fn endpoints_from_cli(cli: &Cli) -> EndpointConfig {
         if cli.tv_passport_base.is_some() {
             tv_passport_base.clone()
         } else {
-            cli.passport_base.clone()
+            default_endpoints.tv_passport_poll_base
         }
     });
     EndpointConfig {
@@ -623,8 +623,9 @@ fn _assert_credentials_send_sync(_: Credentials) {}
 
 #[cfg(test)]
 mod tests {
-    use super::{next_poll_sleep, remaining_until, save_qr_credentials};
-    use bbdown::{CredentialStore, Credentials};
+    use super::{Cli, endpoints_from_cli, next_poll_sleep, remaining_until, save_qr_credentials};
+    use bbdown::{CredentialStore, Credentials, EndpointConfig};
+    use clap::Parser as _;
     use std::time::{Duration, Instant};
 
     #[test]
@@ -660,6 +661,58 @@ mod tests {
             Some(Duration::from_secs(119))
         );
         assert_eq!(remaining_until(now, now), None);
+    }
+
+    #[test]
+    fn passport_base_does_not_override_default_tv_poll_base() {
+        let cli = Cli::parse_from([
+            "bbdown",
+            "--passport-base",
+            "http://127.0.0.1:8080",
+            "auth",
+            "status",
+        ]);
+        let endpoints = endpoints_from_cli(&cli);
+        let defaults = EndpointConfig::default();
+
+        assert_eq!(endpoints.passport_base, "http://127.0.0.1:8080");
+        assert_eq!(endpoints.tv_passport_base, defaults.tv_passport_base);
+        assert_eq!(
+            endpoints.tv_passport_poll_base,
+            defaults.tv_passport_poll_base
+        );
+    }
+
+    #[test]
+    fn tv_passport_base_controls_tv_poll_when_poll_base_is_implicit() {
+        let cli = Cli::parse_from([
+            "bbdown",
+            "--tv-passport-base",
+            "http://127.0.0.1:8080",
+            "auth",
+            "status",
+        ]);
+        let endpoints = endpoints_from_cli(&cli);
+
+        assert_eq!(endpoints.tv_passport_base, "http://127.0.0.1:8080");
+        assert_eq!(endpoints.tv_passport_poll_base, "http://127.0.0.1:8080");
+    }
+
+    #[test]
+    fn explicit_tv_passport_poll_base_wins() {
+        let cli = Cli::parse_from([
+            "bbdown",
+            "--tv-passport-base",
+            "http://127.0.0.1:8080",
+            "--tv-passport-poll-base",
+            "http://127.0.0.1:8081",
+            "auth",
+            "status",
+        ]);
+        let endpoints = endpoints_from_cli(&cli);
+
+        assert_eq!(endpoints.tv_passport_base, "http://127.0.0.1:8080");
+        assert_eq!(endpoints.tv_passport_poll_base, "http://127.0.0.1:8081");
     }
 
     #[test]

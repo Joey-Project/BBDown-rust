@@ -132,13 +132,15 @@ QR login is modeled as an explicit state machine in the crate. WEB QR login crea
 `QrLoginTicket`, polls waiting-for-scan, waiting-for-confirmation, expired, and succeeded states,
 then returns a cookie credential. TV QR login uses the BBDown-compatible app signed form flow and
 returns a TV-specific access-key credential. This stays separate from the generic intl/Bstar
-`access_key` because Bilibili app tokens are appkey-bound. TV auth-code creation and TV polling are
-separately configurable so tests and controlled proxies can mirror either the upstream split-host
-flow or a single local endpoint. TV tickets retain the generated device session context so polling
-reuses the same device identity. QR login requests use anonymous headers even when the client has
-stored credentials. The CLI `auth login-web` and `auth login-tv` commands update the local credential
-store after a succeeded state by reloading the current store before merging returned credentials, so
-a long QR wait does not overwrite another command's credential update with a stale pre-wait snapshot.
+`access_key` because Bilibili app tokens are appkey-bound. WEB QR success prefers response
+`Set-Cookie` headers and falls back to BBDown-compatible cookie extraction from the cross-domain
+success URL. TV auth-code creation and TV polling are separately configurable so tests and controlled
+proxies can mirror either the upstream split-host flow or a single local endpoint. TV tickets retain
+the generated device session context so polling reuses the same device identity. QR login requests
+use anonymous headers even when the client has stored credentials. The CLI `auth login-web` and
+`auth login-tv` commands update the local credential store after a succeeded state by reloading the
+current store before merging returned credentials, so a long QR wait does not overwrite another
+command's credential update with a stale pre-wait snapshot.
 
 Secrets are never included in status output; `auth status` and QR login `saved` JSON output report
 only booleans. The QR login `ticket` event and human scan output intentionally expose the scan URL so
