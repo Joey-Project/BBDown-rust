@@ -40,8 +40,9 @@ accidentally download a full season.
 
 ## Stream Planning
 
-`BiliClient::plan_download` is the public crate API for building a typed download plan without
-performing file I/O. It currently supports three official source modes:
+`BiliClient::plan` is the public crate API for building a typed download plan from a parsed
+`Input` without performing file I/O. `BiliClient::plan_download` remains a raw-string convenience
+wrapper for CLI-style callers. Planning currently supports three official source modes:
 
 - `NormalWeb` uses the normal web playurl endpoint for `aid`/`bvid` inputs.
 - `PgcWeb` uses the PGC web playurl endpoint for `ep`, `ss`, and `md` inputs.

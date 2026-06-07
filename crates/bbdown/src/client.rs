@@ -116,6 +116,10 @@ impl BiliClient {
         selection: Option<Selection>,
     ) -> Result<DownloadPlan> {
         let input = Input::parse(raw)?;
+        self.plan(input, selection).await
+    }
+
+    pub async fn plan(&self, input: Input, selection: Option<Selection>) -> Result<DownloadPlan> {
         match input {
             Input::Aid(aid) => {
                 let video = self.fetch_video_by_aid(aid, TagPolicy::Skip).await?;
@@ -1359,7 +1363,9 @@ fn fallback_id(index: usize) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::{BiliClient, ClientConfig, EndpointConfig, PlayUrlRoot};
-    use crate::{Credentials, Error, ResolvedContent, Selection, StreamSource, SubtitleFormat};
+    use crate::{
+        Credentials, Error, Input, ResolvedContent, Selection, StreamSource, SubtitleFormat,
+    };
     use httpmock::MockServer;
     use httpmock::prelude::*;
     use std::time::{Duration, Instant};
@@ -1484,7 +1490,7 @@ mod tests {
         });
 
         let client = test_client(&server);
-        let plan = client.plan_download("av170001", None).await?;
+        let plan = client.plan(Input::Aid(170_001), None).await?;
 
         assert_eq!(plan.title, "Example video");
         assert_eq!(

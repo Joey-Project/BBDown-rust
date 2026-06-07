@@ -22,8 +22,8 @@ superseded_by:
 
 ## Current State
 
-- `BiliClient::plan_download` returns `DownloadPlan` values for normal video, PGC, and intl
-  episode inputs.
+- `BiliClient::plan` returns `DownloadPlan` values for parsed normal video, PGC, and intl episode
+  inputs; `BiliClient::plan_download` remains a raw-string wrapper for CLI-style callers.
 - `DownloadEntry` records stream source, selected ids, stream sets, subtitles, and danmaku XML URL.
 - Intl planning uses the intl web playurl/subtitle endpoints and keeps mobile `video_info`
   `stream_list`/`dash_audio` parsing support for proxy or future resolver responses.

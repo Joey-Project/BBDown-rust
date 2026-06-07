@@ -64,7 +64,7 @@ The CLI accepts endpoint overrides for mock tests and future resolver chains:
 
 ```bash
 bbdown --api-base http://127.0.0.1:8080 plan av170001 --json
-bbdown --pgc-base http://127.0.0.1:8080 plan ep267851 --json
+bbdown --pgc-base http://127.0.0.1:8080 --api-base http://127.0.0.1:8080 plan ep267851 --json
 bbdown --intl-base http://127.0.0.1:8080 plan https://www.bilibili.tv/en/play/34613/341736 --json
 ```
 
