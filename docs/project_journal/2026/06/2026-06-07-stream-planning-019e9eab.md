@@ -30,6 +30,8 @@ superseded_by:
   official and future proxy resolver responses.
 - Review follow-up switched intl playurl away from the UGC-style web path and made intl module
   grouping reuse the same `ep_id`/`episode_id`/`id` episode alias handling as metadata conversion.
+- Review follow-up also classifies intl `limit`/`status` metadata responses as access-restricted
+  errors when no episode list is available, avoiding misleading `selected episode` failures.
 - Normal-video planning skips tag metadata so unrelated tag API failures do not block stream
   planning; `info` still treats tag API failures as metadata errors.
 - Normal web playurl planning includes `try_look=1` so anonymous plans can report available trial

@@ -41,7 +41,8 @@ The JSON output contains:
 - `danmaku.xml_url`: the XML comment endpoint for the entry `cid`.
 
 Planning is side-effect free. It does not create files, download media, or call ffmpeg.
-PGC and intl planning may still require eligible account or region access.
+PGC and intl planning may still require eligible account or region access. When intl metadata
+returns a region-limit payload, the CLI reports it as an access restriction.
 
 ## Credentials
 

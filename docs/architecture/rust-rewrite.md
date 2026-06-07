@@ -54,6 +54,10 @@ endpoint. Intl entries use the intl subtitle endpoint. Subtitle failures are tre
 optional tracks, matching BBDown's practical behavior, while stream resolution failures remain
 hard errors.
 
+Intl season metadata can return `code: 0` with a region-limit payload and no episode list. The
+resolver preserves that as an access-restricted error instead of reporting a generic selection
+failure.
+
 The CLI exposes this layer through `bbdown plan`. The command is intentionally a planning surface:
 it prints typed JSON or a short human summary, but it does not download, merge, or mutate output
 files.

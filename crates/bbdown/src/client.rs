@@ -296,6 +296,9 @@ impl BiliClient {
         }
         let response: IntlSeasonRoot = self.get_json(url).await?;
         let result = response.into_result()?;
+        if let Some(message) = result.access_limit_message() {
+            return Err(Error::AccessRestricted(message));
+        }
         let season = season_from_intl(result, Some(epid));
         let selection = selection.unwrap_or(Selection::Current);
         Self::resolve_season_selection(season, Some(&selection), Some(epid), "intl episode")
@@ -665,6 +668,7 @@ fn season_from_intl(result: IntlSeasonResult, current_epid: Option<u64>) -> Seas
         modules,
         areas,
         styles,
+        ..
     } = result;
     let mut module_episode_groups = modules
         .into_iter()
@@ -852,6 +856,8 @@ struct IntlSeasonResult {
     season_title: Option<String>,
     evaluate: Option<String>,
     cover: Option<String>,
+    status: Option<i64>,
+    limit: Option<IntlLimit>,
     #[serde(default)]
     episodes: Vec<PgcEpisode>,
     #[serde(default)]
@@ -860,6 +866,42 @@ struct IntlSeasonResult {
     areas: Vec<PgcName>,
     #[serde(default)]
     styles: Vec<PgcName>,
+}
+
+impl IntlSeasonResult {
+    fn access_limit_message(&self) -> Option<String> {
+        if self.has_episodes() {
+            return None;
+        }
+        let content = self
+            .limit
+            .as_ref()
+            .and_then(|limit| limit.content.as_deref())
+            .map(str::trim)
+            .filter(|content| !content.is_empty());
+        if let Some(content) = content {
+            return Some(content.to_owned());
+        }
+        if self.status == Some(13) {
+            return Some("intl content is not available in the current region".to_owned());
+        }
+        None
+    }
+
+    fn has_episodes(&self) -> bool {
+        !self.episodes.is_empty()
+            || self.modules.iter().any(|module| {
+                module
+                    .data
+                    .as_ref()
+                    .is_some_and(|data| !data.episodes.is_empty())
+            })
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct IntlLimit {
+    content: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1875,6 +1917,48 @@ mod tests {
                 assert_eq!(season.selected_episodes[0].epid, 341_736);
             }
             ResolvedContent::Video(_) => return Err(anyhow::anyhow!("expected season")),
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn intl_region_limit_returns_access_restricted_error() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/intl/gateway/v2/ogv/view/app/season")
+                .query_param("ep_id", "341736");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "result": {
+                    "season_id": 34613,
+                    "title": "Intl Season",
+                    "status": 13,
+                    "limit": {
+                        "content": "Sorry, this content is not available in your region"
+                    },
+                    "modules": []
+                }
+            }));
+        });
+
+        let client = test_client(&server);
+        let Err(error) = client
+            .resolve_input("https://www.bilibili.tv/en/play/34613/341736", None)
+            .await
+        else {
+            return Err(anyhow::anyhow!("region-limited intl season should fail"));
+        };
+
+        match error {
+            Error::AccessRestricted(message) => {
+                assert!(message.contains("not available in your region"));
+            }
+            other => {
+                return Err(anyhow::anyhow!(
+                    "expected access restriction, got {other:?}"
+                ));
+            }
         }
         Ok(())
     }
