@@ -95,7 +95,7 @@ just ci
 ```
 
 Default CI runs formatter, clippy, unit tests, and mock e2e tests. `just live-e2e` is intentionally
-excluded from default CI and requires explicit live sample env such as `BBDOWN_LIVE_URL`,
+excluded from default CI and fails fast unless `BBDOWN_LIVE_URL` is set. It also accepts
 `BBDOWN_LIVE_SELECTION`, `BBDOWN_LIVE_COOKIE`, and `BBDOWN_LIVE_ACCESS_KEY`.
 
 ## Documentation

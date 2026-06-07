@@ -29,8 +29,11 @@ superseded_by:
   waiting for scan, waiting for confirmation, expired, and succeeded cookie credential.
 - `BiliClient::create_tv_qr_login` and `BiliClient::poll_tv_qr_login` model the TV QR flow using
   BBDown-compatible signed app parameters, waiting-for-scan, waiting-for-confirmation, expired, and
-  succeeded access-key credential output.
+  succeeded access-key credential output. TV QR tickets retain the generated device session context
+  so polling reuses the same device identity.
 - QR login HTTP requests use anonymous headers even when the caller has stored credentials.
+- QR ticket debug output is redacted because ticket keys and scan URL query strings can act as
+  pre-authentication secrets.
 - CLI `auth login-web` and `auth login-tv` print the scan URL in human mode, poll with
   deadline-based timeout handling, and save resulting credentials without printing token values.
 - QR login JSON output is newline-delimited event output: `ticket` exposes the scan URL before
@@ -40,8 +43,8 @@ superseded_by:
 - `crates/bbdown-cli/tests/live_e2e.rs` contains ignored opt-in live tests for `info --json` and
   `plan --json` using `BBDOWN_LIVE_URL`, optional `BBDOWN_LIVE_SELECTION`, `BBDOWN_LIVE_COOKIE`,
   and `BBDOWN_LIVE_ACCESS_KEY`.
-- `just live-e2e` runs the ignored live test target; default CI remains formatter, clippy, unit
-  tests, and mock e2e tests only.
+- `just live-e2e` fails fast unless `BBDOWN_LIVE_URL` is set, then runs the ignored live test
+  target. Default CI remains formatter, clippy, unit tests, and mock e2e tests only.
 
 ## Next Steps
 
@@ -52,6 +55,7 @@ superseded_by:
 - Targeted QR unit tests: `cargo test -p bbdown login`.
 - Targeted mock e2e test: `cargo test -p bbdown-cli --test cli_e2e auth_qr_login_web_and_tv_use_local_store`.
 - Targeted timeout helper test: `cargo test -p bbdown-cli next_poll_sleep_caps_interval_by_deadline`.
-- Local gate: `just ci` with 75 library tests, 1 CLI unit test, 6 mock CLI e2e tests, and 2
+- Local gate: `just ci` with 77 library tests, 1 CLI unit test, 6 mock CLI e2e tests, and 2
   ignored live e2e tests in the default workspace test run.
-- Opt-in harness smoke without live env: `just live-e2e`.
+- Live gate env preflight: `just live-e2e` without `BBDOWN_LIVE_URL` exits with code 2 before
+  running tests.

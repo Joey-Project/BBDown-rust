@@ -1,7 +1,10 @@
 use crate::{BiliClient, Credentials, Error, Result};
 use md5::Digest;
 use serde::{Deserialize, Serialize};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    fmt,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 const WEB_QR_WAITING_SCAN: i64 = 86_101;
 const WEB_QR_WAITING_CONFIRM: i64 = 86_090;
@@ -17,11 +20,24 @@ pub enum QrLoginKind {
     Tv,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct QrLoginTicket {
     pub kind: QrLoginKind,
     pub url: String,
     pub key: String,
+    tv_context: Option<TvLoginContext>,
+}
+
+impl fmt::Debug for QrLoginTicket {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("QrLoginTicket")
+            .field("kind", &self.kind)
+            .field("has_url", &!self.url.is_empty())
+            .field("has_key", &!self.key.is_empty())
+            .field("has_tv_context", &self.tv_context.is_some())
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -62,6 +78,7 @@ impl BiliClient {
             kind: QrLoginKind::Web,
             url: data.url,
             key,
+            tv_context: None,
         })
     }
 
@@ -112,7 +129,9 @@ impl BiliClient {
             &self.config.endpoints.tv_passport_base,
             "/x/passport-tv-login/qrcode/auth_code",
         )?;
-        let params = tv_login_params("", current_timestamp_seconds());
+        let timestamp = current_timestamp_seconds();
+        let context = TvLoginContext::new(timestamp);
+        let params = context.params("", timestamp);
         let response = self
             .http
             .post(url)
@@ -132,15 +151,25 @@ impl BiliClient {
             kind: QrLoginKind::Tv,
             url: data.url,
             key: data.auth_code,
+            tv_context: Some(context),
         })
     }
 
-    pub async fn poll_tv_qr_login(&self, auth_code: &str) -> Result<QrLoginState> {
+    pub async fn poll_tv_qr_login(&self, ticket: &QrLoginTicket) -> Result<QrLoginState> {
+        if ticket.kind != QrLoginKind::Tv {
+            return Err(Error::InvalidInput(
+                "poll_tv_qr_login requires a TV QR login ticket".to_owned(),
+            ));
+        }
+        let context = ticket
+            .tv_context
+            .as_ref()
+            .ok_or(Error::MissingField("tv login context"))?;
         let url = Self::endpoint_url(
             &self.config.endpoints.tv_passport_poll_base,
             "/x/passport-tv-login/qrcode/poll",
         )?;
-        let params = tv_login_params(auth_code, current_timestamp_seconds());
+        let params = context.params(&ticket.key, current_timestamp_seconds());
         let response = self
             .http
             .post(url)
@@ -220,6 +249,57 @@ struct TvQrPollData {
     access_token: String,
 }
 
+#[derive(Clone, Eq, PartialEq)]
+struct TvLoginContext {
+    device_id: String,
+    buvid: String,
+    fingerprint: String,
+}
+
+impl TvLoginContext {
+    fn new(timestamp: u64) -> Self {
+        let device_id = device_token("device", timestamp, 20);
+        let buvid = device_token("buvid", timestamp, 37);
+        let fingerprint = format!(
+            "{}{}",
+            timestamp,
+            device_token("fingerprint", timestamp, 45)
+        );
+        Self {
+            device_id,
+            buvid,
+            fingerprint,
+        }
+    }
+
+    fn params(&self, auth_code: &str, timestamp: u64) -> Vec<(&'static str, String)> {
+        let mut params = vec![
+            ("appkey", "4409e2ce8ffd12b8".to_owned()),
+            ("auth_code", auth_code.to_owned()),
+            ("bili_local_id", self.device_id.clone()),
+            ("build", "102801".to_owned()),
+            ("buvid", self.buvid.clone()),
+            ("channel", "master".to_owned()),
+            ("device", "OnePlus".to_owned()),
+            ("device_id", self.device_id.clone()),
+            ("device_name", "OnePlus7TPro".to_owned()),
+            ("device_platform", "Android10OnePlusHD1910".to_owned()),
+            ("fingerprint", self.fingerprint.clone()),
+            ("guid", self.buvid.clone()),
+            ("local_fingerprint", self.fingerprint.clone()),
+            ("local_id", self.buvid.clone()),
+            ("mobi_app", "android_tv_yst".to_owned()),
+            ("networkstate", "wifi".to_owned()),
+            ("platform", "android".to_owned()),
+            ("sys_ver", "29".to_owned()),
+            ("ts", timestamp.to_string()),
+        ];
+        let sign = crate::client::sign_ordered_params(&params, "59b43e04ad6965f34319062b478f83dd");
+        params.push(("sign", sign));
+        params
+    }
+}
+
 fn qrcode_key_from_url(raw: &str) -> Option<String> {
     url::Url::parse(raw)
         .ok()?
@@ -238,38 +318,9 @@ fn cookie_from_success_url(raw: &str) -> Result<String> {
     Ok(query.replace('&', ";").replace(',', "%2C"))
 }
 
+#[cfg(test)]
 fn tv_login_params(auth_code: &str, timestamp: u64) -> Vec<(&'static str, String)> {
-    let device_id = device_token("device", timestamp, 20);
-    let buvid = device_token("buvid", timestamp, 37);
-    let fingerprint = format!(
-        "{}{}",
-        timestamp,
-        device_token("fingerprint", timestamp, 45)
-    );
-    let mut params = vec![
-        ("appkey", "4409e2ce8ffd12b8".to_owned()),
-        ("auth_code", auth_code.to_owned()),
-        ("bili_local_id", device_id.clone()),
-        ("build", "102801".to_owned()),
-        ("buvid", buvid.clone()),
-        ("channel", "master".to_owned()),
-        ("device", "OnePlus".to_owned()),
-        ("device_id", device_id),
-        ("device_name", "OnePlus7TPro".to_owned()),
-        ("device_platform", "Android10OnePlusHD1910".to_owned()),
-        ("fingerprint", fingerprint.clone()),
-        ("guid", buvid.clone()),
-        ("local_fingerprint", fingerprint),
-        ("local_id", buvid),
-        ("mobi_app", "android_tv_yst".to_owned()),
-        ("networkstate", "wifi".to_owned()),
-        ("platform", "android".to_owned()),
-        ("sys_ver", "29".to_owned()),
-        ("ts", timestamp.to_string()),
-    ];
-    let sign = crate::client::sign_ordered_params(&params, "59b43e04ad6965f34319062b478f83dd");
-    params.push(("sign", sign));
-    params
+    TvLoginContext::new(timestamp).params(auth_code, timestamp)
 }
 
 fn device_token(label: &str, timestamp: u64, len: usize) -> String {
@@ -291,7 +342,10 @@ fn current_timestamp_seconds() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{QrLoginState, cookie_from_success_url, qrcode_key_from_url, tv_login_params};
+    use super::{
+        QrLoginState, QrLoginTicket, TvLoginContext, cookie_from_success_url, qrcode_key_from_url,
+        tv_login_params,
+    };
     use crate::{BiliClient, ClientConfig, Credentials, EndpointConfig};
     use httpmock::MockServer;
     use httpmock::prelude::*;
@@ -313,6 +367,23 @@ mod tests {
             "SESSDATA=abc%2Cdef;bili_jct=csrf;DedeUserID=1"
         );
         Ok(())
+    }
+
+    #[test]
+    fn qr_login_ticket_debug_is_redacted() {
+        let ticket = QrLoginTicket {
+            kind: super::QrLoginKind::Web,
+            url: "https://passport.example/scan?qrcode_key=SECRET".to_owned(),
+            key: "SECRET".to_owned(),
+            tv_context: None,
+        };
+        let debug = format!("{ticket:?}");
+
+        assert!(debug.contains("kind: Web"));
+        assert!(debug.contains("has_url: true"));
+        assert!(debug.contains("has_key: true"));
+        assert!(!debug.contains("SECRET"));
+        assert!(!debug.contains("qrcode_key"));
     }
 
     #[test]
@@ -351,6 +422,35 @@ mod tests {
                 ("ts", "1700000000".to_owned()),
                 ("sign", "fcaa54c903154ca39a4e046b73469f74".to_owned()),
             ]
+        );
+    }
+
+    #[test]
+    fn tv_login_context_reuses_device_identity_for_poll() {
+        let context = TvLoginContext::new(1_700_000_000);
+        let create_params = context.params("", 1_700_000_000);
+        let poll_params = context.params("AUTH", 1_700_000_050);
+
+        for key in [
+            "bili_local_id",
+            "buvid",
+            "device_id",
+            "fingerprint",
+            "guid",
+            "local_fingerprint",
+            "local_id",
+        ] {
+            assert_eq!(
+                param_value(&create_params, key),
+                param_value(&poll_params, key)
+            );
+        }
+        assert_eq!(param_value(&poll_params, "auth_code"), Some("AUTH"));
+        assert_eq!(param_value(&create_params, "ts"), Some("1700000000"));
+        assert_eq!(param_value(&poll_params, "ts"), Some("1700000050"));
+        assert_ne!(
+            param_value(&create_params, "sign"),
+            param_value(&poll_params, "sign")
         );
     }
 
@@ -454,12 +554,14 @@ mod tests {
         let ticket = client.create_tv_qr_login().await?;
 
         assert_eq!(ticket.key, "AUTH");
+        let mut confirm_ticket = ticket.clone();
+        confirm_ticket.key = "CONFIRM".to_owned();
         assert_eq!(
-            client.poll_tv_qr_login("CONFIRM").await?,
+            client.poll_tv_qr_login(&confirm_ticket).await?,
             QrLoginState::WaitingForConfirm
         );
         assert_eq!(
-            client.poll_tv_qr_login(&ticket.key).await?,
+            client.poll_tv_qr_login(&ticket).await?,
             QrLoginState::Succeeded {
                 credentials: Credentials {
                     cookie: None,
@@ -488,5 +590,11 @@ mod tests {
             user_agent: "test".to_owned(),
             request_timeout: std::time::Duration::from_secs(30),
         })
+    }
+
+    fn param_value<'a>(params: &'a [(&str, String)], key: &str) -> Option<&'a str> {
+        params
+            .iter()
+            .find_map(|(candidate, value)| (*candidate == key).then_some(value.as_str()))
     }
 }

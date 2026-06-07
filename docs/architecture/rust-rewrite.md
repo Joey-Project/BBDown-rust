@@ -133,13 +133,16 @@ QR login is modeled as an explicit state machine in the crate. WEB QR login crea
 then returns a cookie credential. TV QR login uses the BBDown-compatible app signed form flow and
 returns an access-key credential. TV auth-code creation and TV polling are separately configurable
 so tests and controlled proxies can mirror either the upstream split-host flow or a single local
-endpoint. QR login requests use anonymous headers even when the client has stored credentials. The
+endpoint. TV tickets retain the generated device session context so polling reuses the same device
+identity. QR login requests use anonymous headers even when the client has stored credentials. The
 CLI `auth login-web` and `auth login-tv` commands update the local credential store after a
 succeeded state.
 
 Secrets are never included in status output; `auth status` and QR login JSON output report only
 booleans. The public QR state enum intentionally does not derive serde traits because the succeeded
-state carries full credentials for embedding callers that handle storage themselves.
+state carries full credentials for embedding callers that handle storage themselves. QR ticket debug
+output is redacted because ticket keys and scan URL query strings can act as pre-authentication
+secrets.
 HTTP request errors are converted without retaining full URLs so query secrets such as intl
 `access_key` do not appear in user-facing errors.
 
@@ -152,11 +155,11 @@ Default CI is deterministic:
 - unit tests
 - CLI mock e2e tests
 
-Live tests against Bilibili are opt-in only through `just live-e2e`. They require explicit
-environment variables such as `BBDOWN_LIVE_URL`, optional `BBDOWN_LIVE_SELECTION`,
-`BBDOWN_LIVE_COOKIE`, and `BBDOWN_LIVE_ACCESS_KEY`, so branch CI is not blocked by network,
-account, or regional state. Network requests have a configurable timeout through `ClientConfig` and
-CLI/env settings so misbehaving official or proxy endpoints do not hang indefinitely.
+Live tests against Bilibili are opt-in only through `just live-e2e`. The recipe fails fast unless
+`BBDOWN_LIVE_URL` is set and also accepts optional `BBDOWN_LIVE_SELECTION`, `BBDOWN_LIVE_COOKIE`,
+and `BBDOWN_LIVE_ACCESS_KEY`, so branch CI is not blocked by network, account, or regional state.
+Network requests have a configurable timeout through `ClientConfig` and CLI/env settings so
+misbehaving official or proxy endpoints do not hang indefinitely.
 
 ## Planned PR Slices
 

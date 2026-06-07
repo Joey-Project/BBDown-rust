@@ -4,7 +4,8 @@
 use anyhow::{Context, bail, ensure};
 use bbdown::{
     BiliClient, ClientConfig, CredentialStore, Credentials, DownloadOptions, DownloadReport,
-    EndpointConfig, MuxOptions, QrLoginKind, QrLoginState, ResolvedContent, RetryPolicy, Selection,
+    EndpointConfig, MuxOptions, QrLoginKind, QrLoginState, QrLoginTicket, ResolvedContent,
+    RetryPolicy, Selection,
 };
 use clap::{Args, Parser, Subcommand};
 use std::fs;
@@ -390,7 +391,7 @@ async fn handle_qr_login(
     } else {
         println!("scan: {}", ticket.url);
     }
-    let credentials = wait_for_qr_login(&client, kind, &ticket.key, &args).await?;
+    let credentials = wait_for_qr_login(&client, &ticket, &args).await?;
     let mut stored = stored_credentials;
     if credentials.cookie.is_some() {
         stored.cookie = credentials.cookie;
@@ -414,17 +415,21 @@ async fn handle_qr_login(
 
 async fn wait_for_qr_login(
     client: &BiliClient,
-    kind: QrLoginKind,
-    key: &str,
+    ticket: &QrLoginTicket,
     args: &QrLoginArgs,
 ) -> anyhow::Result<Credentials> {
     let interval = Duration::from_secs(args.poll_interval_seconds);
     let deadline = Instant::now() + Duration::from_secs(args.timeout_seconds);
     let mut last_waiting_state: Option<&'static str> = None;
+    let mut first_poll = true;
     loop {
-        let state = match kind {
-            QrLoginKind::Web => client.poll_web_qr_login(key).await?,
-            QrLoginKind::Tv => client.poll_tv_qr_login(key).await?,
+        if !first_poll && Instant::now() >= deadline {
+            bail!("QR login timed out");
+        }
+        first_poll = false;
+        let state = match ticket.kind {
+            QrLoginKind::Web => client.poll_web_qr_login(&ticket.key).await?,
+            QrLoginKind::Tv => client.poll_tv_qr_login(ticket).await?,
         };
         match state {
             QrLoginState::WaitingForScan => {
