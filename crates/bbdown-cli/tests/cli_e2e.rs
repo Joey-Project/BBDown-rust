@@ -168,7 +168,7 @@ fn plan_json_uses_restricted_area_proxy_after_official_pgc_failure() -> anyhow::
     let temp = tempfile::tempdir()?;
     let credential_file = temp.path().join("credentials.json");
     CredentialStore::new(credential_file.clone()).save(&Credentials {
-        cookie: None,
+        cookie: Some("SESSDATA=COOKIE_SECRET".to_owned()),
         access_key: Some("ACCESS_SECRET".to_owned()),
         tv_access_key: None,
     })?;
@@ -202,7 +202,8 @@ fn plan_json_uses_restricted_area_proxy_after_official_pgc_failure() -> anyhow::
             .query_param("proxy_token", "a=b")
             .query_param("ep_id", "1000")
             .query_param("area", "hk")
-            .query_param("access_key", "ACCESS_SECRET");
+            .query_param("access_key", "ACCESS_SECRET")
+            .header_missing("cookie");
         then.status(200).json_body_obj(&serde_json::json!({
             "code": 0,
             "result": {
@@ -264,6 +265,7 @@ fn plan_json_uses_restricted_area_proxy_after_official_pgc_failure() -> anyhow::
     );
     let output_text = String::from_utf8(output)?;
     assert!(!output_text.contains("ACCESS_SECRET"));
+    assert!(!output_text.contains("COOKIE_SECRET"));
     assert!(!output_text.contains("access_key"));
     assert!(!output_text.contains("proxy_token"));
     Ok(())

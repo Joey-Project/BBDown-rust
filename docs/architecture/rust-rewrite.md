@@ -121,23 +121,27 @@ configured resolver chain:
 - user-configured area hints such as `cn`, `hk`, `tw`, or `th`.
 
 `ClientConfig::restricted_area` holds a per-client `RestrictedAreaConfig`. Embedders can set an
-optional area hint and a list of `RestrictedAreaProxy` candidates. Candidate ordering follows the
-bilibili-helper approach without browser-local caches: matching area hint first, generic candidates,
-then `cn`, `th`, `hk`, and `tw`, with duplicate `(base_url, area, kind)` candidates removed.
+optional area hint and a list of `RestrictedAreaProxy` candidates. The crate is still pre-1.0, so
+embedding projects should prefer `ClientConfig::new(endpoints, credentials).with_*` construction over
+struct literals when they do not need every field. Candidate ordering follows the bilibili-helper
+approach without browser-local caches: matching area hint first, generic candidates, then `cn`, `th`,
+`hk`, and `tw`, with duplicate `(base_url, area, kind)` candidates removed.
 
 PGC stream planning first calls the official PGC web playurl endpoint. If that request fails and
 restricted-area proxies are configured, the client tries ordered candidates until one returns a
 valid DASH or FLV stream shape. A BBDown/BiliPlus-style playurl proxy receives the PGC playurl query
 at the configured URL. A Bilibili API proxy receives the same query at
-`/pgc/player/web/v2/playurl` below the configured base URL. When a generic access key is present in
-`Credentials::access_key`, proxy requests include it as `access_key`; the TV-specific access key is
-not reused for this flow.
+`/pgc/player/web/v2/playurl` below the configured base URL and preserves any query parameters already
+present on that base URL. When a generic access key is present in `Credentials::access_key`, proxy
+requests include it as `access_key`; the TV-specific access key is not reused for this flow. Bilibili
+cookies are intentionally omitted from restricted-area proxy requests.
 
 When proxy fallback succeeds, `DownloadEntry.source` is `PgcProxy` and `DownloadEntry.diagnostics`
 contains the official failed attempt plus the successful proxy attempt. When all candidates fail,
 the returned access-restricted error summarizes the ordered attempts. Diagnostic endpoint fields
 strip query strings and URL userinfo so `access_key` values and proxy basic-auth credentials are not
-printed.
+printed; diagnostic error messages also redact URL tokens and common sensitive key-value patterns
+before they are exposed through JSON or final errors.
 
 The current implementation supports endpoint override, intl metadata shape, official PGC stream
 planning, official intl OGV signed stream planning, configured PGC proxy fallback, typed source

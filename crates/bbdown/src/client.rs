@@ -58,6 +58,35 @@ impl Default for ClientConfig {
     }
 }
 
+impl ClientConfig {
+    #[must_use]
+    pub fn new(endpoints: EndpointConfig, credentials: Credentials) -> Self {
+        Self {
+            endpoints,
+            credentials,
+            ..Self::default()
+        }
+    }
+
+    #[must_use]
+    pub fn with_restricted_area(mut self, restricted_area: RestrictedAreaConfig) -> Self {
+        self.restricted_area = restricted_area;
+        self
+    }
+
+    #[must_use]
+    pub fn with_user_agent(mut self, user_agent: impl Into<String>) -> Self {
+        self.user_agent = user_agent.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_request_timeout(mut self, request_timeout: Duration) -> Self {
+        self.request_timeout = request_timeout;
+        self
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RestrictedAreaConfig {
     pub area_hint: Option<RestrictedArea>,
@@ -673,7 +702,10 @@ impl BiliClient {
                             continue;
                         }
                     };
-                    match self.fetch_playurl_stream_set(request_url.clone()).await {
+                    match self
+                        .fetch_proxy_playurl_stream_set(request_url.clone())
+                        .await
+                    {
                         Ok(streams) => {
                             attempts.push(resolver_attempt(
                                 StreamSource::PgcProxy,
@@ -721,7 +753,7 @@ impl BiliClient {
         let mut url = match proxy.kind {
             RestrictedAreaProxyKind::PlayUrl => Url::parse(&proxy.base_url)?,
             RestrictedAreaProxyKind::BilibiliApi => {
-                Self::endpoint_url(&proxy.base_url, "/pgc/player/web/v2/playurl")?
+                Self::endpoint_url_preserving_query(&proxy.base_url, "/pgc/player/web/v2/playurl")?
             }
         };
         append_pgc_playurl_params(
@@ -737,6 +769,11 @@ impl BiliClient {
 
     async fn fetch_playurl_stream_set(&self, url: Url) -> Result<StreamSet> {
         let response: PlayUrlRoot = self.get_json(url).await?;
+        response.into_stream_set()
+    }
+
+    async fn fetch_proxy_playurl_stream_set(&self, url: Url) -> Result<StreamSet> {
+        let response: PlayUrlRoot = self.get_json_without_cookie(url).await?;
         response.into_stream_set()
     }
 
@@ -782,10 +819,24 @@ impl BiliClient {
     where
         T: for<'de> Deserialize<'de>,
     {
+        self.get_json_with_cookie(url, true).await
+    }
+
+    async fn get_json_without_cookie<T>(&self, url: Url) -> Result<T>
+    where
+        T: for<'de> Deserialize<'de>,
+    {
+        self.get_json_with_cookie(url, false).await
+    }
+
+    async fn get_json_with_cookie<T>(&self, url: Url, include_cookie: bool) -> Result<T>
+    where
+        T: for<'de> Deserialize<'de>,
+    {
         let response = self
             .http
             .get(url)
-            .headers(self.request_headers()?)
+            .headers(self.headers(include_cookie)?)
             .timeout(self.config.request_timeout)
             .send()
             .await
@@ -797,10 +848,6 @@ impl BiliClient {
             .json::<T>()
             .await
             .map_err(Self::http_error_without_url)
-    }
-
-    pub(crate) fn request_headers(&self) -> Result<HeaderMap> {
-        self.headers(true)
     }
 
     pub(crate) fn anonymous_headers(&self) -> Result<HeaderMap> {
@@ -839,18 +886,29 @@ impl BiliClient {
 
     pub(crate) fn endpoint_url(base: &str, path: &str) -> Result<Url> {
         let mut url = Url::parse(base)?;
-        let base_path = url.path().trim_end_matches('/');
-        let suffix = path.trim_start_matches('/');
-        let next_path = if base_path.is_empty() {
-            format!("/{suffix}")
-        } else {
-            format!("{base_path}/{suffix}")
-        };
-        url.set_path(&next_path);
+        set_endpoint_path(&mut url, path);
         url.set_query(None);
         url.set_fragment(None);
         Ok(url)
     }
+
+    fn endpoint_url_preserving_query(base: &str, path: &str) -> Result<Url> {
+        let mut url = Url::parse(base)?;
+        set_endpoint_path(&mut url, path);
+        url.set_fragment(None);
+        Ok(url)
+    }
+}
+
+fn set_endpoint_path(url: &mut Url, path: &str) {
+    let base_path = url.path().trim_end_matches('/');
+    let suffix = path.trim_start_matches('/');
+    let next_path = if base_path.is_empty() {
+        format!("/{suffix}")
+    } else {
+        format!("{base_path}/{suffix}")
+    };
+    url.set_path(&next_path);
 }
 
 fn season_from_pgc(result: PgcSeasonResult) -> SeasonMetadata {
@@ -1289,19 +1347,44 @@ fn resolver_attempt(
 
 fn resolver_error_message(error: &Error) -> String {
     match error {
-        Error::Api { code, message } => format!("API code {code}: {message}"),
-        Error::AccessRestricted(message) => format!("access restricted: {message}"),
+        Error::Api { code, message } => {
+            format!("API code {code}: {}", sanitize_diagnostic_text(message))
+        }
+        Error::AccessRestricted(message) => {
+            format!("access restricted: {}", sanitize_diagnostic_text(message))
+        }
         Error::MissingField(field) => format!("missing field: {field}"),
-        Error::Http(error) => format!("HTTP error: {error}"),
-        Error::Json(error) => format!("JSON error: {error}"),
-        Error::Url(error) => format!("URL error: {error}"),
-        Error::InvalidInput(message) => format!("invalid input: {message}"),
+        Error::Http(error) => format!(
+            "HTTP error: {}",
+            sanitize_diagnostic_text(&error.to_string())
+        ),
+        Error::Json(error) => format!(
+            "JSON error: {}",
+            sanitize_diagnostic_text(&error.to_string())
+        ),
+        Error::Url(error) => format!(
+            "URL error: {}",
+            sanitize_diagnostic_text(&error.to_string())
+        ),
+        Error::InvalidInput(message) => {
+            format!("invalid input: {}", sanitize_diagnostic_text(message))
+        }
         Error::SelectionRequired { input_kind } => {
             format!("{input_kind} links require an explicit selection")
         }
-        Error::Unsupported(message) => format!("unsupported: {message}"),
-        Error::Io(error) => format!("I/O error: {error}"),
-        Error::MuxFailed { status } => format!("ffmpeg mux failed with status {status}"),
+        Error::Unsupported(message) => {
+            format!("unsupported: {}", sanitize_diagnostic_text(message))
+        }
+        Error::Io(error) => format!(
+            "I/O error: {}",
+            sanitize_diagnostic_text(&error.to_string())
+        ),
+        Error::MuxFailed { status } => {
+            format!(
+                "ffmpeg mux failed with status {}",
+                sanitize_diagnostic_text(status)
+            )
+        }
     }
 }
 
@@ -1339,6 +1422,104 @@ fn redact_url_string(raw: &str) -> String {
         |_| redact_basic_auth_like_string(raw),
         |url| redact_url_for_diagnostics(&url),
     )
+}
+
+fn sanitize_diagnostic_text(raw: &str) -> String {
+    let without_urls = redact_urls_in_text(raw);
+    let redacted = redact_sensitive_key_values(&without_urls);
+    let lower = redacted.to_ascii_lowercase();
+    if SENSITIVE_DIAGNOSTIC_KEYS
+        .iter()
+        .any(|key| lower.contains(key))
+    {
+        "redacted diagnostic message".to_owned()
+    } else {
+        redacted
+    }
+}
+
+const SENSITIVE_DIAGNOSTIC_KEYS: &[&str] = &[
+    "access_key",
+    "access_token",
+    "proxy_token",
+    "sessdata",
+    "bili_jct",
+    "cookie",
+];
+
+fn redact_urls_in_text(raw: &str) -> String {
+    let mut output = String::with_capacity(raw.len());
+    let mut index = 0;
+    while let Some(relative_start) = find_next_url_start(&raw[index..]) {
+        let start = index + relative_start;
+        output.push_str(&raw[index..start]);
+        let end = raw[start..]
+            .find(is_message_url_delimiter)
+            .map_or(raw.len(), |relative_end| start + relative_end);
+        let token = &raw[start..end];
+        let (url_token, trailing) = split_trailing_url_punctuation(token);
+        match Url::parse(url_token) {
+            Ok(url) => output.push_str(&redact_url_for_diagnostics(&url)),
+            Err(_) => output.push_str(url_token),
+        }
+        output.push_str(trailing);
+        index = end;
+    }
+    output.push_str(&raw[index..]);
+    output
+}
+
+fn find_next_url_start(raw: &str) -> Option<usize> {
+    match (raw.find("http://"), raw.find("https://")) {
+        (Some(http), Some(https)) => Some(http.min(https)),
+        (Some(http), None) => Some(http),
+        (None, Some(https)) => Some(https),
+        (None, None) => None,
+    }
+}
+
+fn is_message_url_delimiter(character: char) -> bool {
+    character.is_whitespace() || matches!(character, '"' | '\'' | '<' | '>' | '(' | ')')
+}
+
+fn split_trailing_url_punctuation(token: &str) -> (&str, &str) {
+    let trimmed_len = token.trim_end_matches([',', '.', ';']).len();
+    token.split_at(trimmed_len)
+}
+
+fn redact_sensitive_key_values(raw: &str) -> String {
+    SENSITIVE_DIAGNOSTIC_KEYS
+        .iter()
+        .fold(raw.to_owned(), |value, key| {
+            redact_sensitive_key_value(&value, key)
+        })
+}
+
+fn redact_sensitive_key_value(raw: &str, key: &str) -> String {
+    let mut output = String::with_capacity(raw.len());
+    let mut index = 0;
+    let pattern = format!("{key}=");
+    let lower = raw.to_ascii_lowercase();
+    while let Some(relative_start) = lower[index..].find(&pattern) {
+        let start = index + relative_start;
+        output.push_str(&raw[index..start]);
+        output.push_str("<redacted>");
+        let value_start = start + pattern.len();
+        let value_end = raw[value_start..]
+            .find(is_sensitive_value_delimiter)
+            .map_or(raw.len(), |relative_end| value_start + relative_end);
+        index = value_end;
+    }
+    output.push_str(&raw[index..]);
+    output
+}
+
+fn is_sensitive_value_delimiter(character: char) -> bool {
+    character.is_whitespace()
+        || matches!(
+            character,
+            '&' | '"' | '\'' | '<' | '>' | '(' | ')' | ',' | ';' | '\r' | '\n'
+        )
 }
 
 fn redact_basic_auth_like_string(raw: &str) -> String {
@@ -2600,7 +2781,8 @@ mod tests {
                 .path("/proxy-playurl")
                 .query_param("ep_id", "1000")
                 .query_param("area", "hk")
-                .query_param("access_key", "ACCESS_SECRET");
+                .query_param("access_key", "ACCESS_SECRET")
+                .header_missing("cookie");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "result": {
@@ -2630,7 +2812,7 @@ mod tests {
                 tv_passport_poll_base: server.base_url(),
             },
             credentials: Credentials {
-                cookie: None,
+                cookie: Some("SESSDATA=COOKIE_SECRET".to_owned()),
                 access_key: Some("ACCESS_SECRET".to_owned()),
                 tv_access_key: None,
             },
@@ -2657,8 +2839,144 @@ mod tests {
         assert_eq!(entry.diagnostics.attempts[1].area.as_deref(), Some("hk"));
         let diagnostics = serde_json::to_string(&entry.diagnostics)?;
         assert!(!diagnostics.contains("ACCESS_SECRET"));
+        assert!(!diagnostics.contains("COOKIE_SECRET"));
         assert!(!diagnostics.contains("access_key"));
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn pgc_restricted_area_failure_redacts_sensitive_messages() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/pgc/view/web/season")
+                .query_param("ep_id", "1000");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "result": {
+                    "season_id": 123,
+                    "title": "A Season",
+                    "episodes": [
+                        {"aid": 10, "bvid": "BV1aa", "cid": 100, "id": 1000, "ep_id": 1000, "title": "1"}
+                    ]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/pgc/player/web/v2/playurl")
+                .query_param("ep_id", "1000");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": -40301,
+                "message": "area restricted access_key=OFFICIAL_SECRET"
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/proxy-playurl")
+                .query_param("ep_id", "1000")
+                .query_param("access_key", "ACCESS_SECRET")
+                .header_missing("cookie");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": -40301,
+                "message": "proxy rejected https://user:pass@proxy.example/api?proxy_token=PROXY_SECRET&access_key=ACCESS_SECRET cookie=SESSDATA=COOKIE_SECRET"
+            }));
+        });
+
+        let client = BiliClient::new(ClientConfig {
+            endpoints: EndpointConfig {
+                api_base: server.base_url(),
+                pgc_base: server.base_url(),
+                intl_base: server.base_url(),
+                comment_base: server.base_url(),
+                passport_base: server.base_url(),
+                tv_passport_base: server.base_url(),
+                tv_passport_poll_base: server.base_url(),
+            },
+            credentials: Credentials {
+                cookie: Some("SESSDATA=COOKIE_SECRET".to_owned()),
+                access_key: Some("ACCESS_SECRET".to_owned()),
+                tv_access_key: None,
+            },
+            restricted_area: RestrictedAreaConfig {
+                area_hint: Some(RestrictedArea::Hk),
+                proxies: vec![RestrictedAreaProxy::playurl(
+                    format!("{}/proxy-playurl", server.base_url()),
+                    None,
+                )],
+            },
+            user_agent: "test".to_owned(),
+            request_timeout: Duration::from_secs(30),
+        });
+
+        let Err(error) = client.plan_download("ep1000", None).await else {
+            return Err(anyhow::anyhow!("all resolver candidates should fail"));
+        };
+        let message = error.to_string();
+        assert!(message.contains("restricted-area resolver failed"));
+        for sensitive in [
+            "OFFICIAL_SECRET",
+            "ACCESS_SECRET",
+            "PROXY_SECRET",
+            "COOKIE_SECRET",
+            "access_key",
+            "proxy_token",
+            "cookie",
+            "user:pass",
+        ] {
+            assert!(
+                !message.contains(sensitive),
+                "message leaked {sensitive}: {message}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn pgc_bilibili_api_proxy_preserves_base_query() -> anyhow::Result<()> {
+        let client = BiliClient::new(ClientConfig {
+            credentials: Credentials {
+                cookie: None,
+                access_key: Some("ACCESS_SECRET".to_owned()),
+                tv_access_key: None,
+            },
+            ..ClientConfig::default()
+        });
+        let proxy = RestrictedAreaProxy::bilibili_api(
+            "https://proxy.example/base?proxy_token=a%3Db",
+            Some(RestrictedArea::Hk),
+        );
+
+        let url = client.pgc_proxy_playurl_url(&proxy, 10, 100, 1000)?;
+        assert_eq!(
+            url.as_str(),
+            "https://proxy.example/base/pgc/player/web/v2/playurl?proxy_token=a%3Db&avid=10&cid=100&ep_id=1000&module=bangumi&qn=0&fnval=4048&fnver=0&fourk=1&otype=json&area=hk&access_key=ACCESS_SECRET"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn resolver_error_message_redacts_sensitive_values() {
+        let message = super::resolver_error_message(&Error::Api {
+            code: -40301,
+            message: "proxy rejected https://user:pass@proxy.example/api?proxy_token=PROXY_SECRET&access_key=ACCESS_SECRET cookie=SESSDATA=COOKIE_SECRET".to_owned(),
+        });
+
+        assert!(message.starts_with("API code -40301:"));
+        for sensitive in [
+            "ACCESS_SECRET",
+            "PROXY_SECRET",
+            "COOKIE_SECRET",
+            "proxy_token",
+            "access_key",
+            "cookie",
+            "user:pass",
+        ] {
+            assert!(
+                !message.contains(sensitive),
+                "message leaked {sensitive}: {message}"
+            );
+        }
     }
 
     #[tokio::test]

@@ -342,13 +342,10 @@ fn client_config(
     request_timeout: Duration,
     credentials: Credentials,
 ) -> ClientConfig {
-    ClientConfig {
-        endpoints,
-        credentials,
-        restricted_area,
-        user_agent: "bbdown-rs/0.1".to_owned(),
-        request_timeout,
-    }
+    ClientConfig::new(endpoints, credentials)
+        .with_restricted_area(restricted_area)
+        .with_user_agent("bbdown-rs/0.1")
+        .with_request_timeout(request_timeout)
 }
 
 async fn handle_auth(

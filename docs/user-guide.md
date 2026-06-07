@@ -140,9 +140,12 @@ front. Without a hint, ordering is generic, `cn`, `th`, `hk`, then `tw`, with du
 `--restricted-area-proxy` targets BBDown/BiliPlus-style playurl proxy endpoints where the original
 PGC playurl query is sent to the configured URL. `--restricted-api-proxy` targets proxies that mirror
 `api.bilibili.com` path layout, so the CLI calls `/pgc/player/web/v2/playurl` below that base URL.
-Both flags may be repeated. `BBDOWN_RESTRICTED_AREA_PROXY` and `BBDOWN_RESTRICTED_API_PROXY` also
-accept comma-separated lists.
+If the configured API proxy base URL already contains a query string, that query is preserved before
+the PGC playurl parameters are appended. Both flags may be repeated.
+`BBDOWN_RESTRICTED_AREA_PROXY` and `BBDOWN_RESTRICTED_API_PROXY` also accept comma-separated lists.
 
 If a generic access key was imported with `auth import-access-key`, proxy playurl requests include
-it as `access_key`. Resolver diagnostics record the official failure and proxy attempts, but they
-strip query strings and URL userinfo from endpoint fields so token values are not printed.
+it as `access_key`. Bilibili cookies are not forwarded to restricted-area proxy hosts. Resolver
+diagnostics record the official failure and proxy attempts, but they strip query strings and URL
+userinfo from endpoint fields and redact sensitive error-message values so token values are not
+printed.

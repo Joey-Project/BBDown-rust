@@ -95,9 +95,12 @@ bbdown --restricted-api-proxy tw=https://proxy.example/bili/api plan ss26801 --s
 ```
 
 `--restricted-area-proxy` targets BBDown/BiliPlus-style playurl proxy endpoints.
-`--restricted-api-proxy` targets proxies that mirror `api.bilibili.com` paths. Use repeated flags or
-comma-separated `BBDOWN_RESTRICTED_AREA_PROXY` / `BBDOWN_RESTRICTED_API_PROXY` values to configure
-multiple candidates. Hosts are user supplied; the tool does not ship public proxy defaults.
+`--restricted-api-proxy` targets proxies that mirror `api.bilibili.com` paths and preserves query
+parameters already present on the configured proxy base URL. Use repeated flags or comma-separated
+`BBDOWN_RESTRICTED_AREA_PROXY` / `BBDOWN_RESTRICTED_API_PROXY` values to configure multiple
+candidates. Hosts are user supplied; the tool does not ship public proxy defaults. Proxy requests do
+not forward Bilibili cookies. Resolver diagnostics redact endpoint query strings, URL userinfo, and
+sensitive error-message values.
 
 ## Developer Commands
 
