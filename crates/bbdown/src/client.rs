@@ -18,6 +18,7 @@ pub struct EndpointConfig {
     pub comment_base: String,
     pub passport_base: String,
     pub tv_passport_base: String,
+    pub tv_passport_poll_base: String,
 }
 
 impl Default for EndpointConfig {
@@ -29,6 +30,7 @@ impl Default for EndpointConfig {
             comment_base: "https://comment.bilibili.com".to_owned(),
             passport_base: "https://passport.bilibili.com".to_owned(),
             tv_passport_base: "https://passport.snm0516.aisee.tv".to_owned(),
+            tv_passport_poll_base: "https://passport.bilibili.com".to_owned(),
         }
     }
 }
@@ -598,6 +600,10 @@ impl BiliClient {
 
     pub(crate) fn request_headers(&self) -> Result<HeaderMap> {
         self.headers(true)
+    }
+
+    pub(crate) fn anonymous_headers(&self) -> Result<HeaderMap> {
+        self.headers(false)
     }
 
     pub(crate) fn media_headers(&self) -> Result<HeaderMap> {
@@ -1916,6 +1922,7 @@ mod tests {
                 comment_base: server.base_url(),
                 passport_base: server.base_url(),
                 tv_passport_base: server.base_url(),
+                tv_passport_poll_base: server.base_url(),
             },
             credentials: Credentials {
                 cookie: None,
@@ -2114,6 +2121,7 @@ mod tests {
                 comment_base: server.base_url(),
                 passport_base: server.base_url(),
                 tv_passport_base: server.base_url(),
+                tv_passport_poll_base: server.base_url(),
             },
             credentials: Credentials {
                 cookie: None,
@@ -2217,6 +2225,7 @@ mod tests {
                 comment_base: "http://127.0.0.1:1".to_owned(),
                 passport_base: "http://127.0.0.1:1".to_owned(),
                 tv_passport_base: "http://127.0.0.1:1".to_owned(),
+                tv_passport_poll_base: "http://127.0.0.1:1".to_owned(),
             },
             credentials: Credentials::default(),
             user_agent: "test".to_owned(),
@@ -2430,6 +2439,7 @@ mod tests {
                 comment_base: server.base_url(),
                 passport_base: server.base_url(),
                 tv_passport_base: server.base_url(),
+                tv_passport_poll_base: server.base_url(),
             },
             credentials: Credentials::default(),
             user_agent: "test".to_owned(),

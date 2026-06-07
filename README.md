@@ -73,13 +73,15 @@ Credentials are stored in the platform config directory by default. Use
 Secret import commands also read `BBDOWN_COOKIE` or `BBDOWN_ACCESS_KEY` when no input flag is
 provided, so callers can avoid passing credentials through process arguments. QR login commands poll
 the Bilibili QR state machine and save only the resulting credential; status and JSON output expose
-redacted booleans only.
+redacted booleans only. With `--json`, QR login emits newline-delimited JSON events: a `ticket`
+event with the scan URL before polling, then a `saved` event after credentials are stored.
 
 Use `--request-timeout-seconds` or `BBDOWN_REQUEST_TIMEOUT_SECONDS` to tune API request bounds.
 Media body reads use `--download-idle-timeout-seconds`; pass `0` to disable the idle timeout.
 Use `--comment-base` or `BBDOWN_COMMENT_BASE` to point danmaku XML downloads at a mock or proxy
 endpoint. Use `--passport-base` / `--tv-passport-base` and their env equivalents for QR login mock
-tests or controlled proxies.
+tests or controlled proxies. TV QR creation uses `--tv-passport-base`; TV QR polling follows that
+override unless `--tv-passport-poll-base` is set explicitly.
 
 ## Developer Commands
 

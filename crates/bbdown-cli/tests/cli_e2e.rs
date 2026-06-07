@@ -407,13 +407,43 @@ fn auth_import_status_and_logout_use_local_store() -> anyhow::Result<()> {
 
 #[test]
 fn auth_qr_login_web_and_tv_use_local_store() -> anyhow::Result<()> {
-    let server = MockServer::start();
+    let web_server = MockServer::start();
+    let tv_server = MockServer::start();
+    let unused_passport_server = MockServer::start();
     let temp = tempfile::tempdir()?;
     let credential_file = temp.path().join("credentials.json");
-    server.mock(|when, then| {
+    mock_web_qr_login(&web_server);
+    mock_tv_qr_login(&tv_server);
+
+    let output = run_web_qr_login(&credential_file, &web_server)?;
+    let events = json_lines(&output)?;
+    assert_eq!(events[0]["event"], "ticket");
+    assert_eq!(
+        events[0]["url"],
+        "https://passport.example/scan?qrcode_key=WEBKEY"
+    );
+    assert_eq!(events[1]["event"], "saved");
+    assert_eq!(events[1]["saved"]["has_cookie"], true);
+    assert_eq!(events[1]["saved"]["has_access_key"], false);
+    assert!(!String::from_utf8_lossy(&output).contains("sess"));
+
+    let output = run_tv_qr_login(&credential_file, &unused_passport_server, &tv_server)?;
+    let events = json_lines(&output)?;
+    assert_eq!(events[0]["event"], "ticket");
+    assert_eq!(events[0]["url"], "https://tv.example/scan");
+    assert_eq!(events[1]["event"], "saved");
+    assert_eq!(events[1]["saved"]["has_cookie"], true);
+    assert_eq!(events[1]["saved"]["has_access_key"], true);
+    assert!(!String::from_utf8_lossy(&output).contains("ACCESS"));
+    Ok(())
+}
+
+fn mock_web_qr_login(web_server: &MockServer) {
+    web_server.mock(|when, then| {
         when.method(GET)
             .path("/x/passport-login/web/qrcode/generate")
-            .query_param("source", "main-fe-header");
+            .query_param("source", "main-fe-header")
+            .header_missing("cookie");
         then.status(200).json_body_obj(&serde_json::json!({
             "code": 0,
             "data": {
@@ -422,11 +452,12 @@ fn auth_qr_login_web_and_tv_use_local_store() -> anyhow::Result<()> {
             }
         }));
     });
-    server.mock(|when, then| {
+    web_server.mock(|when, then| {
         when.method(GET)
             .path("/x/passport-login/web/qrcode/poll")
             .query_param("qrcode_key", "WEBKEY")
-            .query_param("source", "main-fe-header");
+            .query_param("source", "main-fe-header")
+            .header_missing("cookie");
         then.status(200).json_body_obj(&serde_json::json!({
             "code": 0,
             "data": {
@@ -435,12 +466,17 @@ fn auth_qr_login_web_and_tv_use_local_store() -> anyhow::Result<()> {
             }
         }));
     });
+}
 
-    let output = Command::cargo_bin("bbdown")?
+fn run_web_qr_login(
+    credential_file: &std::path::Path,
+    web_server: &MockServer,
+) -> anyhow::Result<Vec<u8>> {
+    Ok(Command::cargo_bin("bbdown")?
         .arg("--credential-file")
-        .arg(&credential_file)
+        .arg(credential_file)
         .arg("--passport-base")
-        .arg(server.base_url())
+        .arg(web_server.base_url())
         .args([
             "auth",
             "login-web",
@@ -454,15 +490,17 @@ fn auth_qr_login_web_and_tv_use_local_store() -> anyhow::Result<()> {
         .success()
         .get_output()
         .stdout
-        .clone();
-    let json: Value = serde_json::from_slice(&output)?;
-    assert_eq!(json["saved"]["has_cookie"], true);
-    assert_eq!(json["saved"]["has_access_key"], false);
-    assert!(!String::from_utf8_lossy(&output).contains("sess"));
+        .clone())
+}
 
-    server.mock(|when, then| {
+fn mock_tv_qr_login(tv_server: &MockServer) {
+    tv_server.mock(|when, then| {
         when.method(POST)
-            .path("/x/passport-tv-login/qrcode/auth_code");
+            .path("/x/passport-tv-login/qrcode/auth_code")
+            .header_missing("cookie")
+            .form_urlencoded_tuple("auth_code", "")
+            .form_urlencoded_tuple("mobi_app", "android_tv_yst")
+            .form_urlencoded_tuple_exists("sign");
         then.status(200).json_body_obj(&serde_json::json!({
             "code": 0,
             "data": {
@@ -471,21 +509,31 @@ fn auth_qr_login_web_and_tv_use_local_store() -> anyhow::Result<()> {
             }
         }));
     });
-    server.mock(|when, then| {
-        when.method(POST).path("/x/passport-tv-login/qrcode/poll");
+    tv_server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/qrcode/poll")
+            .header_missing("cookie")
+            .form_urlencoded_tuple("auth_code", "AUTH")
+            .form_urlencoded_tuple_exists("sign");
         then.status(200).json_body_obj(&serde_json::json!({
             "code": 0,
             "data": {"access_token": "ACCESS"}
         }));
     });
+}
 
-    let output = Command::cargo_bin("bbdown")?
+fn run_tv_qr_login(
+    credential_file: &std::path::Path,
+    unused_passport_server: &MockServer,
+    tv_server: &MockServer,
+) -> anyhow::Result<Vec<u8>> {
+    Ok(Command::cargo_bin("bbdown")?
         .arg("--credential-file")
-        .arg(&credential_file)
+        .arg(credential_file)
         .arg("--passport-base")
-        .arg(server.base_url())
+        .arg(unused_passport_server.base_url())
         .arg("--tv-passport-base")
-        .arg(server.base_url())
+        .arg(tv_server.base_url())
         .args([
             "auth",
             "login-tv",
@@ -499,12 +547,7 @@ fn auth_qr_login_web_and_tv_use_local_store() -> anyhow::Result<()> {
         .success()
         .get_output()
         .stdout
-        .clone();
-    let json: Value = serde_json::from_slice(&output)?;
-    assert_eq!(json["saved"]["has_cookie"], true);
-    assert_eq!(json["saved"]["has_access_key"], true);
-    assert!(!String::from_utf8_lossy(&output).contains("ACCESS"));
-    Ok(())
+        .clone())
 }
 
 #[cfg(unix)]
@@ -528,4 +571,11 @@ fn downloaded_file_path<'a>(json: &'a Value, kind: &str) -> anyhow::Result<&'a s
             })
         })
         .ok_or_else(|| anyhow::anyhow!("missing downloaded {kind} path"))
+}
+
+fn json_lines(output: &[u8]) -> anyhow::Result<Vec<Value>> {
+    String::from_utf8(output.to_vec())?
+        .lines()
+        .map(|line| serde_json::from_str(line).map_err(Into::into))
+        .collect()
 }

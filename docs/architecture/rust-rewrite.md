@@ -131,11 +131,15 @@ inject their own storage or keep credentials in memory.
 QR login is modeled as an explicit state machine in the crate. WEB QR login creates a
 `QrLoginTicket`, polls waiting-for-scan, waiting-for-confirmation, expired, and succeeded states,
 then returns a cookie credential. TV QR login uses the BBDown-compatible app signed form flow and
-returns an access-key credential. The CLI `auth login-web` and `auth login-tv` commands update the
-local credential store after a succeeded state.
+returns an access-key credential. TV auth-code creation and TV polling are separately configurable
+so tests and controlled proxies can mirror either the upstream split-host flow or a single local
+endpoint. QR login requests use anonymous headers even when the client has stored credentials. The
+CLI `auth login-web` and `auth login-tv` commands update the local credential store after a
+succeeded state.
 
 Secrets are never included in status output; `auth status` and QR login JSON output report only
-booleans.
+booleans. The public QR state enum intentionally does not derive serde traits because the succeeded
+state carries full credentials for embedding callers that handle storage themselves.
 HTTP request errors are converted without retaining full URLs so query secrets such as intl
 `access_key` do not appear in user-facing errors.
 

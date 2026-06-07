@@ -10,7 +10,7 @@ use clap::{Args, Parser, Subcommand};
 use std::fs;
 use std::io::{self, Read};
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Parser)]
 #[command(name = "bbdown")]
@@ -46,12 +46,10 @@ struct Cli {
         default_value = "https://passport.bilibili.com"
     )]
     passport_base: String,
-    #[arg(
-        long,
-        env = "BBDOWN_TV_PASSPORT_BASE",
-        default_value = "https://passport.snm0516.aisee.tv"
-    )]
-    tv_passport_base: String,
+    #[arg(long, env = "BBDOWN_TV_PASSPORT_BASE")]
+    tv_passport_base: Option<String>,
+    #[arg(long, env = "BBDOWN_TV_PASSPORT_POLL_BASE")]
+    tv_passport_poll_base: Option<String>,
     #[arg(long, env = "BBDOWN_CREDENTIAL_FILE")]
     credential_file: Option<PathBuf>,
     #[arg(long, env = "BBDOWN_REQUEST_TIMEOUT_SECONDS", default_value_t = 30)]
@@ -142,14 +140,7 @@ async fn main() -> anyhow::Result<()> {
         cli.request_timeout_seconds > 0,
         "--request-timeout-seconds must be greater than 0"
     );
-    let endpoints = EndpointConfig {
-        api_base: cli.api_base.clone(),
-        pgc_base: cli.pgc_base.clone(),
-        intl_base: cli.intl_base.clone(),
-        comment_base: cli.comment_base.clone(),
-        passport_base: cli.passport_base.clone(),
-        tv_passport_base: cli.tv_passport_base.clone(),
-    };
+    let endpoints = endpoints_from_cli(&cli);
     let request_timeout = Duration::from_secs(cli.request_timeout_seconds);
     let store = CredentialStore::new(credential_path(cli.credential_file)?);
     match cli.command {
@@ -380,20 +371,27 @@ async fn handle_qr_login(
         args.poll_interval_seconds > 0,
         "--poll-interval-seconds must be greater than 0"
     );
+    let stored_credentials = store.load().context("failed to load credentials")?;
     let client = BiliClient::new(client_config(
         endpoints,
         request_timeout,
-        store.load().context("failed to load credentials")?,
+        Credentials::default(),
     ));
     let ticket = match kind {
         QrLoginKind::Web => client.create_web_qr_login().await?,
         QrLoginKind::Tv => client.create_tv_qr_login().await?,
     };
-    if !args.json {
+    if args.json {
+        print_json_line(&serde_json::json!({
+            "event": "ticket",
+            "kind": kind,
+            "url": ticket.url,
+        }))?;
+    } else {
         println!("scan: {}", ticket.url);
     }
     let credentials = wait_for_qr_login(&client, kind, &ticket.key, &args).await?;
-    let mut stored = store.load().context("failed to load credentials")?;
+    let mut stored = stored_credentials;
     if credentials.cookie.is_some() {
         stored.cookie = credentials.cookie;
     }
@@ -403,13 +401,11 @@ async fn handle_qr_login(
     store.save(&stored).context("failed to save credentials")?;
     let summary = stored.redacted_summary();
     if args.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "kind": kind,
-                "saved": summary,
-            }))?
-        );
+        print_json_line(&serde_json::json!({
+            "event": "saved",
+            "kind": kind,
+            "saved": summary,
+        }))?;
     } else {
         println!("credentials saved");
     }
@@ -423,9 +419,9 @@ async fn wait_for_qr_login(
     args: &QrLoginArgs,
 ) -> anyhow::Result<Credentials> {
     let interval = Duration::from_secs(args.poll_interval_seconds);
-    let max_attempts = args.timeout_seconds / args.poll_interval_seconds + 1;
+    let deadline = Instant::now() + Duration::from_secs(args.timeout_seconds);
     let mut last_waiting_state: Option<&'static str> = None;
-    for attempt in 0..max_attempts {
+    loop {
         let state = match kind {
             QrLoginKind::Web => client.poll_web_qr_login(key).await?,
             QrLoginKind::Tv => client.poll_tv_qr_login(key).await?,
@@ -446,11 +442,48 @@ async fn wait_for_qr_login(
             QrLoginState::Expired => bail!("QR code expired"),
             QrLoginState::Succeeded { credentials } => return Ok(credentials),
         }
-        if attempt + 1 < max_attempts {
-            tokio::time::sleep(interval).await;
-        }
+        let sleep_duration =
+            next_poll_sleep(Instant::now(), deadline, interval).context("QR login timed out")?;
+        tokio::time::sleep(sleep_duration).await;
     }
-    bail!("QR login timed out")
+}
+
+fn next_poll_sleep(now: Instant, deadline: Instant, interval: Duration) -> Option<Duration> {
+    let remaining = deadline.checked_duration_since(now)?;
+    if remaining.is_zero() {
+        None
+    } else {
+        Some(remaining.min(interval))
+    }
+}
+
+fn print_json_line(value: &serde_json::Value) -> anyhow::Result<()> {
+    println!("{}", serde_json::to_string(value)?);
+    Ok(())
+}
+
+fn endpoints_from_cli(cli: &Cli) -> EndpointConfig {
+    let default_endpoints = EndpointConfig::default();
+    let tv_passport_base = cli
+        .tv_passport_base
+        .clone()
+        .unwrap_or(default_endpoints.tv_passport_base);
+    let tv_passport_poll_base = cli.tv_passport_poll_base.clone().unwrap_or_else(|| {
+        if cli.tv_passport_base.is_some() {
+            tv_passport_base.clone()
+        } else {
+            cli.passport_base.clone()
+        }
+    });
+    EndpointConfig {
+        api_base: cli.api_base.clone(),
+        pgc_base: cli.pgc_base.clone(),
+        intl_base: cli.intl_base.clone(),
+        comment_base: cli.comment_base.clone(),
+        passport_base: cli.passport_base.clone(),
+        tv_passport_base,
+        tv_passport_poll_base,
+    }
 }
 
 fn read_secret(
@@ -533,3 +566,34 @@ fn print_download_report(report: &DownloadReport) {
 
 #[allow(dead_code)]
 fn _assert_credentials_send_sync(_: Credentials) {}
+
+#[cfg(test)]
+mod tests {
+    use super::next_poll_sleep;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn next_poll_sleep_caps_interval_by_deadline() {
+        let now = Instant::now();
+        assert_eq!(
+            next_poll_sleep(now, now + Duration::from_secs(119), Duration::from_secs(61)),
+            Some(Duration::from_secs(61))
+        );
+        assert_eq!(
+            next_poll_sleep(
+                now + Duration::from_secs(61),
+                now + Duration::from_secs(119),
+                Duration::from_secs(61),
+            ),
+            Some(Duration::from_secs(58))
+        );
+        assert_eq!(
+            next_poll_sleep(
+                now + Duration::from_secs(119),
+                now + Duration::from_secs(119),
+                Duration::from_secs(61),
+            ),
+            None
+        );
+    }
+}

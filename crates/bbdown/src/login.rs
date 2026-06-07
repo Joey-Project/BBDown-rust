@@ -7,6 +7,7 @@ const WEB_QR_WAITING_SCAN: i64 = 86_101;
 const WEB_QR_WAITING_CONFIRM: i64 = 86_090;
 const WEB_QR_EXPIRED: i64 = 86_038;
 const TV_QR_WAITING_SCAN: i64 = 86_039;
+const TV_QR_WAITING_CONFIRM: i64 = 86_090;
 const TV_QR_EXPIRED: i64 = 86_038;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -16,15 +17,14 @@ pub enum QrLoginKind {
     Tv,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QrLoginTicket {
     pub kind: QrLoginKind,
     pub url: String,
     pub key: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "state", rename_all = "snake_case")]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum QrLoginState {
     WaitingForScan,
     WaitingForConfirm,
@@ -43,7 +43,7 @@ impl BiliClient {
         let response = self
             .http
             .get(url)
-            .headers(self.request_headers()?)
+            .headers(self.anonymous_headers()?)
             .timeout(self.config.request_timeout)
             .send()
             .await
@@ -76,7 +76,7 @@ impl BiliClient {
         let response = self
             .http
             .get(url)
-            .headers(self.request_headers()?)
+            .headers(self.anonymous_headers()?)
             .timeout(self.config.request_timeout)
             .send()
             .await
@@ -116,7 +116,7 @@ impl BiliClient {
         let response = self
             .http
             .post(url)
-            .headers(self.request_headers()?)
+            .headers(self.anonymous_headers()?)
             .timeout(self.config.request_timeout)
             .form(&params)
             .send()
@@ -137,14 +137,14 @@ impl BiliClient {
 
     pub async fn poll_tv_qr_login(&self, auth_code: &str) -> Result<QrLoginState> {
         let url = Self::endpoint_url(
-            &self.config.endpoints.passport_base,
+            &self.config.endpoints.tv_passport_poll_base,
             "/x/passport-tv-login/qrcode/poll",
         )?;
         let params = tv_login_params(auth_code, current_timestamp_seconds());
         let response = self
             .http
             .post(url)
-            .headers(self.request_headers()?)
+            .headers(self.anonymous_headers()?)
             .timeout(self.config.request_timeout)
             .form(&params)
             .send()
@@ -157,6 +157,7 @@ impl BiliClient {
             .map_err(BiliClient::http_error_without_url)?;
         match response.code {
             TV_QR_WAITING_SCAN => Ok(QrLoginState::WaitingForScan),
+            TV_QR_WAITING_CONFIRM => Ok(QrLoginState::WaitingForConfirm),
             TV_QR_EXPIRED => Ok(QrLoginState::Expired),
             0 => {
                 let data = response.data.ok_or(Error::MissingField("data"))?;
@@ -315,14 +316,42 @@ mod tests {
     }
 
     #[test]
-    fn signs_tv_login_params_after_auth_code() {
+    fn signs_stable_tv_login_params_after_auth_code() {
         let params = tv_login_params("AUTH", 1_700_000_000);
-        assert!(
-            params
-                .iter()
-                .any(|(key, value)| *key == "auth_code" && value == "AUTH")
+        assert_eq!(
+            params,
+            vec![
+                ("appkey", "4409e2ce8ffd12b8".to_owned()),
+                ("auth_code", "AUTH".to_owned()),
+                ("bili_local_id", "device068a1f84f3b481".to_owned()),
+                ("build", "102801".to_owned()),
+                ("buvid", "buvid9bb49b85083b8fa445ee2eb127052e63".to_owned()),
+                ("channel", "master".to_owned()),
+                ("device", "OnePlus".to_owned()),
+                ("device_id", "device068a1f84f3b481".to_owned()),
+                ("device_name", "OnePlus7TPro".to_owned()),
+                ("device_platform", "Android10OnePlusHD1910".to_owned()),
+                (
+                    "fingerprint",
+                    "1700000000fingerprint2fee77e506dae703f7a1197bd676400600".to_owned()
+                ),
+                ("guid", "buvid9bb49b85083b8fa445ee2eb127052e63".to_owned()),
+                (
+                    "local_fingerprint",
+                    "1700000000fingerprint2fee77e506dae703f7a1197bd676400600".to_owned()
+                ),
+                (
+                    "local_id",
+                    "buvid9bb49b85083b8fa445ee2eb127052e63".to_owned()
+                ),
+                ("mobi_app", "android_tv_yst".to_owned()),
+                ("networkstate", "wifi".to_owned()),
+                ("platform", "android".to_owned()),
+                ("sys_ver", "29".to_owned()),
+                ("ts", "1700000000".to_owned()),
+                ("sign", "fcaa54c903154ca39a4e046b73469f74".to_owned()),
+            ]
         );
-        assert!(params.iter().any(|(key, _)| *key == "sign"));
     }
 
     #[tokio::test]
@@ -331,7 +360,8 @@ mod tests {
         server.mock(|when, then| {
             when.method(GET)
                 .path("/x/passport-login/web/qrcode/poll")
-                .query_param("qrcode_key", "WAIT");
+                .query_param("qrcode_key", "WAIT")
+                .header_missing("cookie");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {"code": 86101}
@@ -340,7 +370,8 @@ mod tests {
         server.mock(|when, then| {
             when.method(GET)
                 .path("/x/passport-login/web/qrcode/poll")
-                .query_param("qrcode_key", "CONFIRM");
+                .query_param("qrcode_key", "CONFIRM")
+                .header_missing("cookie");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {"code": 86090}
@@ -349,7 +380,8 @@ mod tests {
         server.mock(|when, then| {
             when.method(GET)
                 .path("/x/passport-login/web/qrcode/poll")
-                .query_param("qrcode_key", "DONE");
+                .query_param("qrcode_key", "DONE")
+                .header_missing("cookie");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {
@@ -385,14 +417,34 @@ mod tests {
         let server = MockServer::start();
         server.mock(|when, then| {
             when.method(POST)
-                .path("/x/passport-tv-login/qrcode/auth_code");
+                .path("/x/passport-tv-login/qrcode/auth_code")
+                .header_missing("cookie")
+                .form_urlencoded_tuple("appkey", "4409e2ce8ffd12b8")
+                .form_urlencoded_tuple("auth_code", "")
+                .form_urlencoded_tuple("mobi_app", "android_tv_yst")
+                .form_urlencoded_tuple_exists("sign");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {"url": "https://tv.example/scan", "auth_code": "AUTH"}
             }));
         });
         server.mock(|when, then| {
-            when.method(POST).path("/x/passport-tv-login/qrcode/poll");
+            when.method(POST)
+                .path("/x/passport-tv-login/qrcode/poll")
+                .header_missing("cookie")
+                .form_urlencoded_tuple("auth_code", "CONFIRM")
+                .form_urlencoded_tuple_exists("sign");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 86090,
+                "message": "waiting confirm"
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(POST)
+                .path("/x/passport-tv-login/qrcode/poll")
+                .header_missing("cookie")
+                .form_urlencoded_tuple("auth_code", "AUTH")
+                .form_urlencoded_tuple_exists("sign");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {"access_token": "ACCESS"}
@@ -402,6 +454,10 @@ mod tests {
         let ticket = client.create_tv_qr_login().await?;
 
         assert_eq!(ticket.key, "AUTH");
+        assert_eq!(
+            client.poll_tv_qr_login("CONFIRM").await?,
+            QrLoginState::WaitingForConfirm
+        );
         assert_eq!(
             client.poll_tv_qr_login(&ticket.key).await?,
             QrLoginState::Succeeded {
@@ -423,8 +479,12 @@ mod tests {
                 comment_base: server.base_url(),
                 passport_base: server.base_url(),
                 tv_passport_base: server.base_url(),
+                tv_passport_poll_base: server.base_url(),
             },
-            credentials: Credentials::default(),
+            credentials: Credentials {
+                cookie: Some("SESSDATA=old".to_owned()),
+                access_key: None,
+            },
             user_agent: "test".to_owned(),
             request_timeout: std::time::Duration::from_secs(30),
         })
