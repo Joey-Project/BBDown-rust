@@ -7,6 +7,7 @@ use md5::{Digest, Md5};
 use reqwest::StatusCode;
 use reqwest::header::{CONTENT_RANGE, RANGE};
 use serde::{Deserialize, Serialize};
+use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -380,46 +381,40 @@ impl BiliClient {
             }
         }
         let start_offset = if append { resume_from } else { 0 };
+        let replace_existing = resume_from > 0 && !append;
+        let write_path = if replace_existing {
+            temporary_download_path(path)
+        } else {
+            path.to_path_buf()
+        };
         let mut file = OpenOptions::new()
             .create(true)
             .write(true)
             .append(append)
             .truncate(!append)
-            .open(path)
+            .open(&write_path)
             .await?;
-        let mut bytes_written = 0;
-        let mut stream = response.bytes_stream();
-        while let Some(chunk) =
-            match next_download_chunk(&mut stream, options.download_idle_timeout).await {
-                Ok(chunk) => chunk,
-                Err(error) => {
-                    rollback_download_file(&file, start_offset).await?;
-                    return Err(error);
+        let write_result = write_response_body_to_file(
+            &mut file,
+            response,
+            content_range,
+            start_offset,
+            expected_size,
+            options.download_idle_timeout,
+        )
+        .await;
+        drop(file);
+        let bytes_written = match write_result {
+            Ok(bytes_written) => bytes_written,
+            Err(error) => {
+                if replace_existing {
+                    let _ = fs::remove_file(&write_path).await;
                 }
+                return Err(error);
             }
-        {
-            let chunk = match chunk {
-                Ok(chunk) => chunk,
-                Err(error) => {
-                    rollback_download_file(&file, start_offset).await?;
-                    return Err(BiliClient::http_error_without_url(error));
-                }
-            };
-            if let Err(error) = file.write_all(&chunk).await {
-                rollback_download_file(&file, start_offset).await?;
-                return Err(Error::Io(error));
-            }
-            bytes_written += u64::try_from(chunk.len()).unwrap_or(u64::MAX);
-        }
-        if let Err(error) = file.flush().await {
-            rollback_download_file(&file, start_offset).await?;
-            return Err(Error::Io(error));
-        }
-        if let Err(error) =
-            validate_download_completion(expected_size, content_range, start_offset, bytes_written)
-        {
-            rollback_download_file(&file, start_offset).await?;
-            return Err(error);
+        };
+        if replace_existing {
+            fs::rename(&write_path, path).await?;
         }
         Ok(DownloadedFile {
             kind,
@@ -465,6 +460,7 @@ impl BiliClient {
         let output_path = entry_dir.join(format!("{}.mp4", safe_file_name(&entry.title)));
         let mut args = Vec::new();
         args.push("-y".to_owned());
+        args.push("-nostdin".to_owned());
         if only_flv_segments(files) {
             let list_path = entry_dir.join("ffmpeg-concat.txt");
             fs::write(&list_path, concat_file_list(&media_files, entry_dir)).await?;
@@ -489,6 +485,7 @@ impl BiliClient {
         ]);
         let status = Command::new(binary)
             .args(&args)
+            .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
@@ -499,6 +496,16 @@ impl BiliClient {
                     || "terminated by signal".to_owned(),
                     |code| code.to_string(),
                 ),
+            });
+        }
+        let metadata = fs::metadata(&output_path)
+            .await
+            .map_err(|_| Error::MuxFailed {
+                status: "missing output file".to_owned(),
+            })?;
+        if !metadata.is_file() {
+            return Err(Error::MuxFailed {
+                status: "missing output file".to_owned(),
             });
         }
         let mut command = Vec::with_capacity(args.len() + 1);
@@ -517,12 +524,63 @@ impl DownloadFileKind {
     }
 }
 
+async fn write_response_body_to_file(
+    file: &mut tokio::fs::File,
+    response: reqwest::Response,
+    content_range: Option<ParsedContentRange>,
+    start_offset: u64,
+    expected_size: Option<u64>,
+    download_idle_timeout: Option<Duration>,
+) -> Result<u64> {
+    let mut bytes_written = 0;
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = match next_download_chunk(&mut stream, download_idle_timeout).await {
+        Ok(chunk) => chunk,
+        Err(error) => {
+            rollback_download_file(file, start_offset).await?;
+            return Err(error);
+        }
+    } {
+        let chunk = match chunk {
+            Ok(chunk) => chunk,
+            Err(error) => {
+                rollback_download_file(file, start_offset).await?;
+                return Err(BiliClient::http_error_without_url(error));
+            }
+        };
+        if let Err(error) = file.write_all(&chunk).await {
+            rollback_download_file(file, start_offset).await?;
+            return Err(Error::Io(error));
+        }
+        bytes_written += u64::try_from(chunk.len()).unwrap_or(u64::MAX);
+    }
+    if let Err(error) = file.flush().await {
+        rollback_download_file(file, start_offset).await?;
+        return Err(Error::Io(error));
+    }
+    if let Err(error) =
+        validate_download_completion(expected_size, content_range, start_offset, bytes_written)
+    {
+        rollback_download_file(file, start_offset).await?;
+        return Err(error);
+    }
+    Ok(bytes_written)
+}
+
 async fn existing_file_len(path: &Path) -> Result<u64> {
     match fs::metadata(path).await {
         Ok(metadata) => Ok(metadata.len()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(0),
         Err(error) => Err(Error::Io(error)),
     }
+}
+
+fn temporary_download_path(path: &Path) -> PathBuf {
+    let mut file_name = path
+        .file_name()
+        .map_or_else(|| OsString::from("download"), std::ffi::OsStr::to_os_string);
+    file_name.push(".bbdown-download");
+    path.with_file_name(file_name)
 }
 
 fn candidate_urls(primary: &str, backups: &[String]) -> Vec<String> {
@@ -730,16 +788,29 @@ fn media_file_name(label: &str, stream: &MediaStream) -> String {
 }
 
 fn media_stream_identity(stream: &MediaStream) -> String {
-    let hash = short_identity_hash(&url_identity_source(&stream.base_url));
-    if let Some(codec) = stream
-        .codecs
-        .as_deref()
-        .map(file_name_token)
-        .filter(|codec| !codec.is_empty())
-    {
-        return format!("{codec}-{hash}");
+    let mut parts = Vec::new();
+    push_identity_part(&mut parts, stream.codecs.as_deref());
+    push_identity_part(&mut parts, stream.mime_type.as_deref());
+    if let Some(bandwidth) = stream.bandwidth {
+        parts.push(format!("bw{bandwidth}"));
     }
-    hash
+    if let (Some(width), Some(height)) = (stream.width, stream.height) {
+        parts.push(format!("{width}x{height}"));
+    }
+    push_identity_part(&mut parts, stream.frame_rate.as_deref());
+    if let Some(size) = stream.size {
+        parts.push(format!("s{size}"));
+    }
+    if !parts.is_empty() {
+        return parts.join("-");
+    }
+    short_identity_hash(&url_identity_source(&stream.base_url))
+}
+
+fn push_identity_part(parts: &mut Vec<String>, value: Option<&str>) {
+    if let Some(token) = value.map(file_name_token).filter(|token| !token.is_empty()) {
+        parts.push(token);
+    }
 }
 
 fn file_name_token(raw: &str) -> String {
@@ -765,13 +836,9 @@ fn short_identity_hash(raw: &str) -> String {
 
 fn url_identity_source(url: &str) -> String {
     if let Ok(parsed) = url::Url::parse(url) {
-        let mut source = String::new();
-        if let Some(host) = parsed.host_str() {
-            source.push_str(host);
-        }
-        source.push_str(parsed.path());
-        if !source.is_empty() {
-            return source;
+        let path = parsed.path();
+        if !path.is_empty() {
+            return path.to_owned();
         }
     }
     url.split(['?', '#']).next().unwrap_or(url).to_owned()
@@ -833,9 +900,12 @@ mod tests {
         let first = media_file_name("video", &stream);
         stream.base_url = "https://cdn.example/path/video.m4s?token=second".to_owned();
         assert_eq!(media_file_name("video", &stream), first);
+        stream.base_url = "https://mirror.example/other/path/video.m4s?token=third".to_owned();
+        assert_eq!(media_file_name("video", &stream), first);
         stream.codecs = Some("hev1.1.6.L120.90".to_owned());
         assert_ne!(media_file_name("video", &stream), first);
         stream.codecs = None;
+        stream.mime_type = None;
         assert!(media_file_name("video", &stream).starts_with("video-80-h"));
     }
 
@@ -1174,6 +1244,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn preserves_partial_file_when_full_retry_fails_after_ignored_range() -> anyhow::Result<()>
+    {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/video.m4s")
+                .header("range", "bytes=3-");
+            then.status(200).body("new");
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let mut plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
+        plan.entries[0].streams.videos[0].size = Some(6);
+        let output_dir = temp.path().join("Mock video").join("P001-Main");
+        tokio::fs::create_dir_all(&output_dir).await?;
+        let path = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
+        tokio::fs::write(&path, "old").await?;
+
+        let Err(error) = client
+            .download_plan(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().to_path_buf(),
+                    retry: RetryPolicy::single_attempt(),
+                    include_danmaku: false,
+                    mux: MuxOptions::Disabled,
+                    ..DownloadOptions::default()
+                },
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!("short full retry should fail"));
+        };
+
+        assert!(error.to_string().contains("expected media size"));
+        assert_eq!(tokio::fs::read_to_string(&path).await?, "old");
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn rejects_short_content_range_body_on_resume() -> anyhow::Result<()> {
         let server = MockServer::start();
         server.mock(|when, then| {
@@ -1440,7 +1550,7 @@ mod tests {
             then.status(200).body("video");
         });
         let temp = tempfile::tempdir()?;
-        let ffmpeg = write_fake_ffmpeg(temp.path(), "exit 0")?;
+        let ffmpeg = write_fake_ffmpeg(temp.path(), fake_ffmpeg_creates_output_body())?;
         let client = BiliClient::new(ClientConfig::default());
         let plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
 
@@ -1462,8 +1572,42 @@ mod tests {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("missing mux report"))?;
         assert_eq!(mux.command[1], "-y");
+        assert!(mux.command.iter().any(|arg| arg == "-nostdin"));
         assert!(mux.command.iter().any(|arg| arg == "-c"));
         assert!(mux.output_path.ends_with("Main.mp4"));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ffmpeg_mux_requires_output_file() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/video.m4s");
+            then.status(200).body("video");
+        });
+        let temp = tempfile::tempdir()?;
+        let ffmpeg = write_fake_ffmpeg(temp.path(), "exit 0")?;
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
+
+        let Err(error) = client
+            .download_plan(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().join("downloads"),
+                    retry: RetryPolicy::single_attempt(),
+                    include_danmaku: false,
+                    mux: MuxOptions::Ffmpeg { binary: ffmpeg },
+                    ..DownloadOptions::default()
+                },
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!("missing mux output should fail"));
+        };
+
+        assert!(error.to_string().contains("missing output file"));
         Ok(())
     }
 
@@ -1511,7 +1655,7 @@ mod tests {
         let temp = tempfile::Builder::new()
             .prefix(".bbdown-flv-mux-")
             .tempdir_in(".")?;
-        let ffmpeg = write_fake_ffmpeg(temp.path(), "exit 0")?;
+        let ffmpeg = write_fake_ffmpeg(temp.path(), fake_ffmpeg_creates_output_body())?;
         let output_dir = temp.path().join("downloads");
         let client = BiliClient::new(ClientConfig::default());
         let mut plan = test_plan(&server);
@@ -1620,5 +1764,10 @@ mod tests {
         permissions.set_mode(0o755);
         std_fs::set_permissions(&path, permissions)?;
         Ok(path)
+    }
+
+    #[cfg(unix)]
+    fn fake_ffmpeg_creates_output_body() -> &'static str {
+        "last=\nfor arg do last=$arg; done\n: > \"$last\"\nexit 0"
     }
 }

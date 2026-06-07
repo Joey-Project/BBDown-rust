@@ -15,6 +15,7 @@ pub struct EndpointConfig {
     pub api_base: String,
     pub pgc_base: String,
     pub intl_base: String,
+    pub comment_base: String,
 }
 
 impl Default for EndpointConfig {
@@ -23,6 +24,7 @@ impl Default for EndpointConfig {
             api_base: "https://api.bilibili.com".to_owned(),
             pgc_base: "https://api.bilibili.com".to_owned(),
             intl_base: "https://api.bilibili.tv".to_owned(),
+            comment_base: "https://comment.bilibili.com".to_owned(),
         }
     }
 }
@@ -431,7 +433,11 @@ impl BiliClient {
             subtitles,
             danmaku: DanmakuTrack {
                 cid: seed.cid,
-                xml_url: format!("https://comment.bilibili.com/{}.xml", seed.cid),
+                xml_url: Self::endpoint_url(
+                    &self.config.endpoints.comment_base,
+                    &format!("/{}.xml", seed.cid),
+                )?
+                .to_string(),
             },
         })
     }
@@ -1851,7 +1857,7 @@ mod tests {
         assert_eq!(entry.subtitles[0].url, "https://subtitle.example/zh.json");
         assert_eq!(
             entry.danmaku.xml_url,
-            "https://comment.bilibili.com/9988.xml"
+            format!("{}/9988.xml", server.base_url())
         );
         Ok(())
     }
@@ -1864,6 +1870,7 @@ mod tests {
                 api_base: server.base_url(),
                 pgc_base: server.base_url(),
                 intl_base: server.base_url(),
+                comment_base: server.base_url(),
             },
             credentials: Credentials {
                 cookie: None,
@@ -2059,6 +2066,7 @@ mod tests {
                 api_base: server.base_url(),
                 pgc_base: server.base_url(),
                 intl_base: server.base_url(),
+                comment_base: server.base_url(),
             },
             credentials: Credentials {
                 cookie: None,
@@ -2159,6 +2167,7 @@ mod tests {
                 api_base: format!("http://{address}"),
                 pgc_base: "http://127.0.0.1:1".to_owned(),
                 intl_base: "http://127.0.0.1:1".to_owned(),
+                comment_base: "http://127.0.0.1:1".to_owned(),
             },
             credentials: Credentials::default(),
             user_agent: "test".to_owned(),
@@ -2369,6 +2378,7 @@ mod tests {
                 api_base: server.base_url(),
                 pgc_base: server.base_url(),
                 intl_base: server.base_url(),
+                comment_base: server.base_url(),
             },
             credentials: Credentials::default(),
             user_agent: "test".to_owned(),

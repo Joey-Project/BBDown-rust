@@ -34,6 +34,12 @@ struct Cli {
         default_value = "https://api.bilibili.tv"
     )]
     intl_base: String,
+    #[arg(
+        long,
+        env = "BBDOWN_COMMENT_BASE",
+        default_value = "https://comment.bilibili.com"
+    )]
+    comment_base: String,
     #[arg(long, env = "BBDOWN_CREDENTIAL_FILE")]
     credential_file: Option<PathBuf>,
     #[arg(long, env = "BBDOWN_REQUEST_TIMEOUT_SECONDS", default_value_t = 30)]
@@ -116,6 +122,7 @@ async fn main() -> anyhow::Result<()> {
         api_base: cli.api_base.clone(),
         pgc_base: cli.pgc_base.clone(),
         intl_base: cli.intl_base.clone(),
+        comment_base: cli.comment_base.clone(),
     };
     let request_timeout = Duration::from_secs(cli.request_timeout_seconds);
     let store = CredentialStore::new(credential_path(cli.credential_file)?);

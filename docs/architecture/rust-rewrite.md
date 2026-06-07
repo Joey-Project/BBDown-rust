@@ -32,7 +32,8 @@ The library resolves media availability into `DownloadPlan`:
 - `DownloadEntry` records the selected `aid`, `bvid`, `cid`, optional `epid`, title, and source.
 - `StreamSet` keeps DASH video/audio tracks, FLV segments, accepted quality ids, and duration.
 - `SubtitleTrack` records language metadata, normalized URL, and basic format classification.
-- `DanmakuTrack` records the XML comment endpoint derived from `cid`.
+- `DanmakuTrack` records the XML comment endpoint derived from `cid` and the configured comment
+  endpoint base.
 
 `ss` and `md` require a `Selection` in non-interactive contexts. The CLI will later add
 interactive prompting, but the library keeps the contract explicit so integrations cannot
@@ -88,14 +89,15 @@ list. Media body reads use a separate idle timeout instead of the metadata reque
 appends only when `Content-Range` starts at the local file length and completes at the advertised
 range total; matching 416 responses are treated as already complete. When a stream or FLV segment
 declares a size, the executor rejects mismatched final file lengths and rolls back failed writes to
-the pre-attempt length.
-DASH media output names include codec and source identity hash material, with expiring query and
-fragment parameters excluded, so resume files are not shared across different stream variants.
+the pre-attempt length. If a server ignores `Range` and returns `200 OK` for a partial file, the
+executor writes the full retry to a temporary file and only replaces the old partial after
+validation succeeds. DASH media output names prefer stable stream metadata and only fall back to URL
+path hashing when metadata is absent, so CDN host or query changes do not split resume targets.
 
 The crate default keeps muxing disabled so embedding projects do not spawn external processes by
 surprise. The CLI `download` command enables ffmpeg by default and exposes `--no-mux` for users and
-mock e2e tests. Mux subprocess stdout and stderr are isolated from CLI stdout so JSON reports remain
-parseable.
+mock e2e tests. Mux subprocess stdin, stdout, and stderr are isolated from CLI stdio, and successful
+mux reports require the output file to exist, so JSON reports remain parseable and accurate.
 
 ## Restricted Area And Intl
 

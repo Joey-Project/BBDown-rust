@@ -215,6 +215,10 @@ fn download_json_writes_mock_media_files() -> anyhow::Result<()> {
         when.method(GET).path("/subtitle.ass");
         then.status(200).body("[Script Info]");
     });
+    server.mock(|when, then| {
+        when.method(GET).path("/2.xml");
+        then.status(200).body("<i/>");
+    });
 
     let mut command = Command::cargo_bin("bbdown")?;
     command
@@ -222,18 +226,19 @@ fn download_json_writes_mock_media_files() -> anyhow::Result<()> {
         .arg(&credential_file)
         .arg("--api-base")
         .arg(server.base_url())
+        .arg("--comment-base")
+        .arg(server.base_url())
         .arg("download")
         .arg("av170001")
         .arg("--output-dir")
         .arg(&output_dir)
         .arg("--no-mux")
-        .arg("--no-danmaku")
         .arg("--json");
     let output = command.assert().success().get_output().stdout.clone();
     let json: Value = serde_json::from_slice(&output)?;
     assert_eq!(
         json["entries"][0]["files"].as_array().map(Vec::len),
-        Some(3)
+        Some(4)
     );
     assert_eq!(
         fs::read_to_string(downloaded_file_path(&json, "video")?)?,
@@ -247,6 +252,10 @@ fn download_json_writes_mock_media_files() -> anyhow::Result<()> {
         fs::read_to_string(output_dir.join("Mock video/P001-Main/subtitle-en.ass"))?,
         "[Script Info]"
     );
+    assert_eq!(
+        fs::read_to_string(downloaded_file_path(&json, "danmaku")?)?,
+        "<i/>"
+    );
     Ok(())
 }
 
@@ -258,7 +267,10 @@ fn download_json_default_mux_keeps_stdout_valid() -> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;
     let credential_file = temp.path().join("credentials.json");
     let output_dir = temp.path().join("downloads");
-    let ffmpeg = write_fake_ffmpeg(temp.path(), "printf 'mux noise\\n'\nexit 0")?;
+    let ffmpeg = write_fake_ffmpeg(
+        temp.path(),
+        "printf 'mux noise\\n'\nlast=\nfor arg do last=$arg; done\n: > \"$last\"\nexit 0",
+    )?;
     server.mock(|when, then| {
         when.method(GET)
             .path("/x/web-interface/view")

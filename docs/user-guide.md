@@ -96,8 +96,9 @@ The CLI accepts endpoint overrides for mock tests and future resolver chains:
 bbdown --api-base http://127.0.0.1:8080 plan av170001 --json
 bbdown --pgc-base http://127.0.0.1:8080 --api-base http://127.0.0.1:8080 plan ep267851 --json
 bbdown --intl-base http://127.0.0.1:8080 plan https://www.bilibili.tv/en/play/34613/341736 --json
+bbdown --comment-base http://127.0.0.1:8080 download av170001 --output-dir downloads
 ```
 
 Restricted-area proxy ordering is not implemented yet. Current intl support uses official intl
 metadata/subtitle endpoints and the official signed intl OGV playurl endpoint with the configured
-access key when present.
+access key when present. Danmaku XML downloads use the configurable comment endpoint.
