@@ -1156,11 +1156,8 @@ impl IntlMediaResource {
             .filter(|value| !value.is_empty())?;
         Some(MediaStream {
             id: self.id.unwrap_or(fallback_id),
-            base_url,
-            backup_urls: self
-                .backup_url
-                .or(self.backup_url_camel)
-                .unwrap_or_default(),
+            base_url: normalize_media_url(&base_url),
+            backup_urls: normalize_media_urls(self.backup_url.or(self.backup_url_camel)),
             codecs: self.codecs,
             bandwidth: self.bandwidth,
             width: self.width,
@@ -1221,11 +1218,8 @@ impl DashTrack {
             .filter(|value| !value.is_empty())?;
         Some(MediaStream {
             id: self.id?,
-            base_url,
-            backup_urls: self
-                .backup_url
-                .or(self.backup_url_camel)
-                .unwrap_or_default(),
+            base_url: normalize_media_url(&base_url),
+            backup_urls: normalize_media_urls(self.backup_url.or(self.backup_url_camel)),
             codecs: self.codecs,
             bandwidth: self.bandwidth,
             width: self.width,
@@ -1255,8 +1249,8 @@ impl DurlSegment {
                 .order
                 .or_else(|| u32::try_from(index + 1).ok())
                 .unwrap_or(1),
-            url,
-            backup_urls: self.backup_url.unwrap_or_default(),
+            url: normalize_media_url(&url),
+            backup_urls: normalize_media_urls(self.backup_url),
             size: self.size,
             length_ms: self.length,
         })
@@ -1340,6 +1334,14 @@ fn normalize_media_url(url: &str) -> String {
     } else {
         url.to_owned()
     }
+}
+
+fn normalize_media_urls(urls: Option<Vec<String>>) -> Vec<String> {
+    urls.unwrap_or_default()
+        .into_iter()
+        .filter(|url| !url.is_empty())
+        .map(|url| normalize_media_url(&url))
+        .collect()
 }
 
 fn subtitle_format(url: &str) -> SubtitleFormat {
@@ -1605,10 +1607,10 @@ mod tests {
                         "duration": 123,
                         "video": [{
                             "id": 80,
-                            "baseUrl": "https://video.example/80.m4s",
-                            "base_url": "https://video.example/80.m4s",
-                            "backupUrl": ["https://backup.example/80.m4s"],
-                            "backup_url": ["https://backup.example/80.m4s"],
+                            "baseUrl": "//video.example/80.m4s",
+                            "base_url": "//video.example/80.m4s",
+                            "backupUrl": ["//backup.example/80.m4s"],
+                            "backup_url": ["//backup.example/80.m4s"],
                             "codecs": "avc1.640028",
                             "bandwidth": 1000,
                             "width": 1920,
@@ -1618,16 +1620,16 @@ mod tests {
                         }],
                         "audio": [{
                             "id": 30280,
-                            "baseUrl": "https://audio.example/30280.m4s",
-                            "base_url": "https://audio.example/30280.m4s",
+                            "baseUrl": "//audio.example/30280.m4s",
+                            "base_url": "//audio.example/30280.m4s",
                             "codecs": "mp4a.40.2",
                             "bandwidth": 128_000
                         }],
                         "dolby": {"audio": null}
                     },
                     "durl": [{
-                        "url": "https://flv.example/segment.flv",
-                        "backup_url": null,
+                        "url": "//flv.example/segment.flv",
+                        "backup_url": ["//flv-backup.example/segment.flv"],
                         "length": 123_000
                     }]
                 }
@@ -1663,9 +1665,24 @@ mod tests {
             entry.streams.videos[0].base_url,
             "https://video.example/80.m4s"
         );
+        assert_eq!(
+            entry.streams.videos[0].backup_urls[0],
+            "https://backup.example/80.m4s"
+        );
         assert_eq!(entry.streams.audios[0].id, 30280);
+        assert_eq!(
+            entry.streams.audios[0].base_url,
+            "https://audio.example/30280.m4s"
+        );
         assert_eq!(entry.streams.flv_segments[0].order, 1);
-        assert!(entry.streams.flv_segments[0].backup_urls.is_empty());
+        assert_eq!(
+            entry.streams.flv_segments[0].url,
+            "https://flv.example/segment.flv"
+        );
+        assert_eq!(
+            entry.streams.flv_segments[0].backup_urls[0],
+            "https://flv-backup.example/segment.flv"
+        );
         assert_eq!(entry.streams.duration_seconds, Some(123));
         assert_eq!(entry.subtitles[0].url, "https://subtitle.example/zh.json");
         assert_eq!(
