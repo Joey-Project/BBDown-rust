@@ -363,6 +363,11 @@ impl BiliClient {
             .map_err(BiliClient::http_error_without_url)?;
         let content_range = content_range(response.headers())?;
         let append = resume_from > 0 && status == StatusCode::PARTIAL_CONTENT;
+        if status != StatusCode::PARTIAL_CONTENT && content_range.is_some() {
+            return Err(Error::InvalidInput(
+                "server returned Content-Range without partial content".to_owned(),
+            ));
+        }
         if status == StatusCode::PARTIAL_CONTENT {
             let range = content_range.ok_or_else(|| {
                 Error::InvalidInput(
@@ -402,10 +407,16 @@ impl BiliClient {
                     return Err(BiliClient::http_error_without_url(error));
                 }
             };
-            file.write_all(&chunk).await?;
+            if let Err(error) = file.write_all(&chunk).await {
+                rollback_download_file(&file, start_offset).await?;
+                return Err(Error::Io(error));
+            }
             bytes_written += u64::try_from(chunk.len()).unwrap_or(u64::MAX);
         }
-        file.flush().await?;
+        if let Err(error) = file.flush().await {
+            rollback_download_file(&file, start_offset).await?;
+            return Err(Error::Io(error));
+        }
         if let Err(error) =
             validate_download_completion(expected_size, content_range, start_offset, bytes_written)
         {
@@ -458,7 +469,7 @@ impl BiliClient {
         args.push("-y".to_owned());
         if only_flv_segments(files) {
             let list_path = entry_dir.join("ffmpeg-concat.txt");
-            fs::write(&list_path, concat_file_list(&media_files)).await?;
+            fs::write(&list_path, concat_file_list(&media_files, entry_dir)).await?;
             args.extend([
                 "-f".to_owned(),
                 "concat".to_owned(),
@@ -670,9 +681,10 @@ fn only_flv_segments(files: &[DownloadedFile]) -> bool {
             .all(|file| file.kind == DownloadFileKind::FlvSegment)
 }
 
-fn concat_file_list(paths: &[PathBuf]) -> String {
+fn concat_file_list(paths: &[PathBuf], base: &Path) -> String {
     paths.iter().fold(String::new(), |mut output, path| {
-        let escaped = path.to_string_lossy().replace('\'', "'\\''");
+        let list_path = path.strip_prefix(base).unwrap_or(path);
+        let escaped = list_path.to_string_lossy().replace('\'', "'\\''");
         let _ = writeln!(output, "file '{escaped}'");
         output
     })
@@ -736,8 +748,8 @@ fn url_path_extension(url: &str) -> Option<String> {
 mod tests {
     use super::{DownloadOptions, MuxOptions, RetryPolicy};
     use crate::models::{
-        DanmakuTrack, DownloadEntry, DownloadPlan, MediaStream, StreamSet, StreamSource,
-        SubtitleFormat, SubtitleTrack,
+        DanmakuTrack, DownloadEntry, DownloadPlan, FlvSegment, MediaStream, StreamSet,
+        StreamSource, SubtitleFormat, SubtitleTrack,
     };
     use crate::{BiliClient, ClientConfig, Credentials, DownloadFileKind};
     use httpmock::MockServer;
@@ -988,6 +1000,49 @@ mod tests {
         };
 
         assert!(error.to_string().contains("Content-Range"));
+        assert_eq!(tokio::fs::read_to_string(&path).await?, "old");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rejects_content_range_on_non_partial_response() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/video.m4s")
+                .header("range", "bytes=3-");
+            then.status(200)
+                .header("Content-Range", "bytes 3-5/6")
+                .body("new");
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let mut plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
+        plan.entries[0].streams.videos[0].size = Some(6);
+        let output_dir = temp.path().join("Mock video").join("P001-Main");
+        tokio::fs::create_dir_all(&output_dir).await?;
+        let path = output_dir.join("video-80.m4s");
+        tokio::fs::write(&path, "old").await?;
+
+        let Err(error) = client
+            .download_plan(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().to_path_buf(),
+                    retry: RetryPolicy::single_attempt(),
+                    include_danmaku: false,
+                    mux: MuxOptions::Disabled,
+                    ..DownloadOptions::default()
+                },
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!(
+                "non-partial Content-Range response should fail"
+            ));
+        };
+
+        assert!(error.to_string().contains("partial content"));
         assert_eq!(tokio::fs::read_to_string(&path).await?, "old");
         Ok(())
     }
@@ -1316,6 +1371,56 @@ mod tests {
         };
 
         assert!(error.to_string().contains("status 7"));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn flv_mux_concat_file_uses_paths_relative_to_entry_dir() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/segment.flv");
+            then.status(200).body("segment");
+        });
+        let temp = tempfile::Builder::new()
+            .prefix(".bbdown-flv-mux-")
+            .tempdir_in(".")?;
+        let ffmpeg = write_fake_ffmpeg(temp.path(), "exit 0")?;
+        let output_dir = temp.path().join("downloads");
+        let client = BiliClient::new(ClientConfig::default());
+        let mut plan = test_plan(&server);
+        plan.entries[0].streams.videos.clear();
+        plan.entries[0].streams.audios.clear();
+        plan.entries[0].streams.flv_segments = vec![FlvSegment {
+            order: 1,
+            url: format!("{}/segment.flv", server.base_url()),
+            backup_urls: Vec::new(),
+            size: Some(7),
+            length_ms: Some(1000),
+        }];
+        plan.entries[0].subtitles.clear();
+
+        client
+            .download_plan(
+                &plan,
+                DownloadOptions {
+                    output_dir: output_dir.clone(),
+                    retry: RetryPolicy::single_attempt(),
+                    include_danmaku: false,
+                    mux: MuxOptions::Ffmpeg { binary: ffmpeg },
+                    ..DownloadOptions::default()
+                },
+            )
+            .await?;
+
+        let concat_path = output_dir
+            .join("Mock video")
+            .join("P001-Main")
+            .join("ffmpeg-concat.txt");
+        assert_eq!(
+            tokio::fs::read_to_string(concat_path).await?,
+            "file 'segment-001.flv'\n"
+        );
         Ok(())
     }
 

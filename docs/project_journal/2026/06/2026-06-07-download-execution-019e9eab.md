@@ -46,9 +46,11 @@ superseded_by:
 - Resume coverage verifies HTTP `Range` requests and appending to a partial file.
 - Safety coverage verifies media downloads do not send cookies, backup URLs are used, matching 416
   responses are treated as complete, mismatched `Content-Range` responses are rejected, range body
-  lengths are checked, and expected media sizes are enforced.
+  lengths are checked, non-partial `Content-Range` responses are rejected, and expected media sizes
+  are enforced.
 - Retry coverage verifies a failed first request can be retried and then written successfully.
 - Mux coverage verifies fake ffmpeg success reports and failed ffmpeg status propagation.
+- FLV mux coverage verifies concat list paths are relative to the entry directory.
 - CLI e2e coverage verifies a mock `download --no-mux --no-danmaku --json` run writes media and
   subtitle files to disk.
 - CLI e2e coverage verifies the default mux path with a fake ffmpeg binary while preserving valid
@@ -63,4 +65,4 @@ superseded_by:
 
 - Local type gate: `cargo check --workspace`.
 - Local lint gate: `cargo clippy --workspace --all-targets -- -D warnings`.
-- Local tests: `cargo test --workspace` with 40 library tests and 5 CLI e2e tests.
+- Local tests: `cargo test --workspace` with 42 library tests and 5 CLI e2e tests.
