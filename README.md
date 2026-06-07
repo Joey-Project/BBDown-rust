@@ -110,8 +110,8 @@ Resolver diagnostics reduce endpoints to URL origins and redact sensitive error-
 
 GitHub tag releases build prepackaged `bbdown` CLI archives for Linux x86_64, macOS x86_64,
 macOS aarch64, and Windows x86_64. Manual release workflow runs can also build the same archives
-without publishing a GitHub Release. Each archive includes the CLI binary, `README.md`, and
-`docs/user-guide.md`, plus a `.sha256` checksum file.
+without publishing a GitHub Release. Each archive includes the CLI binary, `README.md`,
+`docs/user-guide.md`, and `LICENSE`. Each archive also has an adjacent `.sha256` checksum file.
 
 ## Developer Commands
 

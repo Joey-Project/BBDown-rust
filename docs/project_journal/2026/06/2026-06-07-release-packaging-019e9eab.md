@@ -27,8 +27,7 @@ superseded_by:
   workflow artifacts without publishing a release.
 - The release matrix covers Linux x86_64, macOS x86_64, macOS aarch64, and Windows x86_64.
 - Unix archives are `.tar.gz`; Windows archives are `.zip`.
-- Each package contains the `bbdown` CLI binary, `README.md`, and `docs/user-guide.md`; a `LICENSE`
-  file is included automatically if one is added later.
+- Each package contains the `bbdown` CLI binary, `README.md`, `docs/user-guide.md`, and `LICENSE`.
 - Each archive has an adjacent `.sha256` checksum file.
 - `scripts/package-release.sh` packages Unix archives and is locally syntax/lint validated.
 - `scripts/package-release.ps1` packages Windows archives for the GitHub Windows runner; local
