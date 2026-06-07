@@ -192,6 +192,7 @@ Default CI is deterministic:
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - unit tests
 - CLI mock e2e tests
+- crates.io dry-run packaging for the publishable `bbdown` library crate
 
 Release packaging is a separate GitHub Actions workflow. Tag pushes matching `v*` build Linux
 x86_64, macOS x86_64, macOS aarch64, and Windows x86_64 CLI archives and publish them to the
@@ -201,6 +202,11 @@ downloadable workflow artifacts without publishing a release. Archives contain t
 checksum file. Action references in the release workflow are pinned to commit SHAs. Package names
 normalize release refs to the packager-safe `[A-Za-z0-9._-]` character set, so tags such as SemVer
 build metadata do not fail at packaging time.
+
+Crate publishing is intentionally scoped to the reusable `bbdown` library crate. The crate has
+crates.io metadata, a package-local README, and CI-backed `cargo publish --dry-run -p bbdown --locked`
+validation. `bbdown-cli` remains `publish = false` because CLI distribution is handled by GitHub
+release archives.
 
 Live tests against Bilibili are opt-in only through `just live-e2e`. The recipe fails fast unless an
 ignored `live-e2e.samples.json` manifest exists, so branch CI is not blocked by network, account, or
@@ -226,7 +232,7 @@ fixed `cn`, `th`, `hk`, and `tw` ordering. Network requests have a configurable 
 5. Restricted-area proxy resolver ordering and diagnostics. Completed in PR #5.
 6. Manifest-driven local live e2e sample matrix. Completed in PR #7.
 7. GitHub binary release packaging. Completed in PR #8.
-8. Crate publish readiness and dry-run validation. Planned.
+8. Crate publish readiness and dry-run validation. Completed in this slice.
 9. Clearer stream quality selection and listing support. Planned.
 10. Restricted-area proxy response compatibility expansion. Planned.
 11. Integration API and documentation hardening. Planned.

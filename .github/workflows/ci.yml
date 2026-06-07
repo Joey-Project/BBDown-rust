@@ -25,3 +25,5 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Unit and e2e tests
         run: cargo test --workspace
+      - name: Crate publish dry run
+        run: cargo publish --dry-run -p bbdown --locked

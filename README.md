@@ -120,16 +120,19 @@ just fmt-check
 just lint
 just test
 just e2e
+just publish-dry-run
 just live-e2e
 just ci
 ```
 
-Default CI runs formatter, clippy, unit tests, and mock e2e tests. `just live-e2e` is intentionally
-excluded from default CI and fails fast unless the ignored local `live-e2e.samples.json` exists.
-Start from `live-e2e.samples.example.json`, then point `credential_file` and `access_key_file` at
-local secret files and list the public, PGC, intl, or restricted PGC samples to probe. The live
-harness writes an isolated temporary credential store per case and removes CLI override environment
-variables before running, so sample behavior is driven by the manifest rather than shell state.
+Default CI runs formatter, clippy, unit tests, mock e2e tests, and a crates.io dry run for the
+publishable `bbdown` library crate. The CLI crate is not a crates.io publish target; use the GitHub
+release archives for binary distribution. `just live-e2e` is intentionally excluded from default CI
+and fails fast unless the ignored local `live-e2e.samples.json` exists. Start from
+`live-e2e.samples.example.json`, then point `credential_file` and `access_key_file` at local secret
+files and list the public, PGC, intl, or restricted PGC samples to probe. The live harness writes an
+isolated temporary credential store per case and removes CLI override environment variables before
+running, so sample behavior is driven by the manifest rather than shell state.
 
 ## Documentation
 

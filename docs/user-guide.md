@@ -12,6 +12,12 @@ macOS aarch64, and Windows x86_64. Download the archive for your platform, verif
 adjacent `.sha256` file if needed, extract it, and place the `bbdown` or `bbdown.exe` binary on your
 `PATH`. Archives also include `README.md`, this user guide, and `LICENSE`.
 
+## Crate Publishing
+
+The crates.io publish target is the reusable `bbdown` library crate. Use `just publish-dry-run` to
+run the same locked `cargo publish --dry-run -p bbdown` gate used by CI. The `bbdown-cli` package is
+marked `publish = false`; install or distribute the CLI through GitHub release archives instead.
+
 ## Metadata
 
 Use `info` to resolve metadata:

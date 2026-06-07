@@ -12,7 +12,8 @@
   - `docs/project_journal/2026/06/2026-06-07-restricted-area-proxy-019e9eab.md`.
   - `docs/project_journal/2026/06/2026-06-07-live-e2e-matrix-019e9eab.md`.
   - `docs/project_journal/2026/06/2026-06-07-release-packaging-019e9eab.md`.
-- Next planned workstream: crate publish readiness and dry-run validation.
+  - `docs/project_journal/2026/06/2026-06-07-crate-publish-readiness-019e9eab.md`.
+- Next planned workstream: clearer stream quality selection and listing support.
 
 ## Recovery Pointers
 

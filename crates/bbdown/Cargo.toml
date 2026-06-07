@@ -1,10 +1,16 @@
 [package]
 name = "bbdown"
 version = "0.1.0"
+description = "Rust library for resolving Bilibili metadata, download plans, media, subtitles, and danmaku."
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/bbdown"
+readme = "README.md"
 rust-version.workspace = true
+keywords = ["bbdown", "bilibili", "download", "video", "async"]
+categories = ["api-bindings", "multimedia", "web-programming"]
 
 [dependencies]
 futures-util.workspace = true
