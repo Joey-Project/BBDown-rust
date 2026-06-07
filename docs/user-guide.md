@@ -12,9 +12,9 @@ Use `info` to resolve metadata:
 ```bash
 bbdown info av170001 --json
 bbdown info BV1qt4y1X7TW --json
-bbdown info ep359333 --json
-bbdown info ss28276 --select latest --json
-bbdown info md28230188 --select episode:359333 --json
+bbdown info ep267851 --json
+bbdown info ss26801 --select latest --json
+bbdown info md22718131 --select episode:267851 --json
 ```
 
 Season and media inputs require `--select` in non-interactive mode. Supported selectors are
@@ -26,8 +26,8 @@ Use `plan` to resolve stream, subtitle, and danmaku availability:
 
 ```bash
 bbdown plan av170001 --json
-bbdown plan ep359333 --json
-bbdown plan ss28276 --select latest --json
+bbdown plan ep267851 --json
+bbdown plan ss26801 --select latest --json
 bbdown plan https://www.bilibili.tv/en/play/34613/341736 --json
 ```
 
@@ -41,6 +41,7 @@ The JSON output contains:
 - `danmaku.xml_url`: the XML comment endpoint for the entry `cid`.
 
 Planning is side-effect free. It does not create files, download media, or call ffmpeg.
+PGC and intl planning may still require eligible account or region access.
 
 ## Credentials
 
@@ -63,7 +64,7 @@ The CLI accepts endpoint overrides for mock tests and future resolver chains:
 
 ```bash
 bbdown --api-base http://127.0.0.1:8080 plan av170001 --json
-bbdown --pgc-base http://127.0.0.1:8080 plan ep359333 --json
+bbdown --pgc-base http://127.0.0.1:8080 plan ep267851 --json
 bbdown --intl-base http://127.0.0.1:8080 plan https://www.bilibili.tv/en/play/34613/341736 --json
 ```
 

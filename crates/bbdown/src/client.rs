@@ -472,7 +472,7 @@ impl BiliClient {
             )?,
             StreamSource::IntlWeb => Self::endpoint_url(
                 &self.config.endpoints.intl_base,
-                "/intl/gateway/v2/ogv/playurl",
+                "/intl/gateway/web/playurl",
             )?,
         };
         {
@@ -505,13 +505,8 @@ impl BiliClient {
                 StreamSource::IntlWeb => {
                     let epid = epid.ok_or(Error::MissingField("epid"))?;
                     query
-                        .append_pair("aid", &aid.to_string())
-                        .append_pair("cid", &cid.to_string())
                         .append_pair("ep_id", &epid.to_string())
-                        .append_pair("platform", "android")
-                        .append_pair("prefer_code_type", "0")
-                        .append_pair("qn", "0")
-                        .append_pair("s_locale", "zh_SG");
+                        .append_pair("platform", "web");
                     if let Some(access_key) = self.config.credentials.access_key.as_deref() {
                         query.append_pair("access_key", access_key);
                     }
@@ -546,7 +541,10 @@ impl BiliClient {
                 )?;
                 {
                     let mut query = url.query_pairs_mut();
-                    query.append_pair("episode_id", &epid.to_string());
+                    query
+                        .append_pair("episode_id", &epid.to_string())
+                        .append_pair("platform", "web")
+                        .append_pair("s_locale", "en_US");
                     if let Some(access_key) = self.config.credentials.access_key.as_deref() {
                         query.append_pair("access_key", access_key);
                     }
@@ -974,6 +972,9 @@ impl PlayUrlRoot {
         if let Some(video_info) = payload.video_info.take() {
             payload = *video_info;
         }
+        if let Some(playurl) = payload.playurl.take() {
+            return playurl.into_stream_set(payload.timelength);
+        }
         let dash_duration = payload.dash.as_ref().and_then(|dash| dash.duration);
         let duration_seconds = dash_duration.or_else(|| {
             payload
@@ -1011,6 +1012,19 @@ impl PlayUrlRoot {
                 audios.push(stream);
             }
         }
+        videos.extend(
+            payload
+                .stream_list
+                .into_iter()
+                .filter_map(IntlStreamItem::into_video_stream),
+        );
+        audios.extend(
+            payload
+                .dash_audio
+                .into_iter()
+                .enumerate()
+                .filter_map(|(index, resource)| resource.into_media_stream(fallback_id(index))),
+        );
         let flv_segments = payload
             .durl
             .into_iter()
@@ -1033,12 +1047,125 @@ impl PlayUrlRoot {
 #[derive(Debug, Deserialize)]
 struct PlayPayload {
     video_info: Option<Box<PlayPayload>>,
+    playurl: Option<IntlPlayUrlPayload>,
     dash: Option<DashPayload>,
+    #[serde(default)]
+    stream_list: Vec<IntlStreamItem>,
+    #[serde(default)]
+    dash_audio: Vec<IntlMediaResource>,
     #[serde(default)]
     durl: Vec<DurlSegment>,
     #[serde(default)]
     accept_quality: Vec<u32>,
     timelength: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IntlPlayUrlPayload {
+    #[serde(default)]
+    video: Vec<IntlStreamItem>,
+    #[serde(default)]
+    audio_resource: Vec<IntlMediaResource>,
+    timelength: Option<u64>,
+}
+
+impl IntlPlayUrlPayload {
+    fn into_stream_set(self, fallback_timelength: Option<u64>) -> Result<StreamSet> {
+        let videos = self
+            .video
+            .into_iter()
+            .filter_map(IntlStreamItem::into_video_stream)
+            .collect::<Vec<_>>();
+        let audios = self
+            .audio_resource
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, resource)| resource.into_media_stream(fallback_id(index)))
+            .collect::<Vec<_>>();
+        if videos.is_empty() && audios.is_empty() {
+            return Err(Error::MissingField("intl playurl streams"));
+        }
+        let accept_quality = videos.iter().map(|stream| stream.id).collect();
+        let duration_seconds = self
+            .timelength
+            .or(fallback_timelength)
+            .and_then(|value| u32::try_from(value / 1000).ok());
+        Ok(StreamSet {
+            videos,
+            audios,
+            flv_segments: Vec::new(),
+            accept_quality,
+            duration_seconds,
+        })
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct IntlStreamItem {
+    stream_info: Option<IntlStreamInfo>,
+    video_resource: Option<IntlMediaResource>,
+    dash_video: Option<IntlMediaResource>,
+}
+
+impl IntlStreamItem {
+    fn into_video_stream(self) -> Option<MediaStream> {
+        let id = self.stream_info.and_then(|info| info.quality).or_else(|| {
+            self.video_resource
+                .as_ref()
+                .or(self.dash_video.as_ref())
+                .and_then(|resource| resource.id)
+        })?;
+        self.video_resource
+            .or(self.dash_video)
+            .and_then(|resource| resource.into_media_stream(id))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct IntlStreamInfo {
+    quality: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IntlMediaResource {
+    id: Option<u32>,
+    url: Option<String>,
+    base_url: Option<String>,
+    #[serde(rename = "baseUrl")]
+    base_url_camel: Option<String>,
+    backup_url: Option<Vec<String>>,
+    #[serde(rename = "backupUrl")]
+    backup_url_camel: Option<Vec<String>>,
+    codecs: Option<String>,
+    bandwidth: Option<u64>,
+    width: Option<u32>,
+    height: Option<u32>,
+    size: Option<u64>,
+}
+
+impl IntlMediaResource {
+    fn into_media_stream(self, fallback_id: u32) -> Option<MediaStream> {
+        let base_url = self
+            .url
+            .or(self.base_url)
+            .or(self.base_url_camel)
+            .filter(|value| !value.is_empty())?;
+        Some(MediaStream {
+            id: self.id.unwrap_or(fallback_id),
+            base_url,
+            backup_urls: self
+                .backup_url
+                .or(self.backup_url_camel)
+                .unwrap_or_default(),
+            codecs: self.codecs,
+            bandwidth: self.bandwidth,
+            width: self.width,
+            height: self.height,
+            frame_rate: None,
+            mime_type: None,
+            size: self.size,
+        })
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1225,6 +1352,10 @@ fn subtitle_format(url: &str) -> SubtitleFormat {
     }
 }
 
+fn fallback_id(index: usize) -> u32 {
+    u32::try_from(index).unwrap_or(u32::MAX)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{BiliClient, ClientConfig, EndpointConfig, PlayUrlRoot};
@@ -1388,6 +1519,41 @@ mod tests {
             streams.flv_segments[0].url,
             "https://flv.example/segment.flv"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn playurl_accepts_intl_mobile_video_info_shape() -> anyhow::Result<()> {
+        let response: PlayUrlRoot = serde_json::from_value(serde_json::json!({
+            "code": 0,
+            "data": {
+                "video_info": {
+                    "timelength": 42_000,
+                    "stream_list": [{
+                        "stream_info": {"quality": 80},
+                        "dash_video": {
+                            "base_url": "https://intl.example/video.m4s",
+                            "bandwidth": 900,
+                            "codecs": "avc1",
+                            "width": 1280,
+                            "height": 720
+                        }
+                    }],
+                    "dash_audio": [{
+                        "id": 30280,
+                        "base_url": "https://intl.example/audio.m4s",
+                        "bandwidth": 128_000,
+                        "codecs": "mp4a.40.2"
+                    }]
+                }
+            }
+        }))?;
+
+        let streams = response.into_stream_set()?;
+
+        assert_eq!(streams.duration_seconds, Some(42));
+        assert_eq!(streams.videos[0].id, 80);
+        assert_eq!(streams.audios[0].id, 30280);
         Ok(())
     }
 
@@ -1597,17 +1763,30 @@ mod tests {
         });
         server.mock(|when, then| {
             when.method(GET)
-                .path("/intl/gateway/v2/ogv/playurl")
-                .query_param("aid", "7")
-                .query_param("cid", "70")
+                .path("/intl/gateway/web/playurl")
                 .query_param("ep_id", "341736")
+                .query_param("platform", "web")
                 .query_param("access_key", "intl-token");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {
-                    "dash": {
-                        "video": [{"id": 80, "base_url": "https://intl.example/video.m4s"}],
-                        "audio": [{"id": 30280, "base_url": "https://intl.example/audio.m4s"}]
+                    "playurl": {
+                        "video": [{
+                            "stream_info": {"quality": 80},
+                            "video_resource": {
+                                "url": "https://intl.example/video.m4s",
+                                "width": 1280,
+                                "height": 720,
+                                "bandwidth": 900,
+                                "codecs": "avc1"
+                            }
+                        }],
+                        "audio_resource": [{
+                            "id": 30280,
+                            "url": "https://intl.example/audio.m4s",
+                            "bandwidth": 128_000,
+                            "codecs": "mp4a.40.2"
+                        }]
                     }
                 }
             }));
@@ -1616,6 +1795,8 @@ mod tests {
             when.method(GET)
                 .path("/intl/gateway/web/v2/subtitle")
                 .query_param("episode_id", "341736")
+                .query_param("platform", "web")
+                .query_param("s_locale", "en_US")
                 .query_param("access_key", "intl-token");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,

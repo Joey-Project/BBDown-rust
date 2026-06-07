@@ -16,30 +16,31 @@ Resolve metadata as JSON:
 ```bash
 bbdown info av170001 --json
 bbdown info BV1qt4y1X7TW --json
-bbdown info ep359333 --json
-bbdown info ss28276 --select latest --json
-bbdown info md28230188 --select latest --json
+bbdown info ep267851 --json
+bbdown info ss26801 --select latest --json
+bbdown info md22718131 --select latest --json
 ```
 
 Build a download plan as JSON:
 
 ```bash
 bbdown plan av170001 --json
-bbdown plan ep359333 --json
-bbdown plan ss28276 --select latest --json
+bbdown plan ep267851 --json
+bbdown plan ss26801 --select latest --json
 bbdown plan https://www.bilibili.tv/en/play/34613/341736 --json
 ```
 
 `plan` resolves the selected entries, available DASH or FLV stream URLs, subtitle URLs, and the
-danmaku XML URL for each `cid`. It does not download files yet.
+danmaku XML URL for each `cid`. PGC and intl planning may still require eligible account or region
+access. It does not download files yet.
 
 `ss` and `md` inputs require an explicit selection in non-interactive mode:
 
 ```bash
-bbdown info ss28276 --select latest
-bbdown info ss28276 --select all
-bbdown info ss28276 --select episode:359333
-bbdown info ss28276 --select page:1
+bbdown info ss26801 --select latest
+bbdown info ss26801 --select all
+bbdown info ss26801 --select episode:267851
+bbdown info ss26801 --select page:1
 ```
 
 Manage local credentials:
