@@ -3,10 +3,14 @@ use httpmock::MockServer;
 use httpmock::prelude::*;
 use serde_json::Value;
 use std::fs;
+use std::net::TcpListener;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 #[cfg(unix)]
 use std::path::Path;
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 #[test]
 fn info_json_resolves_mock_video() -> anyhow::Result<()> {
@@ -438,6 +442,85 @@ fn auth_qr_login_web_and_tv_use_local_store() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test]
+fn auth_qr_login_failures_do_not_save_credentials() -> anyhow::Result<()> {
+    let expired_server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let expired_credential_file = temp.path().join("expired-credentials.json");
+    mock_expired_web_qr_login(&expired_server);
+
+    let expired_output = Command::cargo_bin("bbdown")?
+        .env_remove("BBDOWN_PASSPORT_BASE")
+        .env_remove("BBDOWN_TV_PASSPORT_BASE")
+        .env_remove("BBDOWN_TV_PASSPORT_POLL_BASE")
+        .arg("--credential-file")
+        .arg(&expired_credential_file)
+        .arg("--passport-base")
+        .arg(expired_server.base_url())
+        .args([
+            "auth",
+            "login-web",
+            "--timeout-seconds",
+            "2",
+            "--poll-interval-seconds",
+            "1",
+            "--json",
+        ])
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+    assert!(String::from_utf8_lossy(&expired_output).contains("QR code expired"));
+    assert!(!expired_credential_file.exists());
+
+    let tv_server = MockServer::start();
+    let timeout_credential_file = temp.path().join("timeout-credentials.json");
+    let (slow_poll_base, shutdown, handle) = slow_poll_server()?;
+    mock_tv_qr_create(&tv_server);
+
+    let started = Instant::now();
+    let timeout_output = Command::cargo_bin("bbdown")?
+        .env_remove("BBDOWN_PASSPORT_BASE")
+        .env_remove("BBDOWN_TV_PASSPORT_BASE")
+        .env_remove("BBDOWN_TV_PASSPORT_POLL_BASE")
+        .arg("--credential-file")
+        .arg(&timeout_credential_file)
+        .arg("--request-timeout-seconds")
+        .arg("5")
+        .arg("--tv-passport-base")
+        .arg(tv_server.base_url())
+        .arg("--tv-passport-poll-base")
+        .arg(slow_poll_base)
+        .args([
+            "auth",
+            "login-tv",
+            "--timeout-seconds",
+            "1",
+            "--poll-interval-seconds",
+            "1",
+            "--json",
+        ])
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+    let elapsed = started.elapsed();
+    let _ = shutdown.send(());
+    handle
+        .join()
+        .map_err(|_| anyhow::anyhow!("slow poll server thread panicked"))?;
+
+    assert!(String::from_utf8_lossy(&timeout_output).contains("QR login timed out"));
+    assert!(
+        elapsed < Duration::from_secs(4),
+        "QR timeout should bound a hung poll request, elapsed: {elapsed:?}"
+    );
+    assert!(!timeout_credential_file.exists());
+    Ok(())
+}
+
 fn mock_web_qr_login(web_server: &MockServer) {
     web_server.mock(|when, then| {
         when.method(GET)
@@ -468,11 +551,44 @@ fn mock_web_qr_login(web_server: &MockServer) {
     });
 }
 
+fn mock_expired_web_qr_login(web_server: &MockServer) {
+    web_server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/passport-login/web/qrcode/generate")
+            .query_param("source", "main-fe-header")
+            .header_missing("cookie");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "url": "https://passport.example/scan?qrcode_key=EXPIRED",
+                "qrcode_key": "EXPIRED"
+            }
+        }));
+    });
+    web_server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/passport-login/web/qrcode/poll")
+            .query_param("qrcode_key", "EXPIRED")
+            .query_param("source", "main-fe-header")
+            .header_missing("cookie");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "code": 86038,
+                "message": "expired"
+            }
+        }));
+    });
+}
+
 fn run_web_qr_login(
     credential_file: &std::path::Path,
     web_server: &MockServer,
 ) -> anyhow::Result<Vec<u8>> {
     Ok(Command::cargo_bin("bbdown")?
+        .env_remove("BBDOWN_PASSPORT_BASE")
+        .env_remove("BBDOWN_TV_PASSPORT_BASE")
+        .env_remove("BBDOWN_TV_PASSPORT_POLL_BASE")
         .arg("--credential-file")
         .arg(credential_file)
         .arg("--passport-base")
@@ -493,7 +609,7 @@ fn run_web_qr_login(
         .clone())
 }
 
-fn mock_tv_qr_login(tv_server: &MockServer) {
+fn mock_tv_qr_create(tv_server: &MockServer) {
     tv_server.mock(|when, then| {
         when.method(POST)
             .path("/x/passport-tv-login/qrcode/auth_code")
@@ -509,6 +625,10 @@ fn mock_tv_qr_login(tv_server: &MockServer) {
             }
         }));
     });
+}
+
+fn mock_tv_qr_login(tv_server: &MockServer) {
+    mock_tv_qr_create(tv_server);
     tv_server.mock(|when, then| {
         when.method(POST)
             .path("/x/passport-tv-login/qrcode/poll")
@@ -528,11 +648,16 @@ fn run_tv_qr_login(
     tv_server: &MockServer,
 ) -> anyhow::Result<Vec<u8>> {
     Ok(Command::cargo_bin("bbdown")?
+        .env_remove("BBDOWN_PASSPORT_BASE")
+        .env_remove("BBDOWN_TV_PASSPORT_BASE")
+        .env_remove("BBDOWN_TV_PASSPORT_POLL_BASE")
         .arg("--credential-file")
         .arg(credential_file)
         .arg("--passport-base")
         .arg(unused_passport_server.base_url())
         .arg("--tv-passport-base")
+        .arg(tv_server.base_url())
+        .arg("--tv-passport-poll-base")
         .arg(tv_server.base_url())
         .args([
             "auth",
@@ -548,6 +673,31 @@ fn run_tv_qr_login(
         .get_output()
         .stdout
         .clone())
+}
+
+fn slow_poll_server() -> anyhow::Result<(String, mpsc::Sender<()>, thread::JoinHandle<()>)> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    listener.set_nonblocking(true)?;
+    let base_url = format!("http://{}", listener.local_addr()?);
+    let (shutdown_sender, shutdown_receiver) = mpsc::channel();
+    let handle = thread::spawn(move || {
+        loop {
+            if shutdown_receiver.try_recv().is_ok() {
+                break;
+            }
+            match listener.accept() {
+                Ok((_stream, _address)) => {
+                    let _ = shutdown_receiver.recv_timeout(Duration::from_secs(10));
+                    break;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    Ok((base_url, shutdown_sender, handle))
 }
 
 #[cfg(unix)]

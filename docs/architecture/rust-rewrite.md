@@ -136,13 +136,15 @@ so tests and controlled proxies can mirror either the upstream split-host flow o
 endpoint. TV tickets retain the generated device session context so polling reuses the same device
 identity. QR login requests use anonymous headers even when the client has stored credentials. The
 CLI `auth login-web` and `auth login-tv` commands update the local credential store after a
-succeeded state.
+succeeded state by reloading the current store before merging returned credentials, so a long QR wait
+does not overwrite another command's credential update with a stale pre-wait snapshot.
 
-Secrets are never included in status output; `auth status` and QR login JSON output report only
-booleans. The public QR state enum intentionally does not derive serde traits because the succeeded
-state carries full credentials for embedding callers that handle storage themselves. QR ticket debug
-output is redacted because ticket keys and scan URL query strings can act as pre-authentication
-secrets.
+Secrets are never included in status output; `auth status` and QR login `saved` JSON output report
+only booleans. The QR login `ticket` event and human scan output intentionally expose the scan URL so
+the user can authenticate, and callers should treat that URL as a temporary login secret. The public QR
+state enum intentionally does not derive serde traits because the succeeded state carries full
+credentials for embedding callers that handle storage themselves. QR ticket debug output is redacted
+because ticket keys and scan URL query strings can act as pre-authentication secrets.
 HTTP request errors are converted without retaining full URLs so query secrets such as intl
 `access_key` do not appear in user-facing errors.
 

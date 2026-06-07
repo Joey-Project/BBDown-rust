@@ -372,7 +372,6 @@ async fn handle_qr_login(
         args.poll_interval_seconds > 0,
         "--poll-interval-seconds must be greater than 0"
     );
-    let stored_credentials = store.load().context("failed to load credentials")?;
     let client = BiliClient::new(client_config(
         endpoints,
         request_timeout,
@@ -392,15 +391,7 @@ async fn handle_qr_login(
         println!("scan: {}", ticket.url);
     }
     let credentials = wait_for_qr_login(&client, &ticket, &args).await?;
-    let mut stored = stored_credentials;
-    if credentials.cookie.is_some() {
-        stored.cookie = credentials.cookie;
-    }
-    if credentials.access_key.is_some() {
-        stored.access_key = credentials.access_key;
-    }
-    store.save(&stored).context("failed to save credentials")?;
-    let summary = stored.redacted_summary();
+    let summary = save_qr_credentials(store, credentials)?;
     if args.json {
         print_json_line(&serde_json::json!({
             "event": "saved",
@@ -413,6 +404,25 @@ async fn handle_qr_login(
     Ok(())
 }
 
+fn save_qr_credentials(
+    store: &CredentialStore,
+    credentials: Credentials,
+) -> anyhow::Result<bbdown::CredentialSource> {
+    let mut stored = store.load().context("failed to load credentials")?;
+    merge_credentials(&mut stored, credentials);
+    store.save(&stored).context("failed to save credentials")?;
+    Ok(stored.redacted_summary())
+}
+
+fn merge_credentials(stored: &mut Credentials, credentials: Credentials) {
+    if credentials.cookie.is_some() {
+        stored.cookie = credentials.cookie;
+    }
+    if credentials.access_key.is_some() {
+        stored.access_key = credentials.access_key;
+    }
+}
+
 async fn wait_for_qr_login(
     client: &BiliClient,
     ticket: &QrLoginTicket,
@@ -421,16 +431,10 @@ async fn wait_for_qr_login(
     let interval = Duration::from_secs(args.poll_interval_seconds);
     let deadline = Instant::now() + Duration::from_secs(args.timeout_seconds);
     let mut last_waiting_state: Option<&'static str> = None;
-    let mut first_poll = true;
     loop {
-        if !first_poll && Instant::now() >= deadline {
-            bail!("QR login timed out");
-        }
-        first_poll = false;
-        let state = match ticket.kind {
-            QrLoginKind::Web => client.poll_web_qr_login(&ticket.key).await?,
-            QrLoginKind::Tv => client.poll_tv_qr_login(ticket).await?,
-        };
+        let poll_timeout =
+            remaining_until(Instant::now(), deadline).context("QR login timed out")?;
+        let state = poll_qr_login(client, ticket, poll_timeout).await?;
         match state {
             QrLoginState::WaitingForScan => {
                 if !args.json && last_waiting_state != Some("waiting_for_scan") {
@@ -450,6 +454,31 @@ async fn wait_for_qr_login(
         let sleep_duration =
             next_poll_sleep(Instant::now(), deadline, interval).context("QR login timed out")?;
         tokio::time::sleep(sleep_duration).await;
+    }
+}
+
+async fn poll_qr_login(
+    client: &BiliClient,
+    ticket: &QrLoginTicket,
+    timeout: Duration,
+) -> anyhow::Result<QrLoginState> {
+    tokio::time::timeout(timeout, async {
+        match ticket.kind {
+            QrLoginKind::Web => client.poll_web_qr_login(&ticket.key).await,
+            QrLoginKind::Tv => client.poll_tv_qr_login(ticket).await,
+        }
+    })
+    .await
+    .context("QR login timed out")?
+    .map_err(Into::into)
+}
+
+fn remaining_until(now: Instant, deadline: Instant) -> Option<Duration> {
+    let remaining = deadline.checked_duration_since(now)?;
+    if remaining.is_zero() {
+        None
+    } else {
+        Some(remaining)
     }
 }
 
@@ -574,7 +603,8 @@ fn _assert_credentials_send_sync(_: Credentials) {}
 
 #[cfg(test)]
 mod tests {
-    use super::next_poll_sleep;
+    use super::{next_poll_sleep, remaining_until, save_qr_credentials};
+    use bbdown::{CredentialStore, Credentials};
     use std::time::{Duration, Instant};
 
     #[test]
@@ -600,5 +630,45 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn remaining_until_uses_total_deadline_without_poll_interval_cap() {
+        let now = Instant::now();
+        assert_eq!(
+            remaining_until(now, now + Duration::from_secs(119)),
+            Some(Duration::from_secs(119))
+        );
+        assert_eq!(remaining_until(now, now), None);
+    }
+
+    #[test]
+    fn save_qr_credentials_merges_with_current_store() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let store = CredentialStore::new(temp.path().join("credentials.json"));
+        store.save(&Credentials {
+            cookie: Some("SESSDATA=fresh".to_owned()),
+            access_key: None,
+        })?;
+
+        let summary = save_qr_credentials(
+            &store,
+            Credentials {
+                cookie: None,
+                access_key: Some("ACCESS".to_owned()),
+            },
+        )?;
+        let saved = store.load()?;
+
+        assert_eq!(
+            saved,
+            Credentials {
+                cookie: Some("SESSDATA=fresh".to_owned()),
+                access_key: Some("ACCESS".to_owned()),
+            }
+        );
+        assert!(summary.has_cookie);
+        assert!(summary.has_access_key);
+        Ok(())
     }
 }

@@ -96,8 +96,9 @@ provided. Use `--credential-file <path>` to isolate test credentials from the de
 config path. `auth login-web` prints a QR login URL, polls until scan confirmation, and saves the
 resulting cookie. `auth login-tv` uses the TV QR flow and saves the resulting access key for app and
 intl flows. With `--json`, QR login prints newline-delimited JSON events: `ticket` includes the scan
-URL before polling, and `saved` includes only redacted credential booleans. Token values are not
-printed by status or JSON login output.
+URL before polling, and `saved` includes only redacted credential booleans. Treat the scan URL as a
+temporary login secret because it contains the QR login key. Token values are not printed by status or
+the `saved` JSON event.
 
 ## Endpoint Overrides
 

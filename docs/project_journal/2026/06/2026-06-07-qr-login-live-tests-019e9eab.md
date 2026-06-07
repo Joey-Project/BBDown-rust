@@ -37,9 +37,13 @@ superseded_by:
 - CLI `auth login-web` and `auth login-tv` print the scan URL in human mode, poll with
   deadline-based timeout handling, and save resulting credentials without printing token values.
 - QR login JSON output is newline-delimited event output: `ticket` exposes the scan URL before
-  polling, while `saved` reports only `has_cookie` and `has_access_key` booleans.
+  polling and must be treated as a temporary login secret, while `saved` reports only `has_cookie`
+  and `has_access_key` booleans.
+- QR login saves reload the current credential store after scan success before merging returned
+  credentials, so long QR waits do not overwrite another command's fresh credential update with a
+  stale pre-wait snapshot.
 - CLI mock e2e coverage verifies WEB QR cookie import and TV QR access-key import through a local
-  credential file.
+  credential file, plus expired and hung-poll failure paths that do not save credentials.
 - `crates/bbdown-cli/tests/live_e2e.rs` contains ignored opt-in live tests for `info --json` and
   `plan --json` using `BBDOWN_LIVE_URL`, optional `BBDOWN_LIVE_SELECTION`, `BBDOWN_LIVE_COOKIE`,
   and `BBDOWN_LIVE_ACCESS_KEY`.
@@ -53,9 +57,10 @@ superseded_by:
 ## Evidence
 
 - Targeted QR unit tests: `cargo test -p bbdown login`.
-- Targeted mock e2e test: `cargo test -p bbdown-cli --test cli_e2e auth_qr_login_web_and_tv_use_local_store`.
+- Targeted mock e2e tests: `cargo test -p bbdown-cli --test cli_e2e auth_qr_login`.
 - Targeted timeout helper test: `cargo test -p bbdown-cli next_poll_sleep_caps_interval_by_deadline`.
-- Local gate: `just ci` with 77 library tests, 1 CLI unit test, 6 mock CLI e2e tests, and 2
+- Targeted credential merge test: `cargo test -p bbdown-cli save_qr_credentials_merges_with_current_store`.
+- Local gate: `just ci` with 77 library tests, 3 CLI unit tests, 7 mock CLI e2e tests, and 2
   ignored live e2e tests in the default workspace test run.
 - Live gate env preflight: `just live-e2e` without `BBDOWN_LIVE_URL` exits with code 2 before
   running tests.

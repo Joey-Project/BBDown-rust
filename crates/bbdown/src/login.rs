@@ -490,6 +490,19 @@ mod tests {
                 }
             }));
         });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/passport-login/web/qrcode/poll")
+                .query_param("qrcode_key", "EXPIRED")
+                .header_missing("cookie");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "code": 86038,
+                    "message": "expired"
+                }
+            }));
+        });
         let client = test_client(&server);
 
         assert_eq!(
@@ -508,6 +521,10 @@ mod tests {
                     access_key: None,
                 }
             }
+        );
+        assert_eq!(
+            client.poll_web_qr_login("EXPIRED").await?,
+            QrLoginState::Expired
         );
         Ok(())
     }
@@ -532,11 +549,33 @@ mod tests {
             when.method(POST)
                 .path("/x/passport-tv-login/qrcode/poll")
                 .header_missing("cookie")
+                .form_urlencoded_tuple("auth_code", "WAIT")
+                .form_urlencoded_tuple_exists("sign");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 86039,
+                "message": "waiting scan"
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(POST)
+                .path("/x/passport-tv-login/qrcode/poll")
+                .header_missing("cookie")
                 .form_urlencoded_tuple("auth_code", "CONFIRM")
                 .form_urlencoded_tuple_exists("sign");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 86090,
                 "message": "waiting confirm"
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(POST)
+                .path("/x/passport-tv-login/qrcode/poll")
+                .header_missing("cookie")
+                .form_urlencoded_tuple("auth_code", "EXPIRED")
+                .form_urlencoded_tuple_exists("sign");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 86038,
+                "message": "expired"
             }));
         });
         server.mock(|when, then| {
@@ -554,11 +593,23 @@ mod tests {
         let ticket = client.create_tv_qr_login().await?;
 
         assert_eq!(ticket.key, "AUTH");
+        let mut wait_ticket = ticket.clone();
+        wait_ticket.key = "WAIT".to_owned();
+        assert_eq!(
+            client.poll_tv_qr_login(&wait_ticket).await?,
+            QrLoginState::WaitingForScan
+        );
         let mut confirm_ticket = ticket.clone();
         confirm_ticket.key = "CONFIRM".to_owned();
         assert_eq!(
             client.poll_tv_qr_login(&confirm_ticket).await?,
             QrLoginState::WaitingForConfirm
+        );
+        let mut expired_ticket = ticket.clone();
+        expired_ticket.key = "EXPIRED".to_owned();
+        assert_eq!(
+            client.poll_tv_qr_login(&expired_ticket).await?,
+            QrLoginState::Expired
         );
         assert_eq!(
             client.poll_tv_qr_login(&ticket).await?,
