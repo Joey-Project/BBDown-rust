@@ -100,8 +100,9 @@ bbdown --restricted-api-proxy tw=https://proxy.example/bili/api plan ss26801 --s
 parameters already present on the configured proxy base URL. Use repeated flags or comma-separated
 `BBDOWN_RESTRICTED_AREA_PROXY` / `BBDOWN_RESTRICTED_API_PROXY` values to configure multiple
 candidates. Repeated command-line flags preserve declaration order within the same area priority.
-Environment lists are read as playurl proxies first, then API-path proxies. Hosts are user supplied;
-the tool does not ship public proxy defaults. Proxy requests do not forward Bilibili cookies.
+When command-line and environment proxy values are both present, command-line candidates are tried
+first, followed by environment playurl proxies and then environment API-path proxies. Hosts are user
+supplied; the tool does not ship public proxy defaults. Proxy requests do not forward Bilibili cookies.
 Resolver diagnostics reduce endpoints to URL origins and redact sensitive error-message values.
 
 ## Developer Commands

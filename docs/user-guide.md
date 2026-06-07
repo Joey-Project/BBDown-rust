@@ -139,7 +139,8 @@ Proxy specs use `area=url` or a bare URL. Supported areas are `cn`, `th`, `hk`, 
 are generic candidates. `--restricted-area <area>` is a hint that moves matching candidates to the
 front. Without a hint, ordering is generic, `cn`, `th`, `hk`, then `tw`, with duplicates removed.
 Repeated command-line proxy flags preserve declaration order within the same area priority.
-Environment lists are read as playurl proxies first, then API-path proxies.
+When command-line and environment proxy values are both present, command-line candidates are tried
+first, followed by environment playurl proxies and then environment API-path proxies.
 
 `--restricted-area-proxy` targets BBDown/BiliPlus-style playurl proxy endpoints where the original
 PGC playurl query is sent to the configured URL. `--restricted-api-proxy` targets proxies that mirror

@@ -5,7 +5,7 @@ status: completed
 created: 2026-06-07
 updated: 2026-06-07
 branch: wip/restricted-area-proxy
-pr:
+pr: https://github.com/Joey-Project/BBDown-rust/pull/5
 supersedes: []
 superseded_by:
 ---
@@ -50,7 +50,10 @@ superseded_by:
 - Mock e2e coverage verifies official PGC failure followed by local proxy success, confirms JSON
   output does not leak configured access keys or cookies, and asserts proxy requests omit Cookie.
 - CLI unit coverage verifies cross-flag declaration order for proxy candidates and redacted URL parse
-  errors.
+  errors, uppercase URL schemes, CLI/env proxy merging, and non-UTF-8 non-proxy argv values.
+- Review fixes tightened fallback eligibility so non-area `403`/`-40301` errors keep their original
+  failure, and invalid proxy URL diagnostics now drop path/query/userinfo even for crate-level
+  public API inputs that bypass CLI URL validation.
 - App-only/mobile proxy response conversion remains out of scope for this slice.
 
 ## Evidence
@@ -58,7 +61,7 @@ superseded_by:
 - Targeted crate tests: `cargo test -p bbdown restricted_area`.
 - Targeted CLI unit test: `cargo test -p bbdown-cli restricted_area_cli_builds_proxy_chain`.
 - Targeted mock e2e test: `cargo test -p bbdown-cli --test cli_e2e plan_json_uses_restricted_area_proxy_after_official_pgc_failure`.
-- Local gate: `just ci` with formatter check, clippy, 84 library tests, 10 CLI unit tests, 8 mock
+- Local gate: `just ci` with formatter check, clippy, 85 library tests, 14 CLI unit tests, 8 mock
   CLI e2e tests, and 2 ignored live e2e tests in the default workspace test run.
 - Live gate env preflight: `just live-e2e` without `BBDOWN_LIVE_URL` exits with code 2 before
   running tests.

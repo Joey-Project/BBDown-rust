@@ -1336,10 +1336,9 @@ fn append_pgc_playurl_params(
 
 fn is_restricted_area_fallback_error(error: &Error) -> bool {
     match error {
-        Error::Api { code, message } => {
-            matches!(*code, 403 | -40301) || is_restricted_area_message(message)
+        Error::Api { message, .. } | Error::AccessRestricted(message) => {
+            is_restricted_area_message(message)
         }
-        Error::AccessRestricted(message) => is_restricted_area_message(message),
         _ => false,
     }
 }
@@ -1452,7 +1451,7 @@ fn redact_url_for_diagnostics(url: &Url) -> String {
 
 fn redact_url_string(raw: &str) -> String {
     Url::parse(raw).map_or_else(
-        |_| redact_basic_auth_like_string(raw),
+        |_| redact_unparsed_url_for_diagnostics(raw),
         |url| redact_url_for_diagnostics(&url),
     )
 }
@@ -1498,7 +1497,7 @@ fn redact_urls_in_text(raw: &str) -> String {
         let (url_token, trailing) = split_trailing_url_punctuation(token);
         match Url::parse(url_token) {
             Ok(url) => output.push_str(&redact_url_for_diagnostics(&url)),
-            Err(_) => output.push_str(url_token),
+            Err(_) => output.push_str(&redact_unparsed_url_for_diagnostics(url_token)),
         }
         output.push_str(trailing);
         index = end;
@@ -1601,6 +1600,29 @@ fn redact_basic_auth_like_string(raw: &str) -> String {
     )
     .trim_end_matches('/')
     .to_owned()
+}
+
+fn redact_unparsed_url_for_diagnostics(raw: &str) -> String {
+    let basic_auth_redacted = redact_basic_auth_like_string(raw);
+    let Some(scheme_end) = basic_auth_redacted.find("//") else {
+        return "<invalid-url>".to_owned();
+    };
+    let prefix = &basic_auth_redacted[..scheme_end];
+    let after_scheme = &basic_auth_redacted[(scheme_end + 2)..];
+    let authority_end = after_scheme
+        .find(|character: char| character.is_whitespace() || matches!(character, '/' | '?' | '#'))
+        .unwrap_or(after_scheme.len());
+    let authority = &after_scheme[..authority_end];
+    let authority = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    if authority.is_empty() {
+        "<invalid-url>".to_owned()
+    } else {
+        format!("{prefix}//{authority}")
+            .trim_end_matches('/')
+            .to_owned()
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -2915,7 +2937,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pgc_proxy_fallback_requires_area_restriction() -> anyhow::Result<()> {
+    async fn pgc_proxy_invalid_candidate_diagnostics_redact_endpoint() -> anyhow::Result<()> {
         let server = MockServer::start();
         server.mock(|when, then| {
             when.method(GET)
@@ -2937,12 +2959,15 @@ mod tests {
                 .path("/pgc/player/web/v2/playurl")
                 .query_param("ep_id", "1000");
             then.status(200).json_body_obj(&serde_json::json!({
-                "code": -10403,
-                "message": "vip required"
+                "code": -40301,
+                "message": "area restricted"
             }));
         });
         server.mock(|when, then| {
-            when.method(GET).path("/proxy-playurl");
+            when.method(GET)
+                .path("/proxy-playurl")
+                .query_param("ep_id", "1000")
+                .header_missing("cookie");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "result": {
@@ -2970,26 +2995,115 @@ mod tests {
                 tv_passport_base: server.base_url(),
                 tv_passport_poll_base: server.base_url(),
             },
-            credentials: Credentials {
-                cookie: None,
-                access_key: Some("ACCESS_SECRET".to_owned()),
-                tv_access_key: None,
-            },
+            credentials: Credentials::default(),
             restricted_area: RestrictedAreaConfig {
                 area_hint: Some(RestrictedArea::Hk),
-                proxies: vec![RestrictedAreaProxy::playurl(
-                    format!("{}/proxy-playurl", server.base_url()),
-                    Some(RestrictedArea::Hk),
-                )],
+                proxies: vec![
+                    RestrictedAreaProxy::playurl(
+                        "https://user:pass@proxy.example:bad/t/PATH_SECRET?proxy_token=PROXY_SECRET",
+                        Some(RestrictedArea::Hk),
+                    ),
+                    RestrictedAreaProxy::playurl(
+                        format!("{}/proxy-playurl", server.base_url()),
+                        Some(RestrictedArea::Hk),
+                    ),
+                ],
             },
             user_agent: "test".to_owned(),
             request_timeout: Duration::from_secs(30),
         });
 
-        let Err(error) = client.plan_download("ep1000", None).await else {
-            return Err(anyhow::anyhow!("non-area PGC error should not use proxy"));
-        };
-        assert!(matches!(error, Error::Api { code: -10403, .. }));
+        let plan = client.plan_download("ep1000", None).await?;
+        let diagnostics = serde_json::to_string(&plan.entries[0].diagnostics)?;
+
+        assert!(diagnostics.contains("https://proxy.example:bad"));
+        for sensitive in ["user:pass", "PATH_SECRET", "PROXY_SECRET", "proxy_token"] {
+            assert!(
+                !diagnostics.contains(sensitive),
+                "diagnostics leaked {sensitive}: {diagnostics}"
+            );
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pgc_proxy_fallback_requires_area_restriction() -> anyhow::Result<()> {
+        for code in [403_i64, -40301_i64] {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/pgc/view/web/season")
+                    .query_param("ep_id", "1000");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "code": 0,
+                    "result": {
+                        "season_id": 123,
+                        "title": "A Season",
+                        "episodes": [
+                            {"aid": 10, "bvid": "BV1aa", "cid": 100, "id": 1000, "ep_id": 1000, "title": "1"}
+                        ]
+                    }
+                }));
+            });
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/pgc/player/web/v2/playurl")
+                    .query_param("ep_id", "1000");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "code": code,
+                    "message": "vip required"
+                }));
+            });
+            server.mock(|when, then| {
+                when.method(GET).path("/proxy-playurl");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "code": 0,
+                    "result": {
+                        "video_info": {
+                            "dash": {
+                                "video": [{
+                                    "id": 64,
+                                    "baseUrl": "https://proxy.example/64.m4s",
+                                    "base_url": "https://proxy.example/64.m4s"
+                                }],
+                                "audio": []
+                            }
+                        }
+                    }
+                }));
+            });
+
+            let client = BiliClient::new(ClientConfig {
+                endpoints: EndpointConfig {
+                    api_base: server.base_url(),
+                    pgc_base: server.base_url(),
+                    intl_base: server.base_url(),
+                    comment_base: server.base_url(),
+                    passport_base: server.base_url(),
+                    tv_passport_base: server.base_url(),
+                    tv_passport_poll_base: server.base_url(),
+                },
+                credentials: Credentials {
+                    cookie: None,
+                    access_key: Some("ACCESS_SECRET".to_owned()),
+                    tv_access_key: None,
+                },
+                restricted_area: RestrictedAreaConfig {
+                    area_hint: Some(RestrictedArea::Hk),
+                    proxies: vec![RestrictedAreaProxy::playurl(
+                        format!("{}/proxy-playurl", server.base_url()),
+                        Some(RestrictedArea::Hk),
+                    )],
+                },
+                user_agent: "test".to_owned(),
+                request_timeout: Duration::from_secs(30),
+            });
+
+            let Err(error) = client.plan_download("ep1000", None).await else {
+                return Err(anyhow::anyhow!("non-area PGC error should not use proxy"));
+            };
+            assert!(matches!(error, Error::Api { code: error_code, .. } if error_code == code));
+        }
         Ok(())
     }
 

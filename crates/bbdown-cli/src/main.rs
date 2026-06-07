@@ -9,7 +9,7 @@ use bbdown::{
     RetryPolicy, Selection,
 };
 use clap::{Args, Parser, Subcommand};
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{self, Read};
 use std::path::PathBuf;
@@ -608,22 +608,47 @@ fn restricted_area_from_cli_with_args(
     cli: &Cli,
     raw_args: impl IntoIterator<Item = OsString>,
 ) -> anyhow::Result<RestrictedAreaConfig> {
+    let env_area_proxy = std::env::var("BBDOWN_RESTRICTED_AREA_PROXY").ok();
+    let env_api_proxy = std::env::var("BBDOWN_RESTRICTED_API_PROXY").ok();
+    restricted_area_from_cli_with_env_values(
+        cli,
+        raw_args,
+        env_area_proxy.as_deref(),
+        env_api_proxy.as_deref(),
+    )
+}
+
+fn restricted_area_from_cli_with_env_values(
+    cli: &Cli,
+    raw_args: impl IntoIterator<Item = OsString>,
+    env_area_proxy: Option<&str>,
+    env_api_proxy: Option<&str>,
+) -> anyhow::Result<RestrictedAreaConfig> {
     let area_hint = cli
         .restricted_area
         .as_deref()
         .map(parse_restricted_area)
         .transpose()?;
-    let proxy_args = proxy_args_from_raw_args(raw_args)?;
-    let proxy_args = if proxy_args.is_empty() {
-        proxy_args_from_cli_fields(cli)
-    } else {
-        proxy_args
-    };
+    let proxy_args = proxy_args_from_sources(cli, raw_args, env_area_proxy, env_api_proxy)?;
     let proxies = proxy_args
         .iter()
         .map(|arg| parse_restricted_proxy_spec(&arg.spec, arg.kind))
         .collect::<anyhow::Result<Vec<_>>>()?;
     Ok(RestrictedAreaConfig { area_hint, proxies })
+}
+
+fn proxy_args_from_sources(
+    cli: &Cli,
+    raw_args: impl IntoIterator<Item = OsString>,
+    env_area_proxy: Option<&str>,
+    env_api_proxy: Option<&str>,
+) -> anyhow::Result<Vec<RestrictedProxyArg>> {
+    let mut proxy_args = proxy_args_from_raw_args(raw_args)?;
+    proxy_args.extend(proxy_args_from_env_values(env_area_proxy, env_api_proxy));
+    if proxy_args.is_empty() {
+        proxy_args = proxy_args_from_cli_fields(cli);
+    }
+    Ok(proxy_args)
 }
 
 fn proxy_args_from_cli_fields(cli: &Cli) -> Vec<RestrictedProxyArg> {
@@ -644,27 +669,38 @@ fn proxy_args_from_cli_fields(cli: &Cli) -> Vec<RestrictedProxyArg> {
         .collect()
 }
 
+fn proxy_args_from_env_values(
+    area_proxy: Option<&str>,
+    api_proxy: Option<&str>,
+) -> Vec<RestrictedProxyArg> {
+    let mut proxy_args = Vec::new();
+    if let Some(value) = area_proxy.filter(|value| !value.trim().is_empty()) {
+        push_proxy_arg_values(&mut proxy_args, RestrictedAreaProxyKind::PlayUrl, value);
+    }
+    if let Some(value) = api_proxy.filter(|value| !value.trim().is_empty()) {
+        push_proxy_arg_values(&mut proxy_args, RestrictedAreaProxyKind::BilibiliApi, value);
+    }
+    proxy_args
+}
+
 fn proxy_args_from_raw_args(
     raw_args: impl IntoIterator<Item = OsString>,
 ) -> anyhow::Result<Vec<RestrictedProxyArg>> {
     let mut args = raw_args.into_iter().skip(1).peekable();
     let mut proxy_args = Vec::new();
     while let Some(arg) = args.next() {
-        let arg = arg
-            .into_string()
-            .map_err(|_| anyhow::anyhow!("CLI arguments must be valid UTF-8"))?;
-        if let Some(value) = arg.strip_prefix("--restricted-area-proxy=") {
+        if let Some(value) = os_str_strip_prefix(&arg, "--restricted-area-proxy=") {
             push_proxy_arg_values(&mut proxy_args, RestrictedAreaProxyKind::PlayUrl, value);
-        } else if let Some(value) = arg.strip_prefix("--restricted-api-proxy=") {
+        } else if let Some(value) = os_str_strip_prefix(&arg, "--restricted-api-proxy=") {
             push_proxy_arg_values(&mut proxy_args, RestrictedAreaProxyKind::BilibiliApi, value);
-        } else if arg == "--restricted-area-proxy" {
+        } else if arg == OsStr::new("--restricted-area-proxy") {
             if let Some(value) = args.next() {
                 let value = value.into_string().map_err(|_| {
                     anyhow::anyhow!("restricted-area proxy URL must be valid UTF-8")
                 })?;
                 push_proxy_arg_values(&mut proxy_args, RestrictedAreaProxyKind::PlayUrl, &value);
             }
-        } else if arg == "--restricted-api-proxy"
+        } else if arg == OsStr::new("--restricted-api-proxy")
             && let Some(value) = args.next()
         {
             let value = value
@@ -678,6 +714,10 @@ fn proxy_args_from_raw_args(
         }
     }
     Ok(proxy_args)
+}
+
+fn os_str_strip_prefix<'a>(value: &'a OsStr, prefix: &str) -> Option<&'a str> {
+    value.to_str()?.strip_prefix(prefix)
 }
 
 fn push_proxy_arg_values(
@@ -719,16 +759,25 @@ fn parse_restricted_proxy_spec(
 }
 
 fn parse_area_prefixed_proxy(spec: &str) -> anyhow::Result<Option<(&str, &str)>> {
+    if starts_with_http_scheme(spec) {
+        return Ok(None);
+    }
     let Some((area, base_url)) = spec.split_once('=') else {
         return Ok(None);
     };
-    if spec.starts_with("http://") || spec.starts_with("https://") {
-        return Ok(None);
-    }
     match area.trim().to_ascii_lowercase().as_str() {
         "cn" | "th" | "hk" | "tw" => Ok(Some((area, base_url))),
         other => bail!("unsupported restricted area `{other}`; expected cn, th, hk, or tw"),
     }
+}
+
+fn starts_with_http_scheme(value: &str) -> bool {
+    value
+        .get(.."http://".len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("http://"))
+        || value
+            .get(.."https://".len())
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("https://"))
 }
 
 fn parse_restricted_area(value: &str) -> anyhow::Result<RestrictedArea> {
@@ -856,7 +905,8 @@ fn _assert_credentials_send_sync(_: Credentials) {}
 mod tests {
     use super::{
         Cli, endpoints_from_cli, next_poll_sleep, remaining_until,
-        restricted_area_from_cli_with_args, save_qr_credentials,
+        restricted_area_from_cli_with_args, restricted_area_from_cli_with_env_values,
+        save_qr_credentials,
     };
     use bbdown::{CredentialStore, Credentials, EndpointConfig};
     use clap::Parser as _;
@@ -995,6 +1045,26 @@ mod tests {
     }
 
     #[test]
+    fn restricted_area_proxy_uppercase_scheme_may_contain_query_equals() -> anyhow::Result<()> {
+        let args = [
+            "bbdown",
+            "--restricted-area-proxy",
+            "HTTPS://generic.example/playurl?token=a=b",
+            "auth",
+            "status",
+        ];
+        let cli = Cli::parse_from(args);
+        let config = restricted_area_from_cli_with_args(&cli, args.map(std::ffi::OsString::from))?;
+
+        assert_eq!(config.proxies[0].area, None);
+        assert_eq!(
+            config.proxies[0].base_url,
+            "HTTPS://generic.example/playurl?token=a=b"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn restricted_area_proxy_preserves_cross_flag_cli_order() -> anyhow::Result<()> {
         let args = [
             "bbdown",
@@ -1017,11 +1087,85 @@ mod tests {
     }
 
     #[test]
+    fn restricted_area_proxy_merges_cli_and_env_values() -> anyhow::Result<()> {
+        let args = [
+            "bbdown",
+            "--restricted-area",
+            "hk",
+            "--restricted-area-proxy",
+            "hk=https://cli-play.example/playurl",
+            "auth",
+            "status",
+        ];
+        let cli = Cli::parse_from(args);
+        let config = restricted_area_from_cli_with_env_values(
+            &cli,
+            args.map(std::ffi::OsString::from),
+            None,
+            Some("hk=https://env-api.example/api"),
+        )?;
+        let ordered = config.ordered_proxies();
+
+        assert_eq!(ordered[0].base_url, "https://cli-play.example/playurl");
+        assert_eq!(ordered[1].base_url, "https://env-api.example/api");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restricted_area_raw_arg_scan_ignores_non_utf8_non_proxy_values() -> anyhow::Result<()> {
+        use std::os::unix::ffi::OsStringExt;
+
+        let cli = Cli::parse_from([
+            "bbdown",
+            "--credential-file",
+            "placeholder",
+            "auth",
+            "status",
+        ]);
+        let raw_args = vec![
+            std::ffi::OsString::from("bbdown"),
+            std::ffi::OsString::from("--credential-file"),
+            std::ffi::OsString::from_vec(vec![b'p', b'a', b't', b'h', 0xff]),
+            std::ffi::OsString::from("auth"),
+            std::ffi::OsString::from("status"),
+        ];
+        let config = restricted_area_from_cli_with_env_values(&cli, raw_args, None, None)?;
+
+        assert!(config.proxies.is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn restricted_area_proxy_parse_error_redacts_spec() {
         let args = [
             "bbdown",
             "--restricted-area-proxy",
             "hk=https://user:pass@exa mple/t/PATH_SECRET?token=QUERY_SECRET",
+            "auth",
+            "status",
+        ];
+        let cli = Cli::parse_from(args);
+        let error = restricted_area_from_cli_with_args(&cli, args.map(std::ffi::OsString::from))
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
+
+        assert!(error.contains("failed to parse restricted-area proxy URL"));
+        for sensitive in ["user:pass", "PATH_SECRET", "QUERY_SECRET", "token="] {
+            assert!(
+                !error.contains(sensitive),
+                "parse error leaked {sensitive}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn restricted_area_proxy_uppercase_scheme_parse_error_redacts_spec() {
+        let args = [
+            "bbdown",
+            "--restricted-area-proxy",
+            "HTTPS://user:pass@exa mple/t/PATH_SECRET?token=QUERY_SECRET",
             "auth",
             "status",
         ];
