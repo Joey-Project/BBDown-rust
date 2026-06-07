@@ -133,12 +133,13 @@ explicit command-line proxy candidates are tried before environment-derived prox
 PGC stream planning first calls the official PGC web playurl endpoint. If that response clearly
 reports a region/area restriction and restricted-area proxies are configured, the client tries
 ordered candidates until one returns a valid DASH or FLV stream shape. Non-area official failures keep
-their original error and do not contact proxy hosts. A BBDown/BiliPlus-style playurl proxy receives
-the PGC playurl query at the configured URL. A Bilibili API proxy receives the same query at
-`/pgc/player/web/v2/playurl` below the configured base URL and preserves any query parameters already
-present on that base URL. When a generic access key is present in `Credentials::access_key`, proxy
-requests include it as `access_key`; the TV-specific access key is not reused for this flow. Bilibili
-cookies are intentionally omitted from restricted-area proxy requests.
+their original error and do not contact proxy hosts. A BBDown/BiliPlus-style HTTP(S) playurl proxy
+receives the PGC playurl query at the configured URL. A Bilibili API HTTP(S) proxy receives the same
+query at `/pgc/player/web/v2/playurl` below the configured base URL and preserves any query
+parameters already present on that base URL. When a generic access key is present in
+`Credentials::access_key`, proxy requests include it as `access_key`; the TV-specific access key is
+not reused for this flow. Bilibili cookies are intentionally omitted from restricted-area proxy
+requests.
 
 When proxy fallback succeeds, `DownloadEntry.source` is `PgcProxy` and `DownloadEntry.diagnostics`
 contains the official failed attempt plus the successful proxy attempt. When all candidates fail,

@@ -95,8 +95,8 @@ bbdown --restricted-area hk --restricted-area-proxy hk=https://proxy.example/pla
 bbdown --restricted-api-proxy tw=https://proxy.example/bili/api plan ss26801 --select latest --json
 ```
 
-`--restricted-area-proxy` targets BBDown/BiliPlus-style playurl proxy endpoints.
-`--restricted-api-proxy` targets proxies that mirror `api.bilibili.com` paths and preserves query
+`--restricted-area-proxy` targets BBDown/BiliPlus-style HTTP(S) playurl proxy endpoints.
+`--restricted-api-proxy` targets HTTP(S) proxies that mirror `api.bilibili.com` paths and preserves query
 parameters already present on the configured proxy base URL. Use repeated flags or comma-separated
 `BBDOWN_RESTRICTED_AREA_PROXY` / `BBDOWN_RESTRICTED_API_PROXY` values to configure multiple
 candidates. Repeated command-line flags preserve declaration order within the same area priority.

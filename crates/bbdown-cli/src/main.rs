@@ -763,12 +763,17 @@ fn parse_restricted_proxy_spec(
         !base_url.is_empty(),
         "restricted-area proxy URL cannot be empty"
     );
-    url::Url::parse(base_url).with_context(|| {
+    let parsed = url::Url::parse(base_url).with_context(|| {
         format!(
             "failed to parse restricted-area proxy URL `{}`",
             redact_cli_url_for_error(base_url)
         )
     })?;
+    ensure!(
+        matches!(parsed.scheme(), "http" | "https"),
+        "restricted-area proxy URL `{}` must use http or https",
+        redact_cli_url_for_error(base_url)
+    );
     Ok(match kind {
         RestrictedAreaProxyKind::PlayUrl => RestrictedAreaProxy::playurl(base_url, area),
         RestrictedAreaProxyKind::BilibiliApi => RestrictedAreaProxy::bilibili_api(base_url, area),
@@ -777,7 +782,7 @@ fn parse_restricted_proxy_spec(
 }
 
 fn parse_area_prefixed_proxy(spec: &str) -> anyhow::Result<Option<(&str, &str)>> {
-    if starts_with_http_scheme(spec) {
+    if starts_with_url_scheme(spec) {
         return Ok(None);
     }
     let Some((area, base_url)) = spec.split_once('=') else {
@@ -789,13 +794,18 @@ fn parse_area_prefixed_proxy(spec: &str) -> anyhow::Result<Option<(&str, &str)>>
     }
 }
 
-fn starts_with_http_scheme(value: &str) -> bool {
-    value
-        .get(.."http://".len())
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("http://"))
-        || value
-            .get(.."https://".len())
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("https://"))
+fn starts_with_url_scheme(value: &str) -> bool {
+    let Some(scheme_end) = value.find("://") else {
+        return false;
+    };
+    let scheme = &value[..scheme_end];
+    scheme
+        .as_bytes()
+        .first()
+        .is_some_and(u8::is_ascii_alphabetic)
+        && scheme
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.'))
 }
 
 fn parse_restricted_area(value: &str) -> anyhow::Result<RestrictedArea> {
@@ -1219,6 +1229,30 @@ mod tests {
             .unwrap_or_default();
 
         assert!(error.contains("failed to parse restricted-area proxy URL"));
+        for sensitive in ["user:pass", "PATH_SECRET", "QUERY_SECRET", "token="] {
+            assert!(
+                !error.contains(sensitive),
+                "parse error leaked {sensitive}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn restricted_area_proxy_invalid_scheme_parse_error_redacts_spec() {
+        let args = [
+            "bbdown",
+            "--restricted-area-proxy",
+            "HTPS://user:pass@proxy.example/t/PATH_SECRET?token=QUERY_SECRET",
+            "auth",
+            "status",
+        ];
+        let cli = Cli::parse_from(args);
+        let error = restricted_area_from_cli_with_args(&cli, args.map(std::ffi::OsString::from))
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
+
+        assert!(error.contains("must use http or https"));
         for sensitive in ["user:pass", "PATH_SECRET", "QUERY_SECRET", "token="] {
             assert!(
                 !error.contains(sensitive),

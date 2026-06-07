@@ -143,9 +143,10 @@ When command-line and environment proxy values are both present, command-line ca
 first, followed by environment playurl proxies and then environment API-path proxies. Each source
 group is ordered by area hint, generic candidates, then fixed area order.
 
-`--restricted-area-proxy` targets BBDown/BiliPlus-style playurl proxy endpoints where the original
-PGC playurl query is sent to the configured URL. `--restricted-api-proxy` targets proxies that mirror
-`api.bilibili.com` path layout, so the CLI calls `/pgc/player/web/v2/playurl` below that base URL.
+`--restricted-area-proxy` targets BBDown/BiliPlus-style HTTP(S) playurl proxy endpoints where the
+original PGC playurl query is sent to the configured URL. `--restricted-api-proxy` targets HTTP(S)
+proxies that mirror `api.bilibili.com` path layout, so the CLI calls `/pgc/player/web/v2/playurl`
+below that base URL.
 If the configured API proxy base URL already contains a query string, that query is preserved before
 the PGC playurl parameters are appended. Both flags may be repeated.
 `BBDOWN_RESTRICTED_AREA_PROXY` and `BBDOWN_RESTRICTED_API_PROXY` also accept comma-separated lists.
