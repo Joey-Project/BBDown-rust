@@ -5,6 +5,7 @@ use anyhow::{Context, bail, ensure};
 use bbdown::{
     BiliClient, ClientConfig, CredentialStore, Credentials, DownloadOptions, DownloadReport,
     EndpointConfig, MuxOptions, QrLoginKind, QrLoginState, QrLoginTicket, ResolvedContent,
+    RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind,
     RetryPolicy, Selection,
 };
 use clap::{Args, Parser, Subcommand};
@@ -51,6 +52,22 @@ struct Cli {
     tv_passport_base: Option<String>,
     #[arg(long, env = "BBDOWN_TV_PASSPORT_POLL_BASE")]
     tv_passport_poll_base: Option<String>,
+    #[arg(long, env = "BBDOWN_RESTRICTED_AREA")]
+    restricted_area: Option<String>,
+    #[arg(
+        long,
+        env = "BBDOWN_RESTRICTED_AREA_PROXY",
+        value_delimiter = ',',
+        value_name = "[AREA=]URL"
+    )]
+    restricted_area_proxy: Vec<String>,
+    #[arg(
+        long,
+        env = "BBDOWN_RESTRICTED_API_PROXY",
+        value_delimiter = ',',
+        value_name = "[AREA=]URL"
+    )]
+    restricted_api_proxy: Vec<String>,
     #[arg(long, env = "BBDOWN_CREDENTIAL_FILE")]
     credential_file: Option<PathBuf>,
     #[arg(long, env = "BBDOWN_REQUEST_TIMEOUT_SECONDS", default_value_t = 30)]
@@ -142,6 +159,7 @@ async fn main() -> anyhow::Result<()> {
         "--request-timeout-seconds must be greater than 0"
     );
     let endpoints = endpoints_from_cli(&cli);
+    let restricted_area = restricted_area_from_cli(&cli)?;
     let request_timeout = Duration::from_secs(cli.request_timeout_seconds);
     let store = CredentialStore::new(credential_path(cli.credential_file)?);
     match cli.command {
@@ -149,6 +167,7 @@ async fn main() -> anyhow::Result<()> {
             handle_info(
                 &store,
                 endpoints.clone(),
+                restricted_area.clone(),
                 request_timeout,
                 url,
                 select,
@@ -160,6 +179,7 @@ async fn main() -> anyhow::Result<()> {
             handle_plan(
                 &store,
                 endpoints.clone(),
+                restricted_area.clone(),
                 request_timeout,
                 url,
                 select,
@@ -210,10 +230,10 @@ async fn main() -> anyhow::Result<()> {
                     },
                 },
             };
-            handle_download(&store, endpoints, request_timeout, args).await?;
+            handle_download(&store, endpoints, restricted_area, request_timeout, args).await?;
         }
         Command::Auth { command } => {
-            handle_auth(command, &store, endpoints, request_timeout).await?;
+            handle_auth(command, &store, endpoints, restricted_area, request_timeout).await?;
         }
     }
     Ok(())
@@ -229,13 +249,19 @@ struct DownloadCommandArgs {
 async fn handle_info(
     store: &CredentialStore,
     endpoints: EndpointConfig,
+    restricted_area: RestrictedAreaConfig,
     request_timeout: Duration,
     url: String,
     select: Option<Selection>,
     json: bool,
 ) -> anyhow::Result<()> {
     let credentials = store.load().context("failed to load credentials")?;
-    let client = BiliClient::new(client_config(endpoints, request_timeout, credentials));
+    let client = BiliClient::new(client_config(
+        endpoints,
+        restricted_area,
+        request_timeout,
+        credentials,
+    ));
     let resolved = client.resolve_input(&url, select).await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&resolved)?);
@@ -248,13 +274,19 @@ async fn handle_info(
 async fn handle_plan(
     store: &CredentialStore,
     endpoints: EndpointConfig,
+    restricted_area: RestrictedAreaConfig,
     request_timeout: Duration,
     url: String,
     select: Option<Selection>,
     json: bool,
 ) -> anyhow::Result<()> {
     let credentials = store.load().context("failed to load credentials")?;
-    let client = BiliClient::new(client_config(endpoints, request_timeout, credentials));
+    let client = BiliClient::new(client_config(
+        endpoints,
+        restricted_area,
+        request_timeout,
+        credentials,
+    ));
     let plan = client.plan_download(&url, select).await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&plan)?);
@@ -282,11 +314,17 @@ async fn handle_plan(
 async fn handle_download(
     store: &CredentialStore,
     endpoints: EndpointConfig,
+    restricted_area: RestrictedAreaConfig,
     request_timeout: Duration,
     args: DownloadCommandArgs,
 ) -> anyhow::Result<()> {
     let credentials = store.load().context("failed to load credentials")?;
-    let client = BiliClient::new(client_config(endpoints, request_timeout, credentials));
+    let client = BiliClient::new(client_config(
+        endpoints,
+        restricted_area,
+        request_timeout,
+        credentials,
+    ));
     let report = client
         .download_input(&args.url, args.select, args.options)
         .await?;
@@ -300,12 +338,14 @@ async fn handle_download(
 
 fn client_config(
     endpoints: EndpointConfig,
+    restricted_area: RestrictedAreaConfig,
     request_timeout: Duration,
     credentials: Credentials,
 ) -> ClientConfig {
     ClientConfig {
         endpoints,
         credentials,
+        restricted_area,
         user_agent: "bbdown-rs/0.1".to_owned(),
         request_timeout,
     }
@@ -315,6 +355,7 @@ async fn handle_auth(
     command: AuthCommand,
     store: &CredentialStore,
     endpoints: EndpointConfig,
+    restricted_area: RestrictedAreaConfig,
     request_timeout: Duration,
 ) -> anyhow::Result<()> {
     match command {
@@ -344,10 +385,26 @@ async fn handle_auth(
             println!("access key imported");
         }
         AuthCommand::LoginWeb(args) => {
-            handle_qr_login(QrLoginKind::Web, args, store, endpoints, request_timeout).await?;
+            handle_qr_login(
+                QrLoginKind::Web,
+                args,
+                store,
+                endpoints,
+                restricted_area,
+                request_timeout,
+            )
+            .await?;
         }
         AuthCommand::LoginTv(args) => {
-            handle_qr_login(QrLoginKind::Tv, args, store, endpoints, request_timeout).await?;
+            handle_qr_login(
+                QrLoginKind::Tv,
+                args,
+                store,
+                endpoints,
+                restricted_area,
+                request_timeout,
+            )
+            .await?;
         }
         AuthCommand::Logout => {
             store.clear().context("failed to clear credentials")?;
@@ -362,6 +419,7 @@ async fn handle_qr_login(
     args: QrLoginArgs,
     store: &CredentialStore,
     endpoints: EndpointConfig,
+    restricted_area: RestrictedAreaConfig,
     request_timeout: Duration,
 ) -> anyhow::Result<()> {
     ensure!(
@@ -374,6 +432,7 @@ async fn handle_qr_login(
     );
     let client = BiliClient::new(client_config(
         endpoints,
+        restricted_area,
         request_timeout,
         Credentials::default(),
     ));
@@ -540,6 +599,74 @@ fn endpoints_from_cli(cli: &Cli) -> EndpointConfig {
     }
 }
 
+fn restricted_area_from_cli(cli: &Cli) -> anyhow::Result<RestrictedAreaConfig> {
+    let area_hint = cli
+        .restricted_area
+        .as_deref()
+        .map(parse_restricted_area)
+        .transpose()?;
+    let mut proxies = Vec::new();
+    for spec in &cli.restricted_area_proxy {
+        proxies.push(parse_restricted_proxy_spec(
+            spec,
+            RestrictedAreaProxyKind::PlayUrl,
+        )?);
+    }
+    for spec in &cli.restricted_api_proxy {
+        proxies.push(parse_restricted_proxy_spec(
+            spec,
+            RestrictedAreaProxyKind::BilibiliApi,
+        )?);
+    }
+    Ok(RestrictedAreaConfig { area_hint, proxies })
+}
+
+fn parse_restricted_proxy_spec(
+    spec: &str,
+    kind: RestrictedAreaProxyKind,
+) -> anyhow::Result<RestrictedAreaProxy> {
+    let trimmed = spec.trim();
+    ensure!(!trimmed.is_empty(), "restricted-area proxy cannot be empty");
+    let (area, base_url) = if let Some((area, base_url)) = parse_area_prefixed_proxy(trimmed)? {
+        (Some(parse_restricted_area(area)?), base_url.trim())
+    } else {
+        (None, trimmed)
+    };
+    ensure!(
+        !base_url.is_empty(),
+        "restricted-area proxy URL cannot be empty"
+    );
+    url::Url::parse(base_url)
+        .with_context(|| format!("failed to parse restricted-area proxy URL from `{trimmed}`"))?;
+    Ok(match kind {
+        RestrictedAreaProxyKind::PlayUrl => RestrictedAreaProxy::playurl(base_url, area),
+        RestrictedAreaProxyKind::BilibiliApi => RestrictedAreaProxy::bilibili_api(base_url, area),
+    })
+}
+
+fn parse_area_prefixed_proxy(spec: &str) -> anyhow::Result<Option<(&str, &str)>> {
+    let Some((area, base_url)) = spec.split_once('=') else {
+        return Ok(None);
+    };
+    if spec.starts_with("http://") || spec.starts_with("https://") {
+        return Ok(None);
+    }
+    match area.trim().to_ascii_lowercase().as_str() {
+        "cn" | "th" | "hk" | "tw" => Ok(Some((area, base_url))),
+        other => bail!("unsupported restricted area `{other}`; expected cn, th, hk, or tw"),
+    }
+}
+
+fn parse_restricted_area(value: &str) -> anyhow::Result<RestrictedArea> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "cn" => Ok(RestrictedArea::Cn),
+        "th" => Ok(RestrictedArea::Th),
+        "hk" => Ok(RestrictedArea::Hk),
+        "tw" => Ok(RestrictedArea::Tw),
+        other => bail!("unsupported restricted area `{other}`; expected cn, th, hk, or tw"),
+    }
+}
+
 fn read_secret(
     args: SecretImportArgs,
     env_key: &'static str,
@@ -623,7 +750,10 @@ fn _assert_credentials_send_sync(_: Credentials) {}
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, endpoints_from_cli, next_poll_sleep, remaining_until, save_qr_credentials};
+    use super::{
+        Cli, endpoints_from_cli, next_poll_sleep, remaining_until, restricted_area_from_cli,
+        save_qr_credentials,
+    };
     use bbdown::{CredentialStore, Credentials, EndpointConfig};
     use clap::Parser as _;
     use std::time::{Duration, Instant};
@@ -713,6 +843,49 @@ mod tests {
 
         assert_eq!(endpoints.tv_passport_base, "http://127.0.0.1:8080");
         assert_eq!(endpoints.tv_passport_poll_base, "http://127.0.0.1:8081");
+    }
+
+    #[test]
+    fn restricted_area_cli_builds_proxy_chain() -> anyhow::Result<()> {
+        let cli = Cli::parse_from([
+            "bbdown",
+            "--restricted-area",
+            "hk",
+            "--restricted-area-proxy",
+            "https://generic.example/playurl",
+            "--restricted-api-proxy",
+            "tw=https://tw.example/api",
+            "--restricted-api-proxy",
+            "hk=https://hk.example/api",
+            "auth",
+            "status",
+        ]);
+        let config = restricted_area_from_cli(&cli)?;
+        let ordered = config.ordered_proxies();
+
+        assert_eq!(ordered[0].base_url, "https://hk.example/api");
+        assert_eq!(ordered[1].base_url, "https://generic.example/playurl");
+        assert_eq!(ordered[2].base_url, "https://tw.example/api");
+        Ok(())
+    }
+
+    #[test]
+    fn restricted_area_proxy_bare_url_may_contain_query_equals() -> anyhow::Result<()> {
+        let cli = Cli::parse_from([
+            "bbdown",
+            "--restricted-area-proxy",
+            "https://generic.example/playurl?token=a=b",
+            "auth",
+            "status",
+        ]);
+        let config = restricted_area_from_cli(&cli)?;
+
+        assert_eq!(config.proxies[0].area, None);
+        assert_eq!(
+            config.proxies[0].base_url,
+            "https://generic.example/playurl?token=a=b"
+        );
+        Ok(())
     }
 
     #[test]

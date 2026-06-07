@@ -7,7 +7,7 @@
 
 The current implementation establishes the crate/CLI/CI foundation, metadata resolver, stream
 planning, media downloads, sidecar downloads, retry/resume behavior, optional ffmpeg muxing, QR
-login, and opt-in live test harnesses. Restricted-area proxy ordering will land in a later PR slice.
+login, opt-in live test harnesses, and configured restricted-area proxy ordering with diagnostics.
 
 ## Current CLI
 
@@ -32,7 +32,8 @@ bbdown plan https://www.bilibili.tv/en/play/34613/341736 --json
 
 `plan` resolves the selected entries, available DASH or FLV stream URLs, subtitle URLs, and the
 danmaku XML URL for each `cid`. PGC and intl planning may still require eligible account or region
-access. It does not download files.
+access. PGC playurl resolution can fall back to user-configured restricted-area proxies. It does
+not download files.
 
 Download selected media files:
 
@@ -85,6 +86,18 @@ endpoint. Use `--passport-base` for WEB QR login mocks or proxies, and use `--tv
 `--tv-passport-poll-base` for TV QR login mocks or proxies. TV QR polling follows
 `--tv-passport-base` only when that TV-specific override is supplied; otherwise it uses the upstream
 TV poll default unless `--tv-passport-poll-base` is set explicitly.
+
+Configure restricted-area PGC playurl fallback with explicit proxy hosts:
+
+```bash
+bbdown --restricted-area hk --restricted-area-proxy hk=https://proxy.example/playurl plan ep267851 --json
+bbdown --restricted-api-proxy tw=https://proxy.example/bili/api plan ss26801 --select latest --json
+```
+
+`--restricted-area-proxy` targets BBDown/BiliPlus-style playurl proxy endpoints.
+`--restricted-api-proxy` targets proxies that mirror `api.bilibili.com` paths. Use repeated flags or
+comma-separated `BBDOWN_RESTRICTED_AREA_PROXY` / `BBDOWN_RESTRICTED_API_PROXY` values to configure
+multiple candidates. Hosts are user supplied; the tool does not ship public proxy defaults.
 
 ## Developer Commands
 

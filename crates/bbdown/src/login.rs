@@ -371,7 +371,7 @@ mod tests {
         QrLoginState, QrLoginTicket, TvLoginContext, cookie_from_set_cookie_headers,
         cookie_from_success_url, qrcode_key_from_url, tv_login_params,
     };
-    use crate::{BiliClient, ClientConfig, Credentials, EndpointConfig};
+    use crate::{BiliClient, ClientConfig, Credentials, EndpointConfig, RestrictedAreaConfig};
     use httpmock::MockServer;
     use httpmock::prelude::*;
     use reqwest::header::{HeaderMap, HeaderValue, SET_COOKIE};
@@ -687,6 +687,7 @@ mod tests {
                 access_key: None,
                 tv_access_key: None,
             },
+            restricted_area: RestrictedAreaConfig::default(),
             user_agent: "test".to_owned(),
             request_timeout: std::time::Duration::from_secs(30),
         })

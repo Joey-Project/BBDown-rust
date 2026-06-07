@@ -1096,8 +1096,8 @@ mod tests {
         subtitle_file_name, temporary_download_path, temporary_mux_path, temporary_replace_path,
     };
     use crate::models::{
-        DanmakuTrack, DownloadEntry, DownloadPlan, FlvSegment, MediaStream, StreamSet,
-        StreamSource, SubtitleFormat, SubtitleTrack,
+        DanmakuTrack, DownloadEntry, DownloadPlan, FlvSegment, MediaStream, StreamDiagnostics,
+        StreamSet, StreamSource, SubtitleFormat, SubtitleTrack,
     };
     use crate::{BiliClient, ClientConfig, Credentials, DownloadFileKind};
     use httpmock::MockServer;
@@ -2724,6 +2724,7 @@ mod tests {
                     accept_quality: vec![80],
                     duration_seconds: Some(3),
                 },
+                diagnostics: StreamDiagnostics::default(),
                 subtitles: vec![SubtitleTrack {
                     language: "en".to_owned(),
                     language_doc: Some("English".to_owned()),
