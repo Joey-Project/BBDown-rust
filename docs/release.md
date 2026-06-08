@@ -73,10 +73,10 @@ The workflow validates that the selected ref is the latest RC tag for the reques
 serializes all RC creation and promotion runs for the same release version, confirms the
 `bbdown-core` and `bbdown-cli` Cargo versions match the final tag, calls the shared release
 verification workflow, rebuilds final release archives, rechecks that the selected RC is still latest
-immediately before publication, verifies any existing crates.io `bbdown-core` version has the same
-local package checksum before creating the final tag or GitHub Release, creates the final annotated
-tag, publishes the GitHub Release, and then publishes `bbdown-core`. Generated GitHub Release notes
-start from the
+immediately before publication, verifies any existing crates.io `bbdown-core` version is non-yanked
+and has the same local package checksum before creating the final tag or GitHub Release, creates the
+final annotated tag, publishes the GitHub Release, and then publishes `bbdown-core`. Generated
+GitHub Release notes start from the
 previous non-RC release tag when one exists, so the final release notes do not use the just-created
 RC tag as their comparison base. If crates.io already contains the exact `bbdown-core` version, the
 publish step repackages the selected RC source and treats the run as recovered success only when the
@@ -105,7 +105,8 @@ local `.crate` SHA256 matches the crates.io checksum.
   to crates.io publication. Release archives normalize entry ordering, timestamps, owners, groups,
   and archive container metadata so identical compiled inputs have stable package checksums. If the
   exact crate version was already accepted by crates.io, the crate publish step exits successfully
-  only after the current RC package checksum matches the crates.io checksum.
+  only after the existing version is non-yanked and the current RC package checksum matches the
+  crates.io checksum.
 - Final releases are intentionally non-overwriting. Final tags are reused only when they already
   point at the same RC target commit, and published GitHub Releases are reused only when they are
   non-prerelease releases with a complete checksum-verified asset set. To replace a bad final

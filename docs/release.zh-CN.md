@@ -66,8 +66,9 @@ rulesets 应只允许这个 App 作为非人工 actor 写 tag。
 promotion，确认 `bbdown-core` 和 `bbdown-cli` Cargo version 与正式 tag 匹配，调用共享
 release verification workflow，重新构建正式 release archives，并在发布前再次确认选中的
 RC 仍然是最新 RC，在创建正式 tag 或 GitHub Release 前验证 crates.io 上任何已存在的
-`bbdown-core` version 都与本地 package checksum 匹配，然后创建正式 annotated tag，发布
-GitHub Release，并发布 `bbdown-core`。如果存在上一条非 RC 正式 release tag，自动生成的
+`bbdown-core` version 都没有被 yank 且与本地 package checksum 匹配，然后创建正式
+annotated tag，发布 GitHub Release，并发布 `bbdown-core`。如果存在上一条非 RC 正式
+release tag，自动生成的
 GitHub Release notes 会从那条 tag 开始，避免把刚创建的 RC tag 当作比较起点。如果
 crates.io 已经存在 exact `bbdown-core` version，crate publish step 会重新打包选中的 RC
 源码，并且只在本地 `.crate` SHA256 与 crates.io checksum 匹配时把它当作恢复成功。
@@ -90,8 +91,8 @@ crates.io 已经存在 exact `bbdown-core` version，crate publish step 会重�
   通过自己的 sidecar 校验、archive checksum 与已发布 assets 相同的时候复用它，然后继续发
   布到 crates.io。Release archives 会规范化条目顺序、时间戳、owner、group 和归档容器
   metadata，因此相同已编译输入会得到稳定 package checksum。如果 exact crate version 已经
-  被 crates.io 接受，crate publish step 只有在当前 RC package checksum 与 crates.io checksum
-  匹配后才会成功退出。
+  被 crates.io 接受，crate publish step 只有在已存在版本没有被 yank、且当前 RC package
+  checksum 与 crates.io checksum 匹配后才会成功退出。
 - 正式 release 被设计为不覆盖。正式 tag 只有在已经指向同一个 RC target commit 时才会被复
   用；已发布 GitHub Release 只有在它不是 prerelease、且 asset set 完整并通过 checksum 校验
   时才会被复用。要替换有问题的正式 release，请发布新版本。

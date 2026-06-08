@@ -158,3 +158,5 @@ superseded_by:
 - Follow-up frozen review found crates.io checksum mismatch recovery would fail only after creating
   the final tag and GitHub Release. Promotion now preflights the crates.io package state before
   publishing the GitHub Release and repeats the same helper check in the crate publish job.
+- Follow-up independent review found crates.io recovery could accept a yanked version with a matching
+  checksum. The shared crates.io helper now rejects yanked exact-version matches.

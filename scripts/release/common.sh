@@ -91,6 +91,7 @@ release_crate_version_state() {
   local status
   local published_version
   local published_checksum
+  local published_yanked
   local crate_path
   local local_checksum
   version_json=$(mktemp)
@@ -103,6 +104,11 @@ release_crate_version_state() {
     200)
       published_version=$(python3 -c 'import json, sys; print(json.load(sys.stdin)["version"]["num"])' < "${version_json}")
       if [[ "${published_version}" == "${version}" ]]; then
+        published_yanked=$(python3 -c 'import json, sys; print("true" if json.load(sys.stdin)["version"].get("yanked") else "false")' < "${version_json}")
+        if [[ "${published_yanked}" == "true" ]]; then
+          echo "::error::crates.io bbdown-core ${version} is yanked; recovery requires a non-yanked matching package"
+          exit 2
+        fi
         published_checksum=$(python3 -c 'import json, sys; print(json.load(sys.stdin)["version"].get("checksum") or "")' < "${version_json}")
         if [[ -z "${published_checksum}" ]]; then
           echo "::error::crates.io did not return a checksum for bbdown-core ${version}"
