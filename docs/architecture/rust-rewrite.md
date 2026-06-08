@@ -245,15 +245,18 @@ Default CI is deterministic:
 - CLI mock e2e tests
 - crates.io dry-run packaging for the publishable `bbdown-core` library package
 
-Release packaging is a separate GitHub Actions workflow. Tag pushes matching `v*` build Linux
-x86_64, macOS x86_64, macOS aarch64, and Windows x86_64 CLI archives and publish them to the
-GitHub Release with generated release notes. Manual workflow dispatch builds the same archives as
-downloadable workflow artifacts without publishing a release. Archives contain the `bbdown` binary,
-English and Simplified Chinese README files, English and Simplified Chinese user, embedding, and
-architecture guides, and `LICENSE`. Each archive also has an adjacent platform-specific checksum
-file. Action references in the release workflow are pinned to commit SHAs. Package names normalize
-release refs to the packager-safe `[A-Za-z0-9._-]` character set, so tags such as SemVer build
-metadata do not fail at packaging time.
+Release packaging is a separate GitHub Actions workflow stack. `Release Artifacts` is reusable and
+manual-only: it builds Linux x86_64, macOS x86_64, macOS aarch64, and Windows x86_64 CLI archives
+without publishing tags, GitHub Releases, or crates. `Create Release Candidate` validates `master`,
+builds those archives, and creates an annotated `vX.Y.Z-rc.N` tag through the release GitHub App.
+`Promote Release Candidate` must be run from an RC tag; it reruns validation, rebuilds final
+archives, creates the final annotated `vX.Y.Z` tag, publishes the GitHub Release, then publishes
+`bbdown-core` to crates.io through the protected `crates-io` environment. Archives contain the
+`bbdown` binary, English and Simplified Chinese README files, English and Simplified Chinese user,
+embedding, release, and architecture guides, and `LICENSE`. Each archive also has an adjacent
+platform-specific checksum file. Action references in the release workflows are pinned to commit
+SHAs. Package names normalize release refs to the packager-safe `[A-Za-z0-9._-]` character set, so
+tags such as SemVer build metadata do not fail at packaging time.
 
 Crate publishing is intentionally scoped to the reusable `bbdown-core` library package, imported as
 `bbdown_core` in Rust code. The crate has crates.io metadata, a package-local README and LICENSE,

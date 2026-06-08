@@ -1,0 +1,134 @@
+name: Create Release Candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Final SemVer version without the leading v, for example 0.1.0."
+        required: true
+        type: string
+      rc:
+        description: "Release candidate number, for example 1."
+        required: true
+        default: "1"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate release candidate
+    runs-on: ubuntu-latest
+    outputs:
+      rc_tag: ${{ steps.meta.outputs.rc_tag }}
+      target_sha: ${{ steps.meta.outputs.target_sha }}
+    steps:
+      # actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+
+      # dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+        with:
+          toolchain: 1.95.0
+          components: rustfmt, clippy
+
+      # Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+
+      - name: Validate release metadata
+        id: meta
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          RC: ${{ inputs.rc }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "refs/heads/master" ]]; then
+            echo "::error::release candidates must be created from the master branch; current ref is ${GITHUB_REF}"
+            exit 2
+          fi
+          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must be MAJOR.MINOR.PATCH without a leading v: ${VERSION}"
+            exit 2
+          fi
+          if [[ ! "${RC}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::rc must be a positive integer: ${RC}"
+            exit 2
+          fi
+          cargo_version=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; data = json.load(sys.stdin); print(next(pkg["version"] for pkg in data["packages"] if pkg["name"] == "bbdown-core"))')
+          if [[ "${cargo_version}" != "${VERSION}" ]]; then
+            echo "::error::bbdown-core version ${cargo_version} does not match requested release ${VERSION}"
+            exit 2
+          fi
+          target_sha=$(git rev-parse HEAD)
+          rc_tag="v${VERSION}-rc.${RC}"
+          {
+            echo "rc_tag=${rc_tag}"
+            echo "target_sha=${target_sha}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Lint
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Unit and e2e tests
+        run: cargo test --workspace
+
+      - name: Crate publish dry run
+        run: cargo publish --dry-run -p bbdown-core --locked
+
+  build-artifacts:
+    name: Build release candidate artifacts
+    needs: validate
+    uses: ./.github/workflows/release.yml
+    with:
+      checkout_ref: ${{ needs.validate.outputs.target_sha }}
+      package_version: ${{ needs.validate.outputs.rc_tag }}
+
+  create-tag:
+    name: Create release candidate tag
+    needs:
+      - validate
+      - build-artifacts
+    runs-on: ubuntu-latest
+    environment: release-candidate
+    permissions:
+      contents: write
+    steps:
+      # actions/create-github-app-token@v2
+      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        id: app-token
+        with:
+          app-id: ${{ secrets.RELEASE_GITHUB_APP_ID }}
+          private-key: ${{ secrets.RELEASE_GITHUB_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+
+      - name: Create annotated RC tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          RC_TAG: ${{ needs.validate.outputs.rc_tag }}
+          TARGET_SHA: ${{ needs.validate.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          repo="${GITHUB_REPOSITORY}"
+          if gh api "repos/${repo}/git/ref/tags/${RC_TAG}" >/dev/null 2>&1; then
+            echo "::error::tag ${RC_TAG} already exists"
+            exit 2
+          fi
+          tag_sha=$(gh api --method POST "repos/${repo}/git/tags" \
+            -f tag="${RC_TAG}" \
+            -f message="Release candidate ${RC_TAG}" \
+            -f object="${TARGET_SHA}" \
+            -f type=commit \
+            --jq .sha)
+          gh api --method POST "repos/${repo}/git/refs" \
+            -f ref="refs/tags/${RC_TAG}" \
+            -f sha="${tag_sha}" >/dev/null
+          echo "Created ${RC_TAG} at ${TARGET_SHA}"

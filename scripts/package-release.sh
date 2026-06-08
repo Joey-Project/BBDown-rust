@@ -44,6 +44,8 @@ cp "$repo_root/docs/embedding.md" "$staging_dir/docs/embedding.md"
 cp "$repo_root/docs/embedding.zh-CN.md" "$staging_dir/docs/embedding.zh-CN.md"
 cp "$repo_root/docs/user-guide.md" "$staging_dir/docs/user-guide.md"
 cp "$repo_root/docs/user-guide.zh-CN.md" "$staging_dir/docs/user-guide.zh-CN.md"
+cp "$repo_root/docs/release.md" "$staging_dir/docs/release.md"
+cp "$repo_root/docs/release.zh-CN.md" "$staging_dir/docs/release.zh-CN.md"
 cp "$repo_root/docs/architecture/rust-rewrite.md" "$staging_dir/docs/architecture/rust-rewrite.md"
 cp "$repo_root/docs/architecture/rust-rewrite.zh-CN.md" "$staging_dir/docs/architecture/rust-rewrite.zh-CN.md"
 if [[ -f "$repo_root/LICENSE" ]]; then

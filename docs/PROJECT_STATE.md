@@ -18,11 +18,14 @@
   - `docs/project_journal/2026/06/2026-06-08-integration-api-docs-019e9eab.md`.
   - `docs/project_journal/2026/06/2026-06-08-download-archive-dedup-019e9eab.md`.
   - `docs/project_journal/2026/06/2026-06-08-bilingual-docs-live-e2e-019ea775.md`.
+  - `docs/project_journal/2026/06/2026-06-08-release-automation-019ea7.md`.
 - The originally planned rewrite continuation slices are complete through download archive and
   duplicate decision handling.
 - Human-facing docs now have English and Simplified Chinese versions, and the latest real live e2e
   gate passed against the configured public and restricted-area samples.
 - The publishable library package is named `bbdown-core`; Rust code imports it as `bbdown_core`.
+- First-release automation now uses a protected RC tag workflow followed by RC promotion to GitHub
+  Release and crates.io.
 
 ## Recovery Pointers
 
@@ -31,6 +34,7 @@
 - User-facing CLI behavior is documented in `docs/user-guide.md`.
 - Crate embedding guidance is documented in `docs/embedding.md`.
 - Simplified Chinese companion docs use `*.zh-CN.md` next to the English originals.
+- Maintainer release steps are documented in `docs/release.md` and `docs/release.zh-CN.md`.
 
 ## Global Blockers
 

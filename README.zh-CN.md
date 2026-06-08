@@ -120,10 +120,12 @@ bbdown --restricted-api-proxy tw=https://proxy.example/bili/api plan ss26801 --s
 
 ## 发布构建
 
-GitHub tag release 会为 Linux x86_64、macOS x86_64、macOS aarch64 和 Windows x86_64 构
-建预打包的 `bbdown` CLI 归档。手动 release workflow 运行也可以构建相同归档，但不会发布
-GitHub Release。每个归档包含 CLI 二进制、英文和简体中文 README、英文和简体中文用户指
-南、嵌入指南和架构指南，以及 `LICENSE`。每个归档旁边还有 `.sha256` 校验文件。
+GitHub tag release 会通过两阶段 release candidate 和 promotion workflow 为 Linux x86_64、
+macOS x86_64、macOS aarch64 和 Windows x86_64 构建预打包的 `bbdown` CLI 归档。手动
+release artifact workflow 运行也可以构建相同归档，但不会发布 tag、GitHub Release 或
+crate。每个归档包含 CLI 二进制、英文和简体中文 README、英文和简体中文用户指南、嵌入指
+南、发布 runbook 和架构指南，以及 `LICENSE`。每个归档旁边还有 `.sha256` 校验文件。
+maintainer 发布步骤见 [发布 Runbook](docs/release.zh-CN.md)。
 
 ## 开发命令
 

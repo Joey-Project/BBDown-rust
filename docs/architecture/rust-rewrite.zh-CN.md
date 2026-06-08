@@ -216,13 +216,17 @@ ticket key 和扫码 URL query string 可作为预认证密钥。HTTP request er
 - CLI mock e2e 测试
 - 对可发布 `bbdown-core` library package 执行 crates.io dry-run packaging
 
-Release packaging 是单独的 GitHub Actions workflow。匹配 `v*` 的 tag push 会构建 Linux
-x86_64、macOS x86_64、macOS aarch64 和 Windows x86_64 CLI 归档，并用生成的 release notes
-发布到 GitHub Release。手动 workflow dispatch 会把相同归档构建为可下载 workflow artifact，
-但不发布 release。归档包含 `bbdown` 二进制、英文和简体中文 README、英文和简体中文用户
-指南、嵌入指南和架构指南，以及 `LICENSE`。每个归档旁边也有平台专用 checksum 文件。
-release workflow 中的 action 引用固定到 commit SHA。包名会把 release ref 规范化到打包器
-安全的 `[A-Za-z0-9._-]` 字符集，因此 SemVer build metadata 等 tag 不会导致打包失败。
+Release packaging 是单独的 GitHub Actions workflow stack。`Release Artifacts` 是可复用且
+仅手动/被调用的 workflow：它会构建 Linux x86_64、macOS x86_64、macOS aarch64 和 Windows
+x86_64 CLI 归档，但不发布 tag、GitHub Release 或 crate。`Create Release Candidate` 会验
+证 `master`、构建这些归档，并通过 release GitHub App 创建 annotated `vX.Y.Z-rc.N` tag。
+`Promote Release Candidate` 必须从 RC tag 运行；它会重新验证、重新构建正式归档，创建正式
+annotated `vX.Y.Z` tag，发布 GitHub Release，然后通过受保护的 `crates-io` environment 发
+布 `bbdown-core` 到 crates.io。归档包含 `bbdown` 二进制、英文和简体中文 README、英文和
+简体中文用户指南、嵌入指南、发布 runbook 和架构指南，以及 `LICENSE`。每个归档旁边也有
+平台专用 checksum 文件。release workflows 中的 action 引用固定到 commit SHA。包名会把
+release ref 规范化到打包器安全的 `[A-Za-z0-9._-]` 字符集，因此 SemVer build metadata 等
+tag 不会导致打包失败。
 
 Crate publishing 被有意限制在可复用 `bbdown-core` library package，在 Rust 代码中导入为
 `bbdown_core`。该 crate 有 crates.io metadata、package-local README 和 LICENSE、

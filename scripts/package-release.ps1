@@ -39,6 +39,8 @@ try {
     Copy-Item -LiteralPath (Join-Path $repoRoot "docs/embedding.zh-CN.md") -Destination (Join-Path $stagingDir "docs/embedding.zh-CN.md")
     Copy-Item -LiteralPath (Join-Path $repoRoot "docs/user-guide.md") -Destination (Join-Path $stagingDir "docs/user-guide.md")
     Copy-Item -LiteralPath (Join-Path $repoRoot "docs/user-guide.zh-CN.md") -Destination (Join-Path $stagingDir "docs/user-guide.zh-CN.md")
+    Copy-Item -LiteralPath (Join-Path $repoRoot "docs/release.md") -Destination (Join-Path $stagingDir "docs/release.md")
+    Copy-Item -LiteralPath (Join-Path $repoRoot "docs/release.zh-CN.md") -Destination (Join-Path $stagingDir "docs/release.zh-CN.md")
     Copy-Item -LiteralPath (Join-Path $repoRoot "docs/architecture/rust-rewrite.md") -Destination (Join-Path $stagingDir "docs/architecture/rust-rewrite.md")
     Copy-Item -LiteralPath (Join-Path $repoRoot "docs/architecture/rust-rewrite.zh-CN.md") -Destination (Join-Path $stagingDir "docs/architecture/rust-rewrite.zh-CN.md")
     $licensePath = Join-Path $repoRoot "LICENSE"
