@@ -37,8 +37,9 @@ superseded_by:
   the requested release version so GitHub Release archive names, CLI package metadata, and the
   crates.io package do not drift.
 - RC creation is serialized per requested release version, and promotion is serialized per final
-  release version, so concurrent manual runs cannot race the automatic RC number or duplicate the
-  same final release.
+  release version with the same concurrency group, so concurrent manual runs cannot race the
+  automatic RC number, create a later RC while an older RC is being promoted, or duplicate the same
+  final release.
 - RC creation rejects versions that already have a final tag or GitHub Release, so maintainers cannot
   create dead-end RC tags after a version has already shipped. The create-tag job repeats that check
   immediately before writing the RC tag because artifact builds and environment approval can add a
@@ -62,6 +63,11 @@ superseded_by:
 - Follow-up independent review found that generated final release notes could compare against the
   just-created RC tag. Promotion now passes the previous non-RC final release tag as the generated
   notes start tag when one exists.
+- Follow-up independent review found a cross-workflow race between RC creation and promotion. Both
+  workflows now share the same version-scoped concurrency group.
+- Follow-up independent review found a crates.io publish recovery gap after an upload is accepted but
+  the job is marked failed. The publish step now checks the exact `bbdown-core` version first and
+  treats an already-published matching version as recovered success.
 
 ## Validation
 
@@ -95,3 +101,8 @@ superseded_by:
   release.
 - Follow-up independent Codex PR review found generated release notes could use the RC tag as their
   comparison base; the workflow now uses the previous non-RC final release tag when available.
+- Follow-up independent Codex PR review found RC creation and promotion needed a shared cross-workflow
+  lock; both workflows now use the same version-scoped concurrency group.
+- Follow-up independent Codex PR review found crates.io publication was not idempotent after an
+  accepted upload with a failed job result; the publish step now exits successfully if the exact
+  `bbdown-core` version already exists.

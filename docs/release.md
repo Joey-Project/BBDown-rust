@@ -50,11 +50,11 @@ Recommended rulesets:
 5. Approve the `release-candidate` environment deployment.
 
 The workflow checks that it is running from the repository default branch, validates the
-`bbdown-core` and `bbdown-cli` Cargo versions, serializes RC creation per release version, computes
-the next RC number, runs formatter, clippy, declared MSRV check, tests, and a crates.io dry run,
-rejects versions that already have a final tag or GitHub Release, builds all release archives, then
-rechecks the final tag and GitHub Release state immediately before writing, and creates the
-annotated RC tag.
+`bbdown-core` and `bbdown-cli` Cargo versions, serializes all RC creation and promotion runs for the
+same release version, computes the next RC number, runs formatter, clippy, declared MSRV check,
+tests, and a crates.io dry run, rejects versions that already have a final tag or GitHub Release,
+builds all release archives, then rechecks the final tag and GitHub Release state immediately before
+writing, and creates the annotated RC tag.
 
 ## Promote An RC
 
@@ -68,12 +68,14 @@ annotated RC tag.
 6. Approve the `crates-io` environment deployment.
 
 The workflow validates that the selected ref is the latest RC tag for the requested version,
-serializes promotion per final release version, confirms the `bbdown-core` and `bbdown-cli` Cargo
-versions match the final tag, reruns formatter, clippy, declared MSRV check, tests, and crates.io dry
-run, rebuilds final release archives, rechecks that the selected RC is still latest immediately
-before publication, creates the final annotated tag, publishes the GitHub Release, and then publishes
-`bbdown-core`. Generated GitHub Release notes start from the previous non-RC release tag when one
-exists, so the final release notes do not use the just-created RC tag as their comparison base.
+serializes all RC creation and promotion runs for the same release version, confirms the
+`bbdown-core` and `bbdown-cli` Cargo versions match the final tag, reruns formatter, clippy, declared
+MSRV check, tests, and crates.io dry run, rebuilds final release archives, rechecks that the selected
+RC is still latest immediately before publication, creates the final annotated tag, publishes the
+GitHub Release, and then publishes `bbdown-core`. Generated GitHub Release notes start from the
+previous non-RC release tag when one exists, so the final release notes do not use the just-created
+RC tag as their comparison base. If crates.io already contains the exact `bbdown-core` version, the
+publish step treats that as recovered success.
 
 ## Failure Recovery
 
@@ -91,7 +93,8 @@ exists, so the final release notes do not use the just-created RC tag as their c
 - If GitHub Release publication succeeds but crates.io publication fails, prefer GitHub Actions
   `Re-run failed jobs` so only the failed crate job is retried. A full rerun from the same RC tag is
   also safe: the workflow reuses an existing published GitHub Release only when all expected assets
-  are present, then continues to crates.io publication.
+  are present, then continues to crates.io publication. If the exact crate version was already
+  accepted by crates.io, the crate publish step exits successfully.
 - Final releases are intentionally non-overwriting. Final tags are reused only when they already
   point at the same RC target commit, and published GitHub Releases are reused only when the expected
   assets are already complete. To replace a bad final release, create a new version.
