@@ -12,6 +12,8 @@ This project releases in two phases:
 
 The reusable release artifact workflow can still be run manually for archive previews, but it does
 not publish tags, GitHub Releases, or crates.
+RC creation and RC promotion share the same `Release Verification` reusable workflow for formatter,
+lint, declared MSRV, tests, and crates.io dry-run validation.
 
 ## GitHub Setup
 
@@ -51,10 +53,10 @@ Recommended rulesets:
 
 The workflow checks that it is running from the repository default branch, validates the
 `bbdown-core` and `bbdown-cli` Cargo versions, serializes all RC creation and promotion runs for the
-same release version, computes the next RC number, runs formatter, clippy, declared MSRV check,
-tests, and a crates.io dry run, rejects versions that already have a final tag or GitHub Release,
-builds all release archives, then rechecks the final tag and GitHub Release state immediately before
-writing, and creates the annotated RC tag.
+same release version, computes the next RC number, calls the shared release verification workflow,
+rejects versions that already have a final tag or GitHub Release, builds all release archives, then
+rechecks the final tag and GitHub Release state immediately before writing, and creates the
+annotated RC tag.
 
 ## Promote An RC
 
@@ -69,10 +71,10 @@ writing, and creates the annotated RC tag.
 
 The workflow validates that the selected ref is the latest RC tag for the requested version,
 serializes all RC creation and promotion runs for the same release version, confirms the
-`bbdown-core` and `bbdown-cli` Cargo versions match the final tag, reruns formatter, clippy, declared
-MSRV check, tests, and crates.io dry run, rebuilds final release archives, rechecks that the selected
-RC is still latest immediately before publication, creates the final annotated tag, publishes the
-GitHub Release, and then publishes `bbdown-core`. Generated GitHub Release notes start from the
+`bbdown-core` and `bbdown-cli` Cargo versions match the final tag, calls the shared release
+verification workflow, rebuilds final release archives, rechecks that the selected RC is still latest
+immediately before publication, creates the final annotated tag, publishes the GitHub Release, and
+then publishes `bbdown-core`. Generated GitHub Release notes start from the
 previous non-RC release tag when one exists, so the final release notes do not use the just-created
 RC tag as their comparison base. If crates.io already contains the exact `bbdown-core` version, the
 publish step repackages the selected RC source and treats the run as recovered success only when the

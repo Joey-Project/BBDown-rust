@@ -25,14 +25,19 @@ superseded_by:
 
 - `.github/workflows/release.yml` is now `Release Artifacts`, a reusable/manual artifact builder. It
   no longer publishes on arbitrary `v*` tag pushes.
+- `.github/workflows/release-verify.yml` is a reusable verification workflow shared by RC creation
+  and RC promotion, so formatter, clippy, declared MSRV check, tests, and crates.io dry-run coverage
+  stay in one place.
 - `.github/workflows/create-release-candidate.yml` validates the repository default branch, runs
-  formatter, clippy, declared MSRV check, tests, crates.io dry run, builds release archives,
-  auto-selects the next `vX.Y.Z-rc.N` tag, and creates that annotated tag through the release GitHub
-  App inside the `release-candidate` environment.
+  release verification, builds release archives, auto-selects the next `vX.Y.Z-rc.N` tag, and
+  creates that annotated tag through the release GitHub App inside the `release-candidate`
+  environment.
 - `.github/workflows/promote-release-candidate.yml` must be dispatched from an RC tag. It reruns the
-  same validation, rebuilds final artifacts, verifies the selected RC is the latest for that version,
-  creates the final annotated `vX.Y.Z` tag, publishes the GitHub Release inside the
+  shared release verification, rebuilds final artifacts, verifies the selected RC is the latest for
+  that version, creates the final annotated `vX.Y.Z` tag, publishes the GitHub Release inside the
   `production-release` environment, and publishes `bbdown-core` inside the `crates-io` environment.
+- Shared release shell helpers live in `scripts/release/common.sh`, which centralizes GitHub
+  tag/release queries, latest RC calculation, and Cargo workspace version extraction outside YAML.
 - RC and promotion validation both require `bbdown-core` and `bbdown-cli` Cargo versions to match
   the requested release version so GitHub Release archive names, CLI package metadata, and the
   crates.io package do not drift.
@@ -138,3 +143,6 @@ superseded_by:
 - GitHub Codex review found release asset reuse could accept stale but self-consistent archives; the
   promotion workflow now compares each published archive checksum against the rebuilt `dist`
   checksum before continuing to crates.io.
+- Follow-up refactor split repeated validation into `.github/workflows/release-verify.yml` and
+  repeated shell helpers into `scripts/release/common.sh`, with CODEOWNERS coverage for both new
+  surfaces.

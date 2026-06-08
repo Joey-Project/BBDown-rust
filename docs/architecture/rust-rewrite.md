@@ -248,10 +248,12 @@ Default CI is deterministic:
 
 Release packaging is a separate GitHub Actions workflow stack. `Release Artifacts` is reusable and
 manual-only: it builds Linux x86_64, macOS x86_64, macOS aarch64, and Windows x86_64 CLI archives
-without publishing tags, GitHub Releases, or crates. `Create Release Candidate` validates the
-repository default branch, builds those archives, and creates an annotated `vX.Y.Z-rc.N` tag through
-the release GitHub App, but first rejects versions that already have a final tag or GitHub Release.
-It repeats that final tag and GitHub Release check immediately before writing the RC tag.
+without publishing tags, GitHub Releases, or crates. `Release Verification` is also reusable: both
+RC creation and RC promotion call it to run formatter, clippy, declared MSRV, tests, and crates.io
+dry-run validation for the selected commit. `Create Release Candidate` validates the repository
+default branch, builds those archives, and creates an annotated `vX.Y.Z-rc.N` tag through the release
+GitHub App, but first rejects versions that already have a final tag or GitHub Release. It repeats
+that final tag and GitHub Release check immediately before writing the RC tag.
 `Promote Release Candidate` must be run from the latest RC tag for the requested version; it reruns
 validation, rebuilds final archives, rechecks that the selected RC is still latest immediately before
 publication, creates the final annotated `vX.Y.Z` tag, publishes the GitHub Release, then publishes
@@ -280,7 +282,8 @@ Rust channel from `rust-toolchain.toml`; third-party Rust toolchain and cache ac
 intentionally avoided. They also install Rust 1.95.0 for a
 `cargo check` gate matching the crate `rust-version` metadata. Package names normalize release refs
 to the packager-safe `[A-Za-z0-9._-]` character set, so tags such as SemVer build metadata do not
-fail at packaging time.
+fail at packaging time. Shared release shell helpers live in `scripts/release/` so tag/release API
+queries and Cargo version extraction can be linted outside YAML.
 
 Crate publishing is intentionally scoped to the reusable `bbdown-core` library package, imported as
 `bbdown_core` in Rust code. The crate has crates.io metadata, a package-local README and LICENSE,

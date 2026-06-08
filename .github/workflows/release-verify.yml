@@ -1,0 +1,43 @@
+name: Release Verification
+
+on:
+  workflow_call:
+    inputs:
+      checkout_ref:
+        description: "Git ref or SHA to validate."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify release source
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ inputs.checkout_ref }}
+
+      - name: Install Rust stable
+        run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Lint
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Install declared MSRV
+        run: rustup toolchain install 1.95.0 --profile minimal
+
+      - name: Check declared MSRV
+        run: cargo +1.95.0 check --workspace --locked
+
+      - name: Unit and e2e tests
+        run: cargo test --workspace
+
+      - name: Crate publish dry run
+        run: cargo publish --dry-run -p bbdown-core --locked

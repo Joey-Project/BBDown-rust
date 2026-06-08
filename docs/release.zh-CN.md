@@ -12,6 +12,8 @@
 
 可复用的 release artifact workflow 仍然可以手动运行，用于预览归档；它不会发布 tag、
 GitHub Release 或 crate。
+RC 创建和 RC promotion 共用 `Release Verification` reusable workflow 来执行 formatter、
+lint、declared MSRV、测试和 crates.io dry-run validation。
 
 ## GitHub 设置
 
@@ -46,9 +48,9 @@ rulesets 应只允许这个 App 作为非人工 actor 写 tag。
 
 该 workflow 会检查它是否从 repository default branch 运行，验证 `bbdown-core` 和
 `bbdown-cli` Cargo version，按同一 release version 串行化所有 RC 创建和 promotion 运行，
-计算下一个 RC 编号，运行 formatter、clippy、declared MSRV check、测试和 crates.io dry
-run，构建所有 release archives，并拒绝已经存在 final tag 或 GitHub Release 的 version，
-然后创建 annotated RC tag；真正写入前还会再次检查 final tag 和 GitHub Release 状态。
+计算下一个 RC 编号，调用共享 release verification workflow，构建所有 release archives，并拒
+绝已经存在 final tag 或 GitHub Release 的 version，然后创建 annotated RC tag；真正写入前
+还会再次检查 final tag 和 GitHub Release 状态。
 
 ## 晋升 RC
 
@@ -61,10 +63,10 @@ run，构建所有 release archives，并拒绝已经存在 final tag 或 GitHub
 6. 批准 `crates-io` environment deployment。
 
 该 workflow 会验证选中的 ref 是请求版本的最新 RC tag，按最终 release version 串行化
-promotion，确认 `bbdown-core` 和 `bbdown-cli` Cargo version 与正式 tag 匹配，重新运行
-formatter、clippy、declared MSRV check、测试和 crates.io dry run，重新构建正式 release
-archives，并在发布前再次确认选中的 RC 仍然是最新 RC，然后创建正式 annotated tag，发布
-GitHub Release，并发布 `bbdown-core`。如果存在上一条非 RC 正式 release tag，自动生成的
+promotion，确认 `bbdown-core` 和 `bbdown-cli` Cargo version 与正式 tag 匹配，调用共享
+release verification workflow，重新构建正式 release archives，并在发布前再次确认选中的
+RC 仍然是最新 RC，然后创建正式 annotated tag，发布 GitHub Release，并发布
+`bbdown-core`。如果存在上一条非 RC 正式 release tag，自动生成的
 GitHub Release notes 会从那条 tag 开始，避免把刚创建的 RC tag 当作比较起点。如果
 crates.io 已经存在 exact `bbdown-core` version，crate publish step 会重新打包选中的 RC
 源码，并且只在本地 `.crate` SHA256 与 crates.io checksum 匹配时把它当作恢复成功。

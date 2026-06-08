@@ -5,6 +5,7 @@
 /.github/workflows/*.yaml @JoeyTeng
 /scripts/package-release.sh @JoeyTeng
 /scripts/package-release.ps1 @JoeyTeng
+/scripts/release/** @JoeyTeng
 /Cargo.toml @JoeyTeng
 /Cargo.lock @JoeyTeng
 /crates/*/Cargo.toml @JoeyTeng

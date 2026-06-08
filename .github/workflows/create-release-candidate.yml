@@ -43,53 +43,7 @@ jobs:
         run: |
           set -euo pipefail
           repo="${GITHUB_REPOSITORY}"
-          release_id_for_tag() {
-            local tag=$1
-            local error_file
-            error_file=$(mktemp)
-            if ids=$(gh api --paginate "repos/${repo}/releases?per_page=100" --jq ".[] | select(.tag_name == \"${tag}\") | .id" 2>"${error_file}"); then
-              printf '%s\n' "${ids}" | sed -n '1p'
-              return
-            fi
-            echo "::error::failed to list GitHub Releases for ${tag}: $(tr '\n' ' ' < "${error_file}")"
-            exit 2
-          }
-          ensure_release_absent() {
-            local tag=$1
-            local release_id
-            release_id=$(release_id_for_tag "${tag}")
-            if [[ -n "${release_id}" ]]; then
-              echo "::error::GitHub Release ${tag} already exists; create a new version instead"
-              exit 2
-            fi
-          }
-          ensure_tag_absent() {
-            local tag=$1
-            local error_file
-            error_file=$(mktemp)
-            if gh api "repos/${repo}/git/ref/tags/${tag}" >/dev/null 2>"${error_file}"; then
-              echo "::error::final tag ${tag} already exists; create a new version instead"
-              exit 2
-            fi
-            if ! grep -q "HTTP 404" "${error_file}"; then
-              echo "::error::failed to check tag ${tag}: $(tr '\n' ' ' < "${error_file}")"
-              exit 2
-            fi
-          }
-          list_matching_refs() {
-            local prefix=$1
-            local error_file
-            error_file=$(mktemp)
-            if refs=$(gh api --paginate "repos/${repo}/git/matching-refs/tags/${prefix}" --jq '.[].ref' 2>"${error_file}"); then
-              printf '%s\n' "${refs}"
-              return
-            fi
-            if grep -q "HTTP 404" "${error_file}"; then
-              return
-            fi
-            echo "::error::failed to list matching tags for ${prefix}: $(tr '\n' ' ' < "${error_file}")"
-            exit 2
-          }
+          source scripts/release/common.sh
           if [[ -z "${DEFAULT_BRANCH}" ]]; then
             echo "::error::repository default branch is not available"
             exit 2
@@ -102,7 +56,7 @@ jobs:
             echo "::error::version must be MAJOR.MINOR.PATCH without a leading v: ${VERSION}"
             exit 2
           fi
-          cargo_versions=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; data = json.load(sys.stdin); versions = {pkg["name"]: pkg["version"] for pkg in data["packages"]}; print(versions["bbdown-core"]); print(versions["bbdown-cli"])')
+          cargo_versions=$(release_workspace_versions)
           core_version=$(printf '%s\n' "${cargo_versions}" | sed -n '1p')
           cli_version=$(printf '%s\n' "${cargo_versions}" | sed -n '2p')
           if [[ "${core_version}" != "${VERSION}" ]]; then
@@ -114,21 +68,9 @@ jobs:
             exit 2
           fi
           final_tag="v${VERSION}"
-          ensure_release_absent "${final_tag}"
-          ensure_tag_absent "${final_tag}"
-          rc_prefix="v${VERSION}-rc."
-          version_regex="${VERSION//./\\.}"
-          max_rc=0
-          refs=$(list_matching_refs "${rc_prefix}")
-          while IFS= read -r ref; do
-            tag="${ref#refs/tags/}"
-            if [[ "${tag}" =~ ^v${version_regex}-rc\.([1-9][0-9]*)$ ]]; then
-              current_rc="${BASH_REMATCH[1]}"
-              if (( current_rc > max_rc )); then
-                max_rc="${current_rc}"
-              fi
-            fi
-          done <<< "${refs}"
+          release_ensure_release_absent "${repo}" "${final_tag}"
+          release_ensure_tag_absent "${repo}" "${final_tag}" "final tag ${final_tag} already exists; create a new version instead"
+          max_rc=$(release_max_rc_number "${repo}" "${VERSION}")
           rc_number=$((max_rc + 1))
           target_sha=$(git rev-parse HEAD)
           rc_tag="v${VERSION}-rc.${rc_number}"
@@ -139,27 +81,18 @@ jobs:
             echo "version=${VERSION}"
           } >> "${GITHUB_OUTPUT}"
 
-      - name: Format
-        run: cargo fmt --all -- --check
-
-      - name: Lint
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
-      - name: Install declared MSRV
-        run: rustup toolchain install 1.95.0 --profile minimal
-
-      - name: Check declared MSRV
-        run: cargo +1.95.0 check --workspace --locked
-
-      - name: Unit and e2e tests
-        run: cargo test --workspace
-
-      - name: Crate publish dry run
-        run: cargo publish --dry-run -p bbdown-core --locked
+  verify:
+    name: Verify release source
+    needs: validate
+    uses: ./.github/workflows/release-verify.yml
+    with:
+      checkout_ref: ${{ needs.validate.outputs.target_sha }}
 
   build-artifacts:
     name: Build release candidate artifacts
-    needs: validate
+    needs:
+      - validate
+      - verify
     uses: ./.github/workflows/release.yml
     with:
       checkout_ref: ${{ needs.validate.outputs.target_sha }}
@@ -169,12 +102,18 @@ jobs:
     name: Create release candidate tag
     needs:
       - validate
+      - verify
       - build-artifacts
     runs-on: ubuntu-latest
     environment: release-candidate
     permissions:
       contents: write
     steps:
+      # actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ needs.validate.outputs.target_sha }}
+
       # actions/create-github-app-token@v2
       - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
         id: app-token
@@ -194,43 +133,10 @@ jobs:
         run: |
           set -euo pipefail
           repo="${GITHUB_REPOSITORY}"
-          release_id_for_tag() {
-            local tag=$1
-            local error_file
-            error_file=$(mktemp)
-            if ids=$(gh api --paginate "repos/${repo}/releases?per_page=100" --jq ".[] | select(.tag_name == \"${tag}\") | .id" 2>"${error_file}"); then
-              printf '%s\n' "${ids}" | sed -n '1p'
-              return
-            fi
-            echo "::error::failed to list GitHub Releases for ${tag}: $(tr '\n' ' ' < "${error_file}")"
-            exit 2
-          }
-          ensure_release_absent() {
-            local tag=$1
-            local release_id
-            release_id=$(release_id_for_tag "${tag}")
-            if [[ -n "${release_id}" ]]; then
-              echo "::error::GitHub Release ${tag} already exists; create a new version instead"
-              exit 2
-            fi
-          }
-          ensure_tag_absent() {
-            local tag=$1
-            local exists_message=$2
-            local error_file
-            error_file=$(mktemp)
-            if gh api "repos/${repo}/git/ref/tags/${tag}" >/dev/null 2>"${error_file}"; then
-              echo "::error::${exists_message}"
-              exit 2
-            fi
-            if ! grep -q "HTTP 404" "${error_file}"; then
-              echo "::error::failed to check tag ${tag}: $(tr '\n' ' ' < "${error_file}")"
-              exit 2
-            fi
-          }
-          ensure_release_absent "${FINAL_TAG}"
-          ensure_tag_absent "${FINAL_TAG}" "final tag ${FINAL_TAG} already exists; create a new version instead"
-          ensure_tag_absent "${RC_TAG}" "tag ${RC_TAG} already exists"
+          source scripts/release/common.sh
+          release_ensure_release_absent "${repo}" "${FINAL_TAG}"
+          release_ensure_tag_absent "${repo}" "${FINAL_TAG}" "final tag ${FINAL_TAG} already exists; create a new version instead"
+          release_ensure_tag_absent "${repo}" "${RC_TAG}" "tag ${RC_TAG} already exists"
           tag_sha=$(gh api --method POST "repos/${repo}/git/tags" \
             -f tag="${RC_TAG}" \
             -f message="Release candidate ${RC_TAG}" \

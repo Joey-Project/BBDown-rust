@@ -42,6 +42,8 @@ jobs:
           REQUESTED_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
+          repo="${GITHUB_REPOSITORY}"
+          source scripts/release/common.sh
           if [[ ! "${REQUESTED_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::version must be MAJOR.MINOR.PATCH without a leading v: ${REQUESTED_VERSION}"
             exit 2
@@ -62,38 +64,12 @@ jobs:
           fi
           selected_rc="${BASH_REMATCH[4]}"
           final_tag="v${version}"
-          rc_prefix="v${version}-rc."
-          version_regex="${version//./\\.}"
-          list_matching_refs() {
-            local prefix=$1
-            local error_file
-            error_file=$(mktemp)
-            if refs=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${prefix}" --jq '.[].ref' 2>"${error_file}"); then
-              printf '%s\n' "${refs}"
-              return
-            fi
-            if grep -q "HTTP 404" "${error_file}"; then
-              return
-            fi
-            echo "::error::failed to list matching tags for ${prefix}: $(tr '\n' ' ' < "${error_file}")"
-            exit 2
-          }
-          max_rc=0
-          refs=$(list_matching_refs "${rc_prefix}")
-          while IFS= read -r ref; do
-            tag="${ref#refs/tags/}"
-            if [[ "${tag}" =~ ^v${version_regex}-rc\.([1-9][0-9]*)$ ]]; then
-              current_rc="${BASH_REMATCH[1]}"
-              if (( current_rc > max_rc )); then
-                max_rc="${current_rc}"
-              fi
-            fi
-          done <<< "${refs}"
+          max_rc=$(release_max_rc_number "${repo}" "${version}")
           if (( selected_rc != max_rc )); then
             echo "::error::release promotion must use the latest RC tag for ${final_tag}; selected ${rc_tag}, latest is v${version}-rc.${max_rc}"
             exit 2
           fi
-          cargo_versions=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; data = json.load(sys.stdin); versions = {pkg["name"]: pkg["version"] for pkg in data["packages"]}; print(versions["bbdown-core"]); print(versions["bbdown-cli"])')
+          cargo_versions=$(release_workspace_versions)
           core_version=$(printf '%s\n' "${cargo_versions}" | sed -n '1p')
           cli_version=$(printf '%s\n' "${cargo_versions}" | sed -n '2p')
           if [[ "${core_version}" != "${version}" ]]; then
@@ -112,27 +88,18 @@ jobs:
             echo "version=${version}"
           } >> "${GITHUB_OUTPUT}"
 
-      - name: Format
-        run: cargo fmt --all -- --check
-
-      - name: Lint
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
-      - name: Install declared MSRV
-        run: rustup toolchain install 1.95.0 --profile minimal
-
-      - name: Check declared MSRV
-        run: cargo +1.95.0 check --workspace --locked
-
-      - name: Unit and e2e tests
-        run: cargo test --workspace
-
-      - name: Crate publish dry run
-        run: cargo publish --dry-run -p bbdown-core --locked
+  verify:
+    name: Verify release source
+    needs: validate
+    uses: ./.github/workflows/release-verify.yml
+    with:
+      checkout_ref: ${{ needs.validate.outputs.target_sha }}
 
   build-artifacts:
     name: Build final release artifacts
-    needs: validate
+    needs:
+      - validate
+      - verify
     uses: ./.github/workflows/release.yml
     with:
       checkout_ref: ${{ needs.validate.outputs.target_sha }}
@@ -142,6 +109,7 @@ jobs:
     name: Publish GitHub Release
     needs:
       - validate
+      - verify
       - build-artifacts
     runs-on: ubuntu-latest
     environment: production-release
@@ -156,6 +124,11 @@ jobs:
           private-key: ${{ secrets.RELEASE_GITHUB_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
+
+      # actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ needs.validate.outputs.target_sha }}
 
       # actions/download-artifact@v4
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -174,44 +147,9 @@ jobs:
         run: |
           set -euo pipefail
           repo="${GITHUB_REPOSITORY}"
-          rc_prefix="${FINAL_TAG}-rc."
-          version_regex="${VERSION//./\\.}"
+          source scripts/release/common.sh
           selected_rc="${RC_TAG##*.}"
-          list_matching_refs() {
-            local prefix=$1
-            local error_file
-            error_file=$(mktemp)
-            if refs=$(gh api --paginate "repos/${repo}/git/matching-refs/tags/${prefix}" --jq '.[].ref' 2>"${error_file}"); then
-              printf '%s\n' "${refs}"
-              return
-            fi
-            if grep -q "HTTP 404" "${error_file}"; then
-              return
-            fi
-            echo "::error::failed to list matching tags for ${prefix}: $(tr '\n' ' ' < "${error_file}")"
-            exit 2
-          }
-          release_id_for_final_tag() {
-            local error_file
-            error_file=$(mktemp)
-            if ids=$(gh api --paginate "repos/${repo}/releases?per_page=100" --jq ".[] | select(.tag_name == \"${FINAL_TAG}\") | .id" 2>"${error_file}"); then
-              printf '%s\n' "${ids}" | sed -n '1p'
-              return
-            fi
-            echo "::error::failed to list GitHub Releases for ${FINAL_TAG}: $(tr '\n' ' ' < "${error_file}")"
-            exit 2
-          }
-          max_rc=0
-          refs=$(list_matching_refs "${rc_prefix}")
-          while IFS= read -r ref; do
-            tag="${ref#refs/tags/}"
-            if [[ "${tag}" =~ ^v${version_regex}-rc\.([1-9][0-9]*)$ ]]; then
-              current_rc="${BASH_REMATCH[1]}"
-              if (( current_rc > max_rc )); then
-                max_rc="${current_rc}"
-              fi
-            fi
-          done <<< "${refs}"
+          max_rc=$(release_max_rc_number "${repo}" "${VERSION}")
           if (( selected_rc != max_rc )); then
             echo "::error::release promotion must use the latest RC tag for ${FINAL_TAG}; selected ${RC_TAG}, latest is v${VERSION}-rc.${max_rc}"
             exit 2
@@ -223,12 +161,9 @@ jobs:
           fi
           tag_ref_error=$(mktemp)
           if tag_ref_json=$(gh api "repos/${repo}/git/ref/tags/${FINAL_TAG}" 2>"${tag_ref_error}"); then
-            tag_object_type=$(printf '%s' "${tag_ref_json}" | python3 -c 'import json, sys; print(json.load(sys.stdin)["object"]["type"])')
-            tag_object_sha=$(printf '%s' "${tag_ref_json}" | python3 -c 'import json, sys; print(json.load(sys.stdin)["object"]["sha"])')
-            if [[ "${tag_object_type}" == "tag" ]]; then
-              tag_target_sha=$(gh api "repos/${repo}/git/tags/${tag_object_sha}" --jq .object.sha)
-            else
-              tag_target_sha="${tag_object_sha}"
+            tag_target_sha=$(printf '%s' "${tag_ref_json}" | python3 -c 'import json, sys; data = json.load(sys.stdin); print(data["object"]["sha"] if data["object"]["type"] != "tag" else "")')
+            if [[ -z "${tag_target_sha}" ]]; then
+              tag_target_sha=$(release_tag_target_sha "${repo}" "${FINAL_TAG}")
             fi
             if [[ "${tag_target_sha}" != "${TARGET_SHA}" ]]; then
               echo "::error::tag ${FINAL_TAG} points to ${tag_target_sha}, expected ${TARGET_SHA}"
@@ -250,7 +185,7 @@ jobs:
               -f ref="refs/tags/${FINAL_TAG}" \
               -f sha="${tag_sha}" >/dev/null
           fi
-          release_id=$(release_id_for_final_tag)
+          release_id=$(release_id_for_tag "${repo}" "${FINAL_TAG}")
           if [[ -n "${release_id}" ]]; then
             release_json=$(gh api "repos/${repo}/releases/${release_id}")
             release_is_draft=$(printf '%s' "${release_json}" | python3 -c 'import json, sys; print("true" if json.load(sys.stdin)["draft"] else "false")')
@@ -337,7 +272,7 @@ jobs:
               exit 0
             fi
           fi
-          release_refs=$(list_matching_refs "v")
+          release_refs=$(release_list_matching_refs "${repo}" "v")
           previous_final_tag=$(printf '%s\n' "${release_refs}" | python3 -c 'import os, re, sys; current = tuple(map(int, os.environ["VERSION"].split("."))); candidates = [(tuple(map(int, match.groups())), tag) for line in sys.stdin for tag in [line.strip().removeprefix("refs/tags/")] for match in [re.fullmatch(r"v([0-9]+)\.([0-9]+)\.([0-9]+)", tag)] if match and tuple(map(int, match.groups())) < current]; print(max(candidates)[1] if candidates else "")')
           release_note_args=(--generate-notes)
           if [[ -n "${previous_final_tag}" ]]; then
