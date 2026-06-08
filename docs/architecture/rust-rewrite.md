@@ -265,7 +265,8 @@ release tag when one exists, so the RC tag is not used as the comparison base fo
 Promotion also supports retry after GitHub Release creation is interrupted: draft releases are
 deleted and recreated, while published releases are reused only if the expected asset set is already
 an exact match for the rebuilt files, including names, `uploaded` states, byte sizes, and SHA-256
-digests. The workflow lists
+digests. Release archives normalize entry ordering, timestamps, owners, groups, and archive container
+metadata so rebuilding the same target commit produces stable package checksums. The workflow lists
 releases by `tag_name` instead of relying only on the published-release tag endpoint, so draft
 releases are visible to the release GitHub App token. The crates.io publish step checks the exact
 `bbdown-core` version first and treats an already-published matching version as recovered success,

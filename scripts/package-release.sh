@@ -24,6 +24,11 @@ if [[ ! -f "$binary_path" ]]; then
   exit 2
 fi
 
+if ! command -v python3 >/dev/null 2>&1; then
+  printf 'python3 is required to create reproducible release archives\n' >&2
+  exit 2
+fi
+
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 mkdir -p "$output_dir"
 output_dir=$(cd "$output_dir" && pwd)
@@ -52,7 +57,46 @@ if [[ -f "$repo_root/LICENSE" ]]; then
   cp "$repo_root/LICENSE" "$staging_dir/LICENSE"
 fi
 
-tar -C "$staging_parent" -czf "$archive_path" "$package_name"
+python3 - "$staging_parent" "$package_name" "$archive_path" <<'PY'
+import gzip
+import os
+import sys
+import tarfile
+
+staging_parent, package_name, archive_path = sys.argv[1:]
+package_root = os.path.join(staging_parent, package_name)
+
+
+def normalize(info):
+    mode = info.mode & 0o777
+    info.uid = 0
+    info.gid = 0
+    info.uname = "root"
+    info.gname = "root"
+    info.mtime = 0
+    if info.isdir():
+        info.mode = 0o755
+    elif info.isfile():
+        info.mode = 0o755 if mode & 0o111 else 0o644
+    return info
+
+
+with open(archive_path, "wb") as raw:
+    with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as gz:
+        with tarfile.open(fileobj=gz, mode="w", format=tarfile.USTAR_FORMAT) as archive:
+            for dirpath, dirnames, filenames in os.walk(package_root):
+                dirnames.sort()
+                filenames.sort()
+                arc_dir = os.path.relpath(dirpath, staging_parent)
+                archive.addfile(normalize(archive.gettarinfo(dirpath, arc_dir)))
+                for filename in filenames:
+                    path = os.path.join(dirpath, filename)
+                    arcname = os.path.relpath(path, staging_parent)
+                    info = normalize(archive.gettarinfo(path, arcname))
+                    with open(path, "rb") as fileobj:
+                        archive.addfile(info, fileobj)
+PY
+
 if command -v shasum >/dev/null 2>&1; then
   (cd "$output_dir" && shasum -a 256 "$archive_name" > "$checksum_path")
 elif command -v sha256sum >/dev/null 2>&1; then

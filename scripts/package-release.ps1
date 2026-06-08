@@ -51,7 +51,34 @@ try {
     if (Test-Path -LiteralPath $archivePath) {
         Remove-Item -LiteralPath $archivePath -Force
     }
-    Compress-Archive -Path $stagingDir -DestinationPath $archivePath
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $epoch = [DateTimeOffset]::FromUnixTimeSeconds(0)
+    $zip = [System.IO.Compression.ZipFile]::Open($archivePath, [System.IO.Compression.ZipArchiveMode]::Create)
+    try {
+        $files = Get-ChildItem -LiteralPath $stagingDir -Recurse -File | Sort-Object FullName
+        foreach ($file in $files) {
+            $relativePath = [System.IO.Path]::GetRelativePath($stagingParent, $file.FullName).Replace("\", "/")
+            $entry = $zip.CreateEntry($relativePath, [System.IO.Compression.CompressionLevel]::Optimal)
+            $entry.LastWriteTime = $epoch
+            $inputStream = [System.IO.File]::OpenRead($file.FullName)
+            try {
+                $outputStream = $entry.Open()
+                try {
+                    $inputStream.CopyTo($outputStream)
+                }
+                finally {
+                    $outputStream.Dispose()
+                }
+            }
+            finally {
+                $inputStream.Dispose()
+            }
+        }
+    }
+    finally {
+        $zip.Dispose()
+    }
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archivePath).Hash.ToLowerInvariant()
     $archiveName = Split-Path -Leaf $archivePath
     Set-Content -LiteralPath $checksumPath -Value "$hash  $archiveName" -Encoding ascii

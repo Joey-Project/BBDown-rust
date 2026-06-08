@@ -74,6 +74,9 @@ superseded_by:
 - Follow-up independent review found published release reuse needed stronger asset validation.
   Promotion now requires matching asset names, `uploaded` states, byte sizes, and SHA-256 digests
   and rejects unexpected extra assets before it treats an existing GitHub Release as reusable.
+- Final frozen review found the stricter digest check required reproducible package archives for
+  full promotion reruns. Unix tarballs and Windows zip files now normalize archive metadata so the
+  same target commit rebuilds to stable package checksums.
 
 ## Validation
 
@@ -115,3 +118,6 @@ superseded_by:
 - Follow-up independent Codex PR review found draft release detection and published asset reuse were
   too weak; the workflow now discovers drafts via release listing and checks asset state, size, and
   digest, and rejects unexpected extra assets, before reuse.
+- Final frozen review found non-reproducible archives would break full promotion reruns after a
+  successful GitHub Release and failed crates.io publish; package scripts now create deterministic
+  archives before digest-level release reuse.
