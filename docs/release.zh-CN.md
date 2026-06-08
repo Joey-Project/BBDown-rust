@@ -45,8 +45,8 @@ rulesets 应只允许这个 App 作为非人工 actor 写 tag。
 5. 批准 `release-candidate` environment deployment。
 
 该 workflow 会检查它是否从 `master` 运行，验证 `bbdown-core` 和 `bbdown-cli` Cargo
-version，计算下一个 RC 编号，运行 formatter、clippy、测试和 crates.io dry run，构建所有
-release archives，然后创建 annotated RC tag。
+version，按 release version 串行化 RC 创建，计算下一个 RC 编号，运行 formatter、clippy、测
+试和 crates.io dry run，构建所有 release archives，然后创建 annotated RC tag。
 
 ## 晋升 RC
 
@@ -56,9 +56,10 @@ release archives，然后创建 annotated RC tag。
 4. 批准 `production-release` environment deployment。
 5. 批准 `crates-io` environment deployment。
 
-该 workflow 会验证选中的 ref 是 RC tag，确认 `bbdown-core` 和 `bbdown-cli` Cargo version
-与正式 tag 匹配，重新运行 formatter、clippy、测试和 crates.io dry run，重新构建正式
-release archives，创建正式 annotated tag，发布 GitHub Release，然后发布 `bbdown-core`。
+该 workflow 会验证选中的 ref 是 RC tag，按 RC tag 串行化 promotion，确认 `bbdown-core` 和
+`bbdown-cli` Cargo version 与正式 tag 匹配，重新运行 formatter、clippy、测试和 crates.io
+dry run，重新构建正式 release archives，创建正式 annotated tag，发布 GitHub Release，然后
+发布 `bbdown-core`。
 
 ## 失败恢复
 

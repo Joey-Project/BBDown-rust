@@ -49,8 +49,9 @@ Recommended rulesets:
 5. Approve the `release-candidate` environment deployment.
 
 The workflow checks that it is running from `master`, validates the `bbdown-core` and `bbdown-cli`
-Cargo versions, computes the next RC number, runs formatter, clippy, tests, and a crates.io dry run,
-builds all release archives, then creates the annotated RC tag.
+Cargo versions, serializes RC creation per release version, computes the next RC number, runs
+formatter, clippy, tests, and a crates.io dry run, builds all release archives, then creates the
+annotated RC tag.
 
 ## Promote An RC
 
@@ -60,10 +61,10 @@ builds all release archives, then creates the annotated RC tag.
 4. Approve the `production-release` environment deployment.
 5. Approve the `crates-io` environment deployment.
 
-The workflow validates that the selected ref is an RC tag, confirms the `bbdown-core` and
-`bbdown-cli` Cargo versions match the final tag, reruns formatter, clippy, tests, and crates.io dry
-run, rebuilds final release archives, creates the final annotated tag, publishes the GitHub Release,
-and then publishes `bbdown-core`.
+The workflow validates that the selected ref is an RC tag, serializes promotion per RC tag, confirms
+the `bbdown-core` and `bbdown-cli` Cargo versions match the final tag, reruns formatter, clippy,
+tests, and crates.io dry run, rebuilds final release archives, creates the final annotated tag,
+publishes the GitHub Release, and then publishes `bbdown-core`.
 
 ## Failure Recovery
 

@@ -35,6 +35,8 @@ superseded_by:
 - RC and promotion validation both require `bbdown-core` and `bbdown-cli` Cargo versions to match
   the requested release version so GitHub Release archive names, CLI package metadata, and the
   crates.io package do not drift.
+- RC creation is serialized per requested release version, and promotion is serialized per RC tag,
+  so concurrent manual runs cannot race the automatic RC number or duplicate the same promotion.
 - Release archives now include the English and Simplified Chinese release runbooks alongside the
   existing README, user, embedding, architecture, and license files.
 - CI and release workflows now use runner-provided `rustup` with the floating stable channel from
@@ -59,3 +61,5 @@ superseded_by:
 - Local default gate: `just ci`.
 - Offline frozen review:
   `isolated_review stateful start --entrypoint codex-readonly --base-ref master --head-ref HEAD`.
+- Independent Codex PR review found the automatic RC numbering concurrency window; the workflow now
+  uses GitHub Actions concurrency groups to serialize runs by release version.

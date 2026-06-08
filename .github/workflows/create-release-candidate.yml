@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-candidate-${{ inputs.version }}
+  cancel-in-progress: false
+
 jobs:
   validate:
     name: Validate release candidate
