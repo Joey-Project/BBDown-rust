@@ -1,8 +1,13 @@
-# bbdown
+[ English | [简体中文](README.zh-CN.md) ]
 
-`bbdown` is the reusable Rust library behind BBDown Rust. It resolves Bilibili and Bilibili intl
-inputs into typed metadata, download plans, media downloads, subtitles, danmaku sidecars, QR login
-credentials, download archive preflight data, and restricted-area proxy diagnostics.
+# bbdown-core
+
+`bbdown-core` is the reusable Rust library package behind BBDown Rust. Rust code imports it as
+`bbdown_core`. It resolves Bilibili and Bilibili intl inputs into typed metadata, download plans,
+media downloads, subtitles, danmaku sidecars, QR login credentials, download archive preflight data,
+and restricted-area proxy diagnostics.
+
+Install with `cargo add bbdown-core`, then import with `bbdown_core`.
 
 The crate is still preparing for its first crates.io release. This pre-release branch intentionally
 hardens public structs before publishing: embedding projects should prefer constructor and
@@ -15,11 +20,11 @@ consumed data surfaces and may be marked non-exhaustive.
 ## Example
 
 ```rust,no_run
-use bbdown::{BiliClient, ClientConfig, DownloadOptions, RetryPolicy, Selection, StreamSelection};
+use bbdown_core::{BiliClient, ClientConfig, DownloadOptions, RetryPolicy, Selection, StreamSelection};
 use std::time::Duration;
 
 #[tokio::main]
-async fn main() -> bbdown::Result<()> {
+async fn main() -> bbdown_core::Result<()> {
     let client = BiliClient::new(ClientConfig::default());
     let plan = client
         .plan_download("BV1qt4y1X7TW", Some(Selection::Current))
@@ -36,7 +41,8 @@ async fn main() -> bbdown::Result<()> {
 
 See the repository embedding guide for restricted-area proxy, endpoint override, credential,
 download archive, and download execution examples:
-<https://github.com/Joey-Project/BBDown-rust/blob/master/docs/embedding.md>.
+[English](https://github.com/Joey-Project/BBDown-rust/blob/master/docs/embedding.md) /
+[简体中文](https://github.com/Joey-Project/BBDown-rust/blob/master/docs/embedding.zh-CN.md).
 
 The CLI package is distributed through GitHub release archives. The crates.io dry-run target for this
-workspace is the `bbdown` library crate.
+workspace is the `bbdown-core` library package.

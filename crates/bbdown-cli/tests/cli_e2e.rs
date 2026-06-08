@@ -1,5 +1,5 @@
 use assert_cmd::Command;
-use bbdown::{CredentialStore, Credentials};
+use bbdown_core::{CredentialStore, Credentials};
 use httpmock::MockServer;
 use httpmock::prelude::*;
 use serde_json::Value;

@@ -154,7 +154,7 @@ superseded_by:
   `git diff --check`.
 - Project journal validation passed with the project-journal helper.
 - Full local gate: `just ci` passed, including formatter, clippy, workspace tests, CLI e2e,
-  live-e2e harness tests with the local manifest case ignored, and the bbdown crate publish
+  live-e2e harness tests with the local manifest case ignored, and the library package publish
   dry-run.
 
 ## Next Steps

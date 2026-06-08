@@ -26,4 +26,4 @@ jobs:
       - name: Unit and e2e tests
         run: cargo test --workspace
       - name: Crate publish dry run
-        run: cargo publish --dry-run -p bbdown --locked
+        run: cargo publish --dry-run -p bbdown-core --locked

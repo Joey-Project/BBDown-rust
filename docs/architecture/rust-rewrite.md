@@ -1,3 +1,5 @@
+[ English | [简体中文](rust-rewrite.zh-CN.md) ]
+
 # Rust Rewrite Architecture
 
 ## Goals
@@ -9,8 +11,8 @@
 
 ## Workspace
 
-- `crates/bbdown`: library crate with typed input parsing, metadata models, credential store,
-  client config, and resolver APIs.
+- `crates/bbdown`: library package published as `bbdown-core` and imported as `bbdown_core`, with
+  typed input parsing, metadata models, credential store, client config, and resolver APIs.
 - `crates/bbdown-cli`: CLI wrapper that uses the crate only through public APIs.
 - `docs/`: architecture, user-facing notes, project state, and project journal entries.
 
@@ -241,21 +243,23 @@ Default CI is deterministic:
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - unit tests
 - CLI mock e2e tests
-- crates.io dry-run packaging for the publishable `bbdown` library crate
+- crates.io dry-run packaging for the publishable `bbdown-core` library package
 
 Release packaging is a separate GitHub Actions workflow. Tag pushes matching `v*` build Linux
 x86_64, macOS x86_64, macOS aarch64, and Windows x86_64 CLI archives and publish them to the
 GitHub Release with generated release notes. Manual workflow dispatch builds the same archives as
 downloadable workflow artifacts without publishing a release. Archives contain the `bbdown` binary,
-`README.md`, `docs/user-guide.md`, `docs/embedding.md`, and `LICENSE`. Each archive also has an
-adjacent platform-specific checksum file. Action references in the release workflow are pinned to
-commit SHAs. Package names normalize release refs to the packager-safe `[A-Za-z0-9._-]` character
-set, so tags such as SemVer build metadata do not fail at packaging time.
+English and Simplified Chinese README files, English and Simplified Chinese user, embedding, and
+architecture guides, and `LICENSE`. Each archive also has an adjacent platform-specific checksum
+file. Action references in the release workflow are pinned to commit SHAs. Package names normalize
+release refs to the packager-safe `[A-Za-z0-9._-]` character set, so tags such as SemVer build
+metadata do not fail at packaging time.
 
-Crate publishing is intentionally scoped to the reusable `bbdown` library crate. The crate has
-crates.io metadata, a package-local README and LICENSE, dirty-tree-friendly local publish dry-run
-validation, and CI-backed `cargo publish --dry-run -p bbdown --locked` validation. `bbdown-cli`
-remains `publish = false` because CLI distribution is handled by GitHub release archives.
+Crate publishing is intentionally scoped to the reusable `bbdown-core` library package, imported as
+`bbdown_core` in Rust code. The crate has crates.io metadata, a package-local README and LICENSE,
+dirty-tree-friendly local publish dry-run validation, and CI-backed
+`cargo publish --dry-run -p bbdown-core --locked` validation. `bbdown-cli` remains `publish = false`
+because CLI distribution is handled by GitHub release archives.
 
 Plan output now exposes structured stream quality data. The library keeps raw
 `StreamSet::accept_quality` for compatibility and adds `StreamSet::qualities` with actual selectable
