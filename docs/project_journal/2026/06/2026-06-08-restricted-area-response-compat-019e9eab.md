@@ -5,7 +5,7 @@ status: completed
 created: 2026-06-08
 updated: 2026-06-08
 branch: wip/restricted-area-response-compat
-pr: pending
+pr: https://github.com/Joey-Project/BBDown-rust/pull/11
 supersedes: []
 superseded_by:
 ---

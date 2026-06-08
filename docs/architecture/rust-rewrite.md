@@ -254,5 +254,5 @@ fixed `cn`, `th`, `hk`, and `tw` ordering. Network requests have a configurable 
 7. GitHub binary release packaging. Completed in PR #8.
 8. Crate publish readiness and dry-run validation. Completed in PR #9.
 9. Clearer stream quality selection and listing support. Completed in PR #10.
-10. Restricted-area proxy response compatibility expansion. Completed in this slice.
+10. Restricted-area proxy response compatibility expansion. Completed in PR #11.
 11. Integration API and documentation hardening. Planned.
