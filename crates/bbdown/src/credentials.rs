@@ -27,6 +27,24 @@ impl fmt::Debug for Credentials {
 
 impl Credentials {
     #[must_use]
+    pub fn with_cookie(mut self, cookie: impl Into<String>) -> Self {
+        self.cookie = Some(cookie.into());
+        self
+    }
+
+    #[must_use]
+    pub fn with_access_key(mut self, access_key: impl Into<String>) -> Self {
+        self.access_key = Some(access_key.into());
+        self
+    }
+
+    #[must_use]
+    pub fn with_tv_access_key(mut self, tv_access_key: impl Into<String>) -> Self {
+        self.tv_access_key = Some(tv_access_key.into());
+        self
+    }
+
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.cookie.as_deref().unwrap_or_default().is_empty()
             && self.access_key.as_deref().unwrap_or_default().is_empty()

@@ -57,6 +57,48 @@ impl DownloadOptions {
             ..Self::default()
         }
     }
+
+    #[must_use]
+    pub fn with_retry_policy(mut self, retry: RetryPolicy) -> Self {
+        self.retry = retry;
+        self
+    }
+
+    #[must_use]
+    pub fn with_stream_selection(mut self, stream_selection: StreamSelection) -> Self {
+        self.stream_selection = stream_selection;
+        self
+    }
+
+    #[must_use]
+    pub fn with_resume(mut self, resume: bool) -> Self {
+        self.resume = resume;
+        self
+    }
+
+    #[must_use]
+    pub fn with_subtitles(mut self, include_subtitles: bool) -> Self {
+        self.include_subtitles = include_subtitles;
+        self
+    }
+
+    #[must_use]
+    pub fn with_danmaku(mut self, include_danmaku: bool) -> Self {
+        self.include_danmaku = include_danmaku;
+        self
+    }
+
+    #[must_use]
+    pub fn with_mux(mut self, mux: MuxOptions) -> Self {
+        self.mux = mux;
+        self
+    }
+
+    #[must_use]
+    pub fn with_download_idle_timeout(mut self, download_idle_timeout: Option<Duration>) -> Self {
+        self.download_idle_timeout = download_idle_timeout;
+        self
+    }
 }
 
 #[non_exhaustive]
@@ -76,11 +118,28 @@ impl StreamSelection {
     }
 
     #[must_use]
+    pub const fn video(video_quality: u32) -> Self {
+        Self {
+            video_quality: Some(video_quality),
+            audio_quality: None,
+        }
+    }
+
+    #[must_use]
+    pub const fn audio(audio_quality: u32) -> Self {
+        Self {
+            video_quality: None,
+            audio_quality: Some(audio_quality),
+        }
+    }
+
+    #[must_use]
     pub const fn has_selection(self) -> bool {
         self.video_quality.is_some() || self.audio_quality.is_some()
     }
 }
 
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug)]
 pub struct RetryPolicy {
     pub max_attempts: u32,
@@ -88,6 +147,14 @@ pub struct RetryPolicy {
 }
 
 impl RetryPolicy {
+    #[must_use]
+    pub const fn new(max_attempts: u32, backoff: Duration) -> Self {
+        Self {
+            max_attempts,
+            backoff,
+        }
+    }
+
     #[must_use]
     pub const fn single_attempt() -> Self {
         Self {
@@ -110,6 +177,15 @@ impl Default for RetryPolicy {
 pub enum MuxOptions {
     Disabled,
     Ffmpeg { binary: PathBuf },
+}
+
+impl MuxOptions {
+    #[must_use]
+    pub fn ffmpeg(binary: impl Into<PathBuf>) -> Self {
+        Self::Ffmpeg {
+            binary: binary.into(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -1268,6 +1344,37 @@ mod tests {
             error.to_string(),
             "invalid input: requested video quality 32 is not available; available video qualities: 80, 64"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn download_options_builders_configure_embedding_controls() -> anyhow::Result<()> {
+        let options = DownloadOptions::new("downloads")
+            .with_retry_policy(RetryPolicy::new(5, Duration::from_secs(2)))
+            .with_stream_selection(super::StreamSelection::video(80))
+            .with_download_idle_timeout(None)
+            .with_resume(false)
+            .with_subtitles(false)
+            .with_danmaku(false)
+            .with_mux(MuxOptions::ffmpeg("ffmpeg-custom"));
+
+        assert_eq!(options.output_dir.as_path(), Path::new("downloads"));
+        assert_eq!(options.retry.max_attempts, 5);
+        assert_eq!(options.retry.backoff, Duration::from_secs(2));
+        assert_eq!(options.stream_selection.video_quality, Some(80));
+        assert_eq!(options.stream_selection.audio_quality, None);
+        assert_eq!(options.download_idle_timeout, None);
+        assert!(!options.resume);
+        assert!(!options.include_subtitles);
+        assert!(!options.include_danmaku);
+        let MuxOptions::Ffmpeg { binary } = options.mux else {
+            return Err(anyhow::anyhow!("expected ffmpeg mux options"));
+        };
+        assert_eq!(binary.as_path(), Path::new("ffmpeg-custom"));
+
+        let audio_selection = super::StreamSelection::audio(30216);
+        assert_eq!(audio_selection.video_quality, None);
+        assert_eq!(audio_selection.audio_quality, Some(30216));
         Ok(())
     }
 

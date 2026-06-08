@@ -34,6 +34,7 @@ try {
     New-Item -ItemType Directory -Path (Join-Path $stagingDir "docs") -Force | Out-Null
     Copy-Item -LiteralPath $BinaryPath -Destination (Join-Path $stagingDir "bbdown.exe")
     Copy-Item -LiteralPath (Join-Path $repoRoot "README.md") -Destination (Join-Path $stagingDir "README.md")
+    Copy-Item -LiteralPath (Join-Path $repoRoot "docs/embedding.md") -Destination (Join-Path $stagingDir "docs/embedding.md")
     Copy-Item -LiteralPath (Join-Path $repoRoot "docs/user-guide.md") -Destination (Join-Path $stagingDir "docs/user-guide.md")
     $licensePath = Join-Path $repoRoot "LICENSE"
     if (Test-Path -LiteralPath $licensePath -PathType Leaf) {

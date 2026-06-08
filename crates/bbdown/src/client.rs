@@ -12,6 +12,7 @@ use std::fmt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use url::Url;
 
+#[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct EndpointConfig {
     pub api_base: String,
@@ -37,6 +38,51 @@ impl Default for EndpointConfig {
     }
 }
 
+impl EndpointConfig {
+    #[must_use]
+    pub fn with_api_base(mut self, api_base: impl Into<String>) -> Self {
+        self.api_base = api_base.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_pgc_base(mut self, pgc_base: impl Into<String>) -> Self {
+        self.pgc_base = pgc_base.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_intl_base(mut self, intl_base: impl Into<String>) -> Self {
+        self.intl_base = intl_base.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_comment_base(mut self, comment_base: impl Into<String>) -> Self {
+        self.comment_base = comment_base.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_passport_base(mut self, passport_base: impl Into<String>) -> Self {
+        self.passport_base = passport_base.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_tv_passport_base(mut self, tv_passport_base: impl Into<String>) -> Self {
+        self.tv_passport_base = tv_passport_base.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_tv_passport_poll_base(mut self, tv_passport_poll_base: impl Into<String>) -> Self {
+        self.tv_passport_poll_base = tv_passport_poll_base.into();
+        self
+    }
+}
+
+#[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct ClientConfig {
     pub endpoints: EndpointConfig,
@@ -69,6 +115,18 @@ impl ClientConfig {
     }
 
     #[must_use]
+    pub fn with_endpoints(mut self, endpoints: EndpointConfig) -> Self {
+        self.endpoints = endpoints;
+        self
+    }
+
+    #[must_use]
+    pub fn with_credentials(mut self, credentials: Credentials) -> Self {
+        self.credentials = credentials;
+        self
+    }
+
+    #[must_use]
     pub fn with_restricted_area(mut self, restricted_area: RestrictedAreaConfig) -> Self {
         self.restricted_area = restricted_area;
         self
@@ -87,6 +145,7 @@ impl ClientConfig {
     }
 }
 
+#[non_exhaustive]
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RestrictedAreaConfig {
     pub area_hint: Option<RestrictedArea>,
@@ -94,6 +153,35 @@ pub struct RestrictedAreaConfig {
 }
 
 impl RestrictedAreaConfig {
+    #[must_use]
+    pub fn new(
+        area_hint: Option<RestrictedArea>,
+        proxies: impl IntoIterator<Item = RestrictedAreaProxy>,
+    ) -> Self {
+        Self {
+            area_hint,
+            proxies: proxies.into_iter().collect(),
+        }
+    }
+
+    #[must_use]
+    pub fn with_area_hint(mut self, area_hint: RestrictedArea) -> Self {
+        self.area_hint = Some(area_hint);
+        self
+    }
+
+    #[must_use]
+    pub fn with_proxy(mut self, proxy: RestrictedAreaProxy) -> Self {
+        self.proxies.push(proxy);
+        self
+    }
+
+    #[must_use]
+    pub fn with_proxies(mut self, proxies: impl IntoIterator<Item = RestrictedAreaProxy>) -> Self {
+        self.proxies.extend(proxies);
+        self
+    }
+
     #[must_use]
     pub fn ordered_proxies(&self) -> Vec<RestrictedAreaProxy> {
         let mut ordered = Vec::new();
@@ -3051,10 +3139,53 @@ mod tests {
     }
 
     #[test]
+    fn endpoint_client_and_restricted_area_builders_configure_embedding_inputs() {
+        let endpoints = EndpointConfig::default()
+            .with_api_base("https://api.test")
+            .with_pgc_base("https://pgc.test")
+            .with_intl_base("https://intl.test")
+            .with_comment_base("https://comment.test")
+            .with_passport_base("https://passport.test")
+            .with_tv_passport_base("https://tv-passport.test")
+            .with_tv_passport_poll_base("https://tv-poll.test");
+        let restricted_area = RestrictedAreaConfig::default()
+            .with_area_hint(RestrictedArea::Tw)
+            .with_proxy(RestrictedAreaProxy::playurl(
+                "https://generic.example/playurl",
+                None,
+            ))
+            .with_proxies([RestrictedAreaProxy::bilibili_api(
+                "https://tw.example/api",
+                Some(RestrictedArea::Tw),
+            )]);
+        let credentials = Credentials::default()
+            .with_cookie("SESSDATA=redacted")
+            .with_access_key("access-key");
+
+        let config = ClientConfig::default()
+            .with_endpoints(endpoints)
+            .with_credentials(credentials)
+            .with_restricted_area(restricted_area)
+            .with_user_agent("embedding-test/1.0")
+            .with_request_timeout(Duration::from_secs(7));
+
+        assert_eq!(config.endpoints.api_base, "https://api.test");
+        assert_eq!(
+            config.endpoints.tv_passport_poll_base,
+            "https://tv-poll.test"
+        );
+        assert_eq!(config.credentials.access_key.as_deref(), Some("access-key"));
+        assert_eq!(config.restricted_area.area_hint, Some(RestrictedArea::Tw));
+        assert_eq!(config.restricted_area.proxies.len(), 2);
+        assert_eq!(config.user_agent, "embedding-test/1.0");
+        assert_eq!(config.request_timeout, Duration::from_secs(7));
+    }
+
+    #[test]
     fn restricted_area_proxies_are_ordered_by_hint_then_generic_then_area() {
-        let config = RestrictedAreaConfig {
-            area_hint: Some(RestrictedArea::Hk),
-            proxies: vec![
+        let config = RestrictedAreaConfig::new(
+            Some(RestrictedArea::Hk),
+            [
                 RestrictedAreaProxy::playurl("https://generic.example/playurl", None),
                 RestrictedAreaProxy::bilibili_api(
                     "https://tw.example/api",
@@ -3065,7 +3196,7 @@ mod tests {
                     Some(RestrictedArea::Hk),
                 ),
             ],
-        };
+        );
 
         let ordered = config.ordered_proxies();
         assert_eq!(ordered[0].area, Some(RestrictedArea::Hk));

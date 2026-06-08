@@ -15,13 +15,16 @@
   - `docs/project_journal/2026/06/2026-06-07-crate-publish-readiness-019e9eab.md`.
   - `docs/project_journal/2026/06/2026-06-08-stream-quality-selection-019e9eab.md`.
   - `docs/project_journal/2026/06/2026-06-08-restricted-area-response-compat-019e9eab.md`.
-- Next planned workstream: integration API and embedding documentation hardening.
+  - `docs/project_journal/2026/06/2026-06-08-integration-api-docs-019e9eab.md`.
+- The originally planned rewrite continuation slices are complete through integration API and
+  embedding documentation hardening.
 
 ## Recovery Pointers
 
 - Run `just ci` for the local default gate after dependencies are restored.
 - Workstream detail and PR-local state should live under `docs/project_journal/`.
 - User-facing CLI behavior is documented in `docs/user-guide.md`.
+- Crate embedding guidance is documented in `docs/embedding.md`.
 
 ## Global Blockers
 

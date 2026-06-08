@@ -14,6 +14,18 @@
 - `crates/bbdown-cli`: CLI wrapper that uses the crate only through public APIs.
 - `docs/`: architecture, user-facing notes, project state, and project journal entries.
 
+## Public API Shape
+
+The reusable crate keeps configuration ergonomic for embedders through `Default`, `new`, and
+builder-style `with_*` methods. `EndpointConfig`, `ClientConfig`, `RestrictedAreaConfig`,
+`Credentials`, `DownloadOptions`, `RetryPolicy`, `StreamSelection`, and `MuxOptions` all have
+constructor paths so downstream projects do not need struct literals for ordinary integration code.
+The CLI uses the same public builders, which makes it an in-repo integration test surface for the
+crate API.
+
+Output models remain typed data surfaces. Callers should read fields or serialize them rather than
+treating output structs as stable construction targets while the crate remains pre-release.
+
 ## Resolver Model
 
 Inputs normalize into `Input`:
@@ -126,14 +138,13 @@ configured resolver chain:
 - user-configured area hints such as `cn`, `hk`, `tw`, or `th`.
 
 `ClientConfig::restricted_area` holds a per-client `RestrictedAreaConfig`. Embedders can set an
-optional area hint and a list of `RestrictedAreaProxy` candidates. The crate is still pre-1.0, so
-embedding projects should prefer `ClientConfig::new(endpoints, credentials).with_*` construction over
-struct literals when they do not need every field. Output model structs are a consumed data surface
-rather than a stable struct-literal construction surface while the crate remains `0.1`. Candidate
-ordering follows the bilibili-helper approach without browser-local caches: matching area hint first,
-generic candidates, then `cn`, `th`, `hk`, and `tw`, with duplicate `(base_url, area, kind)`
-candidates removed. CLI-created configs also preserve source priority before area grouping, so
-explicit command-line proxy candidates are tried before environment-derived proxy candidates.
+optional area hint and a list of `RestrictedAreaProxy` candidates through
+`RestrictedAreaConfig::new`, `RestrictedAreaConfig::default().with_area_hint(...)`,
+`with_proxy(...)`, or `with_proxies(...)`. Candidate ordering follows the bilibili-helper approach
+without browser-local caches: matching area hint first, generic candidates, then `cn`, `th`, `hk`,
+and `tw`, with duplicate `(base_url, area, kind)` candidates removed. CLI-created configs also
+preserve source priority before area grouping, so explicit command-line proxy candidates are tried
+before environment-derived proxy candidates.
 
 PGC stream planning first calls the official PGC web playurl endpoint. If that response clearly
 reports a region/area restriction and restricted-area proxies are configured, the client tries
@@ -207,10 +218,10 @@ Release packaging is a separate GitHub Actions workflow. Tag pushes matching `v*
 x86_64, macOS x86_64, macOS aarch64, and Windows x86_64 CLI archives and publish them to the
 GitHub Release with generated release notes. Manual workflow dispatch builds the same archives as
 downloadable workflow artifacts without publishing a release. Archives contain the `bbdown` binary,
-`README.md`, `docs/user-guide.md`, and `LICENSE`. Each archive also has an adjacent platform-specific
-checksum file. Action references in the release workflow are pinned to commit SHAs. Package names
-normalize release refs to the packager-safe `[A-Za-z0-9._-]` character set, so tags such as SemVer
-build metadata do not fail at packaging time.
+`README.md`, `docs/user-guide.md`, `docs/embedding.md`, and `LICENSE`. Each archive also has an
+adjacent platform-specific checksum file. Action references in the release workflow are pinned to
+commit SHAs. Package names normalize release refs to the packager-safe `[A-Za-z0-9._-]` character
+set, so tags such as SemVer build metadata do not fail at packaging time.
 
 Crate publishing is intentionally scoped to the reusable `bbdown` library crate. The crate has
 crates.io metadata, a package-local README and LICENSE, dirty-tree-friendly local publish dry-run
@@ -225,10 +236,13 @@ select exact DASH streams through `DownloadOptions::stream_selection`.
 
 The reusable crate is still preparing for its first crates.io release, so this branch intentionally
 hardens public structs before publishing rather than preserving local pre-release struct-literal
-experiments. Embedders should create download settings with `DownloadOptions::new`,
-`DownloadOptions::default`, or `StreamSelection::new` instead of relying on struct literals. Public
-output containers such as `StreamSet` and `StreamQuality` are marked non-exhaustive because plan
-models are consumed data surfaces and may gain fields while the crate matures.
+experiments. Embedders should create configuration with constructor and builder APIs, including
+`ClientConfig::default().with_*`, `EndpointConfig::default().with_*`,
+`RestrictedAreaConfig::default().with_*`, `DownloadOptions::new(...).with_*`,
+`RetryPolicy::new`, `StreamSelection::new`, `StreamSelection::video`, and
+`StreamSelection::audio`. Public output containers such as `StreamSet` and `StreamQuality` are
+marked non-exhaustive because plan models are consumed data surfaces and may gain fields while the
+crate matures.
 
 Live tests against Bilibili are opt-in only through `just live-e2e`. The recipe fails fast unless an
 ignored `live-e2e.samples.json` manifest exists, so branch CI is not blocked by network, account, or
@@ -257,4 +271,4 @@ fixed `cn`, `th`, `hk`, and `tw` ordering. Network requests have a configurable 
 8. Crate publish readiness and dry-run validation. Completed in PR #9.
 9. Clearer stream quality selection and listing support. Completed in PR #10.
 10. Restricted-area proxy response compatibility expansion. Completed in PR #11.
-11. Integration API and documentation hardening. Planned.
+11. Integration API and documentation hardening. Completed in PR #12.

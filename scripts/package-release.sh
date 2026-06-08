@@ -39,6 +39,7 @@ mkdir -p "$staging_dir/docs"
 cp "$binary_path" "$staging_dir/bbdown"
 chmod 0755 "$staging_dir/bbdown"
 cp "$repo_root/README.md" "$staging_dir/README.md"
+cp "$repo_root/docs/embedding.md" "$staging_dir/docs/embedding.md"
 cp "$repo_root/docs/user-guide.md" "$staging_dir/docs/user-guide.md"
 if [[ -f "$repo_root/LICENSE" ]]; then
   cp "$repo_root/LICENSE" "$staging_dir/LICENSE"
