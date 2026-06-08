@@ -227,7 +227,9 @@ repository default branch、构建这些归档，并通过 release GitHub App �
 workflow 也会在真正写入 RC tag 前重复 final tag 和 GitHub Release 检查。`Promote Release
 Candidate` 必须从请求版本的最新 RC tag 运行；它会重新验证、重新构建正式归档，在
 发布前再次确认选中的 RC 仍然最新，创建正式 annotated `vX.Y.Z` tag，发布 GitHub Release，
-然后通过受保护的 `crates-io` environment 发布 `bbdown-core` 到 crates.io。RC 创建和
+然后通过受保护的 `crates-io` environment 发布 `bbdown-core` 到 crates.io。它也会在创建
+正式 tag 或 GitHub Release 前检查 crates.io 上任何已存在的 `bbdown-core` package checksum，
+并在 publish job 中重复检查，之后才会把已存在 crate version 视为恢复成功。RC 创建和
 promotion 共用按 version 分组的 concurrency group，因此同一 version 正在 promotion 时不会
 再创建更高编号 RC。归档包含 `bbdown` 二进制、英文和简体中文 README、英文和简
 体中文用户指南、嵌入指南、发布 runbook 和架构指南，以及 `LICENSE`。每个归档旁边也有平

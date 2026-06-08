@@ -155,3 +155,6 @@ superseded_by:
 - Follow-up independent review found the shared Cargo version metadata helper could still resolve
   dependencies before the reusable locked verification job. The helper now calls
   `cargo metadata --locked`.
+- Follow-up frozen review found crates.io checksum mismatch recovery would fail only after creating
+  the final tag and GitHub Release. Promotion now preflights the crates.io package state before
+  publishing the GitHub Release and repeats the same helper check in the crate publish job.

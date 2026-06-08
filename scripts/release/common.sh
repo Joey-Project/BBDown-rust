@@ -85,6 +85,53 @@ release_workspace_versions() {
   cargo metadata --locked --no-deps --format-version 1 | python3 -c 'import json, sys; data = json.load(sys.stdin); versions = {pkg["name"]: pkg["version"] for pkg in data["packages"]}; print(versions["bbdown-core"]); print(versions["bbdown-cli"])'
 }
 
+release_crate_version_state() {
+  local version=$1
+  local version_json
+  local status
+  local published_version
+  local published_checksum
+  local crate_path
+  local local_checksum
+  version_json=$(mktemp)
+  status=$(curl -sS \
+    -H "User-Agent: BBDown-rust-release-workflow (${GITHUB_SERVER_URL:-unknown}/${GITHUB_REPOSITORY:-unknown})" \
+    -o "${version_json}" \
+    -w "%{http_code}" \
+    "https://crates.io/api/v1/crates/bbdown-core/${version}")
+  case "${status}" in
+    200)
+      published_version=$(python3 -c 'import json, sys; print(json.load(sys.stdin)["version"]["num"])' < "${version_json}")
+      if [[ "${published_version}" == "${version}" ]]; then
+        published_checksum=$(python3 -c 'import json, sys; print(json.load(sys.stdin)["version"].get("checksum") or "")' < "${version_json}")
+        if [[ -z "${published_checksum}" ]]; then
+          echo "::error::crates.io did not return a checksum for bbdown-core ${version}"
+          exit 2
+        fi
+        cargo package -p bbdown-core --locked >&2
+        crate_path="target/package/bbdown-core-${version}.crate"
+        local_checksum=$(sha256sum "${crate_path}" | awk '{ print $1 }')
+        if [[ "${local_checksum}" == "${published_checksum}" ]]; then
+          printf 'matching\n'
+          return
+        fi
+        echo "::error::crates.io bbdown-core ${version} checksum ${published_checksum} does not match ${crate_path} checksum ${local_checksum}"
+        exit 2
+      fi
+      echo "::error::crates.io returned bbdown-core version ${published_version}, expected ${version}"
+      exit 2
+      ;;
+    404)
+      printf 'absent\n'
+      return
+      ;;
+    *)
+      echo "::error::failed to check crates.io version for bbdown-core ${version}: HTTP ${status}"
+      exit 2
+      ;;
+  esac
+}
+
 release_tag_target_sha() {
   local repo=$1
   local tag=$2

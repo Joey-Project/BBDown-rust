@@ -65,8 +65,9 @@ rulesets 应只允许这个 App 作为非人工 actor 写 tag。
 该 workflow 会验证选中的 ref 是请求版本的最新 RC tag，按最终 release version 串行化
 promotion，确认 `bbdown-core` 和 `bbdown-cli` Cargo version 与正式 tag 匹配，调用共享
 release verification workflow，重新构建正式 release archives，并在发布前再次确认选中的
-RC 仍然是最新 RC，然后创建正式 annotated tag，发布 GitHub Release，并发布
-`bbdown-core`。如果存在上一条非 RC 正式 release tag，自动生成的
+RC 仍然是最新 RC，在创建正式 tag 或 GitHub Release 前验证 crates.io 上任何已存在的
+`bbdown-core` version 都与本地 package checksum 匹配，然后创建正式 annotated tag，发布
+GitHub Release，并发布 `bbdown-core`。如果存在上一条非 RC 正式 release tag，自动生成的
 GitHub Release notes 会从那条 tag 开始，避免把刚创建的 RC tag 当作比较起点。如果
 crates.io 已经存在 exact `bbdown-core` version，crate publish step 会重新打包选中的 RC
 源码，并且只在本地 `.crate` SHA256 与 crates.io checksum 匹配时把它当作恢复成功。

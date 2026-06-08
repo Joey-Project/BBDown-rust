@@ -73,8 +73,10 @@ The workflow validates that the selected ref is the latest RC tag for the reques
 serializes all RC creation and promotion runs for the same release version, confirms the
 `bbdown-core` and `bbdown-cli` Cargo versions match the final tag, calls the shared release
 verification workflow, rebuilds final release archives, rechecks that the selected RC is still latest
-immediately before publication, creates the final annotated tag, publishes the GitHub Release, and
-then publishes `bbdown-core`. Generated GitHub Release notes start from the
+immediately before publication, verifies any existing crates.io `bbdown-core` version has the same
+local package checksum before creating the final tag or GitHub Release, creates the final annotated
+tag, publishes the GitHub Release, and then publishes `bbdown-core`. Generated GitHub Release notes
+start from the
 previous non-RC release tag when one exists, so the final release notes do not use the just-created
 RC tag as their comparison base. If crates.io already contains the exact `bbdown-core` version, the
 publish step repackages the selected RC source and treats the run as recovered success only when the

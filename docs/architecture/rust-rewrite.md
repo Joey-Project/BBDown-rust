@@ -257,9 +257,11 @@ that final tag and GitHub Release check immediately before writing the RC tag.
 `Promote Release Candidate` must be run from the latest RC tag for the requested version; it reruns
 validation, rebuilds final archives, rechecks that the selected RC is still latest immediately before
 publication, creates the final annotated `vX.Y.Z` tag, publishes the GitHub Release, then publishes
-`bbdown-core` to crates.io through the protected `crates-io` environment. RC creation and promotion
-share a version-scoped concurrency group, so a later RC cannot be created while the same version is
-being promoted. Archives contain the
+`bbdown-core` to crates.io through the protected `crates-io` environment. It also checks any existing
+crates.io `bbdown-core` package checksum before creating the final tag or GitHub Release, and repeats
+that check in the publish job before treating an existing crate version as recovered success. RC
+creation and promotion share a version-scoped concurrency group, so a later RC cannot be created
+while the same version is being promoted. Archives contain the
 `bbdown` binary, English and Simplified Chinese README files, English and Simplified Chinese user,
 embedding, release, and architecture guides, and `LICENSE`. Each archive also has an adjacent
 platform-specific checksum file. GitHub Release notes are generated from the previous non-RC final

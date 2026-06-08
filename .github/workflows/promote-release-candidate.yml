@@ -105,12 +105,42 @@ jobs:
       checkout_ref: ${{ needs.validate.outputs.target_sha }}
       package_version: ${{ needs.validate.outputs.final_tag }}
 
+  crate-preflight:
+    name: Preflight crates.io package
+    needs:
+      - validate
+      - verify
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ needs.validate.outputs.target_sha }}
+
+      - name: Install Rust stable
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Check crates.io package state
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          source scripts/release/common.sh
+          crate_state=$(release_crate_version_state "${VERSION}")
+          if [[ "${crate_state}" == "matching" ]]; then
+            echo "bbdown-core ${VERSION} already exists on crates.io with matching package checksum"
+          else
+            echo "bbdown-core ${VERSION} is not present on crates.io yet"
+          fi
+
   publish-github-release:
     name: Publish GitHub Release
     needs:
       - validate
       - verify
       - build-artifacts
+      - crate-preflight
     runs-on: ubuntu-latest
     environment: production-release
     permissions:
@@ -312,39 +342,10 @@ jobs:
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
           set -euo pipefail
-          version_json=$(mktemp)
-          status=$(curl -sS \
-            -H "User-Agent: BBDown-rust-release-workflow (${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY})" \
-            -o "${version_json}" \
-            -w "%{http_code}" \
-            "https://crates.io/api/v1/crates/bbdown-core/${VERSION}")
-          case "${status}" in
-            200)
-              published_version=$(python3 -c 'import json, sys; print(json.load(sys.stdin)["version"]["num"])' < "${version_json}")
-              if [[ "${published_version}" == "${VERSION}" ]]; then
-                published_checksum=$(python3 -c 'import json, sys; print(json.load(sys.stdin)["version"].get("checksum") or "")' < "${version_json}")
-                if [[ -z "${published_checksum}" ]]; then
-                  echo "::error::crates.io did not return a checksum for bbdown-core ${VERSION}"
-                  exit 2
-                fi
-                cargo package -p bbdown-core --locked
-                crate_path="target/package/bbdown-core-${VERSION}.crate"
-                local_checksum=$(sha256sum "${crate_path}" | awk '{ print $1 }')
-                if [[ "${local_checksum}" == "${published_checksum}" ]]; then
-                  echo "bbdown-core ${VERSION} already exists on crates.io with matching package checksum; treating publish as recovered"
-                  exit 0
-                fi
-                echo "::error::crates.io bbdown-core ${VERSION} checksum ${published_checksum} does not match ${crate_path} checksum ${local_checksum}"
-                exit 2
-              fi
-              echo "::error::crates.io returned bbdown-core version ${published_version}, expected ${VERSION}"
-              exit 2
-              ;;
-            404)
-              ;;
-            *)
-              echo "::error::failed to check crates.io version for bbdown-core ${VERSION}: HTTP ${status}"
-              exit 2
-              ;;
-          esac
+          source scripts/release/common.sh
+          crate_state=$(release_crate_version_state "${VERSION}")
+          if [[ "${crate_state}" == "matching" ]]; then
+            echo "bbdown-core ${VERSION} already exists on crates.io with matching package checksum; treating publish as recovered"
+            exit 0
+          fi
           cargo publish -p bbdown-core --locked --token "${CARGO_REGISTRY_TOKEN}"
