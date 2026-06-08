@@ -132,7 +132,9 @@ exposes the same model with `--archive-file` and `--on-duplicate`, rejects an ar
 overlaps the chosen output root by checking both lexical paths and canonical targets, and JSON/non-TTY
 mode requires an explicit decision instead of prompting. `DownloadArchive::save` also rejects
 directory targets before writing the archive file. Output-root occupancy checks use symlink metadata
-so stale or broken symlink roots are handled consistently with replacement cleanup.
+so stale or broken symlink roots are handled consistently with replacement cleanup, while metadata
+errors such as inaccessible parents are reported to callers instead of being retried as suffixed
+output roots forever.
 
 The crate default keeps muxing disabled so embedding projects do not spawn external processes by
 surprise. The CLI `download` command enables ffmpeg by default and exposes `--no-mux` for users and

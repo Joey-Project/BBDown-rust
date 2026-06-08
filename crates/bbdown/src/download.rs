@@ -331,25 +331,24 @@ pub struct DownloadPreflight {
 }
 
 impl DownloadPreflight {
-    #[must_use]
     pub fn inspect(
         plan: &DownloadPlan,
         options: &DownloadOptions,
         archive: Option<&DownloadArchive>,
-    ) -> Self {
+    ) -> Result<Self> {
         let planned_output_dir = default_plan_output_dir(plan, options);
-        Self {
+        let output_conflict =
+            path_is_occupied(&planned_output_dir)?.then_some(DownloadOutputConflict {
+                path: planned_output_dir.clone(),
+            });
+        Ok(Self {
             content_key: download_plan_content_key(plan),
             title: plan.title.clone(),
             planned_output_dir: planned_output_dir.clone(),
             archived_records: archive
                 .map_or_else(Vec::new, |archive| archive.records_for_plan(plan)),
-            output_conflict: path_is_occupied(&planned_output_dir).then_some(
-                DownloadOutputConflict {
-                    path: planned_output_dir,
-                },
-            ),
-        }
+            output_conflict,
+        })
     }
 
     #[must_use]
@@ -362,8 +361,7 @@ impl DownloadPreflight {
         DuplicateDecision::Cancel
     }
 
-    #[must_use]
-    pub fn output_dir_for_decision(&self, decision: DuplicateDecision) -> PathBuf {
+    pub fn output_dir_for_decision(&self, decision: DuplicateDecision) -> Result<PathBuf> {
         match decision {
             DuplicateDecision::KeepBoth => {
                 let reserved_output_dirs = self
@@ -374,7 +372,7 @@ impl DownloadPreflight {
                 next_available_output_dir_avoiding(&self.planned_output_dir, &reserved_output_dirs)
             }
             DuplicateDecision::Replace | DuplicateDecision::Cancel => {
-                self.planned_output_dir.clone()
+                Ok(self.planned_output_dir.clone())
             }
         }
     }
@@ -464,7 +462,7 @@ impl BiliClient {
         archive: &mut DownloadArchive,
         decision: DuplicateDecision,
     ) -> Result<DownloadReport> {
-        let preflight = DownloadPreflight::inspect(plan, &options, Some(archive));
+        let preflight = DownloadPreflight::inspect(plan, &options, Some(archive))?;
         let mut effective_options = options;
         let output_dir = match decision {
             DuplicateDecision::Cancel if preflight.requires_decision() => {
@@ -482,7 +480,7 @@ impl BiliClient {
                 }
                 preflight.planned_output_dir
             }
-            DuplicateDecision::KeepBoth => preflight.output_dir_for_decision(decision),
+            DuplicateDecision::KeepBoth => preflight.output_dir_for_decision(decision)?,
         };
         let report = self
             .download_plan_to_output_dir(plan, effective_options, output_dir)
@@ -1294,9 +1292,9 @@ fn default_plan_output_dir(plan: &DownloadPlan, options: &DownloadOptions) -> Pa
     options.output_dir.join(safe_file_name(&plan.title))
 }
 
-fn next_available_output_dir_avoiding(base: &Path, reserved: &[PathBuf]) -> PathBuf {
-    if !path_is_occupied(base) && !path_is_reserved(base, reserved) {
-        return base.to_path_buf();
+fn next_available_output_dir_avoiding(base: &Path, reserved: &[PathBuf]) -> Result<PathBuf> {
+    if !path_is_occupied(base)? && !path_is_reserved(base, reserved) {
+        return Ok(base.to_path_buf());
     }
     let parent = base.parent().unwrap_or_else(|| Path::new(""));
     let stem = base
@@ -1306,17 +1304,18 @@ fn next_available_output_dir_avoiding(base: &Path, reserved: &[PathBuf]) -> Path
     let mut index = 2;
     loop {
         let candidate = parent.join(format!("{stem} ({index})"));
-        if !path_is_occupied(&candidate) && !path_is_reserved(&candidate, reserved) {
-            return candidate;
+        if !path_is_occupied(&candidate)? && !path_is_reserved(&candidate, reserved) {
+            return Ok(candidate);
         }
         index += 1;
     }
 }
 
-fn path_is_occupied(path: &Path) -> bool {
+fn path_is_occupied(path: &Path) -> Result<bool> {
     match std::fs::symlink_metadata(path) {
-        Ok(_) => true,
-        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(Error::Io(error)),
     }
 }
 
@@ -1699,9 +1698,10 @@ mod tests {
         DownloadPreflight, DownloadReport, DownloadedFile, DuplicateDecision, EntryDownloadReport,
         MAX_FILE_COMPONENT_BYTES, MAX_FILE_NAME_BYTES, MAX_SUBTITLE_EXTENSION_BYTES, MuxOptions,
         RetryPolicy, archive_sidecar_path, default_plan_output_dir, download_entry_content_key,
-        download_plan_content_key, entry_dir_name, media_file_name, safe_file_name,
-        safe_file_name_with_budget, select_media_stream, subtitle_dedup_key, subtitle_extension,
-        subtitle_file_name, temporary_download_path, temporary_mux_path, temporary_replace_path,
+        download_plan_content_key, entry_dir_name, media_file_name, path_is_occupied,
+        safe_file_name, safe_file_name_with_budget, select_media_stream, subtitle_dedup_key,
+        subtitle_extension, subtitle_file_name, temporary_download_path, temporary_mux_path,
+        temporary_replace_path,
     };
     use crate::models::{
         DanmakuTrack, DownloadEntry, DownloadPlan, FlvSegment, MediaStream, StreamDiagnostics,
@@ -3451,7 +3451,7 @@ mod tests {
         };
         let archive = DownloadArchive::new(vec![record]);
 
-        let preflight = DownloadPreflight::inspect(&plan, &options, Some(&archive));
+        let preflight = DownloadPreflight::inspect(&plan, &options, Some(&archive))?;
 
         assert!(preflight.requires_decision());
         assert_eq!(preflight.archived_records.len(), 1);
@@ -3481,7 +3481,7 @@ mod tests {
         std::os::unix::fs::symlink(temp.path().join("missing-target"), &planned_output_dir)?;
 
         assert!(!planned_output_dir.exists());
-        let preflight = DownloadPreflight::inspect(&plan, &options, None);
+        let preflight = DownloadPreflight::inspect(&plan, &options, None)?;
 
         assert!(preflight.requires_decision());
         assert_eq!(
@@ -3491,6 +3491,33 @@ mod tests {
                 .map(|conflict| &conflict.path),
             Some(&planned_output_dir)
         );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn output_occupancy_reports_metadata_errors() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let restricted = temp.path().join("restricted");
+        std_fs::create_dir(&restricted)?;
+        let original_permissions = std_fs::metadata(&restricted)?.permissions();
+        let mut denied_permissions = original_permissions.clone();
+        denied_permissions.set_mode(0o000);
+        std_fs::set_permissions(&restricted, denied_permissions)?;
+
+        let result = path_is_occupied(&restricted.join("Mock video"));
+
+        std_fs::set_permissions(&restricted, original_permissions)?;
+        match result {
+            Err(crate::Error::Io(error))
+                if error.kind() == std::io::ErrorKind::PermissionDenied => {}
+            Ok(occupied) => {
+                anyhow::bail!("expected metadata permission error, got occupied={occupied}");
+            }
+            Err(error) => {
+                anyhow::bail!("expected metadata permission error, got {error}");
+            }
+        }
         Ok(())
     }
 
@@ -3520,7 +3547,7 @@ mod tests {
         }]);
 
         let preflight =
-            DownloadPreflight::inspect(&plan, &DownloadOptions::new(temp.path()), Some(&archive));
+            DownloadPreflight::inspect(&plan, &DownloadOptions::new(temp.path()), Some(&archive))?;
 
         assert!(preflight.requires_decision());
         assert_eq!(preflight.archived_records.len(), 1);

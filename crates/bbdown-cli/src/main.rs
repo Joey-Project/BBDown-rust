@@ -413,14 +413,14 @@ async fn handle_download(
     ));
     let report = if let Some(archive_file) = args.archive_file {
         let plan = client.plan_download(&args.url, args.select).await?;
-        let planned_preflight = DownloadPreflight::inspect(&plan, &args.options, None);
+        let planned_preflight = DownloadPreflight::inspect(&plan, &args.options, None)?;
         ensure_archive_file_is_not_output_root(
             &archive_file,
             &planned_preflight.planned_output_dir,
         )?;
         let mut archive = DownloadArchive::load(&archive_file)
             .with_context(|| format!("failed to load archive {}", archive_file.display()))?;
-        let preflight = DownloadPreflight::inspect(&plan, &args.options, Some(&archive));
+        let preflight = DownloadPreflight::inspect(&plan, &args.options, Some(&archive))?;
         let stdin_is_terminal = io::stdin().is_terminal();
         let duplicate_prompt_printed_preflight = should_prompt_duplicate_decision(
             args.on_duplicate,
@@ -447,7 +447,7 @@ async fn handle_download(
             }
             return Ok(());
         }
-        let decision_output_dir = preflight.output_dir_for_decision(decision);
+        let decision_output_dir = preflight.output_dir_for_decision(decision)?;
         ensure_archive_file_is_not_output_root(&archive_file, &decision_output_dir)?;
         let report = client
             .download_plan_with_archive_decision(&plan, args.options, &mut archive, decision)

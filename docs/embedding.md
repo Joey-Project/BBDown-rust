@@ -139,7 +139,7 @@ async fn main() -> bbdown::Result<()> {
     let options = DownloadOptions::new("downloads").with_mux(MuxOptions::Disabled);
     let archive_path = "downloads/archive.json";
     let mut archive = DownloadArchive::load(archive_path)?;
-    let preflight = DownloadPreflight::inspect(&plan, &options, Some(&archive));
+    let preflight = DownloadPreflight::inspect(&plan, &options, Some(&archive))?;
 
     if preflight.requires_decision() {
         println!(

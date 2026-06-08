@@ -36,7 +36,8 @@ superseded_by:
 - `keep-both` reserves matching archive record output paths even when those paths are no longer on
   disk, so archive-only duplicate history is preserved across equivalent path spellings.
 - Output-root occupancy uses symlink metadata, so broken symlink roots are treated as existing roots
-  for preflight, keep-both candidate selection, and replace cleanup.
+  for preflight, keep-both candidate selection, and replace cleanup. Non-`NotFound` metadata
+  errors are reported to callers instead of being retried as suffixed keep-both roots.
 - The CLI rejects `--archive-file` when it overlaps the chosen output root either lexically or
   through canonical targets, and `DownloadArchive::save` rejects directory targets before replacing
   archive files.
@@ -62,6 +63,12 @@ superseded_by:
 - Targeted crate coverage:
   `cargo test --locked -p bbdown download_preflight_reports_broken_symlink_output_conflict`.
 - Targeted crate coverage:
+  `cargo test --locked -p bbdown output_occupancy_reports_metadata_errors`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown download_preflight_`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown archive_decision_`.
+- Targeted crate coverage:
   `cargo test --locked -p bbdown download_archive_round_trips_without_urls`.
 - Targeted crate coverage:
   `cargo test --locked -p bbdown download_archive_save_replaces_existing_file`.
@@ -76,6 +83,9 @@ superseded_by:
 - Targeted CLI unit coverage:
   `cargo test --locked -p bbdown-cli duplicate_decision_prompt_state_tracks_displayed_preflight`.
 - Workspace tests: `cargo test --workspace --locked`.
+- Formatter and lint coverage:
+  `cargo fmt --all -- --check`; `cargo clippy --workspace --all-targets -- -D warnings`;
+  `git diff --check`.
 - Project journal validation passed with the project-journal helper.
 - Full local gate: `just ci`.
 
