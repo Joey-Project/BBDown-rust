@@ -9,5 +9,5 @@
 - [completed] Add GitHub release binary packaging for tagged and manual builds.
 - [completed] Add crate publish readiness and dry-run validation.
 - [completed] Add clearer stream quality selection and listing support.
-- [pending] Expand restricted-area proxy response compatibility.
+- [completed] Expand restricted-area proxy response compatibility.
 - [pending] Harden integration APIs and embedding documentation.
