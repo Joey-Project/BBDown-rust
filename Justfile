@@ -12,6 +12,10 @@ fmt-check:
 lint:
     cargo clippy --workspace --all-targets -- -D warnings
 
+msrv:
+    rustup toolchain install 1.95.0 --profile minimal
+    cargo +1.95.0 check --workspace --locked
+
 test:
     cargo test --workspace
 
@@ -28,4 +32,4 @@ live-e2e:
     test -f live-e2e.samples.json || { echo "live-e2e.samples.json is required for live-e2e; copy live-e2e.samples.example.json and fill local sample data" >&2; exit 2; }
     cargo test -p bbdown-cli --test live_e2e -- --ignored
 
-ci: fmt-check lint test e2e publish-dry-run
+ci: fmt-check lint msrv test e2e publish-dry-run

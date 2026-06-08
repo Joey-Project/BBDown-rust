@@ -2,12 +2,17 @@ name: Promote Release Candidate
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Final SemVer version without the leading v, matching the selected RC tag."
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: promote-release-candidate-${{ github.ref_name }}
+  group: promote-release-candidate-${{ inputs.version }}
   cancel-in-progress: false
 
 jobs:
@@ -32,8 +37,15 @@ jobs:
       - name: Validate release metadata
         id: meta
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
+          if [[ ! "${REQUESTED_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must be MAJOR.MINOR.PATCH without a leading v: ${REQUESTED_VERSION}"
+            exit 2
+          fi
           if [[ "${GITHUB_REF}" != refs/tags/* ]]; then
             echo "::error::release promotion must be run from an RC tag; current ref is ${GITHUB_REF}"
             exit 2
@@ -44,7 +56,28 @@ jobs:
             exit 2
           fi
           version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+          if [[ "${version}" != "${REQUESTED_VERSION}" ]]; then
+            echo "::error::selected RC tag ${rc_tag} does not match requested version ${REQUESTED_VERSION}"
+            exit 2
+          fi
+          selected_rc="${BASH_REMATCH[4]}"
           final_tag="v${version}"
+          rc_prefix="v${version}-rc."
+          version_regex="${version//./\\.}"
+          max_rc=0
+          while IFS= read -r ref; do
+            tag="${ref#refs/tags/}"
+            if [[ "${tag}" =~ ^v${version_regex}-rc\.([1-9][0-9]*)$ ]]; then
+              current_rc="${BASH_REMATCH[1]}"
+              if (( current_rc > max_rc )); then
+                max_rc="${current_rc}"
+              fi
+            fi
+          done < <(gh api --paginate "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${rc_prefix}" --jq '.[].ref')
+          if (( selected_rc != max_rc )); then
+            echo "::error::release promotion must use the latest RC tag for ${final_tag}; selected ${rc_tag}, latest is v${version}-rc.${max_rc}"
+            exit 2
+          fi
           cargo_versions=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; data = json.load(sys.stdin); versions = {pkg["name"]: pkg["version"] for pkg in data["packages"]}; print(versions["bbdown-core"]); print(versions["bbdown-cli"])')
           core_version=$(printf '%s\n' "${cargo_versions}" | sed -n '1p')
           cli_version=$(printf '%s\n' "${cargo_versions}" | sed -n '2p')
@@ -69,6 +102,12 @@ jobs:
 
       - name: Lint
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Install declared MSRV
+        run: rustup toolchain install 1.95.0 --profile minimal
+
+      - name: Check declared MSRV
+        run: cargo +1.95.0 check --workspace --locked
 
       - name: Unit and e2e tests
         run: cargo test --workspace
@@ -113,11 +152,30 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          RC_TAG: ${{ needs.validate.outputs.rc_tag }}
           FINAL_TAG: ${{ needs.validate.outputs.final_tag }}
           TARGET_SHA: ${{ needs.validate.outputs.target_sha }}
+          VERSION: ${{ needs.validate.outputs.version }}
         run: |
           set -euo pipefail
           repo="${GITHUB_REPOSITORY}"
+          rc_prefix="${FINAL_TAG}-rc."
+          version_regex="${VERSION//./\\.}"
+          selected_rc="${RC_TAG##*.}"
+          max_rc=0
+          while IFS= read -r ref; do
+            tag="${ref#refs/tags/}"
+            if [[ "${tag}" =~ ^v${version_regex}-rc\.([1-9][0-9]*)$ ]]; then
+              current_rc="${BASH_REMATCH[1]}"
+              if (( current_rc > max_rc )); then
+                max_rc="${current_rc}"
+              fi
+            fi
+          done < <(gh api --paginate "repos/${repo}/git/matching-refs/tags/${rc_prefix}" --jq '.[].ref')
+          if (( selected_rc != max_rc )); then
+            echo "::error::release promotion must use the latest RC tag for ${FINAL_TAG}; selected ${RC_TAG}, latest is v${VERSION}-rc.${max_rc}"
+            exit 2
+          fi
           if gh release view "${FINAL_TAG}" --repo "${repo}" >/dev/null 2>&1; then
             echo "::error::GitHub Release ${FINAL_TAG} already exists"
             exit 2

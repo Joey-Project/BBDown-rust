@@ -241,22 +241,26 @@ Default CI is deterministic:
 
 - `cargo fmt --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
+- declared MSRV check with `cargo +1.95.0 check --workspace --locked`
 - unit tests
 - CLI mock e2e tests
 - crates.io dry-run packaging for the publishable `bbdown-core` library package
 
 Release packaging is a separate GitHub Actions workflow stack. `Release Artifacts` is reusable and
 manual-only: it builds Linux x86_64, macOS x86_64, macOS aarch64, and Windows x86_64 CLI archives
-without publishing tags, GitHub Releases, or crates. `Create Release Candidate` validates `master`,
-builds those archives, and creates an annotated `vX.Y.Z-rc.N` tag through the release GitHub App.
-`Promote Release Candidate` must be run from an RC tag; it reruns validation, rebuilds final
-archives, creates the final annotated `vX.Y.Z` tag, publishes the GitHub Release, then publishes
+without publishing tags, GitHub Releases, or crates. `Create Release Candidate` validates the
+repository default branch, builds those archives, and creates an annotated `vX.Y.Z-rc.N` tag through
+the release GitHub App, but first rejects versions that already have a final tag or GitHub Release.
+`Promote Release Candidate` must be run from the latest RC tag for the requested version; it reruns
+validation, rebuilds final archives, rechecks that the selected RC is still latest immediately before
+publication, creates the final annotated `vX.Y.Z` tag, publishes the GitHub Release, then publishes
 `bbdown-core` to crates.io through the protected `crates-io` environment. Archives contain the
 `bbdown` binary, English and Simplified Chinese README files, English and Simplified Chinese user,
 embedding, release, and architecture guides, and `LICENSE`. Each archive also has an adjacent
 platform-specific checksum file. Release workflows use the GitHub-hosted runner `rustup` and the
 floating stable Rust channel from `rust-toolchain.toml`; third-party Rust toolchain and cache
-actions are intentionally avoided. Package names normalize release refs to the packager-safe
+actions are intentionally avoided. They also install Rust 1.95.0 for a `cargo check` gate matching
+the crate `rust-version` metadata. Package names normalize release refs to the packager-safe
 `[A-Za-z0-9._-]` character set, so tags such as SemVer build metadata do not fail at packaging time.
 
 Crate publishing is intentionally scoped to the reusable `bbdown-core` library package, imported as

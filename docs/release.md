@@ -4,8 +4,8 @@
 
 This project releases in two phases:
 
-1. A manually approved GitHub Actions run validates `master`, builds release artifacts, and creates
-   a release candidate tag such as `v0.1.0-rc.1`.
+1. A manually approved GitHub Actions run validates the repository default branch, builds release
+   artifacts, and creates a release candidate tag such as `v0.1.0-rc.1`.
 2. A second manually approved run is started from that RC tag. It rebuilds final artifacts, creates
    the final tag such as `v0.1.0`, publishes the GitHub Release, and publishes the `bbdown-core`
    crate to crates.io.
@@ -17,7 +17,8 @@ not publish tags, GitHub Releases, or crates.
 
 Configure these environments:
 
-- `release-candidate`: allow deployment from the `master` branch only. Store
+- `release-candidate`: allow deployment from the repository default branch only, currently
+  `master`. Store
   `RELEASE_GITHUB_APP_ID` and `RELEASE_GITHUB_APP_PRIVATE_KEY` here, or make equivalent repository
   secrets available to this environment.
 - `production-release`: allow deployment from tags matching `v*-rc.*` only. Store the same release
@@ -30,9 +31,9 @@ App should be the only non-human actor allowed by the release tag rulesets.
 
 Recommended rulesets:
 
-- `master` branch: require pull requests, require status checks `Rust` and `codex/review-gate`,
-  require Code Owner review, and keep the general required approval count at `0` if ordinary PRs
-  should not need human approval.
+- Repository default branch, currently `master`: require pull requests, require status checks `Rust`
+  and `codex/review-gate`, require Code Owner review, and keep the general required approval count at
+  `0` if ordinary PRs should not need human approval.
 - RC tags: target `v*-rc.*`; restrict creation, updates, and deletion; allow creation only through
   the release GitHub App.
 - Final release tags: target `v*` and exclude `v*-rc.*` when the UI supports excludes; otherwise use
@@ -42,36 +43,44 @@ Recommended rulesets:
 ## Create An RC Tag
 
 1. Ensure `crates/bbdown/Cargo.toml` has the final crate version, for example `0.1.0`.
-2. Ensure the intended branch is merged to `master`.
-3. In GitHub Actions, run `Create Release Candidate` from the `master` branch.
+2. Ensure the intended branch is merged to the repository default branch, currently `master`.
+3. In GitHub Actions, run `Create Release Candidate` from the repository default branch.
 4. Enter `version` without a leading `v`, for example `0.1.0`. The workflow chooses the next
    available RC number automatically.
 5. Approve the `release-candidate` environment deployment.
 
-The workflow checks that it is running from `master`, validates the `bbdown-core` and `bbdown-cli`
-Cargo versions, serializes RC creation per release version, computes the next RC number, runs
-formatter, clippy, tests, and a crates.io dry run, builds all release archives, then creates the
-annotated RC tag.
+The workflow checks that it is running from the repository default branch, validates the
+`bbdown-core` and `bbdown-cli` Cargo versions, serializes RC creation per release version, computes
+the next RC number, runs formatter, clippy, declared MSRV check, tests, and a crates.io dry run,
+rejects versions that already have a final tag or GitHub Release, builds all release archives, then
+creates the annotated RC tag.
 
 ## Promote An RC
 
 1. In GitHub Actions, open `Promote Release Candidate`.
-2. Use the branch/tag selector to select the RC tag, for example `v0.1.0-rc.1`.
-3. Start the workflow.
-4. Approve the `production-release` environment deployment.
-5. Approve the `crates-io` environment deployment.
+2. Use the branch/tag selector to select the latest RC tag for that version, for example
+   `v0.1.0-rc.1`.
+3. Enter the final SemVer `version` without a leading `v`, for example `0.1.0`. This must match the
+   selected RC tag and is used to serialize promotion for the final release version.
+4. Start the workflow.
+5. Approve the `production-release` environment deployment.
+6. Approve the `crates-io` environment deployment.
 
-The workflow validates that the selected ref is an RC tag, serializes promotion per RC tag, confirms
-the `bbdown-core` and `bbdown-cli` Cargo versions match the final tag, reruns formatter, clippy,
-tests, and crates.io dry run, rebuilds final release archives, creates the final annotated tag,
-publishes the GitHub Release, and then publishes `bbdown-core`.
+The workflow validates that the selected ref is the latest RC tag for the requested version,
+serializes promotion per final release version, confirms the `bbdown-core` and `bbdown-cli` Cargo
+versions match the final tag, reruns formatter, clippy, declared MSRV check, tests, and crates.io dry
+run, rebuilds final release archives, rechecks that the selected RC is still latest immediately
+before publication, creates the final annotated tag, publishes the GitHub Release, and then publishes
+`bbdown-core`.
 
 ## Failure Recovery
 
 - If RC creation fails before the tag is created, fix the problem and rerun the RC workflow with the
-  same version and RC number.
-- If RC creation fails after a tag already exists, use a new RC number unless the existing tag is
-  intentionally deleted by a maintainer.
+  same version.
+- If RC creation fails after a tag already exists, rerun the workflow with the same version; it will
+  choose the next RC number unless the existing tag is intentionally deleted by a maintainer.
+- If the final tag or GitHub Release already exists, do not create another RC for that version;
+  create a new version instead.
 - If promotion fails before `Publish GitHub Release`, fix the issue and rerun from the same RC tag.
   If the final tag was already created and still points at the RC target commit, the workflow reuses
   that tag and continues creating the missing release.
