@@ -152,3 +152,6 @@ superseded_by:
 - Follow-up independent review found GitHub Release reuse could accept an existing final release
   marked as a prerelease. Promotion now rejects prerelease final releases instead of treating them as
   recovered success.
+- Follow-up independent review found the shared Cargo version metadata helper could still resolve
+  dependencies before the reusable locked verification job. The helper now calls
+  `cargo metadata --locked`.

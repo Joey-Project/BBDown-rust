@@ -82,7 +82,7 @@ release_max_rc_number() {
 }
 
 release_workspace_versions() {
-  cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; data = json.load(sys.stdin); versions = {pkg["name"]: pkg["version"] for pkg in data["packages"]}; print(versions["bbdown-core"]); print(versions["bbdown-cli"])'
+  cargo metadata --locked --no-deps --format-version 1 | python3 -c 'import json, sys; data = json.load(sys.stdin); versions = {pkg["name"]: pkg["version"] for pkg in data["packages"]}; print(versions["bbdown-core"]); print(versions["bbdown-cli"])'
 }
 
 release_tag_target_sha() {
