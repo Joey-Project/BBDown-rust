@@ -474,21 +474,36 @@ fn ensure_archive_file_is_not_output_root(
     output_dir: &Path,
 ) -> anyhow::Result<()> {
     let output_dir_display = output_dir.display().to_string();
-    let archive_file =
-        comparable_path_components(archive_file).context("failed to resolve archive path")?;
-    let output_dir =
-        comparable_path_components(output_dir).context("failed to resolve output directory")?;
+    let archive_lexical =
+        lexical_path_components(archive_file).context("failed to resolve archive path")?;
+    let output_lexical =
+        lexical_path_components(output_dir).context("failed to resolve output directory")?;
+    let archive_canonical =
+        canonical_path_components(archive_file).context("failed to resolve archive path")?;
+    let output_canonical =
+        canonical_path_components(output_dir).context("failed to resolve output directory")?;
     ensure!(
-        !components_start_with(&archive_file, &output_dir)
-            && !components_start_with(&output_dir, &archive_file),
+        !paths_overlap(&archive_lexical, &output_lexical)
+            && !paths_overlap(&archive_canonical, &output_canonical),
         "--archive-file must not overlap the chosen output directory ({output_dir_display})"
     );
     Ok(())
 }
 
-fn comparable_path_components(path: &Path) -> anyhow::Result<Vec<String>> {
+fn lexical_path_components(path: &Path) -> anyhow::Result<Vec<String>> {
+    Ok(absolute_lexical_path(path)?
+        .components()
+        .map(path_component_key)
+        .collect())
+}
+
+fn canonical_path_components(path: &Path) -> anyhow::Result<Vec<String>> {
     let path = canonicalize_existing_prefix(&absolute_lexical_path(path)?);
     Ok(path.components().map(path_component_key).collect())
+}
+
+fn paths_overlap(path: &[String], other: &[String]) -> bool {
+    components_start_with(path, other) || components_start_with(other, path)
 }
 
 fn components_start_with(path: &[String], prefix: &[String]) -> bool {
@@ -1239,6 +1254,7 @@ mod tests {
         EndpointConfig,
     };
     use clap::Parser as _;
+    use std::fs;
     use std::path::PathBuf;
     use std::time::{Duration, Instant};
 
@@ -1298,6 +1314,25 @@ mod tests {
             ensure_archive_file_is_not_output_root(&case_variant_archive, &output_root).is_err()
         );
         assert!(ensure_archive_file_is_not_output_root(&sibling_archive, &output_root).is_ok());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn archive_file_guard_rejects_lexical_symlink_inside_output_root() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let output_root = temp.path().join("downloads").join("Mock video");
+        fs::create_dir_all(&output_root)?;
+        let external_archive = temp.path().join("external").join("archive.json");
+        let external_parent = external_archive
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("missing external archive parent"))?;
+        fs::create_dir_all(external_parent)?;
+        fs::write(&external_archive, "{}")?;
+        let archive_symlink = output_root.join("archive.json");
+        std::os::unix::fs::symlink(&external_archive, &archive_symlink)?;
+
+        assert!(ensure_archive_file_is_not_output_root(&archive_symlink, &output_root).is_err());
         Ok(())
     }
 

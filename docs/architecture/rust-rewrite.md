@@ -129,8 +129,9 @@ then replaces stale archive records for that output path. `KeepBoth` writes to t
 output root while avoiding matching archive record paths, and both comparisons use normalized output
 path keys instead of raw `PathBuf` equality. `Cancel` is a caller-level stop decision. The CLI
 exposes the same model with `--archive-file` and `--on-duplicate`, rejects an archive file path that
-overlaps the chosen output root, and JSON/non-TTY mode requires an explicit decision instead of
-prompting. `DownloadArchive::save` also rejects directory targets before writing the archive file.
+overlaps the chosen output root by checking both lexical paths and canonical targets, and JSON/non-TTY
+mode requires an explicit decision instead of prompting. `DownloadArchive::save` also rejects
+directory targets before writing the archive file.
 
 The crate default keeps muxing disabled so embedding projects do not spawn external processes by
 surprise. The CLI `download` command enables ffmpeg by default and exposes `--no-mux` for users and
@@ -263,7 +264,7 @@ archive JSON round trips/replacement without media URLs. They also cover archive
 reservation, same-output archive record replacement, and directory-target archive save rejection.
 CLI mock e2e tests cover JSON duplicate failure without an explicit decision, `cancel` preflight
 output, `keep-both` suffixed output roots, `replace` overwriting an existing file, and rejecting an
-archive file path that overlaps the chosen output root.
+archive file path that overlaps the chosen output root lexically or through canonicalized targets.
 
 Live tests against Bilibili are opt-in only through `just live-e2e`. The recipe fails fast unless an
 ignored `live-e2e.samples.json` manifest exists, so branch CI is not blocked by network, account, or
