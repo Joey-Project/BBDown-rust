@@ -62,6 +62,8 @@ superseded_by:
   `cargo test --locked -p bbdown-cli download_archive_`.
 - Targeted CLI unit coverage:
   `cargo test --locked -p bbdown-cli archive_file_guard_rejects_output_root_overlap`.
+- Targeted CLI unit coverage:
+  `cargo test --locked -p bbdown-cli duplicate_decision_prompt_state_tracks_displayed_preflight`.
 - Workspace tests: `cargo test --workspace --locked`.
 - Project journal validation passed with the project-journal helper.
 - Full local gate: `just ci`.

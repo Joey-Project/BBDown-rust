@@ -421,7 +421,15 @@ async fn handle_download(
         let mut archive = DownloadArchive::load(&archive_file)
             .with_context(|| format!("failed to load archive {}", archive_file.display()))?;
         let preflight = DownloadPreflight::inspect(&plan, &args.options, Some(&archive));
-        let decision = duplicate_decision(args.on_duplicate, args.json, &preflight)?;
+        let stdin_is_terminal = io::stdin().is_terminal();
+        let duplicate_prompt_printed_preflight = should_prompt_duplicate_decision(
+            args.on_duplicate,
+            args.json,
+            &preflight,
+            stdin_is_terminal,
+        );
+        let decision =
+            duplicate_decision(args.on_duplicate, args.json, stdin_is_terminal, &preflight)?;
         if preflight.requires_decision() && decision == DuplicateDecision::Cancel {
             if args.json {
                 println!(
@@ -432,7 +440,9 @@ async fn handle_download(
                     }))?
                 );
             } else {
-                print_duplicate_preflight(&preflight);
+                if !duplicate_prompt_printed_preflight {
+                    print_duplicate_preflight(&preflight);
+                }
                 println!("download canceled");
             }
             return Ok(());
@@ -546,6 +556,7 @@ fn path_component_key(component: Component<'_>) -> String {
 fn duplicate_decision(
     explicit: Option<DuplicateDecision>,
     json: bool,
+    stdin_is_terminal: bool,
     preflight: &DownloadPreflight,
 ) -> anyhow::Result<DuplicateDecision> {
     if let Some(decision) = explicit {
@@ -554,12 +565,21 @@ fn duplicate_decision(
     if !preflight.requires_decision() {
         return Ok(DuplicateDecision::Replace);
     }
-    if json || !io::stdin().is_terminal() {
+    if json || !stdin_is_terminal {
         bail!(
             "download archive found an existing record or output conflict; pass --on-duplicate replace, keep-both, or cancel"
         );
     }
     prompt_duplicate_decision(preflight)
+}
+
+fn should_prompt_duplicate_decision(
+    explicit: Option<DuplicateDecision>,
+    json: bool,
+    preflight: &DownloadPreflight,
+    stdin_is_terminal: bool,
+) -> bool {
+    explicit.is_none() && preflight.requires_decision() && !json && stdin_is_terminal
 }
 
 fn prompt_duplicate_decision(preflight: &DownloadPreflight) -> anyhow::Result<DuplicateDecision> {
@@ -1212,9 +1232,14 @@ mod tests {
         Cli, endpoints_from_cli, ensure_archive_file_is_not_output_root, next_poll_sleep,
         remaining_until, restricted_area_from_cli_with_args,
         restricted_area_from_cli_with_env_values, save_qr_credentials,
+        should_prompt_duplicate_decision,
     };
-    use bbdown::{CredentialStore, Credentials, EndpointConfig};
+    use bbdown::{
+        CredentialStore, Credentials, DownloadOutputConflict, DownloadPreflight, DuplicateDecision,
+        EndpointConfig,
+    };
     use clap::Parser as _;
+    use std::path::PathBuf;
     use std::time::{Duration, Instant};
 
     #[test]
@@ -1274,6 +1299,45 @@ mod tests {
         );
         assert!(ensure_archive_file_is_not_output_root(&sibling_archive, &output_root).is_ok());
         Ok(())
+    }
+
+    #[test]
+    fn duplicate_decision_prompt_state_tracks_displayed_preflight() {
+        let preflight = DownloadPreflight {
+            content_key: "plan|aid=1|cid=2".to_owned(),
+            title: "Mock video".to_owned(),
+            planned_output_dir: PathBuf::from("Mock video"),
+            archived_records: Vec::new(),
+            output_conflict: Some(DownloadOutputConflict {
+                path: PathBuf::from("Mock video"),
+            }),
+        };
+        let clean_preflight = DownloadPreflight {
+            output_conflict: None,
+            ..preflight.clone()
+        };
+
+        assert!(should_prompt_duplicate_decision(
+            None, false, &preflight, true
+        ));
+        assert!(!should_prompt_duplicate_decision(
+            Some(DuplicateDecision::Cancel),
+            false,
+            &preflight,
+            true
+        ));
+        assert!(!should_prompt_duplicate_decision(
+            None, true, &preflight, true
+        ));
+        assert!(!should_prompt_duplicate_decision(
+            None, false, &preflight, false
+        ));
+        assert!(!should_prompt_duplicate_decision(
+            None,
+            false,
+            &clean_preflight,
+            true
+        ));
     }
 
     #[test]
