@@ -160,3 +160,6 @@ superseded_by:
   publishing the GitHub Release and repeats the same helper check in the crate publish job.
 - Follow-up independent review found crates.io recovery could accept a yanked version with a matching
   checksum. The shared crates.io helper now rejects yanked exact-version matches.
+- Follow-up independent review found the architecture docs still documented the old non-locked
+  formatter/linter/test commands. The English and Simplified Chinese architecture docs now list the
+  locked CI and local e2e commands used by the workflows.

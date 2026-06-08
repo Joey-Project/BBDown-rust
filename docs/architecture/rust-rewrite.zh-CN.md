@@ -210,11 +210,11 @@ ticket key 和扫码 URL query string 可作为预认证密钥。HTTP request er
 
 默认 CI 是确定性的：
 
-- `cargo fmt --check`
-- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo fmt --all -- --check`
+- `cargo clippy --workspace --all-targets --locked -- -D warnings`
 - 使用 `cargo +1.95.0 check --workspace --locked` 检查 declared MSRV
-- 单元测试
-- CLI mock e2e 测试
+- 使用 `cargo test --workspace --locked` 运行单元测试和 workspace integration tests
+- 本地 CLI mock e2e 测试使用 `cargo test -p bbdown-cli --test cli_e2e --locked`
 - 对可发布 `bbdown-core` library package 执行 crates.io dry-run packaging
 
 Release packaging 是单独的 GitHub Actions workflow stack。`Release Artifacts` 是可复用且

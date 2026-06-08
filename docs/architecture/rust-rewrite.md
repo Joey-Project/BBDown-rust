@@ -239,11 +239,11 @@ HTTP request errors are converted without retaining full URLs so query secrets s
 
 Default CI is deterministic:
 
-- `cargo fmt --check`
-- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo fmt --all -- --check`
+- `cargo clippy --workspace --all-targets --locked -- -D warnings`
 - declared MSRV check with `cargo +1.95.0 check --workspace --locked`
-- unit tests
-- CLI mock e2e tests
+- unit and workspace integration tests with `cargo test --workspace --locked`
+- local CLI mock e2e tests with `cargo test -p bbdown-cli --test cli_e2e --locked`
 - crates.io dry-run packaging for the publishable `bbdown-core` library package
 
 Release packaging is a separate GitHub Actions workflow stack. `Release Artifacts` is reusable and
