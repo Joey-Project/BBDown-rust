@@ -1417,7 +1417,7 @@ impl ArchivePlanMatch {
 }
 
 fn archive_record_path(path: &Path) -> PathBuf {
-    absolute_lexical_path(path)
+    comparable_output_path(path)
 }
 
 fn comparable_output_path_key(path: &Path) -> String {
@@ -1429,21 +1429,19 @@ fn comparable_output_path_key(path: &Path) -> String {
 }
 
 fn comparable_output_path(path: &Path) -> PathBuf {
-    canonicalize_existing_prefix(&absolute_lexical_path(path))
+    canonicalize_existing_prefix(&absolute_path(path))
 }
 
-fn absolute_lexical_path(path: &Path) -> PathBuf {
-    let absolute_path = if path.is_absolute() {
+fn absolute_path(path: &Path) -> PathBuf {
+    if path.is_absolute() {
         path.to_path_buf()
     } else {
         std::env::current_dir().map_or_else(|_| path.to_path_buf(), |cwd| cwd.join(path))
-    };
-    lexical_clean_path(&absolute_path)
+    }
 }
 
 fn canonicalize_existing_prefix(path: &Path) -> PathBuf {
-    let clean_path = lexical_clean_path(path);
-    let mut existing_prefix = clean_path.clone();
+    let mut existing_prefix = path.to_path_buf();
     let mut missing_components = Vec::new();
     while !existing_prefix.exists() {
         let Some(file_name) = existing_prefix.file_name() else {
@@ -1790,11 +1788,11 @@ mod tests {
         DownloadArchive, DownloadArchiveEntryRecord, DownloadArchiveRecord, DownloadOptions,
         DownloadPreflight, DownloadReport, DownloadedFile, DuplicateDecision, EntryDownloadReport,
         MAX_FILE_COMPONENT_BYTES, MAX_FILE_NAME_BYTES, MAX_SUBTITLE_EXTENSION_BYTES, MuxOptions,
-        RetryPolicy, archive_sidecar_path, default_plan_output_dir, download_entry_content_key,
-        download_plan_content_key, entry_dir_name, media_file_name, path_is_occupied,
-        safe_file_name, safe_file_name_with_budget, select_media_stream, subtitle_dedup_key,
-        subtitle_extension, subtitle_file_name, temporary_download_path, temporary_mux_path,
-        temporary_replace_path,
+        RetryPolicy, archive_sidecar_path, comparable_output_path, default_plan_output_dir,
+        download_entry_content_key, download_plan_content_key, entry_dir_name, media_file_name,
+        path_is_occupied, safe_file_name, safe_file_name_with_budget, select_media_stream,
+        subtitle_dedup_key, subtitle_extension, subtitle_file_name, temporary_download_path,
+        temporary_mux_path, temporary_replace_path,
     };
     use crate::models::{
         DanmakuTrack, DownloadEntry, DownloadPlan, FlvSegment, MediaStream, StreamDiagnostics,
@@ -3721,6 +3719,40 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn download_preflight_matches_symlink_parent_archive_output() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let temp = tempfile::tempdir()?;
+        let plan = test_plan(&server);
+        let options = DownloadOptions::new(temp.path().join("downloads"));
+        let planned_output_dir = default_plan_output_dir(&plan, &options);
+        let output_subdir = planned_output_dir.join("subdir");
+        std_fs::create_dir_all(&output_subdir)?;
+        let external_parent = temp.path().join("external");
+        std_fs::create_dir_all(&external_parent)?;
+        let link_to_output_subdir = external_parent.join("link");
+        std::os::unix::fs::symlink(&output_subdir, &link_to_output_subdir)?;
+        let archived_output_dir = link_to_output_subdir.join("..");
+        let archive = DownloadArchive::new(vec![DownloadArchiveRecord {
+            content_key: "plan|different-content".to_owned(),
+            title: "Symlink parent content".to_owned(),
+            output_dir: archived_output_dir,
+            completed_at_unix: 42,
+            entries: Vec::new(),
+        }]);
+
+        let preflight = DownloadPreflight::inspect(&plan, &options, Some(&archive))?;
+
+        assert!(preflight.requires_decision());
+        assert_eq!(preflight.archived_records.len(), 1);
+        assert_eq!(
+            preflight.archived_records[0].title,
+            "Symlink parent content"
+        );
+        Ok(())
+    }
+
     #[tokio::test]
     async fn archive_decision_keep_both_uses_new_output_root() -> anyhow::Result<()> {
         let server = MockServer::start();
@@ -3768,7 +3800,10 @@ mod tests {
         assert_eq!(report.output_dir, output_base.join("Mock video (2)"));
         assert!(report.output_dir.exists());
         assert_eq!(archive.records.len(), 2);
-        assert_eq!(archive.records[1].output_dir, report.output_dir);
+        assert_eq!(
+            archive.records[1].output_dir,
+            comparable_output_path(&report.output_dir)
+        );
         assert_eq!(archive.records[1].entries.len(), 1);
         Ok(())
     }
@@ -3822,7 +3857,10 @@ mod tests {
         assert_eq!(report.output_dir, output_base.join("Mock video (2)"));
         assert_eq!(archive.records.len(), 2);
         assert_eq!(archive.records[0].output_dir, archived_output_dir);
-        assert_eq!(archive.records[1].output_dir, report.output_dir);
+        assert_eq!(
+            archive.records[1].output_dir,
+            comparable_output_path(&report.output_dir)
+        );
         Ok(())
     }
 
@@ -3868,7 +3906,10 @@ mod tests {
         assert_eq!(report.output_dir, output_base.join("Mock video (3)"));
         assert_eq!(archive.records.len(), 2);
         assert_eq!(archive.records[0].output_dir, unrelated_output_dir);
-        assert_eq!(archive.records[1].output_dir, report.output_dir);
+        assert_eq!(
+            archive.records[1].output_dir,
+            comparable_output_path(&report.output_dir)
+        );
         Ok(())
     }
 
@@ -3911,7 +3952,10 @@ mod tests {
 
         assert!(!planned_output_dir.exists());
         assert_eq!(report.output_dir, output_base.join("Mock video (2)"));
-        assert_eq!(archive.records[0].output_dir, report.output_dir);
+        assert_eq!(
+            archive.records[0].output_dir,
+            comparable_output_path(&report.output_dir)
+        );
         Ok(())
     }
 
@@ -3954,7 +3998,10 @@ mod tests {
 
         assert_eq!(report.output_dir, planned_output_dir);
         assert!(tokio::fs::metadata(&planned_output_dir).await?.is_dir());
-        assert_eq!(archive.records[0].output_dir, report.output_dir);
+        assert_eq!(
+            archive.records[0].output_dir,
+            comparable_output_path(&report.output_dir)
+        );
         Ok(())
     }
 
@@ -4176,6 +4223,35 @@ mod tests {
                     .join("entry")
                     .join("main.mp4")
             )
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn download_archive_record_resolves_symlink_parent_output_path() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let temp = tempfile::tempdir()?;
+        let plan = test_plan(&server);
+        let planned_output_dir = temp.path().join("downloads").join("Mock video");
+        let output_subdir = planned_output_dir.join("subdir");
+        std_fs::create_dir_all(&output_subdir)?;
+        let external_parent = temp.path().join("external");
+        std_fs::create_dir_all(&external_parent)?;
+        let link_to_output_subdir = external_parent.join("link");
+        std::os::unix::fs::symlink(&output_subdir, &link_to_output_subdir)?;
+        let report = DownloadReport {
+            title: plan.title.clone(),
+            output_dir: link_to_output_subdir.join(".."),
+            entries: Vec::new(),
+        };
+        let mut archive = DownloadArchive::default();
+
+        archive.record_download(&plan, &report);
+
+        assert_eq!(
+            archive.records[0].output_dir,
+            comparable_output_path(&planned_output_dir)
         );
         Ok(())
     }

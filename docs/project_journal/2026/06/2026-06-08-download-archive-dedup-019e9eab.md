@@ -37,6 +37,8 @@ superseded_by:
   reused archive file is not interpreted relative to a later caller's working directory.
 - Preflight treats archive records with the same planned output root as duplicate records even when
   the content identity differs and the old output root is no longer present on disk.
+- Archive path comparison and stored archive paths resolve existing symlink prefixes before folding
+  parent components, matching filesystem resolution for paths such as `link/../Mock video`.
 - `keep-both` reserves all archive record output paths even when those paths are no longer on disk,
   so archive-only duplicate history is preserved across equivalent path spellings and unrelated
   same-title records.
@@ -70,9 +72,13 @@ superseded_by:
 - Targeted crate coverage:
   `cargo test --locked -p bbdown download_preflight_reports_same_output_archive_record`.
 - Targeted crate coverage:
+  `cargo test --locked -p bbdown download_preflight_matches_symlink_parent_archive_output`.
+- Targeted crate coverage:
   `cargo test --locked -p bbdown download_entry_content_key_ignores_display_index`.
 - Targeted crate coverage:
   `cargo test --locked -p bbdown download_archive_record_stores_absolute_paths`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown download_archive_record_resolves_symlink_parent_output_path`.
 - Targeted crate coverage:
   `cargo test --locked -p bbdown download_archive_load_reports_metadata_errors`.
 - Targeted crate coverage:
