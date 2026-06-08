@@ -34,6 +34,8 @@ superseded_by:
 - A second follow-up review found that GitHub Release and crate payload files should also be
   release-owned, so the branch now covers root README/LICENSE files, crate README/LICENSE files,
   and published user, embedding, and architecture docs.
+- Added repo-local agent instructions requiring local `gh` for GitHub write operations, with
+  the Codex GitHub connector limited to reads so PR authorship stays on `JoeyTeng-Codex`.
 
 ## Validation
 

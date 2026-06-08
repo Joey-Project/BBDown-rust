@@ -1,4 +1,5 @@
 # Release-critical automation and packaging surfaces require JoeyTeng review.
+/AGENTS.md @JoeyTeng
 /.github/CODEOWNERS @JoeyTeng
 /.github/workflows/*.yml @JoeyTeng
 /.github/workflows/*.yaml @JoeyTeng
