@@ -21,10 +21,13 @@ superseded_by:
 
 ## Current State
 
-- `.github/CODEOWNERS` now assigns `@JoeyTeng` to release and publish workflows, release packaging
-  scripts, Cargo manifests and lockfile, and the planned release runbook docs.
+- `.github/CODEOWNERS` now assigns `@JoeyTeng` to the CODEOWNERS file itself, CI, release and
+  publish workflows, release packaging scripts, Cargo manifests and lockfile, and the planned
+  release runbook docs.
 - GitHub branch/ruleset configuration still needs to enable code owner review enforcement for
   matching pull requests.
+- Offline frozen review found and the branch fixed missing ownership for `.github/CODEOWNERS`
+  itself and `.github/workflows/ci.yml`.
 
 ## Validation
 

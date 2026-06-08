@@ -1,4 +1,6 @@
 # Release-critical automation and packaging surfaces require JoeyTeng review.
+/.github/CODEOWNERS @JoeyTeng
+/.github/workflows/ci.yml @JoeyTeng
 /.github/workflows/*release*.yml @JoeyTeng
 /.github/workflows/*publish*.yml @JoeyTeng
 /scripts/package-release.sh @JoeyTeng
