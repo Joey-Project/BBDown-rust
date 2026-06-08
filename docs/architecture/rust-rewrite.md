@@ -244,6 +244,6 @@ fixed `cn`, `th`, `hk`, and `tw` ordering. Network requests have a configurable 
 6. Manifest-driven local live e2e sample matrix. Completed in PR #7.
 7. GitHub binary release packaging. Completed in PR #8.
 8. Crate publish readiness and dry-run validation. Completed in PR #9.
-9. Clearer stream quality selection and listing support. Completed in this slice.
+9. Clearer stream quality selection and listing support. Completed in PR #10.
 10. Restricted-area proxy response compatibility expansion. Planned.
 11. Integration API and documentation hardening. Planned.

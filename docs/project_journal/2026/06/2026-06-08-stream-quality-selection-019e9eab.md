@@ -5,7 +5,7 @@ status: completed
 created: 2026-06-08
 updated: 2026-06-08
 branch: wip/stream-quality-selection
-pr:
+pr: https://github.com/Joey-Project/BBDown-rust/pull/10
 supersedes: []
 superseded_by:
 ---
