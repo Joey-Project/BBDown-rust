@@ -358,8 +358,20 @@ jobs:
             200)
               published_version=$(python3 -c 'import json, sys; print(json.load(sys.stdin)["version"]["num"])' < "${version_json}")
               if [[ "${published_version}" == "${VERSION}" ]]; then
-                echo "bbdown-core ${VERSION} already exists on crates.io; treating publish as recovered"
-                exit 0
+                published_checksum=$(python3 -c 'import json, sys; print(json.load(sys.stdin)["version"].get("checksum") or "")' < "${version_json}")
+                if [[ -z "${published_checksum}" ]]; then
+                  echo "::error::crates.io did not return a checksum for bbdown-core ${VERSION}"
+                  exit 2
+                fi
+                cargo package -p bbdown-core --locked
+                crate_path="target/package/bbdown-core-${VERSION}.crate"
+                local_checksum=$(sha256sum "${crate_path}" | awk '{ print $1 }')
+                if [[ "${local_checksum}" == "${published_checksum}" ]]; then
+                  echo "bbdown-core ${VERSION} already exists on crates.io with matching package checksum; treating publish as recovered"
+                  exit 0
+                fi
+                echo "::error::crates.io bbdown-core ${VERSION} checksum ${published_checksum} does not match ${crate_path} checksum ${local_checksum}"
+                exit 2
               fi
               echo "::error::crates.io returned bbdown-core version ${published_version}, expected ${VERSION}"
               exit 2

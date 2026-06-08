@@ -131,3 +131,7 @@ superseded_by:
   now verifies published release assets through their sidecar checksums before continuing to crates.io.
 - Final independent review found sidecar checksum success alone could validate the wrong filename;
   the workflow now requires each sidecar to name its paired archive before running `sha256sum -c`.
+- Follow-up frozen review found crates.io version-only recovery could accept a package published
+  from a different commit; the crate publish job now repackages the selected RC source and requires
+  the local `.crate` SHA256 to match the crates.io checksum before treating an existing version as
+  recovered success.

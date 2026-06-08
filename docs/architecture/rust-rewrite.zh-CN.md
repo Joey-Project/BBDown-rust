@@ -238,8 +238,9 @@ promotion 共用按 version 分组的 concurrency group，因此同一 version �
 compiler 变化阻断。Release archives 仍会规范化条目顺序、时间戳、owner、group 和归档容
 器 metadata，因此同一组已编译输入会产生稳定 package checksum。workflow 会按 `tag_name`
 列出 releases，而不是只依赖仅面向 published release 的 tag endpoint，因此 release GitHub App token 能看到 draft release。crates.io publish step 会先检查 exact
-`bbdown-core` version；如果匹配版本已经发布，则把它视为恢复成功，以覆盖 upload 已被接
-受但 runner 失败的情况。release workflows 使用 GitHub-hosted runner 自带的 `rustup` 和
+`bbdown-core` version，然后重新打包选中的 RC 源码，并要求本地 `.crate` SHA256 与
+crates.io checksum 匹配后，才把已发布版本视为恢复成功。这样可以覆盖 upload 已被接受但
+runner 失败的情况，同时不会让同一版本的不同 package 通过恢复路径。release workflows 使用 GitHub-hosted runner 自带的 `rustup` 和
 `rust-toolchain.toml` 中的 floating stable Rust channel；有意不使用第三方 Rust toolchain
 或 cache actions。它们也会安装 Rust 1.95.0 来运行与 crate `rust-version` metadata 匹配的
 `cargo check` gate。包名会把 release ref 规范化到打包器安全的 `[A-Za-z0-9._-]` 字符集，

@@ -75,7 +75,8 @@ RC is still latest immediately before publication, creates the final annotated t
 GitHub Release, and then publishes `bbdown-core`. Generated GitHub Release notes start from the
 previous non-RC release tag when one exists, so the final release notes do not use the just-created
 RC tag as their comparison base. If crates.io already contains the exact `bbdown-core` version, the
-publish step treats that as recovered success.
+publish step repackages the selected RC source and treats the run as recovered success only when the
+local `.crate` SHA256 matches the crates.io checksum.
 
 ## Failure Recovery
 
@@ -99,7 +100,8 @@ publish step treats that as recovered success.
   timestamps, owners, groups, and archive container metadata so identical compiled inputs have stable
   checksums, but published-release reuse validates the already-published assets instead of requiring
   rebuilt binary bytes to match. If the exact crate version was already accepted by crates.io, the
-  crate publish step exits successfully.
+  crate publish step exits successfully only after the current RC package checksum matches the
+  crates.io checksum.
 - Final releases are intentionally non-overwriting. Final tags are reused only when they already
   point at the same RC target commit, and published GitHub Releases are reused only when their asset
   set is complete and checksum-verified. To replace a bad final release, create a new version.

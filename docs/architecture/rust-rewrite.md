@@ -271,9 +271,11 @@ which keeps crates.io recovery independent of later floating-stable compiler cha
 normalize entry ordering, timestamps, owners, groups, and archive container metadata so the same
 compiled inputs produce stable package checksums. The workflow lists releases by `tag_name` instead
 of relying only on the published-release tag endpoint, so draft releases are visible to the release
-GitHub App token. The crates.io publish step checks the exact `bbdown-core` version first and treats
-an already-published matching version as recovered success, which covers runner failures after the
-upload was accepted. Release workflows use the GitHub-hosted runner `rustup` and the floating stable
+GitHub App token. The crates.io publish step checks the exact `bbdown-core` version first, then
+repackages the selected RC source and requires the local `.crate` SHA256 to match the crates.io
+checksum before treating an already-published version as recovered success. This covers runner
+failures after the upload was accepted without allowing a different package for the same version to
+pass recovery. Release workflows use the GitHub-hosted runner `rustup` and the floating stable
 Rust channel from `rust-toolchain.toml`; third-party Rust toolchain and cache actions are
 intentionally avoided. They also install Rust 1.95.0 for a
 `cargo check` gate matching the crate `rust-version` metadata. Package names normalize release refs

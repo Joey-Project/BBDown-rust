@@ -66,7 +66,8 @@ formatter、clippy、declared MSRV check、测试和 crates.io dry run，重新�
 archives，并在发布前再次确认选中的 RC 仍然是最新 RC，然后创建正式 annotated tag，发布
 GitHub Release，并发布 `bbdown-core`。如果存在上一条非 RC 正式 release tag，自动生成的
 GitHub Release notes 会从那条 tag 开始，避免把刚创建的 RC tag 当作比较起点。如果
-crates.io 已经存在 exact `bbdown-core` version，crate publish step 会把它当作恢复成功。
+crates.io 已经存在 exact `bbdown-core` version，crate publish step 会重新打包选中的 RC
+源码，并且只在本地 `.crate` SHA256 与 crates.io checksum 匹配时把它当作恢复成功。
 
 ## 失败恢复
 
@@ -85,7 +86,8 @@ crates.io 已经存在 exact `bbdown-core` version，crate publish step 会把�
   `.sha256` sidecar 点名并校验通过时复用它，然后继续发布到 crates.io。Release archives 会规范化条目
   顺序、时间戳、owner、group 和归档容器 metadata，因此相同已编译输入会得到稳定 checksum；
   但已发布 release 复用校验的是已经发布的 assets，而不是要求重新构建出的二进制字节一致。
-  如果 exact crate version 已经被 crates.io 接受，crate publish step 会成功退出。
+  如果 exact crate version 已经被 crates.io 接受，crate publish step 只有在当前 RC package
+  checksum 与 crates.io checksum 匹配后才会成功退出。
 - 正式 release 被设计为不覆盖。正式 tag 只有在已经指向同一个 RC target commit 时才会被复
   用；已发布 GitHub Release 只有在 asset set 完整且 checksum 校验通过时才会被复用。要替
   换有问题的正式 release，请发布新版本。
