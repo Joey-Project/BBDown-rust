@@ -167,3 +167,6 @@ superseded_by:
   `bbdown-core` package version even though RC validation checks both workspace package versions.
   The English and Simplified Chinese release runbooks now call out both `bbdown-core` and
   `bbdown-cli`.
+- Follow-up independent review found the release write jobs granted the default `GITHUB_TOKEN`
+  `contents: write` even though tag and release writes use the release GitHub App token. Those jobs
+  now keep the default token read-only so the App remains the only intended write actor.

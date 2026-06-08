@@ -144,7 +144,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: production-release
     permissions:
-      contents: write
+      contents: read
     steps:
       # actions/create-github-app-token@v2
       - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
