@@ -257,9 +257,9 @@ crate matures.
 Download archive and duplicate handling are covered at both crate and CLI levels. Unit tests cover
 preflight archive/output conflict detection, entry-level archive overlap detection, replace
 removing stale output-root artifacts before fresh writes, keep-both suffixed output roots, and
-archive JSON round trips without media URLs. CLI mock e2e tests cover JSON duplicate failure without
-an explicit decision, `cancel` preflight output, `keep-both` suffixed output roots, and `replace`
-overwriting an existing file.
+archive JSON round trips/replacement without media URLs. CLI mock e2e tests cover JSON duplicate
+failure without an explicit decision, `cancel` preflight output, `keep-both` suffixed output roots,
+and `replace` overwriting an existing file.
 
 Live tests against Bilibili are opt-in only through `just live-e2e`. The recipe fails fast unless an
 ignored `live-e2e.samples.json` manifest exists, so branch CI is not blocked by network, account, or

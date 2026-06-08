@@ -224,14 +224,9 @@ impl DownloadArchive {
         {
             std::fs::create_dir_all(parent)?;
         }
-        let temporary_path = path.with_extension(format!(
-            "{}tmp",
-            path.extension()
-                .and_then(std::ffi::OsStr::to_str)
-                .map_or(String::new(), |extension| format!("{extension}."))
-        ));
+        let temporary_path = archive_sidecar_path(path, ".bbdown-archive-tmp");
         std::fs::write(&temporary_path, serde_json::to_vec_pretty(self)?)?;
-        std::fs::rename(temporary_path, path)?;
+        replace_archive_file(&temporary_path, path)?;
         Ok(())
     }
 
@@ -972,6 +967,38 @@ fn temporary_path_with_suffix(path: &Path, suffix: &str) -> PathBuf {
     ))
 }
 
+fn archive_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
+    let base = path.file_name().map_or_else(
+        || "download-archive".to_owned(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    path.with_file_name(format!("{base}{suffix}"))
+}
+
+fn replace_archive_file(source: &Path, target: &Path) -> Result<()> {
+    let backup = archive_sidecar_path(target, ".bbdown-archive-backup");
+    match std::fs::remove_file(&backup) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(Error::Io(error)),
+    }
+    match std::fs::rename(target, &backup) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(Error::Io(error)),
+    }
+    match std::fs::rename(source, target) {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&backup);
+            Ok(())
+        }
+        Err(error) => {
+            let _ = std::fs::rename(&backup, target);
+            Err(Error::Io(error))
+        }
+    }
+}
+
 async fn replace_file(source: &Path, target: &Path) -> Result<()> {
     match fs::rename(source, target).await {
         Ok(()) => return Ok(()),
@@ -1568,7 +1595,7 @@ mod tests {
         DownloadArchive, DownloadArchiveEntryRecord, DownloadArchiveRecord, DownloadOptions,
         DownloadPreflight, DownloadReport, DownloadedFile, DuplicateDecision, EntryDownloadReport,
         MAX_FILE_COMPONENT_BYTES, MAX_FILE_NAME_BYTES, MAX_SUBTITLE_EXTENSION_BYTES, MuxOptions,
-        RetryPolicy, default_plan_output_dir, download_entry_content_key,
+        RetryPolicy, archive_sidecar_path, default_plan_output_dir, download_entry_content_key,
         download_plan_content_key, entry_dir_name, media_file_name, safe_file_name,
         safe_file_name_with_budget, select_media_stream, subtitle_dedup_key, subtitle_extension,
         subtitle_file_name, temporary_download_path, temporary_mux_path, temporary_replace_path,
@@ -3506,6 +3533,21 @@ mod tests {
         assert_eq!(loaded, archive);
         assert!(!raw.contains("https://"));
         assert!(!raw.contains("ACCESS"));
+        Ok(())
+    }
+
+    #[test]
+    fn download_archive_save_replaces_existing_file() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let archive_path = temp.path().join("archive.json");
+        std::fs::write(&archive_path, "{\"old\":true}")?;
+
+        DownloadArchive::default().save(&archive_path)?;
+
+        let raw = std::fs::read_to_string(&archive_path)?;
+        assert!(raw.contains("\"records\""));
+        assert!(!raw.contains("\"old\""));
+        assert!(!archive_sidecar_path(&archive_path, ".bbdown-archive-backup").exists());
         Ok(())
     }
 

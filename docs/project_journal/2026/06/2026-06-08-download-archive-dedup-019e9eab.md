@@ -47,6 +47,8 @@ superseded_by:
   `cargo test --locked -p bbdown archive_decision_replace_forces_fresh_writes`.
 - Targeted crate coverage:
   `cargo test --locked -p bbdown download_archive_round_trips_without_urls`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown download_archive_save_replaces_existing_file`.
 - Targeted CLI archive coverage:
   `cargo test --locked -p bbdown-cli download_archive_`.
 - Workspace tests: `cargo test --workspace --locked`.
