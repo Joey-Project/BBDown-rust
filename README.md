@@ -56,7 +56,8 @@ replace`, `--on-duplicate keep-both`, or `--on-duplicate cancel`; interactive hu
 when no decision is provided. `replace` removes the existing planned output root before a fresh
 download and replaces stale archive records for that output path, `keep-both` writes the next
 suffixed output root while avoiding matching archive record paths, and `cancel` reports the
-preflight state without downloading. The archive file itself must not be the planned output root.
+preflight state without downloading. The archive file itself must not be the planned output root or
+inside that root.
 
 `ss` and `md` inputs require an explicit selection in non-interactive mode:
 

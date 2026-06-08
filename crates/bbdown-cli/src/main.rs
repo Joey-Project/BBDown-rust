@@ -13,7 +13,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{self, IsTerminal, Read};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Parser)]
@@ -461,12 +461,41 @@ fn ensure_archive_file_is_not_output_root(
     archive_file: &Path,
     output_dir: &Path,
 ) -> anyhow::Result<()> {
+    let archive_file =
+        absolute_lexical_path(archive_file).context("failed to resolve archive path")?;
+    let output_dir =
+        absolute_lexical_path(output_dir).context("failed to resolve planned output directory")?;
     ensure!(
-        archive_file != output_dir,
-        "--archive-file must not be the planned output directory ({})",
+        !archive_file.starts_with(&output_dir) && !output_dir.starts_with(&archive_file),
+        "--archive-file must not overlap the planned output directory ({})",
         output_dir.display()
     );
     Ok(())
+}
+
+fn absolute_lexical_path(path: &Path) -> anyhow::Result<PathBuf> {
+    let absolute_path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    Ok(lexical_clean_path(&absolute_path))
+}
+
+fn lexical_clean_path(path: &Path) -> PathBuf {
+    let mut clean = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => clean.push(prefix.as_os_str()),
+            Component::RootDir => clean.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                let _ = clean.pop();
+            }
+            Component::Normal(part) => clean.push(part),
+        }
+    }
+    clean
 }
 
 fn duplicate_decision(
@@ -1135,9 +1164,9 @@ fn _assert_credentials_send_sync(_: Credentials) {}
 #[cfg(test)]
 mod tests {
     use super::{
-        Cli, endpoints_from_cli, next_poll_sleep, remaining_until,
-        restricted_area_from_cli_with_args, restricted_area_from_cli_with_env_values,
-        save_qr_credentials,
+        Cli, endpoints_from_cli, ensure_archive_file_is_not_output_root, next_poll_sleep,
+        remaining_until, restricted_area_from_cli_with_args,
+        restricted_area_from_cli_with_env_values, save_qr_credentials,
     };
     use bbdown::{CredentialStore, Credentials, EndpointConfig};
     use clap::Parser as _;
@@ -1176,6 +1205,24 @@ mod tests {
             Some(Duration::from_secs(119))
         );
         assert_eq!(remaining_until(now, now), None);
+    }
+
+    #[test]
+    fn archive_file_guard_rejects_output_root_overlap() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let output_root = temp.path().join("downloads").join("Mock video");
+        let output_parent = output_root
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("missing output parent"))?;
+        let same_output_root = output_root.join(".");
+        let nested_archive = output_root.join("archive.json");
+        let sibling_archive = output_parent.join("archive.json");
+
+        assert!(ensure_archive_file_is_not_output_root(&same_output_root, &output_root).is_err());
+        assert!(ensure_archive_file_is_not_output_root(&nested_archive, &output_root).is_err());
+        assert!(ensure_archive_file_is_not_output_root(output_parent, &output_root).is_err());
+        assert!(ensure_archive_file_is_not_output_root(&sibling_archive, &output_root).is_ok());
+        Ok(())
     }
 
     #[test]

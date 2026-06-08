@@ -35,7 +35,7 @@ superseded_by:
   archive records that pointed at the same output path.
 - `keep-both` reserves matching archive record output paths even when those paths are no longer on
   disk, so archive-only duplicate history is preserved.
-- The CLI rejects `--archive-file` when it equals the planned output root, and
+- The CLI rejects `--archive-file` when it overlaps the planned output root, and
   `DownloadArchive::save` rejects directory targets before replacing archive files.
 - User-facing docs, embedding docs, architecture docs, and top-level project state/TODO point to the
   archive and duplicate decision behavior.
@@ -60,6 +60,8 @@ superseded_by:
   `cargo test --locked -p bbdown download_archive_save_rejects_directory_path`.
 - Targeted CLI archive coverage:
   `cargo test --locked -p bbdown-cli download_archive_`.
+- Targeted CLI unit coverage:
+  `cargo test --locked -p bbdown-cli archive_file_guard_rejects_output_root_overlap`.
 - Workspace tests: `cargo test --workspace --locked`.
 - Project journal validation passed with the project-journal helper.
 - Full local gate: `just ci`.

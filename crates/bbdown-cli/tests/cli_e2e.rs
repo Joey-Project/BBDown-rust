@@ -633,7 +633,29 @@ fn download_archive_rejects_archive_file_as_output_root() -> anyhow::Result<()> 
             .stderr
             .clone();
 
-    assert!(String::from_utf8_lossy(&stderr).contains("--archive-file must not be"));
+    assert!(String::from_utf8_lossy(&stderr).contains("--archive-file must not overlap"));
+    assert!(!archive_file.exists());
+    Ok(())
+}
+
+#[test]
+fn download_archive_rejects_archive_file_inside_output_root() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = output_dir.join("Mock video").join("archive.json");
+    mock_minimal_download(&server);
+
+    let stderr =
+        archive_download_command(&credential_file, &server, &output_dir, &archive_file, None)?
+            .assert()
+            .failure()
+            .get_output()
+            .stderr
+            .clone();
+
+    assert!(String::from_utf8_lossy(&stderr).contains("--archive-file must not overlap"));
     assert!(!archive_file.exists());
     Ok(())
 }
