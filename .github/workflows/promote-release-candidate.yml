@@ -266,10 +266,7 @@ jobs:
                 asset_digest="sha256:$(sha256sum "${asset}" | awk '{print $1}')"
                 printf '%s\tuploaded\t%s\t%s\n' "${asset_name}" "${asset_size}" "${asset_digest}"
               done | sort > "${expected_assets}"
-              printf '%s' "${release_json}" | python3 -c 'import json, sys
-              release = json.load(sys.stdin)
-              for asset in release.get("assets", []):
-                  print("{}\t{}\t{}\t{}".format(asset.get("name", ""), asset.get("state", ""), asset.get("size", ""), asset.get("digest", "")))' | sort > "${existing_assets}"
+              printf '%s' "${release_json}" | python3 -c 'import json, sys; release = json.load(sys.stdin); print("\n".join("{}\t{}\t{}\t{}".format(asset.get("name", ""), asset.get("state", ""), asset.get("size", ""), asset.get("digest", "")) for asset in release.get("assets", [])))' | sort > "${existing_assets}"
               asset_errors=$(comm -23 "${expected_assets}" "${existing_assets}")
               if [[ -n "${asset_errors}" ]]; then
                 echo "::error::GitHub Release ${FINAL_TAG} already exists but has incomplete or mismatched assets: $(tr '\n' ' ' <<< "${asset_errors}")"
