@@ -146,3 +146,6 @@ superseded_by:
 - Follow-up refactor split repeated validation into `.github/workflows/release-verify.yml` and
   repeated shell helpers into `scripts/release/common.sh`, with CODEOWNERS coverage for both new
   surfaces.
+- Follow-up independent review found non-locked lint/test steps could update `Cargo.lock` before the
+  later locked checks. CI, release verification, local tests, CLI e2e, and live e2e now run Cargo
+  validation with `--locked`.

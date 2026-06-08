@@ -28,7 +28,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Lint
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Install declared MSRV
         run: rustup toolchain install 1.95.0 --profile minimal
@@ -37,7 +37,7 @@ jobs:
         run: cargo +1.95.0 check --workspace --locked
 
       - name: Unit and e2e tests
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
 
       - name: Crate publish dry run
         run: cargo publish --dry-run -p bbdown-core --locked
