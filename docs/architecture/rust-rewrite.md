@@ -266,10 +266,10 @@ Promotion also supports retry after GitHub Release creation is interrupted: draf
 deleted and recreated, while published releases are reused only if the expected asset set is already
 complete. Reuse requires the exact expected asset name set, `uploaded` states, non-empty sizes, and
 downloaded archives that are named by and verify against their published `.sha256` sidecars. This
-validates the already-published release assets instead of requiring byte-identical rebuilt archives,
-which keeps crates.io recovery independent of later floating-stable compiler changes. Release archives still
-normalize entry ordering, timestamps, owners, groups, and archive container metadata so the same
-compiled inputs produce stable package checksums. The workflow lists releases by `tag_name` instead
+also requires the rebuilt `dist` archives to verify against their own sidecars and have the same
+archive checksums as the published assets. Release archives normalize entry ordering, timestamps,
+owners, groups, and archive container metadata so the same compiled inputs produce stable package
+checksums. The workflow lists releases by `tag_name` instead
 of relying only on the published-release tag endpoint, so draft releases are visible to the release
 GitHub App token. The crates.io publish step checks the exact `bbdown-core` version first, then
 repackages the selected RC source and requires the local `.crate` SHA256 to match the crates.io

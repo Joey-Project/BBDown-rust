@@ -298,18 +298,42 @@ jobs:
                   echo "::error::release asset ${asset_name} is missing checksum sidecar ${checksum_name}"
                   exit 2
                 fi
+                if [[ ! -f "dist/${asset_name}" ]]; then
+                  echo "::error::rebuilt artifact ${asset_name} is missing from dist"
+                  exit 2
+                fi
+                if [[ ! -f "dist/${checksum_name}" ]]; then
+                  echo "::error::rebuilt artifact ${asset_name} is missing checksum sidecar ${checksum_name}"
+                  exit 2
+                fi
                 checksum_target=$(tr -d '\r' < "${downloaded_assets}/${checksum_name}" | awk 'NF >= 2 { print $2; exit }')
                 checksum_target="${checksum_target#\*}"
                 if [[ "${checksum_target}" != "${asset_name}" ]]; then
                   echo "::error::release checksum sidecar ${checksum_name} targets ${checksum_target}, expected ${asset_name}"
                   exit 2
                 fi
+                rebuilt_checksum_target=$(tr -d '\r' < "dist/${checksum_name}" | awk 'NF >= 2 { print $2; exit }')
+                rebuilt_checksum_target="${rebuilt_checksum_target#\*}"
+                if [[ "${rebuilt_checksum_target}" != "${asset_name}" ]]; then
+                  echo "::error::rebuilt checksum sidecar ${checksum_name} targets ${rebuilt_checksum_target}, expected ${asset_name}"
+                  exit 2
+                fi
                 if ! (cd "${downloaded_assets}" && tr -d '\r' < "${checksum_name}" | sha256sum -c -); then
                   echo "::error::release asset ${asset_name} does not match ${checksum_name}"
                   exit 2
                 fi
+                if ! (cd dist && tr -d '\r' < "${checksum_name}" | sha256sum -c -); then
+                  echo "::error::rebuilt artifact ${asset_name} does not match ${checksum_name}"
+                  exit 2
+                fi
+                published_hash=$(tr -d '\r' < "${downloaded_assets}/${checksum_name}" | awk 'NF >= 2 { print $1; exit }')
+                rebuilt_hash=$(tr -d '\r' < "dist/${checksum_name}" | awk 'NF >= 2 { print $1; exit }')
+                if [[ "${published_hash}" != "${rebuilt_hash}" ]]; then
+                  echo "::error::release asset ${asset_name} checksum ${published_hash} does not match rebuilt checksum ${rebuilt_hash}"
+                  exit 2
+                fi
               done < "${expected_asset_names}"
-              echo "Reusing existing published GitHub Release ${FINAL_TAG} with complete self-validated assets"
+              echo "Reusing existing published GitHub Release ${FINAL_TAG} with complete assets matching rebuilt checksums"
               exit 0
             fi
           fi

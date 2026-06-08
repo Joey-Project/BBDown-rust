@@ -96,12 +96,12 @@ local `.crate` SHA256 matches the crates.io checksum.
   rerun from the same RC tag is fail-closed: the workflow reuses an existing published GitHub Release
   only when the release asset names exactly match the expected names, each asset is `uploaded` and
   non-empty, and the downloaded archives are named by and verify against their published `.sha256`
-  sidecars. It then continues to crates.io publication. Release archives normalize entry ordering,
-  timestamps, owners, groups, and archive container metadata so identical compiled inputs have stable
-  checksums, but published-release reuse validates the already-published assets instead of requiring
-  rebuilt binary bytes to match. If the exact crate version was already accepted by crates.io, the
-  crate publish step exits successfully only after the current RC package checksum matches the
-  crates.io checksum.
+  sidecars, while the rebuilt `dist` archives also verify against their own sidecars and have the
+  same archive checksums as the published assets. It then continues to crates.io publication. Release
+  archives normalize entry ordering, timestamps, owners, groups, and archive container metadata so
+  identical compiled inputs have stable package checksums. If the exact crate version was already
+  accepted by crates.io, the crate publish step exits successfully only after the current RC package
+  checksum matches the crates.io checksum.
 - Final releases are intentionally non-overwriting. Final tags are reused only when they already
   point at the same RC target commit, and published GitHub Releases are reused only when their asset
   set is complete and checksum-verified. To replace a bad final release, create a new version.

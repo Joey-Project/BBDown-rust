@@ -233,10 +233,10 @@ promotion 共用按 version 分组的 concurrency group，因此同一 version �
 把 RC tag 当成正式 release 的比较起点。promotion 也支持 GitHub Release 创建被中断后的重
 试：draft release 会被删除并重新创建，已发布 release 只有在预期 asset 集合已经完整时才
 会被复用。复用要求 asset 名称集合与预期完全一致、状态为 `uploaded`、大小非零，并且下载
-后的归档会被其已发布 `.sha256` sidecar 点名并校验通过。这样校验的是已经发布的 release assets 自
-身，而不是要求重新构建的归档字节完全一致，因此 crates.io 恢复不会被之后 floating-stable
-compiler 变化阻断。Release archives 仍会规范化条目顺序、时间戳、owner、group 和归档容
-器 metadata，因此同一组已编译输入会产生稳定 package checksum。workflow 会按 `tag_name`
+后的归档会被其已发布 `.sha256` sidecar 点名并校验通过；重新构建出的 `dist` 归档也必须通
+过自己的 sidecar 校验，并且 archive checksum 与已发布 assets 相同。Release archives 会规
+范化条目顺序、时间戳、owner、group 和归档容器 metadata，因此同一组已编译输入会产生稳定
+package checksum。workflow 会按 `tag_name`
 列出 releases，而不是只依赖仅面向 published release 的 tag endpoint，因此 release GitHub App token 能看到 draft release。crates.io publish step 会先检查 exact
 `bbdown-core` version，然后重新打包选中的 RC 源码，并要求本地 `.crate` SHA256 与
 crates.io checksum 匹配后，才把已发布版本视为恢复成功。这样可以覆盖 upload 已被接受但

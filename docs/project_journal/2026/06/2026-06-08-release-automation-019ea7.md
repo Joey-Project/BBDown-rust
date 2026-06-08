@@ -77,9 +77,9 @@ superseded_by:
 - Final frozen review found the stricter digest check required reproducible package archives for
   full promotion reruns. Unix tarballs and Windows zip files now normalize archive metadata so the
   same target commit rebuilds to stable package checksums.
-- Follow-up review noted that floating stable Rust can still change rebuilt binary bytes across
-  time. Published-release reuse now validates the already-published assets and checksum sidecars
-  instead of comparing them to rebuilt archive digests.
+- Follow-up review noted that published-release reuse must not accept stale assets. Reuse now
+  validates the already-published assets and checksum sidecars, validates the rebuilt `dist`
+  sidecars, and requires the published archive checksums to match the rebuilt archive checksums.
 - Final independent review found checksum sidecars must be tied to the archive currently being
   checked. Promotion now rejects sidecars whose recorded filename does not match the archive asset.
 
@@ -118,8 +118,8 @@ superseded_by:
 - Follow-up independent Codex PR review found RC creation and promotion needed a shared cross-workflow
   lock; both workflows now use the same version-scoped concurrency group.
 - Follow-up independent Codex PR review found crates.io publication was not idempotent after an
-  accepted upload with a failed job result; the publish step now exits successfully if the exact
-  `bbdown-core` version already exists.
+  accepted upload with a failed job result; the publish step now has an idempotent path for existing
+  exact `bbdown-core` versions.
 - Follow-up independent Codex PR review found draft release detection and published asset reuse were
   too weak; the workflow now discovers drafts via release listing and checks asset state, size, and
   digest, and rejects unexpected extra assets, before reuse.
@@ -135,3 +135,6 @@ superseded_by:
   from a different commit; the crate publish job now repackages the selected RC source and requires
   the local `.crate` SHA256 to match the crates.io checksum before treating an existing version as
   recovered success.
+- GitHub Codex review found release asset reuse could accept stale but self-consistent archives; the
+  promotion workflow now compares each published archive checksum against the rebuilt `dist`
+  checksum before continuing to crates.io.
