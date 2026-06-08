@@ -437,6 +437,8 @@ async fn handle_download(
             }
             return Ok(());
         }
+        let decision_output_dir = preflight.output_dir_for_decision(decision);
+        ensure_archive_file_is_not_output_root(&archive_file, &decision_output_dir)?;
         let report = client
             .download_plan_with_archive_decision(&plan, args.options, &mut archive, decision)
             .await?;
@@ -461,16 +463,30 @@ fn ensure_archive_file_is_not_output_root(
     archive_file: &Path,
     output_dir: &Path,
 ) -> anyhow::Result<()> {
+    let output_dir_display = output_dir.display().to_string();
     let archive_file =
-        absolute_lexical_path(archive_file).context("failed to resolve archive path")?;
+        comparable_path_components(archive_file).context("failed to resolve archive path")?;
     let output_dir =
-        absolute_lexical_path(output_dir).context("failed to resolve planned output directory")?;
+        comparable_path_components(output_dir).context("failed to resolve output directory")?;
     ensure!(
-        !archive_file.starts_with(&output_dir) && !output_dir.starts_with(&archive_file),
-        "--archive-file must not overlap the planned output directory ({})",
-        output_dir.display()
+        !components_start_with(&archive_file, &output_dir)
+            && !components_start_with(&output_dir, &archive_file),
+        "--archive-file must not overlap the chosen output directory ({output_dir_display})"
     );
     Ok(())
+}
+
+fn comparable_path_components(path: &Path) -> anyhow::Result<Vec<String>> {
+    let path = canonicalize_existing_prefix(&absolute_lexical_path(path)?);
+    Ok(path.components().map(path_component_key).collect())
+}
+
+fn components_start_with(path: &[String], prefix: &[String]) -> bool {
+    prefix.len() <= path.len()
+        && path
+            .iter()
+            .zip(prefix)
+            .all(|(component, prefix_component)| component == prefix_component)
 }
 
 fn absolute_lexical_path(path: &Path) -> anyhow::Result<PathBuf> {
@@ -480,6 +496,26 @@ fn absolute_lexical_path(path: &Path) -> anyhow::Result<PathBuf> {
         std::env::current_dir()?.join(path)
     };
     Ok(lexical_clean_path(&absolute_path))
+}
+
+fn canonicalize_existing_prefix(path: &Path) -> PathBuf {
+    let clean_path = lexical_clean_path(path);
+    let mut existing_prefix = clean_path.clone();
+    let mut missing_components = Vec::new();
+    while !existing_prefix.exists() {
+        let Some(file_name) = existing_prefix.file_name() else {
+            break;
+        };
+        missing_components.push(file_name.to_os_string());
+        if !existing_prefix.pop() {
+            break;
+        }
+    }
+    let mut normalized = fs::canonicalize(&existing_prefix).unwrap_or(existing_prefix);
+    for component in missing_components.iter().rev() {
+        normalized.push(component);
+    }
+    lexical_clean_path(&normalized)
 }
 
 fn lexical_clean_path(path: &Path) -> PathBuf {
@@ -496,6 +532,15 @@ fn lexical_clean_path(path: &Path) -> PathBuf {
         }
     }
     clean
+}
+
+fn path_component_key(component: Component<'_>) -> String {
+    let value = component.as_os_str().to_string_lossy();
+    if cfg!(windows) || cfg!(target_os = "macos") {
+        value.to_lowercase()
+    } else {
+        value.into_owned()
+    }
 }
 
 fn duplicate_decision(
@@ -1217,10 +1262,16 @@ mod tests {
         let same_output_root = output_root.join(".");
         let nested_archive = output_root.join("archive.json");
         let sibling_archive = output_parent.join("archive.json");
+        #[cfg(any(windows, target_os = "macos"))]
+        let case_variant_archive = output_parent.join("mock video").join("archive.json");
 
         assert!(ensure_archive_file_is_not_output_root(&same_output_root, &output_root).is_err());
         assert!(ensure_archive_file_is_not_output_root(&nested_archive, &output_root).is_err());
         assert!(ensure_archive_file_is_not_output_root(output_parent, &output_root).is_err());
+        #[cfg(any(windows, target_os = "macos"))]
+        assert!(
+            ensure_archive_file_is_not_output_root(&case_variant_archive, &output_root).is_err()
+        );
         assert!(ensure_archive_file_is_not_output_root(&sibling_archive, &output_root).is_ok());
         Ok(())
     }

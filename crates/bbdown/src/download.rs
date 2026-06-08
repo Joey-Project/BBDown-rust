@@ -237,8 +237,10 @@ impl DownloadArchive {
 
     pub fn record_download(&mut self, plan: &DownloadPlan, report: &DownloadReport) {
         let record = DownloadArchiveRecord::from_report(plan, report, current_unix_seconds());
-        self.records
-            .retain(|existing| existing.output_dir != record.output_dir);
+        let record_output_key = comparable_output_path_key(&record.output_dir);
+        self.records.retain(|existing| {
+            comparable_output_path_key(&existing.output_dir) != record_output_key
+        });
         self.records.push(record);
     }
 
@@ -359,6 +361,23 @@ impl DownloadPreflight {
     pub const fn suggested_decision(&self) -> DuplicateDecision {
         DuplicateDecision::Cancel
     }
+
+    #[must_use]
+    pub fn output_dir_for_decision(&self, decision: DuplicateDecision) -> PathBuf {
+        match decision {
+            DuplicateDecision::KeepBoth => {
+                let reserved_output_dirs = self
+                    .archived_records
+                    .iter()
+                    .map(|record| record.output_dir.clone())
+                    .collect::<Vec<_>>();
+                next_available_output_dir_avoiding(&self.planned_output_dir, &reserved_output_dirs)
+            }
+            DuplicateDecision::Replace | DuplicateDecision::Cancel => {
+                self.planned_output_dir.clone()
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -463,17 +482,7 @@ impl BiliClient {
                 }
                 preflight.planned_output_dir
             }
-            DuplicateDecision::KeepBoth => {
-                let reserved_output_dirs = preflight
-                    .archived_records
-                    .iter()
-                    .map(|record| record.output_dir.clone())
-                    .collect::<Vec<_>>();
-                next_available_output_dir_avoiding(
-                    &preflight.planned_output_dir,
-                    &reserved_output_dirs,
-                )
-            }
+            DuplicateDecision::KeepBoth => preflight.output_dir_for_decision(decision),
         };
         let report = self
             .download_plan_to_output_dir(plan, effective_options, output_dir)
@@ -1286,7 +1295,7 @@ fn default_plan_output_dir(plan: &DownloadPlan, options: &DownloadOptions) -> Pa
 }
 
 fn next_available_output_dir_avoiding(base: &Path, reserved: &[PathBuf]) -> PathBuf {
-    if !base.exists() && !reserved.iter().any(|path| path == base) {
+    if !base.exists() && !path_is_reserved(base, reserved) {
         return base.to_path_buf();
     }
     let parent = base.parent().unwrap_or_else(|| Path::new(""));
@@ -1297,10 +1306,83 @@ fn next_available_output_dir_avoiding(base: &Path, reserved: &[PathBuf]) -> Path
     let mut index = 2;
     loop {
         let candidate = parent.join(format!("{stem} ({index})"));
-        if !candidate.exists() && !reserved.iter().any(|path| path == &candidate) {
+        if !candidate.exists() && !path_is_reserved(&candidate, reserved) {
             return candidate;
         }
         index += 1;
+    }
+}
+
+fn path_is_reserved(path: &Path, reserved: &[PathBuf]) -> bool {
+    let path_key = comparable_output_path_key(path);
+    reserved
+        .iter()
+        .any(|reserved_path| comparable_output_path_key(reserved_path) == path_key)
+}
+
+fn comparable_output_path_key(path: &Path) -> String {
+    comparable_output_path(path)
+        .components()
+        .map(path_component_key)
+        .collect::<Vec<_>>()
+        .join("\0")
+}
+
+fn comparable_output_path(path: &Path) -> PathBuf {
+    canonicalize_existing_prefix(&absolute_lexical_path(path))
+}
+
+fn absolute_lexical_path(path: &Path) -> PathBuf {
+    let absolute_path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().map_or_else(|_| path.to_path_buf(), |cwd| cwd.join(path))
+    };
+    lexical_clean_path(&absolute_path)
+}
+
+fn canonicalize_existing_prefix(path: &Path) -> PathBuf {
+    let clean_path = lexical_clean_path(path);
+    let mut existing_prefix = clean_path.clone();
+    let mut missing_components = Vec::new();
+    while !existing_prefix.exists() {
+        let Some(file_name) = existing_prefix.file_name() else {
+            break;
+        };
+        missing_components.push(file_name.to_os_string());
+        if !existing_prefix.pop() {
+            break;
+        }
+    }
+    let mut normalized = std::fs::canonicalize(&existing_prefix).unwrap_or(existing_prefix);
+    for component in missing_components.iter().rev() {
+        normalized.push(component);
+    }
+    lexical_clean_path(&normalized)
+}
+
+fn lexical_clean_path(path: &Path) -> PathBuf {
+    let mut clean = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Prefix(prefix) => clean.push(prefix.as_os_str()),
+            std::path::Component::RootDir => clean.push(component.as_os_str()),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                let _ = clean.pop();
+            }
+            std::path::Component::Normal(part) => clean.push(part),
+        }
+    }
+    clean
+}
+
+fn path_component_key(component: std::path::Component<'_>) -> String {
+    let value = component.as_os_str().to_string_lossy();
+    if cfg!(windows) || cfg!(target_os = "macos") {
+        value.to_lowercase()
+    } else {
+        value.into_owned()
     }
 }
 
@@ -3483,10 +3565,18 @@ mod tests {
             .with_danmaku(false)
             .with_mux(MuxOptions::Disabled);
         let planned_output_dir = default_plan_output_dir(&plan, &options);
+        let planned_file_name = planned_output_dir
+            .file_name()
+            .ok_or_else(|| anyhow::anyhow!("missing planned output file name"))?;
+        let archived_output_dir = planned_output_dir
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("missing planned output parent"))?
+            .join(".")
+            .join(planned_file_name);
         let mut archive = DownloadArchive::new(vec![DownloadArchiveRecord {
             content_key: download_plan_content_key(&plan),
             title: plan.title.clone(),
-            output_dir: planned_output_dir.clone(),
+            output_dir: archived_output_dir.clone(),
             completed_at_unix: 42,
             entries: Vec::new(),
         }]);
@@ -3503,7 +3593,7 @@ mod tests {
         assert!(!planned_output_dir.exists());
         assert_eq!(report.output_dir, output_base.join("Mock video (2)"));
         assert_eq!(archive.records.len(), 2);
-        assert_eq!(archive.records[0].output_dir, planned_output_dir);
+        assert_eq!(archive.records[0].output_dir, archived_output_dir);
         assert_eq!(archive.records[1].output_dir, report.output_dir);
         Ok(())
     }
@@ -3533,11 +3623,20 @@ mod tests {
         std::fs::write(&video_path, "partial")?;
         let stale_sidecar = entry_dir.join("danmaku.xml");
         std::fs::write(&stale_sidecar, "<old/>")?;
+        let planned_output_dir = default_plan_output_dir(&plan, &options);
+        let planned_file_name = planned_output_dir
+            .file_name()
+            .ok_or_else(|| anyhow::anyhow!("missing planned output file name"))?;
+        let equivalent_output_dir = planned_output_dir
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("missing planned output parent"))?
+            .join(".")
+            .join(planned_file_name);
         let stale_content_key = "plan|old-content".to_owned();
         let mut archive = DownloadArchive::new(vec![DownloadArchiveRecord {
             content_key: stale_content_key.clone(),
             title: "Old content".to_owned(),
-            output_dir: default_plan_output_dir(&plan, &options),
+            output_dir: equivalent_output_dir,
             completed_at_unix: 41,
             entries: Vec::new(),
         }]);

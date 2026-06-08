@@ -660,6 +660,38 @@ fn download_archive_rejects_archive_file_inside_output_root() -> anyhow::Result<
     Ok(())
 }
 
+#[test]
+fn download_archive_rejects_archive_file_inside_keep_both_output_root() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    let keep_both_archive_file = output_dir.join("Mock video (2)").join("archive.json");
+    mock_minimal_download(&server);
+
+    archive_download_command(&credential_file, &server, &output_dir, &archive_file, None)?
+        .assert()
+        .success();
+
+    let stderr = archive_download_command(
+        &credential_file,
+        &server,
+        &output_dir,
+        &keep_both_archive_file,
+        Some("keep-both"),
+    )?
+    .assert()
+    .failure()
+    .get_output()
+    .stderr
+    .clone();
+
+    assert!(String::from_utf8_lossy(&stderr).contains("--archive-file must not overlap"));
+    assert!(!keep_both_archive_file.exists());
+    Ok(())
+}
+
 #[cfg(unix)]
 #[test]
 #[allow(clippy::too_many_lines)]

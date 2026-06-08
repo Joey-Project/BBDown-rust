@@ -126,11 +126,11 @@ credentials. `DownloadPreflight::inspect` reports archive hits and planned outpu
 conflicts, so embedding applications can show what already exists and choose a
 `DuplicateDecision`. `Replace` removes the existing planned output root before a fresh download,
 then replaces stale archive records for that output path. `KeepBoth` writes to the next suffixed
-output root while avoiding matching archive record paths, and `Cancel` is a caller-level stop
-decision. The CLI exposes the same model with `--archive-file` and `--on-duplicate`, rejects an
-archive file path that overlaps the planned output root, and JSON/non-TTY mode requires an explicit
-decision instead of prompting. `DownloadArchive::save` also rejects directory targets before writing
-the archive file.
+output root while avoiding matching archive record paths, and both comparisons use normalized output
+path keys instead of raw `PathBuf` equality. `Cancel` is a caller-level stop decision. The CLI
+exposes the same model with `--archive-file` and `--on-duplicate`, rejects an archive file path that
+overlaps the chosen output root, and JSON/non-TTY mode requires an explicit decision instead of
+prompting. `DownloadArchive::save` also rejects directory targets before writing the archive file.
 
 The crate default keeps muxing disabled so embedding projects do not spawn external processes by
 surprise. The CLI `download` command enables ffmpeg by default and exposes `--no-mux` for users and
@@ -263,7 +263,7 @@ archive JSON round trips/replacement without media URLs. They also cover archive
 reservation, same-output archive record replacement, and directory-target archive save rejection.
 CLI mock e2e tests cover JSON duplicate failure without an explicit decision, `cancel` preflight
 output, `keep-both` suffixed output roots, `replace` overwriting an existing file, and rejecting an
-archive file path that overlaps the planned output root.
+archive file path that overlaps the chosen output root.
 
 Live tests against Bilibili are opt-in only through `just live-e2e`. The recipe fails fast unless an
 ignored `live-e2e.samples.json` manifest exists, so branch CI is not blocked by network, account, or

@@ -32,10 +32,10 @@ superseded_by:
   and completion timestamps without storing media URLs or credentials.
 - `replace` removes the existing planned output root before a fresh download, so stale sidecars or
   mux outputs from the previous duplicate run do not remain, and completed records replace stale
-  archive records that pointed at the same output path.
+  archive records that pointed at the same normalized output path.
 - `keep-both` reserves matching archive record output paths even when those paths are no longer on
-  disk, so archive-only duplicate history is preserved.
-- The CLI rejects `--archive-file` when it overlaps the planned output root, and
+  disk, so archive-only duplicate history is preserved across equivalent path spellings.
+- The CLI rejects `--archive-file` when it overlaps the chosen output root, and
   `DownloadArchive::save` rejects directory targets before replacing archive files.
 - User-facing docs, embedding docs, architecture docs, and top-level project state/TODO point to the
   archive and duplicate decision behavior.

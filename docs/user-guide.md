@@ -132,7 +132,8 @@ needs a duplicate decision:
 Without an explicit decision, human TTY mode prompts on stderr. `--json` mode and non-TTY mode never
 prompt; they fail with instructions to pass `--on-duplicate` instead. Without `--archive-file`,
 download behavior is unchanged and no duplicate preflight runs. `--archive-file` must point to a JSON
-file path that does not overlap the planned output directory for the selected content.
+file path that does not overlap the chosen output directory for the selected content and duplicate
+decision.
 
 `--request-timeout-seconds` applies to API requests. Media body reads use
 `--download-idle-timeout-seconds`; pass `0` to disable that idle timeout.
