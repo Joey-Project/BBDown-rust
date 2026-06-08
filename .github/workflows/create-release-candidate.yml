@@ -43,16 +43,23 @@ jobs:
         run: |
           set -euo pipefail
           repo="${GITHUB_REPOSITORY}"
-          ensure_release_absent() {
+          release_id_for_tag() {
             local tag=$1
             local error_file
             error_file=$(mktemp)
-            if gh api "repos/${repo}/releases/tags/${tag}" >/dev/null 2>"${error_file}"; then
-              echo "::error::GitHub Release ${tag} already exists; create a new version instead"
-              exit 2
+            if ids=$(gh api --paginate "repos/${repo}/releases?per_page=100" --jq ".[] | select(.tag_name == \"${tag}\") | .id" 2>"${error_file}"); then
+              printf '%s\n' "${ids}" | sed -n '1p'
+              return
             fi
-            if ! grep -q "HTTP 404" "${error_file}"; then
-              echo "::error::failed to check GitHub Release ${tag}: $(tr '\n' ' ' < "${error_file}")"
+            echo "::error::failed to list GitHub Releases for ${tag}: $(tr '\n' ' ' < "${error_file}")"
+            exit 2
+          }
+          ensure_release_absent() {
+            local tag=$1
+            local release_id
+            release_id=$(release_id_for_tag "${tag}")
+            if [[ -n "${release_id}" ]]; then
+              echo "::error::GitHub Release ${tag} already exists; create a new version instead"
               exit 2
             fi
           }
@@ -187,16 +194,23 @@ jobs:
         run: |
           set -euo pipefail
           repo="${GITHUB_REPOSITORY}"
-          ensure_release_absent() {
+          release_id_for_tag() {
             local tag=$1
             local error_file
             error_file=$(mktemp)
-            if gh api "repos/${repo}/releases/tags/${tag}" >/dev/null 2>"${error_file}"; then
-              echo "::error::GitHub Release ${tag} already exists; create a new version instead"
-              exit 2
+            if ids=$(gh api --paginate "repos/${repo}/releases?per_page=100" --jq ".[] | select(.tag_name == \"${tag}\") | .id" 2>"${error_file}"); then
+              printf '%s\n' "${ids}" | sed -n '1p'
+              return
             fi
-            if ! grep -q "HTTP 404" "${error_file}"; then
-              echo "::error::failed to check GitHub Release ${tag}: $(tr '\n' ' ' < "${error_file}")"
+            echo "::error::failed to list GitHub Releases for ${tag}: $(tr '\n' ' ' < "${error_file}")"
+            exit 2
+          }
+          ensure_release_absent() {
+            local tag=$1
+            local release_id
+            release_id=$(release_id_for_tag "${tag}")
+            if [[ -n "${release_id}" ]]; then
+              echo "::error::GitHub Release ${tag} already exists; create a new version instead"
               exit 2
             fi
           }

@@ -93,11 +93,13 @@ publish step treats that as recovered success.
 - If GitHub Release publication succeeds but crates.io publication fails, prefer GitHub Actions
   `Re-run failed jobs` so only the failed crate job is retried. A full rerun from the same RC tag is
   also safe: the workflow reuses an existing published GitHub Release only when all expected assets
-  are present, then continues to crates.io publication. If the exact crate version was already
-  accepted by crates.io, the crate publish step exits successfully.
+  have matching names, `uploaded` states, byte sizes, and SHA-256 digests, then continues to crates.io
+  publication. If the exact crate version was already accepted by crates.io, the crate publish step
+  exits successfully.
 - Final releases are intentionally non-overwriting. Final tags are reused only when they already
   point at the same RC target commit, and published GitHub Releases are reused only when the expected
-  assets are already complete. To replace a bad final release, create a new version.
+  assets are already complete and byte-identical. To replace a bad final release, create a new
+  version.
 
 After publication, verify:
 

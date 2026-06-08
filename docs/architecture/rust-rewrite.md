@@ -264,13 +264,16 @@ platform-specific checksum file. GitHub Release notes are generated from the pre
 release tag when one exists, so the RC tag is not used as the comparison base for the final release.
 Promotion also supports retry after GitHub Release creation is interrupted: draft releases are
 deleted and recreated, while published releases are reused only if the expected asset set is already
-complete. The crates.io publish step checks the exact `bbdown-core` version first and treats an
-already-published matching version as recovered success, which covers runner failures after the
-upload was accepted. Release workflows use the GitHub-hosted runner `rustup` and the floating stable
-Rust channel from `rust-toolchain.toml`; third-party Rust toolchain and cache actions are
-intentionally avoided. They also install Rust 1.95.0 for a `cargo check` gate matching the crate
-`rust-version` metadata. Package names normalize release refs to the packager-safe `[A-Za-z0-9._-]`
-character set, so tags such as SemVer build metadata do not fail at packaging time.
+complete with matching `uploaded` states, byte sizes, and SHA-256 digests. The workflow lists
+releases by `tag_name` instead of relying only on the published-release tag endpoint, so draft
+releases are visible to the release GitHub App token. The crates.io publish step checks the exact
+`bbdown-core` version first and treats an already-published matching version as recovered success,
+which covers runner failures after the upload was accepted. Release workflows use the GitHub-hosted
+runner `rustup` and the floating stable Rust channel from `rust-toolchain.toml`; third-party Rust
+toolchain and cache actions are intentionally avoided. They also install Rust 1.95.0 for a
+`cargo check` gate matching the crate `rust-version` metadata. Package names normalize release refs
+to the packager-safe `[A-Za-z0-9._-]` character set, so tags such as SemVer build metadata do not
+fail at packaging time.
 
 Crate publishing is intentionally scoped to the reusable `bbdown-core` library package, imported as
 `bbdown_core` in Rust code. The crate has crates.io metadata, a package-local README and LICENSE,

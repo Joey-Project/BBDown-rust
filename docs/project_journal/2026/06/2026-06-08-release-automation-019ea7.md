@@ -68,6 +68,12 @@ superseded_by:
 - Follow-up independent review found a crates.io publish recovery gap after an upload is accepted but
   the job is marked failed. The publish step now checks the exact `bbdown-core` version first and
   treats an already-published matching version as recovered success.
+- Follow-up independent review found draft GitHub Releases were not reliably discovered through the
+  published-release tag endpoint. Promotion now lists releases by `tag_name` with the release GitHub
+  App token before deciding whether to delete a draft or reuse a published release.
+- Follow-up independent review found published release reuse needed stronger asset validation.
+  Promotion now requires matching asset names, `uploaded` states, byte sizes, and SHA-256 digests
+  before it treats an existing GitHub Release as reusable.
 
 ## Validation
 
@@ -106,3 +112,6 @@ superseded_by:
 - Follow-up independent Codex PR review found crates.io publication was not idempotent after an
   accepted upload with a failed job result; the publish step now exits successfully if the exact
   `bbdown-core` version already exists.
+- Follow-up independent Codex PR review found draft release detection and published asset reuse were
+  too weak; the workflow now discovers drafts via release listing and checks asset state, size, and
+  digest before reuse.

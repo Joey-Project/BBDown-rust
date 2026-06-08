@@ -232,13 +232,15 @@ promotion 共用按 version 分组的 concurrency group，因此同一 version �
 台专用 checksum 文件。GitHub Release notes 会从上一条非 RC 正式 release tag 生成，避免
 把 RC tag 当成正式 release 的比较起点。promotion 也支持 GitHub Release 创建被中断后的重
 试：draft release 会被删除并重新创建，已发布 release 只有在预期 asset 集合已经完整时才
-会被复用。crates.io publish step 会先检查 exact `bbdown-core` version；如果匹配版本已经发
-布，则把它视为恢复成功，以覆盖 upload 已被接受但 runner 失败的情况。release workflows
-使用 GitHub-hosted runner 自带的 `rustup` 和 `rust-toolchain.toml` 中的 floating stable
-Rust channel；有意不使用第三方 Rust toolchain 或 cache actions。它们也会安装 Rust 1.95.0
-来运行与 crate `rust-version` metadata 匹配的 `cargo check` gate。包名会把 release ref 规
-范化到打包器安全的 `[A-Za-z0-9._-]` 字符集，因此 SemVer build metadata 等 tag 不会导致打
-包失败。
+会被复用，并且必须匹配 `uploaded` 状态、字节大小和 SHA-256 digest。workflow 会按
+`tag_name` 列出 releases，而不是只依赖仅面向 published release 的 tag endpoint，因此
+release GitHub App token 能看到 draft release。crates.io publish step 会先检查 exact
+`bbdown-core` version；如果匹配版本已经发布，则把它视为恢复成功，以覆盖 upload 已被接
+受但 runner 失败的情况。release workflows 使用 GitHub-hosted runner 自带的 `rustup` 和
+`rust-toolchain.toml` 中的 floating stable Rust channel；有意不使用第三方 Rust toolchain
+或 cache actions。它们也会安装 Rust 1.95.0 来运行与 crate `rust-version` metadata 匹配的
+`cargo check` gate。包名会把 release ref 规范化到打包器安全的 `[A-Za-z0-9._-]` 字符集，
+因此 SemVer build metadata 等 tag 不会导致打包失败。
 
 Crate publishing 被有意限制在可复用 `bbdown-core` library package，在 Rust 代码中导入为
 `bbdown_core`。该 crate 有 crates.io metadata、package-local README 和 LICENSE、

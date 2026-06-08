@@ -191,6 +191,16 @@ jobs:
             echo "::error::failed to list matching tags for ${prefix}: $(tr '\n' ' ' < "${error_file}")"
             exit 2
           }
+          release_id_for_final_tag() {
+            local error_file
+            error_file=$(mktemp)
+            if ids=$(gh api --paginate "repos/${repo}/releases?per_page=100" --jq ".[] | select(.tag_name == \"${FINAL_TAG}\") | .id" 2>"${error_file}"); then
+              printf '%s\n' "${ids}" | sed -n '1p'
+              return
+            fi
+            echo "::error::failed to list GitHub Releases for ${FINAL_TAG}: $(tr '\n' ' ' < "${error_file}")"
+            exit 2
+          }
           max_rc=0
           refs=$(list_matching_refs "${rc_prefix}")
           while IFS= read -r ref; do
@@ -240,9 +250,9 @@ jobs:
               -f ref="refs/tags/${FINAL_TAG}" \
               -f sha="${tag_sha}" >/dev/null
           fi
-          release_error=$(mktemp)
-          if release_json=$(gh api "repos/${repo}/releases/tags/${FINAL_TAG}" 2>"${release_error}"); then
-            release_id=$(printf '%s' "${release_json}" | python3 -c 'import json, sys; print(json.load(sys.stdin)["id"])')
+          release_id=$(release_id_for_final_tag)
+          if [[ -n "${release_id}" ]]; then
+            release_json=$(gh api "repos/${repo}/releases/${release_id}")
             release_is_draft=$(printf '%s' "${release_json}" | python3 -c 'import json, sys; print("true" if json.load(sys.stdin)["draft"] else "false")')
             if [[ "${release_is_draft}" == "true" ]]; then
               echo "Deleting draft GitHub Release ${FINAL_TAG} before retry"
@@ -251,20 +261,23 @@ jobs:
               expected_assets=$(mktemp)
               existing_assets=$(mktemp)
               for asset in "${assets[@]}"; do
-                basename "${asset}"
+                asset_name=$(basename "${asset}")
+                asset_size=$(wc -c < "${asset}" | tr -d '[:space:]')
+                asset_digest="sha256:$(sha256sum "${asset}" | awk '{print $1}')"
+                printf '%s\tuploaded\t%s\t%s\n' "${asset_name}" "${asset_size}" "${asset_digest}"
               done | sort > "${expected_assets}"
-              printf '%s' "${release_json}" | python3 -c 'import json, sys; print("\n".join(sorted(asset["name"] for asset in json.load(sys.stdin)["assets"])))' > "${existing_assets}"
-              missing_assets=$(comm -23 "${expected_assets}" "${existing_assets}")
-              if [[ -n "${missing_assets}" ]]; then
-                echo "::error::GitHub Release ${FINAL_TAG} already exists but is missing expected assets: $(tr '\n' ' ' <<< "${missing_assets}")"
+              printf '%s' "${release_json}" | python3 -c 'import json, sys
+              release = json.load(sys.stdin)
+              for asset in release.get("assets", []):
+                  print("{}\t{}\t{}\t{}".format(asset.get("name", ""), asset.get("state", ""), asset.get("size", ""), asset.get("digest", "")))' | sort > "${existing_assets}"
+              asset_errors=$(comm -23 "${expected_assets}" "${existing_assets}")
+              if [[ -n "${asset_errors}" ]]; then
+                echo "::error::GitHub Release ${FINAL_TAG} already exists but has incomplete or mismatched assets: $(tr '\n' ' ' <<< "${asset_errors}")"
                 exit 2
               fi
               echo "Reusing existing published GitHub Release ${FINAL_TAG} with complete assets"
               exit 0
             fi
-          elif ! grep -q "HTTP 404" "${release_error}"; then
-            echo "::error::failed to check GitHub Release ${FINAL_TAG}: $(tr '\n' ' ' < "${release_error}")"
-            exit 2
           fi
           release_refs=$(list_matching_refs "v")
           previous_final_tag=$(printf '%s\n' "${release_refs}" | python3 -c 'import os, re, sys
