@@ -268,8 +268,13 @@ jobs:
               done | sort > "${expected_assets}"
               printf '%s' "${release_json}" | python3 -c 'import json, sys; release = json.load(sys.stdin); print("\n".join("{}\t{}\t{}\t{}".format(asset.get("name", ""), asset.get("state", ""), asset.get("size", ""), asset.get("digest", "")) for asset in release.get("assets", [])))' | sort > "${existing_assets}"
               asset_errors=$(comm -23 "${expected_assets}" "${existing_assets}")
+              unexpected_assets=$(comm -13 "${expected_assets}" "${existing_assets}")
               if [[ -n "${asset_errors}" ]]; then
                 echo "::error::GitHub Release ${FINAL_TAG} already exists but has incomplete or mismatched assets: $(tr '\n' ' ' <<< "${asset_errors}")"
+                exit 2
+              fi
+              if [[ -n "${unexpected_assets}" ]]; then
+                echo "::error::GitHub Release ${FINAL_TAG} already exists but has unexpected assets: $(tr '\n' ' ' <<< "${unexpected_assets}")"
                 exit 2
               fi
               echo "Reusing existing published GitHub Release ${FINAL_TAG} with complete assets"
@@ -277,20 +282,7 @@ jobs:
             fi
           fi
           release_refs=$(list_matching_refs "v")
-          previous_final_tag=$(printf '%s\n' "${release_refs}" | python3 -c 'import os, re, sys
-          current = tuple(map(int, os.environ["VERSION"].split(".")))
-          best = None
-          best_tag = ""
-          for line in sys.stdin:
-              tag = line.strip().removeprefix("refs/tags/")
-              match = re.fullmatch(r"v([0-9]+)\.([0-9]+)\.([0-9]+)", tag)
-              if not match:
-                  continue
-              version = tuple(map(int, match.groups()))
-              if version < current and (best is None or version > best):
-                  best = version
-                  best_tag = tag
-          print(best_tag)')
+          previous_final_tag=$(printf '%s\n' "${release_refs}" | python3 -c 'import os, re, sys; current = tuple(map(int, os.environ["VERSION"].split("."))); candidates = [(tuple(map(int, match.groups())), tag) for line in sys.stdin for tag in [line.strip().removeprefix("refs/tags/")] for match in [re.fullmatch(r"v([0-9]+)\.([0-9]+)\.([0-9]+)", tag)] if match and tuple(map(int, match.groups())) < current]; print(max(candidates)[1] if candidates else "")')
           release_note_args=(--generate-notes)
           if [[ -n "${previous_final_tag}" ]]; then
             release_note_args+=(--notes-start-tag "${previous_final_tag}")

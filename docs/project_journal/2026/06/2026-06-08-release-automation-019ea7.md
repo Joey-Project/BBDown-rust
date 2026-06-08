@@ -73,7 +73,7 @@ superseded_by:
   App token before deciding whether to delete a draft or reuse a published release.
 - Follow-up independent review found published release reuse needed stronger asset validation.
   Promotion now requires matching asset names, `uploaded` states, byte sizes, and SHA-256 digests
-  before it treats an existing GitHub Release as reusable.
+  and rejects unexpected extra assets before it treats an existing GitHub Release as reusable.
 
 ## Validation
 
@@ -114,4 +114,4 @@ superseded_by:
   `bbdown-core` version already exists.
 - Follow-up independent Codex PR review found draft release detection and published asset reuse were
   too weak; the workflow now discovers drafts via release listing and checks asset state, size, and
-  digest before reuse.
+  digest, and rejects unexpected extra assets, before reuse.
