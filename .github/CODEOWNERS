@@ -7,5 +7,17 @@
 /Cargo.toml @JoeyTeng
 /Cargo.lock @JoeyTeng
 /crates/*/Cargo.toml @JoeyTeng
+/README.md @JoeyTeng
+/README.zh-CN.md @JoeyTeng
+/LICENSE @JoeyTeng
+/crates/bbdown/README.md @JoeyTeng
+/crates/bbdown/README.zh-CN.md @JoeyTeng
+/crates/bbdown/LICENSE @JoeyTeng
+/docs/user-guide.md @JoeyTeng
+/docs/user-guide.zh-CN.md @JoeyTeng
+/docs/embedding.md @JoeyTeng
+/docs/embedding.zh-CN.md @JoeyTeng
+/docs/architecture/rust-rewrite.md @JoeyTeng
+/docs/architecture/rust-rewrite.zh-CN.md @JoeyTeng
 /docs/release.md @JoeyTeng
 /docs/release.zh-CN.md @JoeyTeng

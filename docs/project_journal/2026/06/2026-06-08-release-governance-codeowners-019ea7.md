@@ -31,6 +31,9 @@ superseded_by:
 - A follow-up offline frozen review found that the high-permission `codex-review-gate.yml`
   workflow also needed ownership, so the branch now covers all `.github/workflows/*.yml` and
   `.github/workflows/*.yaml` files.
+- A second follow-up review found that GitHub Release and crate payload files should also be
+  release-owned, so the branch now covers root README/LICENSE files, crate README/LICENSE files,
+  and published user, embedding, and architecture docs.
 
 ## Validation
 
