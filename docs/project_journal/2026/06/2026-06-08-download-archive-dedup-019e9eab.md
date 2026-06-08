@@ -50,6 +50,9 @@ superseded_by:
   applied to the actual suffixed output root. `DownloadArchive::save` rejects directory targets
   before replacing archive files, and `DownloadArchive::load` reports metadata errors instead of
   treating unreadable archive paths as empty archives.
+- Canonical archive overlap checks resolve existing symlink prefixes before folding parent
+  components, so paths such as `link/../archive.json` cannot hide an archive target inside the
+  chosen output root.
 - User-facing docs, embedding docs, architecture docs, and top-level project state/TODO point to the
   archive and duplicate decision behavior.
 
@@ -105,6 +108,8 @@ superseded_by:
   `cargo test --locked -p bbdown-cli archive_file_guard_rejects_sidecar_output_root_overlap`.
 - Targeted CLI unit coverage:
   `cargo test --locked -p bbdown-cli archive_file_guard_rejects_lexical_symlink_inside_output_root`.
+- Targeted CLI unit coverage:
+  `cargo test --locked -p bbdown-cli archive_file_guard_resolves_symlink_before_parent_components`.
 - Targeted CLI unit coverage:
   `cargo test --locked -p bbdown-cli duplicate_decision_prompt_state_tracks_displayed_preflight`.
 - Workspace tests: `cargo test --workspace --locked`.

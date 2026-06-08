@@ -511,7 +511,7 @@ fn lexical_path_components(path: &Path) -> anyhow::Result<Vec<String>> {
 }
 
 fn canonical_path_components(path: &Path) -> anyhow::Result<Vec<String>> {
-    let path = canonicalize_existing_prefix(&absolute_lexical_path(path)?);
+    let path = canonicalize_existing_prefix(&absolute_path(path)?);
     Ok(path.components().map(path_component_key).collect())
 }
 
@@ -528,17 +528,19 @@ fn components_start_with(path: &[String], prefix: &[String]) -> bool {
 }
 
 fn absolute_lexical_path(path: &Path) -> anyhow::Result<PathBuf> {
-    let absolute_path = if path.is_absolute() {
+    Ok(lexical_clean_path(&absolute_path(path)?))
+}
+
+fn absolute_path(path: &Path) -> anyhow::Result<PathBuf> {
+    Ok(if path.is_absolute() {
         path.to_path_buf()
     } else {
         std::env::current_dir()?.join(path)
-    };
-    Ok(lexical_clean_path(&absolute_path))
+    })
 }
 
 fn canonicalize_existing_prefix(path: &Path) -> PathBuf {
-    let clean_path = lexical_clean_path(path);
-    let mut existing_prefix = clean_path.clone();
+    let mut existing_prefix = path.to_path_buf();
     let mut missing_components = Vec::new();
     while !existing_prefix.exists() {
         let Some(file_name) = existing_prefix.file_name() else {
@@ -1366,6 +1368,26 @@ mod tests {
         std::os::unix::fs::symlink(&external_archive, &archive_symlink)?;
 
         assert!(ensure_archive_file_is_not_output_root(&archive_symlink, &output_root).is_err());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn archive_file_guard_resolves_symlink_before_parent_components() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let output_root = temp.path().join("downloads").join("Mock video");
+        let output_subdir = output_root.join("subdir");
+        fs::create_dir_all(&output_subdir)?;
+        let external_parent = temp.path().join("external");
+        fs::create_dir_all(&external_parent)?;
+        let link_to_output_subdir = external_parent.join("link");
+        std::os::unix::fs::symlink(&output_subdir, &link_to_output_subdir)?;
+        let archive_through_symlink_parent = link_to_output_subdir.join("..").join("archive.json");
+
+        assert!(
+            ensure_archive_file_is_not_output_root(&archive_through_symlink_parent, &output_root)
+                .is_err()
+        );
         Ok(())
     }
 
