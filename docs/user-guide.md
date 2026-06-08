@@ -121,16 +121,18 @@ media URLs or credentials. When a planned content key or output directory alread
 needs a duplicate decision:
 
 - `--on-duplicate replace` removes the existing planned output directory or file before a fresh
-  download.
+  download and replaces stale archive records that pointed at that output path.
 - `--on-duplicate keep-both` writes to the next available suffixed output directory such as
-  `Mock video (2)` and preserves prior archive records.
+  `Mock video (2)` and preserves prior archive records, including archive-only records whose old
+  output directory is no longer present on disk.
 - `--on-duplicate cancel` stops before downloading and, with `--json`, prints
   `{"status":"canceled","preflight":...}` so automation can inspect existing records and output
   conflicts.
 
 Without an explicit decision, human TTY mode prompts on stderr. `--json` mode and non-TTY mode never
 prompt; they fail with instructions to pass `--on-duplicate` instead. Without `--archive-file`,
-download behavior is unchanged and no duplicate preflight runs.
+download behavior is unchanged and no duplicate preflight runs. `--archive-file` must point to a JSON
+file path, not the planned output directory for the selected content.
 
 `--request-timeout-seconds` applies to API requests. Media body reads use
 `--download-idle-timeout-seconds`; pass `0` to disable that idle timeout.

@@ -31,7 +31,12 @@ superseded_by:
 - Archive records keep content identity, output paths, entry ids, sidecar paths, mux output paths,
   and completion timestamps without storing media URLs or credentials.
 - `replace` removes the existing planned output root before a fresh download, so stale sidecars or
-  mux outputs from the previous duplicate run do not remain.
+  mux outputs from the previous duplicate run do not remain, and completed records replace stale
+  archive records that pointed at the same output path.
+- `keep-both` reserves matching archive record output paths even when those paths are no longer on
+  disk, so archive-only duplicate history is preserved.
+- The CLI rejects `--archive-file` when it equals the planned output root, and
+  `DownloadArchive::save` rejects directory targets before replacing archive files.
 - User-facing docs, embedding docs, architecture docs, and top-level project state/TODO point to the
   archive and duplicate decision behavior.
 
@@ -44,11 +49,15 @@ superseded_by:
 - Targeted crate coverage:
   `cargo test --locked -p bbdown archive_decision_keep_both_uses_new_output_root`.
 - Targeted crate coverage:
+  `cargo test --locked -p bbdown archive_decision_keep_both_avoids_archive_only_output_root`.
+- Targeted crate coverage:
   `cargo test --locked -p bbdown archive_decision_replace_forces_fresh_writes`.
 - Targeted crate coverage:
   `cargo test --locked -p bbdown download_archive_round_trips_without_urls`.
 - Targeted crate coverage:
   `cargo test --locked -p bbdown download_archive_save_replaces_existing_file`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown download_archive_save_rejects_directory_path`.
 - Targeted CLI archive coverage:
   `cargo test --locked -p bbdown-cli download_archive_`.
 - Workspace tests: `cargo test --workspace --locked`.

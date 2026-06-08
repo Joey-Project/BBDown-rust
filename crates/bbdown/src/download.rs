@@ -218,6 +218,11 @@ impl DownloadArchive {
 
     pub fn save(&self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
+        if path.is_dir() {
+            return Err(Error::InvalidInput(
+                "download archive path is a directory".to_owned(),
+            ));
+        }
         if let Some(parent) = path
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
@@ -232,9 +237,8 @@ impl DownloadArchive {
 
     pub fn record_download(&mut self, plan: &DownloadPlan, report: &DownloadReport) {
         let record = DownloadArchiveRecord::from_report(plan, report, current_unix_seconds());
-        self.records.retain(|existing| {
-            existing.content_key != record.content_key || existing.output_dir != record.output_dir
-        });
+        self.records
+            .retain(|existing| existing.output_dir != record.output_dir);
         self.records.push(record);
     }
 
@@ -459,7 +463,17 @@ impl BiliClient {
                 }
                 preflight.planned_output_dir
             }
-            DuplicateDecision::KeepBoth => next_available_output_dir(&preflight.planned_output_dir),
+            DuplicateDecision::KeepBoth => {
+                let reserved_output_dirs = preflight
+                    .archived_records
+                    .iter()
+                    .map(|record| record.output_dir.clone())
+                    .collect::<Vec<_>>();
+                next_available_output_dir_avoiding(
+                    &preflight.planned_output_dir,
+                    &reserved_output_dirs,
+                )
+            }
         };
         let report = self
             .download_plan_to_output_dir(plan, effective_options, output_dir)
@@ -1271,8 +1285,8 @@ fn default_plan_output_dir(plan: &DownloadPlan, options: &DownloadOptions) -> Pa
     options.output_dir.join(safe_file_name(&plan.title))
 }
 
-fn next_available_output_dir(base: &Path) -> PathBuf {
-    if !base.exists() {
+fn next_available_output_dir_avoiding(base: &Path, reserved: &[PathBuf]) -> PathBuf {
+    if !base.exists() && !reserved.iter().any(|path| path == base) {
         return base.to_path_buf();
     }
     let parent = base.parent().unwrap_or_else(|| Path::new(""));
@@ -1283,7 +1297,7 @@ fn next_available_output_dir(base: &Path) -> PathBuf {
     let mut index = 2;
     loop {
         let candidate = parent.join(format!("{stem} ({index})"));
-        if !candidate.exists() {
+        if !candidate.exists() && !reserved.iter().any(|path| path == &candidate) {
             return candidate;
         }
         index += 1;
@@ -3450,6 +3464,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn archive_decision_keep_both_avoids_archive_only_output_root() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/video.m4s");
+            then.status(200).body("video");
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/audio.m4s");
+            then.status(200).body("audio");
+        });
+        let temp = tempfile::tempdir()?;
+        let output_base = temp.path().join("downloads");
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
+        let options = DownloadOptions::new(output_base.clone())
+            .with_retry_policy(RetryPolicy::single_attempt())
+            .with_danmaku(false)
+            .with_mux(MuxOptions::Disabled);
+        let planned_output_dir = default_plan_output_dir(&plan, &options);
+        let mut archive = DownloadArchive::new(vec![DownloadArchiveRecord {
+            content_key: download_plan_content_key(&plan),
+            title: plan.title.clone(),
+            output_dir: planned_output_dir.clone(),
+            completed_at_unix: 42,
+            entries: Vec::new(),
+        }]);
+
+        let report = client
+            .download_plan_with_archive_decision(
+                &plan,
+                options,
+                &mut archive,
+                DuplicateDecision::KeepBoth,
+            )
+            .await?;
+
+        assert!(!planned_output_dir.exists());
+        assert_eq!(report.output_dir, output_base.join("Mock video (2)"));
+        assert_eq!(archive.records.len(), 2);
+        assert_eq!(archive.records[0].output_dir, planned_output_dir);
+        assert_eq!(archive.records[1].output_dir, report.output_dir);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn archive_decision_replace_forces_fresh_writes() -> anyhow::Result<()> {
         let server = MockServer::start();
         server.mock(|when, then| {
@@ -3474,7 +3533,14 @@ mod tests {
         std::fs::write(&video_path, "partial")?;
         let stale_sidecar = entry_dir.join("danmaku.xml");
         std::fs::write(&stale_sidecar, "<old/>")?;
-        let mut archive = DownloadArchive::default();
+        let stale_content_key = "plan|old-content".to_owned();
+        let mut archive = DownloadArchive::new(vec![DownloadArchiveRecord {
+            content_key: stale_content_key.clone(),
+            title: "Old content".to_owned(),
+            output_dir: default_plan_output_dir(&plan, &options),
+            completed_at_unix: 41,
+            entries: Vec::new(),
+        }]);
 
         let report = client
             .download_plan_with_archive_decision(
@@ -3489,6 +3555,11 @@ mod tests {
         assert!(!stale_sidecar.exists());
         assert_eq!(report.entries[0].files[0].resumed_from, 0);
         assert_eq!(archive.records.len(), 1);
+        assert_eq!(
+            archive.records[0].content_key,
+            download_plan_content_key(&plan)
+        );
+        assert_ne!(archive.records[0].content_key, stale_content_key);
         Ok(())
     }
 
@@ -3548,6 +3619,24 @@ mod tests {
         assert!(raw.contains("\"records\""));
         assert!(!raw.contains("\"old\""));
         assert!(!archive_sidecar_path(&archive_path, ".bbdown-archive-backup").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn download_archive_save_rejects_directory_path() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let archive_path = temp.path().join("archive.json");
+        std::fs::create_dir_all(&archive_path)?;
+
+        let error = match DownloadArchive::default().save(&archive_path) {
+            Ok(()) => anyhow::bail!("directory archive path unexpectedly saved"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(
+            error,
+            crate::Error::InvalidInput(message) if message.contains("directory")
+        ));
         Ok(())
     }
 
