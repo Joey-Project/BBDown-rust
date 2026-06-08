@@ -72,7 +72,8 @@ serializes promotion per final release version, confirms the `bbdown-core` and `
 versions match the final tag, reruns formatter, clippy, declared MSRV check, tests, and crates.io dry
 run, rebuilds final release archives, rechecks that the selected RC is still latest immediately
 before publication, creates the final annotated tag, publishes the GitHub Release, and then publishes
-`bbdown-core`.
+`bbdown-core`. Generated GitHub Release notes start from the previous non-RC release tag when one
+exists, so the final release notes do not use the just-created RC tag as their comparison base.
 
 ## Failure Recovery
 
@@ -84,13 +85,16 @@ before publication, creates the final annotated tag, publishes the GitHub Releas
   create a new version instead.
 - If promotion fails before `Publish GitHub Release`, fix the issue and rerun from the same RC tag.
   If the final tag was already created and still points at the RC target commit, the workflow reuses
-  that tag and continues creating the missing release.
-- If GitHub Release publication succeeds but crates.io publication fails, use GitHub Actions
-  `Re-run failed jobs` so only the failed crate job is retried. Rerunning the entire workflow will
-  fail because the final tag and GitHub Release already exist.
+  that tag.
+- If promotion left behind a draft GitHub Release, rerun from the same RC tag. The workflow deletes
+  the draft and recreates the release with the rebuilt assets.
+- If GitHub Release publication succeeds but crates.io publication fails, prefer GitHub Actions
+  `Re-run failed jobs` so only the failed crate job is retried. A full rerun from the same RC tag is
+  also safe: the workflow reuses an existing published GitHub Release only when all expected assets
+  are present, then continues to crates.io publication.
 - Final releases are intentionally non-overwriting. Final tags are reused only when they already
-  point at the same RC target commit and the GitHub Release is still missing. To replace a bad final
-  release, create a new version.
+  point at the same RC target commit, and published GitHub Releases are reused only when the expected
+  assets are already complete. To replace a bad final release, create a new version.
 
 After publication, verify:
 

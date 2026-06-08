@@ -64,7 +64,8 @@ tag；真正写入前还会再次检查 final tag 和 GitHub Release 状态。
 promotion，确认 `bbdown-core` 和 `bbdown-cli` Cargo version 与正式 tag 匹配，重新运行
 formatter、clippy、declared MSRV check、测试和 crates.io dry run，重新构建正式 release
 archives，并在发布前再次确认选中的 RC 仍然是最新 RC，然后创建正式 annotated tag，发布
-GitHub Release，并发布 `bbdown-core`。
+GitHub Release，并发布 `bbdown-core`。如果存在上一条非 RC 正式 release tag，自动生成的
+GitHub Release notes 会从那条 tag 开始，避免把刚创建的 RC tag 当作比较起点。
 
 ## 失败恢复
 
@@ -73,12 +74,16 @@ GitHub Release，并发布 `bbdown-core`。
   编号，除非 maintainer 有意删除已有 tag。
 - 如果 final tag 或 GitHub Release 已经存在，不要再为该 version 创建 RC；改发新 version。
 - 如果 promotion 在 `Publish GitHub Release` 前失败，修复后从同一个 RC tag 重跑。如果正式
-  tag 已经创建且仍指向该 RC target commit，workflow 会复用该 tag 并继续创建缺失的 release。
-- 如果 GitHub Release 已经发布成功，但 crates.io 发布失败，使用 GitHub Actions 的
-  `Re-run failed jobs`，只重试失败的 crate job。重跑整个 workflow 会失败，因为正式 tag 和
-  GitHub Release 已经存在。
-- 正式 release 被设计为不覆盖。正式 tag 只有在已经指向同一个 RC target commit 且 GitHub
-  Release 仍缺失时才会被复用。要替换有问题的正式 release，请发布新版本。
+  tag 已经创建且仍指向该 RC target commit，workflow 会复用该 tag。
+- 如果 promotion 留下了 draft GitHub Release，从同一个 RC tag 重跑即可。workflow 会删除该
+  draft，并用重新构建的 assets 重新创建 release。
+- 如果 GitHub Release 已经发布成功，但 crates.io 发布失败，优先使用 GitHub Actions 的
+  `Re-run failed jobs`，只重试失败的 crate job。从同一个 RC tag 重跑整个 workflow 也是安全
+  的：workflow 只会在已发布 GitHub Release 包含全部预期 assets 时复用它，然后继续发布到
+  crates.io。
+- 正式 release 被设计为不覆盖。正式 tag 只有在已经指向同一个 RC target commit 时才会被复
+  用；已发布 GitHub Release 只有在预期 assets 已经完整时才会被复用。要替换有问题的正式
+  release，请发布新版本。
 
 发布后验证：
 

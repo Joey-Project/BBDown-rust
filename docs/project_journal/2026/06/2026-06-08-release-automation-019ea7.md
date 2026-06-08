@@ -56,6 +56,12 @@ superseded_by:
 - Offline frozen review found that promotion recovery would fail if final tag creation succeeded but
   GitHub Release creation failed. The promotion workflow now reuses an existing final tag when it
   points at the same RC target commit and the release is still missing.
+- Follow-up offline review found that interrupted `gh release create` runs can leave a draft GitHub
+  Release behind. Promotion now deletes draft releases before retrying, and it reuses already
+  published releases only when all expected assets are present.
+- Follow-up independent review found that generated final release notes could compare against the
+  just-created RC tag. Promotion now passes the previous non-RC final release tag as the generated
+  notes start tag when one exists.
 
 ## Validation
 
@@ -84,3 +90,8 @@ superseded_by:
 - Offline frozen review then confirmed GitHub `matching-refs` returns 404 for an empty first-RC tag
   set; the workflows now treat that specific 404 as an empty tag list while keeping other API errors
   fail-closed.
+- Follow-up offline frozen review found interrupted GitHub Release creation was not fully retryable;
+  the workflow now deletes draft releases and verifies complete assets before reusing a published
+  release.
+- Follow-up independent Codex PR review found generated release notes could use the RC tag as their
+  comparison base; the workflow now uses the previous non-RC final release tag when available.

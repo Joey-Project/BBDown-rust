@@ -228,7 +228,10 @@ Candidate` 必须从请求版本的最新 RC tag 运行；它会重新验证、�
 然后通过受保护的 `crates-io` environment 发布 `bbdown-core` 到 crates.io。归档包含
 `bbdown` 二进制、英文和简体中文 README、英文和简
 体中文用户指南、嵌入指南、发布 runbook 和架构指南，以及 `LICENSE`。每个归档旁边也有平
-台专用 checksum 文件。release workflows 使用 GitHub-hosted runner 自带的 `rustup` 和
+台专用 checksum 文件。GitHub Release notes 会从上一条非 RC 正式 release tag 生成，避免
+把 RC tag 当成正式 release 的比较起点。promotion 也支持 GitHub Release 创建被中断后的重
+试：draft release 会被删除并重新创建，已发布 release 只有在预期 asset 集合已经完整时才
+会被复用。release workflows 使用 GitHub-hosted runner 自带的 `rustup` 和
 `rust-toolchain.toml` 中的 floating stable Rust channel；有意不使用第三方 Rust toolchain
 或 cache actions。它们也会安装 Rust 1.95.0 来运行与 crate `rust-version` metadata 匹配的
 `cargo check` gate。包名会把 release ref 规范化到打包器安全的 `[A-Za-z0-9._-]` 字符集，
