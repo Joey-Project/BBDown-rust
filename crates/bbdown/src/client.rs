@@ -2092,31 +2092,28 @@ fn stream_qualities(
     videos: &[MediaStream],
 ) -> Vec<StreamQuality> {
     let mut qualities = Vec::new();
-    for (index, id) in accept_quality.iter().copied().enumerate() {
-        push_stream_quality(
-            &mut qualities,
-            id,
-            support_format_label(id, support_formats).or_else(|| {
-                accept_description
-                    .get(index)
-                    .filter(|value| !value.is_empty())
-                    .cloned()
-            }),
-        );
-    }
-    for format in support_formats {
-        if let Some(id) = format.quality {
-            push_stream_quality(&mut qualities, id, format.label());
-        }
-    }
     for stream in videos {
         push_stream_quality(
             &mut qualities,
             stream.id,
-            support_format_label(stream.id, support_formats),
+            support_format_label(stream.id, support_formats)
+                .or_else(|| accept_quality_label(stream.id, accept_quality, accept_description)),
         );
     }
     qualities
+}
+
+fn accept_quality_label(
+    id: u32,
+    accept_quality: &[u32],
+    accept_description: &[String],
+) -> Option<String> {
+    accept_quality
+        .iter()
+        .position(|quality| *quality == id)
+        .and_then(|index| accept_description.get(index))
+        .filter(|value| !value.is_empty())
+        .cloned()
 }
 
 fn support_format_label(id: u32, support_formats: &[SupportFormat]) -> Option<String> {
@@ -2637,15 +2634,12 @@ mod tests {
             "https://flv-backup.example/segment.flv"
         );
         assert_eq!(entry.streams.duration_seconds, Some(123));
+        assert_eq!(entry.streams.accept_quality, vec![80, 64]);
+        assert_eq!(entry.streams.qualities.len(), 1);
         assert_eq!(entry.streams.qualities[0].id, 80);
         assert_eq!(
             entry.streams.qualities[0].description.as_deref(),
             Some("1080P 高码率")
-        );
-        assert_eq!(entry.streams.qualities[1].id, 64);
-        assert_eq!(
-            entry.streams.qualities[1].description.as_deref(),
-            Some("720P")
         );
         assert_eq!(entry.subtitles[0].url, "https://subtitle.example/zh.json");
         assert_eq!(

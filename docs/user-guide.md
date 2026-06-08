@@ -50,8 +50,8 @@ bbdown plan https://www.bilibili.tv/en/play/34613/341736 --json
 The JSON output contains:
 
 - `entries`: selected pages or episodes.
-- `streams.qualities`: available video quality ids with optional descriptions from the playurl
-  response.
+- `streams.qualities`: currently selectable DASH video quality ids with optional descriptions from
+  the playurl response.
 - `streams.accept_quality`: raw accepted video quality ids retained for compatibility.
 - `streams.videos`: DASH video tracks.
 - `streams.audios`: DASH audio tracks, including available Dolby or FLAC audio.
@@ -60,8 +60,8 @@ The JSON output contains:
 - `danmaku.xml_url`: the XML comment endpoint for the entry `cid`.
 
 Planning is side-effect free. It does not create files, download media, or call ffmpeg.
-Human-readable plan output lists the same quality ids and stream summaries, so users can choose
-download quality without parsing JSON by hand.
+Human-readable plan output lists the same selectable quality ids and stream summaries, so users can
+choose download quality without parsing JSON by hand.
 PGC and intl planning may still require eligible account or region access. When intl metadata
 returns a region-limit payload, the CLI reports it as an access restriction.
 When configured, PGC playurl resolution falls back to restricted-area proxy candidates and includes

@@ -171,15 +171,18 @@ fn plan_json_resolves_mock_video_streams() -> anyhow::Result<()> {
 }
 
 fn assert_plan_stream_qualities(json: &Value) {
+    assert_eq!(json["entries"][0]["streams"]["accept_quality"][0], 80);
+    assert_eq!(json["entries"][0]["streams"]["accept_quality"][1], 64);
     assert_eq!(json["entries"][0]["streams"]["qualities"][0]["id"], 80);
     assert_eq!(
         json["entries"][0]["streams"]["qualities"][0]["description"],
         "1080P 高码率"
     );
-    assert_eq!(json["entries"][0]["streams"]["qualities"][1]["id"], 64);
     assert_eq!(
-        json["entries"][0]["streams"]["qualities"][1]["description"],
-        "720P"
+        json["entries"][0]["streams"]["qualities"]
+            .as_array()
+            .map(Vec::len),
+        Some(1)
     );
 }
 
@@ -197,7 +200,8 @@ fn assert_human_plan_lists_qualities(
         .arg("av170001");
     let output = command.assert().success().get_output().stdout.clone();
     let text = String::from_utf8(output)?;
-    assert!(text.contains("qualities: 80 (1080P 高码率), 64 (720P)"));
+    assert!(text.contains("qualities: 80 (1080P 高码率)"));
+    assert!(!text.contains("64 (720P)"));
     assert!(text.contains("videos: 1"));
     assert!(text.contains("q=80"));
     Ok(())

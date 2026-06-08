@@ -21,8 +21,8 @@ superseded_by:
 
 ## Current State
 
-- `StreamSet` exposes `qualities`, a structured list of video quality ids and optional labels derived
-  from playurl `support_formats`, `accept_description`, and DASH track ids.
+- `StreamSet` exposes `qualities`, a structured list of actual selectable DASH video quality ids and
+  optional labels derived from playurl `support_formats` and `accept_description`.
 - `StreamSet::accept_quality` remains in the model for callers that already consume the raw Bilibili
   ids.
 - Human `bbdown plan` output lists available quality ids plus video/audio stream summaries, while
@@ -41,3 +41,5 @@ superseded_by:
 - Client planning coverage for `support_formats` and `accept_description` quality labels.
 - CLI mock e2e coverage for human plan quality output.
 - CLI mock e2e coverage that downloads the requested non-default video/audio ids.
+- Regression coverage ensures raw `accept_quality` ids without returned DASH tracks are not listed
+  as selectable plan qualities.

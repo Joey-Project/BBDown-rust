@@ -31,7 +31,7 @@ The library resolves media availability into `DownloadPlan`:
 
 - `DownloadEntry` records the selected `aid`, `bvid`, `cid`, optional `epid`, title, and source.
 - `StreamSet` keeps DASH video/audio tracks, FLV segments, raw accepted quality ids, structured
-  quality labels, and duration.
+  selectable DASH quality labels, and duration.
 - `StreamDiagnostics` records non-default resolver attempts such as restricted-area proxy fallback.
 - `SubtitleTrack` records language metadata, normalized URL, and basic format classification.
 - `DanmakuTrack` records the XML comment endpoint derived from `cid` and the configured comment
@@ -214,10 +214,10 @@ validation, and CI-backed `cargo publish --dry-run -p bbdown --locked` validatio
 remains `publish = false` because CLI distribution is handled by GitHub release archives.
 
 Plan output now exposes structured stream quality data. The library keeps raw
-`StreamSet::accept_quality` for compatibility and adds `StreamSet::qualities` with ids and optional
-labels derived from `accept_description`, `support_formats`, and DASH track ids. The CLI human
-summary prints the same ids alongside video/audio stream summaries, while JSON callers can select
-exact DASH streams through `DownloadOptions::stream_selection`.
+`StreamSet::accept_quality` for compatibility and adds `StreamSet::qualities` with actual selectable
+DASH video ids plus optional labels derived from `accept_description` and `support_formats`. The CLI
+human summary prints the same ids alongside video/audio stream summaries, while JSON callers can
+select exact DASH streams through `DownloadOptions::stream_selection`.
 
 Live tests against Bilibili are opt-in only through `just live-e2e`. The recipe fails fast unless an
 ignored `live-e2e.samples.json` manifest exists, so branch CI is not blocked by network, account, or
