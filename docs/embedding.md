@@ -171,10 +171,12 @@ that root already exists, then the completed record replaces any stale archive r
 the same output path. `DuplicateDecision::KeepBoth` writes to the next suffixed output root and keeps
 prior archive records, including archive-only records whose old output directory has been removed.
 If a UI chooses to cancel, stop after preflight and do not call the download executor. Archive
-records contain content identity, output paths, entry ids, sidecar paths, mux output paths, and
-completion timestamps; they do not contain media URLs or credentials. Store the archive at a JSON
-file path outside the chosen output root and any archive save sidecar paths; `DownloadArchive::save`
-rejects directory targets.
+records contain content identity, absolute output paths, entry ids, absolute sidecar paths, absolute
+mux output paths, and completion timestamps; they do not contain media URLs or credentials.
+`DownloadPreflight::inspect` also treats archive records with the same planned output path as
+duplicates, even when the content identity differs and the old output directory is no longer on
+disk. Store the archive at a JSON file path outside the chosen output root and any archive save
+sidecar paths; `DownloadArchive::save` rejects directory targets.
 
 ## Endpoint Overrides
 

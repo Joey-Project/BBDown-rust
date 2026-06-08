@@ -122,18 +122,19 @@ path hashing when metadata is absent, so CDN host or query changes do not split 
 
 Duplicate handling is modeled before execution instead of hidden inside the downloader.
 `DownloadArchive` stores completed output records by content identity without media URLs or
-credentials. `DownloadPreflight::inspect` reports archive hits and planned output directory
-conflicts, so embedding applications can show what already exists and choose a
+credentials, and records output, sidecar, and mux paths as absolute paths at completion time.
+`DownloadPreflight::inspect` reports content/archive hits, same-output archive records, and planned
+output directory conflicts, so embedding applications can show what already exists and choose a
 `DuplicateDecision`. `Replace` removes the existing planned output root before a fresh download,
 then replaces stale archive records for that output path. `KeepBoth` writes to the next suffixed
 output root while avoiding all archive record output paths, and comparisons use normalized output
 path keys instead of raw `PathBuf` equality. Entry-level archive identities use stable content ids
 instead of display indexes, so reordered pages or episodes can still be detected as duplicates.
 `Cancel` is a caller-level stop decision. The CLI exposes the same model with `--archive-file` and
-`--on-duplicate`, rejects an archive file path that
-overlaps the chosen output root by checking both lexical paths and canonical targets, and applies the
-same guard to archive save sidecar paths. JSON/non-TTY mode requires an explicit decision instead of
-prompting. `DownloadArchive::save` also rejects directory targets before writing the archive file.
+`--on-duplicate`, rejects an archive file path that overlaps the chosen output root by checking both
+lexical paths and canonical targets, and applies the same guard to archive save sidecar paths.
+JSON/non-TTY mode requires an explicit decision instead of prompting. `DownloadArchive::save` also
+rejects directory targets before writing the archive file.
 Output-root occupancy checks use symlink metadata so stale or broken symlink roots are handled
 consistently with replacement cleanup, while metadata errors such as inaccessible parents are
 reported to callers instead of being retried as suffixed output roots forever.

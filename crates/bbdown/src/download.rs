@@ -283,7 +283,7 @@ impl DownloadArchiveRecord {
         Self {
             content_key: download_plan_content_key(plan),
             title: report.title.clone(),
-            output_dir: report.output_dir.clone(),
+            output_dir: archive_record_path(&report.output_dir),
             completed_at_unix,
             entries: plan
                 .entries
@@ -297,13 +297,16 @@ impl DownloadArchiveRecord {
                     cid: plan_entry.cid,
                     epid: plan_entry.epid,
                     title: report_entry.title.clone(),
-                    directory: report_entry.directory.clone(),
+                    directory: archive_record_path(&report_entry.directory),
                     files: report_entry
                         .files
                         .iter()
-                        .map(|file| file.path.clone())
+                        .map(|file| archive_record_path(&file.path))
                         .collect(),
-                    mux_output: report_entry.mux.as_ref().map(|mux| mux.output_path.clone()),
+                    mux_output: report_entry
+                        .mux
+                        .as_ref()
+                        .map(|mux| archive_record_path(&mux.output_path)),
                 })
                 .collect(),
         }
@@ -347,8 +350,9 @@ impl DownloadPreflight {
             path_is_occupied(&planned_output_dir)?.then_some(DownloadOutputConflict {
                 path: planned_output_dir.clone(),
             });
-        let archived_records =
-            archive.map_or_else(Vec::new, |archive| archive.records_for_plan(plan));
+        let archived_records = archive.map_or_else(Vec::new, |archive| {
+            archive_records_for_preflight(archive, plan, &planned_output_dir)
+        });
         let reserved_output_dirs = archive.map_or_else(Vec::new, |archive| {
             archive
                 .records
@@ -1335,6 +1339,37 @@ fn path_is_reserved(path: &Path, reserved: &[PathBuf]) -> bool {
     reserved
         .iter()
         .any(|reserved_path| comparable_output_path_key(reserved_path) == path_key)
+}
+
+fn archive_records_for_preflight(
+    archive: &DownloadArchive,
+    plan: &DownloadPlan,
+    planned_output_dir: &Path,
+) -> Vec<DownloadArchiveRecord> {
+    let content_key = download_plan_content_key(plan);
+    let entry_keys = plan
+        .entries
+        .iter()
+        .map(download_entry_content_key)
+        .collect::<HashSet<_>>();
+    let output_key = comparable_output_path_key(planned_output_dir);
+    archive
+        .records
+        .iter()
+        .filter(|record| {
+            record.content_key == content_key
+                || record
+                    .entries
+                    .iter()
+                    .any(|entry| entry_keys.contains(&entry.content_key))
+                || comparable_output_path_key(&record.output_dir) == output_key
+        })
+        .cloned()
+        .collect()
+}
+
+fn archive_record_path(path: &Path) -> PathBuf {
+    absolute_lexical_path(path)
 }
 
 fn comparable_output_path_key(path: &Path) -> String {
@@ -3614,6 +3649,30 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn download_preflight_reports_same_output_archive_record() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let temp = tempfile::tempdir()?;
+        let plan = test_plan(&server);
+        let options = DownloadOptions::new(temp.path().join("downloads"));
+        let planned_output_dir = default_plan_output_dir(&plan, &options);
+        let archive = DownloadArchive::new(vec![DownloadArchiveRecord {
+            content_key: "plan|different-content".to_owned(),
+            title: "Different content".to_owned(),
+            output_dir: planned_output_dir.join("."),
+            completed_at_unix: 42,
+            entries: Vec::new(),
+        }]);
+
+        let preflight = DownloadPreflight::inspect(&plan, &options, Some(&archive))?;
+
+        assert!(preflight.requires_decision());
+        assert!(preflight.output_conflict.is_none());
+        assert_eq!(preflight.archived_records.len(), 1);
+        assert_eq!(preflight.archived_records[0].title, "Different content");
+        Ok(())
+    }
+
     #[tokio::test]
     async fn archive_decision_keep_both_uses_new_output_root() -> anyhow::Result<()> {
         let server = MockServer::start();
@@ -3912,6 +3971,77 @@ mod tests {
             download_plan_content_key(&plan)
         );
         assert_ne!(archive.records[0].content_key, stale_content_key);
+        Ok(())
+    }
+
+    #[test]
+    fn download_archive_record_stores_absolute_paths() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let plan = test_plan(&server);
+        let report = DownloadReport {
+            title: plan.title.clone(),
+            output_dir: Path::new("downloads").join("Mock video"),
+            entries: vec![EntryDownloadReport {
+                index: 1,
+                title: "Main".to_owned(),
+                directory: Path::new("downloads").join("Mock video").join("entry"),
+                files: vec![DownloadedFile {
+                    kind: DownloadFileKind::Video,
+                    path: Path::new("downloads")
+                        .join("Mock video")
+                        .join("entry")
+                        .join("video.m4s"),
+                    bytes_written: 5,
+                    resumed_from: 0,
+                }],
+                mux: Some(super::MuxReport {
+                    output_path: Path::new("downloads")
+                        .join("Mock video")
+                        .join("entry")
+                        .join("main.mp4"),
+                    command: vec!["ffmpeg".to_owned()],
+                }),
+            }],
+        };
+        let mut archive = DownloadArchive::default();
+
+        archive.record_download(&plan, &report);
+
+        let record = &archive.records[0];
+        assert!(record.output_dir.is_absolute());
+        assert!(
+            record
+                .output_dir
+                .ends_with(Path::new("downloads").join("Mock video"))
+        );
+        assert!(record.entries[0].directory.is_absolute());
+        assert!(
+            record.entries[0]
+                .directory
+                .ends_with(Path::new("downloads").join("Mock video").join("entry"))
+        );
+        assert!(record.entries[0].files[0].is_absolute());
+        assert!(
+            record.entries[0].files[0].ends_with(
+                Path::new("downloads")
+                    .join("Mock video")
+                    .join("entry")
+                    .join("video.m4s")
+            )
+        );
+        let mux_output = record.entries[0]
+            .mux_output
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("missing mux output"))?;
+        assert!(mux_output.is_absolute());
+        assert!(
+            mux_output.ends_with(
+                Path::new("downloads")
+                    .join("Mock video")
+                    .join("entry")
+                    .join("main.mp4")
+            )
+        );
         Ok(())
     }
 

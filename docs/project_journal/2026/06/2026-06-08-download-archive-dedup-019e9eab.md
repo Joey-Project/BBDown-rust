@@ -33,6 +33,10 @@ superseded_by:
 - `replace` removes the existing planned output root before a fresh download, so stale sidecars or
   mux outputs from the previous duplicate run do not remain, and completed records replace stale
   archive records that pointed at the same normalized output path.
+- Archive records store output, sidecar, and mux paths as absolute paths at completion time, so a
+  reused archive file is not interpreted relative to a later caller's working directory.
+- Preflight treats archive records with the same planned output root as duplicate records even when
+  the content identity differs and the old output root is no longer present on disk.
 - `keep-both` reserves all archive record output paths even when those paths are no longer on disk,
   so archive-only duplicate history is preserved across equivalent path spellings and unrelated
   same-title records.
@@ -42,9 +46,10 @@ superseded_by:
   for preflight, keep-both candidate selection, and replace cleanup. Non-`NotFound` metadata
   errors are reported to callers instead of being retried as suffixed keep-both roots.
 - The CLI rejects `--archive-file` and archive save sidecar paths when they overlap the chosen
-  output root either lexically or through canonical targets, and `DownloadArchive::save` rejects
-  directory targets before replacing archive files. `DownloadArchive::load` reports metadata errors
-  instead of treating unreadable archive paths as empty archives.
+  output root either lexically or through canonical targets. For explicit `keep-both`, this guard is
+  applied to the actual suffixed output root. `DownloadArchive::save` rejects directory targets
+  before replacing archive files, and `DownloadArchive::load` reports metadata errors instead of
+  treating unreadable archive paths as empty archives.
 - User-facing docs, embedding docs, architecture docs, and top-level project state/TODO point to the
   archive and duplicate decision behavior.
 
@@ -57,7 +62,11 @@ superseded_by:
 - Targeted crate coverage:
   `cargo test --locked -p bbdown download_preflight_reports_entry_overlap_after_index_change`.
 - Targeted crate coverage:
+  `cargo test --locked -p bbdown download_preflight_reports_same_output_archive_record`.
+- Targeted crate coverage:
   `cargo test --locked -p bbdown download_entry_content_key_ignores_display_index`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown download_archive_record_stores_absolute_paths`.
 - Targeted crate coverage:
   `cargo test --locked -p bbdown download_archive_load_reports_metadata_errors`.
 - Targeted crate coverage:
@@ -88,6 +97,8 @@ superseded_by:
   `cargo test --locked -p bbdown download_archive_save_rejects_directory_path`.
 - Targeted CLI archive coverage:
   `cargo test --locked -p bbdown-cli download_archive_`.
+- Targeted CLI archive coverage:
+  `cargo test --locked -p bbdown-cli --test cli_e2e download_archive_keep_both_allows_archive_inside_old_output_root`.
 - Targeted CLI unit coverage:
   `cargo test --locked -p bbdown-cli archive_file_guard_rejects_output_root_overlap`.
 - Targeted CLI unit coverage:
@@ -101,7 +112,9 @@ superseded_by:
   `cargo fmt --all -- --check`; `cargo clippy --workspace --all-targets -- -D warnings`;
   `git diff --check`.
 - Project journal validation passed with the project-journal helper.
-- Full local gate: `just ci`.
+- Full local gate: `just ci` passed, including formatter, clippy, workspace tests, CLI e2e,
+  live-e2e harness tests with the local manifest case ignored, and the bbdown crate publish
+  dry-run.
 
 ## Next Steps
 

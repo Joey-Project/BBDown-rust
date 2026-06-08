@@ -413,11 +413,6 @@ async fn handle_download(
     ));
     let report = if let Some(archive_file) = args.archive_file {
         let plan = client.plan_download(&args.url, args.select).await?;
-        let planned_preflight = DownloadPreflight::inspect(&plan, &args.options, None)?;
-        ensure_archive_file_is_not_output_root(
-            &archive_file,
-            &planned_preflight.planned_output_dir,
-        )?;
         let mut archive = DownloadArchive::load(&archive_file)
             .with_context(|| format!("failed to load archive {}", archive_file.display()))?;
         let preflight = DownloadPreflight::inspect(&plan, &args.options, Some(&archive))?;

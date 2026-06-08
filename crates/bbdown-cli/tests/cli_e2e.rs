@@ -576,6 +576,42 @@ fn download_archive_keep_both_uses_suffixed_output_dir() -> anyhow::Result<()> {
 }
 
 #[test]
+fn download_archive_keep_both_allows_archive_inside_old_output_root() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = output_dir.join("Mock video").join("archive.json");
+    mock_minimal_download(&server);
+    fs::create_dir_all(output_dir.join("Mock video"))?;
+
+    let output = archive_download_command(
+        &credential_file,
+        &server,
+        &output_dir,
+        &archive_file,
+        Some("keep-both"),
+    )?
+    .assert()
+    .success()
+    .get_output()
+    .stdout
+    .clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    let archive: Value = serde_json::from_slice(&fs::read(&archive_file)?)?;
+
+    assert!(
+        json["output_dir"]
+            .as_str()
+            .is_some_and(|path| path.ends_with("Mock video (2)"))
+    );
+    assert!(output_dir.join("Mock video").join("archive.json").exists());
+    assert!(output_dir.join("Mock video (2)").exists());
+    assert_eq!(archive["records"].as_array().map(Vec::len), Some(1));
+    Ok(())
+}
+
+#[test]
 fn download_archive_replace_overwrites_existing_file() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;
