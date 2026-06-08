@@ -35,6 +35,8 @@ superseded_by:
   archive records that pointed at the same normalized output path.
 - `keep-both` reserves matching archive record output paths even when those paths are no longer on
   disk, so archive-only duplicate history is preserved across equivalent path spellings.
+- Output-root occupancy uses symlink metadata, so broken symlink roots are treated as existing roots
+  for preflight, keep-both candidate selection, and replace cleanup.
 - The CLI rejects `--archive-file` when it overlaps the chosen output root either lexically or
   through canonical targets, and `DownloadArchive::save` rejects directory targets before replacing
   archive files.
@@ -53,6 +55,12 @@ superseded_by:
   `cargo test --locked -p bbdown archive_decision_keep_both_avoids_archive_only_output_root`.
 - Targeted crate coverage:
   `cargo test --locked -p bbdown archive_decision_replace_forces_fresh_writes`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown archive_decision_replace_removes_broken_symlink_output_root`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown archive_decision_keep_both_skips_broken_symlink_output_root`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown download_preflight_reports_broken_symlink_output_conflict`.
 - Targeted crate coverage:
   `cargo test --locked -p bbdown download_archive_round_trips_without_urls`.
 - Targeted crate coverage:

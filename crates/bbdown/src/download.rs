@@ -344,11 +344,11 @@ impl DownloadPreflight {
             planned_output_dir: planned_output_dir.clone(),
             archived_records: archive
                 .map_or_else(Vec::new, |archive| archive.records_for_plan(plan)),
-            output_conflict: planned_output_dir
-                .exists()
-                .then_some(DownloadOutputConflict {
+            output_conflict: path_is_occupied(&planned_output_dir).then_some(
+                DownloadOutputConflict {
                     path: planned_output_dir,
-                }),
+                },
+            ),
         }
     }
 
@@ -1295,7 +1295,7 @@ fn default_plan_output_dir(plan: &DownloadPlan, options: &DownloadOptions) -> Pa
 }
 
 fn next_available_output_dir_avoiding(base: &Path, reserved: &[PathBuf]) -> PathBuf {
-    if !base.exists() && !path_is_reserved(base, reserved) {
+    if !path_is_occupied(base) && !path_is_reserved(base, reserved) {
         return base.to_path_buf();
     }
     let parent = base.parent().unwrap_or_else(|| Path::new(""));
@@ -1306,10 +1306,17 @@ fn next_available_output_dir_avoiding(base: &Path, reserved: &[PathBuf]) -> Path
     let mut index = 2;
     loop {
         let candidate = parent.join(format!("{stem} ({index})"));
-        if !candidate.exists() && !path_is_reserved(&candidate, reserved) {
+        if !path_is_occupied(&candidate) && !path_is_reserved(&candidate, reserved) {
             return candidate;
         }
         index += 1;
+    }
+}
+
+fn path_is_occupied(path: &Path) -> bool {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => true,
+        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
     }
 }
 
@@ -3459,6 +3466,34 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn download_preflight_reports_broken_symlink_output_conflict() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let temp = tempfile::tempdir()?;
+        let plan = test_plan(&server);
+        let options = DownloadOptions::new(temp.path().join("downloads"));
+        let planned_output_dir = default_plan_output_dir(&plan, &options);
+        let output_parent = planned_output_dir
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("missing planned output parent"))?;
+        std::fs::create_dir_all(output_parent)?;
+        std::os::unix::fs::symlink(temp.path().join("missing-target"), &planned_output_dir)?;
+
+        assert!(!planned_output_dir.exists());
+        let preflight = DownloadPreflight::inspect(&plan, &options, None);
+
+        assert!(preflight.requires_decision());
+        assert_eq!(
+            preflight
+                .output_conflict
+                .as_ref()
+                .map(|conflict| &conflict.path),
+            Some(&planned_output_dir)
+        );
+        Ok(())
+    }
+
     #[test]
     fn download_preflight_reports_entry_overlap_from_archive() -> anyhow::Result<()> {
         let server = MockServer::start();
@@ -3595,6 +3630,92 @@ mod tests {
         assert_eq!(archive.records.len(), 2);
         assert_eq!(archive.records[0].output_dir, archived_output_dir);
         assert_eq!(archive.records[1].output_dir, report.output_dir);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn archive_decision_keep_both_skips_broken_symlink_output_root() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/video.m4s");
+            then.status(200).body("video");
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/audio.m4s");
+            then.status(200).body("audio");
+        });
+        let temp = tempfile::tempdir()?;
+        let output_base = temp.path().join("downloads");
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
+        let options = DownloadOptions::new(output_base.clone())
+            .with_retry_policy(RetryPolicy::single_attempt())
+            .with_danmaku(false)
+            .with_mux(MuxOptions::Disabled);
+        let planned_output_dir = default_plan_output_dir(&plan, &options);
+        let output_parent = planned_output_dir
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("missing planned output parent"))?;
+        std::fs::create_dir_all(output_parent)?;
+        std::os::unix::fs::symlink(temp.path().join("missing-target"), &planned_output_dir)?;
+        let mut archive = DownloadArchive::default();
+
+        let report = client
+            .download_plan_with_archive_decision(
+                &plan,
+                options,
+                &mut archive,
+                DuplicateDecision::KeepBoth,
+            )
+            .await?;
+
+        assert!(!planned_output_dir.exists());
+        assert_eq!(report.output_dir, output_base.join("Mock video (2)"));
+        assert_eq!(archive.records[0].output_dir, report.output_dir);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn archive_decision_replace_removes_broken_symlink_output_root() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/video.m4s");
+            then.status(200).body("video");
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/audio.m4s");
+            then.status(200).body("audio");
+        });
+        let temp = tempfile::tempdir()?;
+        let output_base = temp.path().join("downloads");
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
+        let options = DownloadOptions::new(output_base.clone())
+            .with_retry_policy(RetryPolicy::single_attempt())
+            .with_danmaku(false)
+            .with_mux(MuxOptions::Disabled);
+        let planned_output_dir = default_plan_output_dir(&plan, &options);
+        let output_parent = planned_output_dir
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("missing planned output parent"))?;
+        std::fs::create_dir_all(output_parent)?;
+        std::os::unix::fs::symlink(temp.path().join("missing-target"), &planned_output_dir)?;
+        let mut archive = DownloadArchive::default();
+
+        let report = client
+            .download_plan_with_archive_decision(
+                &plan,
+                options,
+                &mut archive,
+                DuplicateDecision::Replace,
+            )
+            .await?;
+
+        assert_eq!(report.output_dir, planned_output_dir);
+        assert!(tokio::fs::metadata(&planned_output_dir).await?.is_dir());
+        assert_eq!(archive.records[0].output_dir, report.output_dir);
         Ok(())
     }
 
