@@ -163,3 +163,7 @@ superseded_by:
 - Follow-up independent review found the architecture docs still documented the old non-locked
   formatter/linter/test commands. The English and Simplified Chinese architecture docs now list the
   locked CI and local e2e commands used by the workflows.
+- Follow-up independent review found the release runbook only told maintainers to update the
+  `bbdown-core` package version even though RC validation checks both workspace package versions.
+  The English and Simplified Chinese release runbooks now call out both `bbdown-core` and
+  `bbdown-cli`.

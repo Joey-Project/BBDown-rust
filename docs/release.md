@@ -44,7 +44,8 @@ Recommended rulesets:
 
 ## Create An RC Tag
 
-1. Ensure `crates/bbdown/Cargo.toml` has the final crate version, for example `0.1.0`.
+1. Ensure `crates/bbdown/Cargo.toml` and `crates/bbdown-cli/Cargo.toml` have the final version,
+   for example `0.1.0`.
 2. Ensure the intended branch is merged to the repository default branch, currently `master`.
 3. In GitHub Actions, run `Create Release Candidate` from the repository default branch.
 4. Enter `version` without a leading `v`, for example `0.1.0`. The workflow chooses the next

@@ -40,7 +40,8 @@ rulesets 应只允许这个 App 作为非人工 actor 写 tag。
 
 ## 创建 RC Tag
 
-1. 确认 `crates/bbdown/Cargo.toml` 已经是最终 crate version，例如 `0.1.0`。
+1. 确认 `crates/bbdown/Cargo.toml` 和 `crates/bbdown-cli/Cargo.toml` 都已经是最终版本，
+   例如 `0.1.0`。
 2. 确认要发布的分支已经合入 repository default branch，目前是 `master`。
 3. 在 GitHub Actions 里，从 repository default branch 运行 `Create Release Candidate`。
 4. 输入不带前导 `v` 的 `version`，例如 `0.1.0`。workflow 会自动选择下一个可用 RC 编号。
