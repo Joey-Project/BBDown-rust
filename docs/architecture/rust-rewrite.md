@@ -145,6 +145,8 @@ proxy hosts, and then tries `/pgc/player/web/v2/playurl` as a compatibility fall
 API proxy deployments. Both paths preserve any query parameters already present on the configured
 base URL. Proxy playurl responses may use the official `data` / `result` wrapper or older helper
 shapes where `dash` / `durl`, `timelength`, and quality metadata are returned at the top level.
+Legacy string status fields such as `result: "suee"` are tolerated for these top-level helper
+payloads.
 When a generic access key is present in
 `Credentials::access_key`, proxy requests include it as `access_key`; the TV-specific access key is
 not reused for this flow. Bilibili cookies are intentionally omitted from restricted-area proxy

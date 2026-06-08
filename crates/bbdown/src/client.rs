@@ -1680,10 +1680,29 @@ struct PlayUrlRoot {
     code: i64,
     #[serde(default)]
     message: String,
+    #[serde(default, deserialize_with = "deserialize_optional_play_payload")]
     data: Option<PlayPayload>,
+    #[serde(default, deserialize_with = "deserialize_optional_play_payload")]
     result: Option<PlayPayload>,
     #[serde(flatten)]
     payload: PlayPayload,
+}
+
+fn deserialize_optional_play_payload<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<PlayPayload>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let Some(value) = Option::<serde_json::Value>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    match value {
+        serde_json::Value::Object(_) => serde_json::from_value(value)
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+        _ => Ok(None),
+    }
 }
 
 impl PlayUrlRoot {
@@ -2427,6 +2446,7 @@ mod tests {
     fn playurl_accepts_top_level_bpplayurl_flv_shape() -> anyhow::Result<()> {
         let response: PlayUrlRoot = serde_json::from_value(serde_json::json!({
             "code": 0,
+            "result": "suee",
             "timelength": 42_000,
             "durl": [{
                 "url": "//flv.example/segment.flv",

@@ -202,8 +202,8 @@ below that base URL first, matching common BALH-style API proxy hosts, then fall
 `/pgc/player/web/v2/playurl` for API proxies that implemented the older path.
 If the configured API proxy base URL already contains a query string, that query is preserved before
 the PGC playurl parameters are appended. Proxy responses may be wrapped in `data` / `result`, or may
-return helper-style top-level `dash` / `durl`, `timelength`, and quality metadata. Both flags may be
-repeated.
+return helper-style top-level `dash` / `durl`, `timelength`, and quality metadata; legacy string
+status fields such as `result: "suee"` are tolerated. Both flags may be repeated.
 `BBDOWN_RESTRICTED_AREA_PROXY` and `BBDOWN_RESTRICTED_API_PROXY` also accept comma-separated lists.
 
 If a generic access key was imported with `auth import-access-key`, proxy playurl requests include

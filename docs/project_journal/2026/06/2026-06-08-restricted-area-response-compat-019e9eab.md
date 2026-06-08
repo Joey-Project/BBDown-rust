@@ -24,6 +24,8 @@ superseded_by:
   payloads.
 - Top-level helper payloads can expose DASH tracks, FLV `durl` segments, `timelength`, and quality
   metadata without an additional wrapper object.
+- Legacy helper string status fields such as `result: "suee"` are tolerated when top-level stream
+  content is present.
 - Existing nested `video_info` and intl `playurl` conversion behavior is preserved.
 - Restricted-area proxy fallback still requires the official PGC playurl response to clearly report
   an area or region restriction.
@@ -32,7 +34,7 @@ superseded_by:
 
 ## Evidence
 
-- Unit coverage for top-level BPplayurl-style FLV payloads.
+- Unit coverage for top-level BPplayurl-style FLV payloads with legacy string status fields.
 - Unit coverage for top-level mobile/helper DASH payloads with quality metadata.
 - CLI mock e2e coverage for restricted-area proxy fallback using a top-level DASH playurl response.
 - Existing resolver ordering and diagnostic redaction coverage remains in place.
