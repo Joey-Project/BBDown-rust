@@ -188,15 +188,15 @@ impl BiliClient {
                 options.stream_selection.video_quality,
                 "video",
             )?;
-            files.push(
-                self.download_media_stream(video, DownloadFileKind::Video, &entry_dir, options)
-                    .await?,
-            );
             let audio = select_media_stream(
                 &entry.streams.audios,
                 options.stream_selection.audio_quality,
                 "audio",
             )?;
+            files.push(
+                self.download_media_stream(video, DownloadFileKind::Video, &entry_dir, options)
+                    .await?,
+            );
             files.push(
                 self.download_media_stream(audio, DownloadFileKind::Audio, &entry_dir, options)
                     .await?,
@@ -1359,6 +1359,48 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("missing video"))?;
         assert_eq!(tokio::fs::read_to_string(&video.path).await?, "video");
         assert!(entry.mux.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn invalid_audio_selection_fails_before_media_writes() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/video.m4s");
+            then.status(200).body("video");
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/audio.m4s");
+            then.status(200).body("audio");
+        });
+        let temp = tempfile::tempdir()?;
+        let output_dir = temp.path().join("downloads");
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = test_plan(&server);
+        let entry_dir = test_entry_dir(&output_dir, &plan);
+
+        let Err(error) = client
+            .download_plan(
+                &plan,
+                DownloadOptions {
+                    output_dir,
+                    retry: RetryPolicy::single_attempt(),
+                    stream_selection: super::StreamSelection {
+                        video_quality: Some(80),
+                        audio_quality: Some(30216),
+                    },
+                    mux: MuxOptions::Disabled,
+                    ..DownloadOptions::default()
+                },
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!("missing audio selection should fail"));
+        };
+
+        assert!(error.to_string().contains("requested audio quality 30216"));
+        let mut entries = tokio::fs::read_dir(entry_dir).await?;
+        assert!(entries.next_entry().await?.is_none());
         Ok(())
     }
 
