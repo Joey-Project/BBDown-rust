@@ -114,10 +114,6 @@ jobs:
         run: |
           set -euo pipefail
           repo="${GITHUB_REPOSITORY}"
-          if gh api "repos/${repo}/git/ref/tags/${FINAL_TAG}" >/dev/null 2>&1; then
-            echo "::error::tag ${FINAL_TAG} already exists"
-            exit 2
-          fi
           if gh release view "${FINAL_TAG}" --repo "${repo}" >/dev/null 2>&1; then
             echo "::error::GitHub Release ${FINAL_TAG} already exists"
             exit 2
@@ -127,15 +123,30 @@ jobs:
             echo "::error::no release assets were downloaded"
             exit 2
           fi
-          tag_sha=$(gh api --method POST "repos/${repo}/git/tags" \
-            -f tag="${FINAL_TAG}" \
-            -f message="Release ${FINAL_TAG}" \
-            -f object="${TARGET_SHA}" \
-            -f type=commit \
-            --jq .sha)
-          gh api --method POST "repos/${repo}/git/refs" \
-            -f ref="refs/tags/${FINAL_TAG}" \
-            -f sha="${tag_sha}" >/dev/null
+          if tag_ref_json=$(gh api "repos/${repo}/git/ref/tags/${FINAL_TAG}" 2>/dev/null); then
+            tag_object_type=$(printf '%s' "${tag_ref_json}" | python3 -c 'import json, sys; print(json.load(sys.stdin)["object"]["type"])')
+            tag_object_sha=$(printf '%s' "${tag_ref_json}" | python3 -c 'import json, sys; print(json.load(sys.stdin)["object"]["sha"])')
+            if [[ "${tag_object_type}" == "tag" ]]; then
+              tag_target_sha=$(gh api "repos/${repo}/git/tags/${tag_object_sha}" --jq .object.sha)
+            else
+              tag_target_sha="${tag_object_sha}"
+            fi
+            if [[ "${tag_target_sha}" != "${TARGET_SHA}" ]]; then
+              echo "::error::tag ${FINAL_TAG} points to ${tag_target_sha}, expected ${TARGET_SHA}"
+              exit 2
+            fi
+            echo "Reusing existing ${FINAL_TAG} tag at ${TARGET_SHA}"
+          else
+            tag_sha=$(gh api --method POST "repos/${repo}/git/tags" \
+              -f tag="${FINAL_TAG}" \
+              -f message="Release ${FINAL_TAG}" \
+              -f object="${TARGET_SHA}" \
+              -f type=commit \
+              --jq .sha)
+            gh api --method POST "repos/${repo}/git/refs" \
+              -f ref="refs/tags/${FINAL_TAG}" \
+              -f sha="${tag_sha}" >/dev/null
+          fi
           gh release create "${FINAL_TAG}" "${assets[@]}" \
             --repo "${repo}" \
             --target "${TARGET_SHA}" \

@@ -70,11 +70,14 @@ creates the final annotated tag, publishes the GitHub Release, and then publishe
 - If RC creation fails after a tag already exists, use a new RC number unless the existing tag is
   intentionally deleted by a maintainer.
 - If promotion fails before `Publish GitHub Release`, fix the issue and rerun from the same RC tag.
+  If the final tag was already created and still points at the RC target commit, the workflow reuses
+  that tag and continues creating the missing release.
 - If GitHub Release publication succeeds but crates.io publication fails, use GitHub Actions
   `Re-run failed jobs` so only the failed crate job is retried. Rerunning the entire workflow will
   fail because the final tag and GitHub Release already exist.
-- Final tags and releases are intentionally non-overwriting. To replace a bad final release, create a
-  new version.
+- Final releases are intentionally non-overwriting. Final tags are reused only when they already
+  point at the same RC target commit and the GitHub Release is still missing. To replace a bad final
+  release, create a new version.
 
 After publication, verify:
 

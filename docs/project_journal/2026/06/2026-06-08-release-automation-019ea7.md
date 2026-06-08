@@ -35,6 +35,9 @@ superseded_by:
   existing README, user, embedding, architecture, and license files.
 - `docs/release.md` and `docs/release.zh-CN.md` document required environments, secrets, tag
   rulesets, RC creation, promotion, and failure recovery.
+- Offline frozen review found that promotion recovery would fail if final tag creation succeeded but
+  GitHub Release creation failed. The promotion workflow now reuses an existing final tag when it
+  points at the same RC target commit and the release is still missing.
 
 ## Validation
 
@@ -48,3 +51,5 @@ superseded_by:
 - Local package checksum check:
   `shasum -a 256 -c bbdown-local-smoke.tar.gz.sha256` from the package output directory.
 - Local default gate: `just ci`.
+- Offline frozen review:
+  `isolated_review stateful start --entrypoint codex-readonly --base-ref master --head-ref HEAD`.

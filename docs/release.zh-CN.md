@@ -63,11 +63,13 @@ annotated tag，发布 GitHub Release，然后发布 `bbdown-core`。
 
 - 如果 RC 创建在 tag 创建前失败，修复问题后用相同 version 和 RC 编号重跑 RC workflow。
 - 如果 RC 创建失败时 tag 已经存在，除非 maintainer 有意删除已有 tag，否则使用新的 RC 编号。
-- 如果 promotion 在 `Publish GitHub Release` 前失败，修复后从同一个 RC tag 重跑。
+- 如果 promotion 在 `Publish GitHub Release` 前失败，修复后从同一个 RC tag 重跑。如果正式
+  tag 已经创建且仍指向该 RC target commit，workflow 会复用该 tag 并继续创建缺失的 release。
 - 如果 GitHub Release 已经发布成功，但 crates.io 发布失败，使用 GitHub Actions 的
   `Re-run failed jobs`，只重试失败的 crate job。重跑整个 workflow 会失败，因为正式 tag 和
   GitHub Release 已经存在。
-- 正式 tag 和 release 被设计为不覆盖。要替换有问题的正式 release，请发布新版本。
+- 正式 release 被设计为不覆盖。正式 tag 只有在已经指向同一个 RC target commit 且 GitHub
+  Release 仍缺失时才会被复用。要替换有问题的正式 release，请发布新版本。
 
 发布后验证：
 
