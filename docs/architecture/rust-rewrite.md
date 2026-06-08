@@ -143,7 +143,11 @@ receives the PGC playurl query at the configured URL. A Bilibili API HTTP(S) pro
 query at `/pgc/player/web/playurl` below the configured base URL, matching common BALH-style API
 proxy hosts, and then tries `/pgc/player/web/v2/playurl` as a compatibility fallback for existing
 API proxy deployments. Both paths preserve any query parameters already present on the configured
-base URL. When a generic access key is present in
+base URL. Proxy playurl responses may use the official `data` / `result` wrapper or older helper
+shapes where `dash` / `durl`, `timelength`, and quality metadata are returned at the top level.
+Legacy string status fields such as `result: "suee"` are tolerated for these top-level helper
+payloads.
+When a generic access key is present in
 `Credentials::access_key`, proxy requests include it as `access_key`; the TV-specific access key is
 not reused for this flow. Bilibili cookies are intentionally omitted from restricted-area proxy
 requests.
@@ -156,9 +160,9 @@ also redact URL tokens and common sensitive key-value patterns before they are e
 final errors.
 
 The current implementation supports endpoint override, intl metadata shape, official PGC stream
-planning, official intl OGV signed stream planning, configured PGC proxy fallback, typed source
-reporting, resolver diagnostics, and download execution. App-only/mobile proxy response conversion
-remains intentionally out of scope for this slice.
+planning, official intl OGV signed stream planning, configured PGC proxy fallback, top-level helper
+playurl response parsing, typed source reporting, resolver diagnostics, and download execution.
+Browser-only mobile response rewriting remains intentionally out of scope.
 
 ## Credentials
 
@@ -252,5 +256,5 @@ fixed `cn`, `th`, `hk`, and `tw` ordering. Network requests have a configurable 
 7. GitHub binary release packaging. Completed in PR #8.
 8. Crate publish readiness and dry-run validation. Completed in PR #9.
 9. Clearer stream quality selection and listing support. Completed in PR #10.
-10. Restricted-area proxy response compatibility expansion. Planned.
+10. Restricted-area proxy response compatibility expansion. Completed in PR #11.
 11. Integration API and documentation hardening. Planned.

@@ -252,18 +252,18 @@ fn plan_json_uses_restricted_area_proxy_after_official_pgc_failure() -> anyhow::
             .header_missing("cookie");
         then.status(200).json_body_obj(&serde_json::json!({
             "code": 0,
-            "result": {
-                "video_info": {
-                    "dash": {
-                        "duration": 3,
-                        "video": [{
-                            "id": 80,
-                            "baseUrl": "https://proxy.example/video.m4s",
-                            "base_url": "https://proxy.example/video.m4s"
-                        }],
-                        "audio": []
-                    }
-                }
+            "timelength": 3000,
+            "accept_quality": [80],
+            "accept_description": ["1080P"],
+            "support_formats": [{"quality": 80, "new_description": "1080P 高码率"}],
+            "dash": {
+                "duration": 3,
+                "video": [{
+                    "id": 80,
+                    "baseUrl": "https://proxy.example/video.m4s",
+                    "base_url": "https://proxy.example/video.m4s"
+                }],
+                "audio": []
             }
         }));
     });
@@ -301,6 +301,11 @@ fn plan_json_uses_restricted_area_proxy_after_official_pgc_failure() -> anyhow::
 
     assert_eq!(json["entries"][0]["source"], "pgc_proxy");
     assert_eq!(json["entries"][0]["streams"]["videos"][0]["id"], 80);
+    assert_eq!(json["entries"][0]["streams"]["qualities"][0]["id"], 80);
+    assert_eq!(
+        json["entries"][0]["streams"]["qualities"][0]["description"],
+        "1080P 高码率"
+    );
     assert_eq!(
         json["entries"][0]["diagnostics"]["attempts"][0]["source"],
         "pgc_web"

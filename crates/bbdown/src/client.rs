@@ -1680,8 +1680,29 @@ struct PlayUrlRoot {
     code: i64,
     #[serde(default)]
     message: String,
+    #[serde(default, deserialize_with = "deserialize_optional_play_payload")]
     data: Option<PlayPayload>,
+    #[serde(default, deserialize_with = "deserialize_optional_play_payload")]
     result: Option<PlayPayload>,
+    #[serde(flatten)]
+    payload: PlayPayload,
+}
+
+fn deserialize_optional_play_payload<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<PlayPayload>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let Some(value) = Option::<serde_json::Value>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    match value {
+        serde_json::Value::Object(_) => serde_json::from_value(value)
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+        _ => Ok(None),
+    }
 }
 
 impl PlayUrlRoot {
@@ -1692,25 +1713,57 @@ impl PlayUrlRoot {
                 message: self.message,
             });
         }
-        let mut payload = self
+        let payload = self
             .result
             .or(self.data)
+            .or_else(|| self.payload.has_playurl_content().then_some(self.payload))
             .ok_or(Error::MissingField("playurl result"))?;
-        if let Some(video_info) = payload.video_info.take() {
-            payload = *video_info;
+        payload.into_stream_set()
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct PlayPayload {
+    video_info: Option<Box<PlayPayload>>,
+    playurl: Option<IntlPlayUrlPayload>,
+    dash: Option<DashPayload>,
+    stream_list: Option<Vec<IntlStreamItem>>,
+    dash_audio: Option<Vec<IntlMediaResource>>,
+    durl: Option<Vec<DurlSegment>>,
+    #[serde(default)]
+    accept_quality: Vec<u32>,
+    #[serde(default)]
+    accept_description: Vec<String>,
+    #[serde(default)]
+    support_formats: Vec<SupportFormat>,
+    timelength: Option<u64>,
+}
+
+impl PlayPayload {
+    fn has_playurl_content(&self) -> bool {
+        self.video_info.is_some()
+            || self.playurl.is_some()
+            || self.dash.is_some()
+            || self.stream_list.is_some()
+            || self.dash_audio.is_some()
+            || self.durl.is_some()
+    }
+
+    fn into_stream_set(mut self) -> Result<StreamSet> {
+        if let Some(video_info) = self.video_info.take() {
+            return video_info.into_stream_set();
         }
-        if let Some(playurl) = payload.playurl.take() {
-            return playurl.into_stream_set(payload.timelength);
+        if let Some(playurl) = self.playurl.take() {
+            return playurl.into_stream_set(self.timelength);
         }
-        let dash_duration = payload.dash.as_ref().and_then(|dash| dash.duration);
+        let dash_duration = self.dash.as_ref().and_then(|dash| dash.duration);
         let duration_seconds = dash_duration.or_else(|| {
-            payload
-                .timelength
+            self.timelength
                 .and_then(|value| u32::try_from(value / 1000).ok())
         });
         let mut videos = Vec::new();
         let mut audios = Vec::new();
-        if let Some(dash) = payload.dash {
+        if let Some(dash) = self.dash {
             videos.extend(
                 dash.video
                     .unwrap_or_default()
@@ -1740,21 +1793,19 @@ impl PlayUrlRoot {
             }
         }
         videos.extend(
-            payload
-                .stream_list
+            self.stream_list
                 .unwrap_or_default()
                 .into_iter()
                 .filter_map(IntlStreamItem::into_video_stream),
         );
         audios.extend(
-            payload
-                .dash_audio
+            self.dash_audio
                 .unwrap_or_default()
                 .into_iter()
                 .enumerate()
                 .filter_map(|(index, resource)| resource.into_media_stream(fallback_id(index))),
         );
-        let flv_segments = payload
+        let flv_segments = self
             .durl
             .unwrap_or_default()
             .into_iter()
@@ -1766,35 +1817,18 @@ impl PlayUrlRoot {
         }
         Ok(StreamSet {
             qualities: stream_qualities(
-                &payload.accept_quality,
-                &payload.accept_description,
-                &payload.support_formats,
+                &self.accept_quality,
+                &self.accept_description,
+                &self.support_formats,
                 &videos,
             ),
             videos,
             audios,
             flv_segments,
-            accept_quality: payload.accept_quality,
+            accept_quality: self.accept_quality,
             duration_seconds,
         })
     }
-}
-
-#[derive(Debug, Deserialize)]
-struct PlayPayload {
-    video_info: Option<Box<PlayPayload>>,
-    playurl: Option<IntlPlayUrlPayload>,
-    dash: Option<DashPayload>,
-    stream_list: Option<Vec<IntlStreamItem>>,
-    dash_audio: Option<Vec<IntlMediaResource>>,
-    durl: Option<Vec<DurlSegment>>,
-    #[serde(default)]
-    accept_quality: Vec<u32>,
-    #[serde(default)]
-    accept_description: Vec<String>,
-    #[serde(default)]
-    support_formats: Vec<SupportFormat>,
-    timelength: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2405,6 +2439,74 @@ mod tests {
         assert_eq!(streams.videos[0].id, 80);
         assert_eq!(streams.audios[0].id, 30280);
         assert!(streams.flv_segments.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn playurl_accepts_top_level_bpplayurl_flv_shape() -> anyhow::Result<()> {
+        let response: PlayUrlRoot = serde_json::from_value(serde_json::json!({
+            "code": 0,
+            "result": "suee",
+            "timelength": 42_000,
+            "durl": [{
+                "url": "//flv.example/segment.flv",
+                "backupUrl": ["//flv-backup.example/segment.flv"],
+                "length": 42_000
+            }]
+        }))?;
+
+        let streams = response.into_stream_set()?;
+
+        assert!(streams.videos.is_empty());
+        assert!(streams.audios.is_empty());
+        assert_eq!(streams.duration_seconds, Some(42));
+        assert_eq!(
+            streams.flv_segments[0].url,
+            "https://flv.example/segment.flv"
+        );
+        assert_eq!(
+            streams.flv_segments[0].backup_urls[0],
+            "https://flv-backup.example/segment.flv"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn playurl_accepts_top_level_mobile_dash_shape() -> anyhow::Result<()> {
+        let response: PlayUrlRoot = serde_json::from_value(serde_json::json!({
+            "code": 0,
+            "timelength": 123_000,
+            "accept_quality": [80],
+            "accept_description": ["1080P"],
+            "support_formats": [{"quality": 80, "new_description": "1080P 高码率"}],
+            "dash": {
+                "duration": 123,
+                "video": [{
+                    "id": 80,
+                    "baseUrl": "//video.example/80.m4s",
+                    "codecs": "avc1.640028",
+                    "width": 1920,
+                    "height": 1080
+                }],
+                "audio": [{
+                    "id": 30280,
+                    "baseUrl": "//audio.example/30280.m4s",
+                    "codecs": "mp4a.40.2"
+                }]
+            }
+        }))?;
+
+        let streams = response.into_stream_set()?;
+
+        assert_eq!(streams.videos[0].id, 80);
+        assert_eq!(streams.audios[0].id, 30280);
+        assert_eq!(streams.accept_quality, vec![80]);
+        assert_eq!(streams.qualities[0].id, 80);
+        assert_eq!(
+            streams.qualities[0].description.as_deref(),
+            Some("1080P 高码率")
+        );
+        assert_eq!(streams.duration_seconds, Some(123));
         Ok(())
     }
 
