@@ -29,6 +29,8 @@ superseded_by:
   JSON output includes the same structured quality list.
 - `DownloadOptions::stream_selection` lets embedding callers request exact DASH video or audio
   stream ids.
+- `DownloadOptions::new` gives embedders a constructor path while the pre-1.0 settings surface stays
+  non-exhaustive.
 - CLI `download` exposes `--video-quality <ID>` and `--audio-quality <ID>` for the same selection
   path.
 - Invalid requested ids fail before media writes and report available ids. Explicit quality
@@ -43,3 +45,5 @@ superseded_by:
 - CLI mock e2e coverage that downloads the requested non-default video/audio ids.
 - Regression coverage ensures raw `accept_quality` ids without returned DASH tracks are not listed
   as selectable plan qualities.
+- Regression coverage verifies multi-entry requested-id failures are preflighted before creating the
+  download output directory.

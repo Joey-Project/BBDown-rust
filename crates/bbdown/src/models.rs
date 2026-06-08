@@ -137,6 +137,7 @@ pub enum StreamResolverOutcome {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct StreamSet {
     pub videos: Vec<MediaStream>,
     pub audios: Vec<MediaStream>,

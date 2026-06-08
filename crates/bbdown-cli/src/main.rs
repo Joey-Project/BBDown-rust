@@ -213,34 +213,33 @@ async fn main() -> anyhow::Result<()> {
                 retry_attempts > 0,
                 "--retry-attempts must be greater than 0"
             );
+            let mut options = DownloadOptions::new(output_dir);
+            options.retry = RetryPolicy {
+                max_attempts: retry_attempts,
+                backoff: Duration::from_millis(retry_backoff_ms),
+            };
+            options.stream_selection = StreamSelection {
+                video_quality,
+                audio_quality,
+            };
+            options.download_idle_timeout = if download_idle_timeout_seconds == 0 {
+                None
+            } else {
+                Some(Duration::from_secs(download_idle_timeout_seconds))
+            };
+            options.resume = !no_resume;
+            options.include_subtitles = !no_subtitles;
+            options.include_danmaku = !no_danmaku;
+            options.mux = if no_mux {
+                MuxOptions::Disabled
+            } else {
+                MuxOptions::Ffmpeg { binary: ffmpeg }
+            };
             let args = DownloadCommandArgs {
                 url,
                 select,
                 json,
-                options: DownloadOptions {
-                    output_dir,
-                    retry: RetryPolicy {
-                        max_attempts: retry_attempts,
-                        backoff: Duration::from_millis(retry_backoff_ms),
-                    },
-                    stream_selection: StreamSelection {
-                        video_quality,
-                        audio_quality,
-                    },
-                    download_idle_timeout: if download_idle_timeout_seconds == 0 {
-                        None
-                    } else {
-                        Some(Duration::from_secs(download_idle_timeout_seconds))
-                    },
-                    resume: !no_resume,
-                    include_subtitles: !no_subtitles,
-                    include_danmaku: !no_danmaku,
-                    mux: if no_mux {
-                        MuxOptions::Disabled
-                    } else {
-                        MuxOptions::Ffmpeg { binary: ffmpeg }
-                    },
-                },
+                options,
             };
             handle_download(&store, endpoints, restricted_area, request_timeout, args).await?;
         }
