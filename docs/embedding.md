@@ -124,7 +124,7 @@ stream ids from the plan.
 
 Embedding applications should keep duplicate handling explicit. Inspect a plan with
 `DownloadPreflight`, show the existing archive records or output conflict to the user, then call the
-executor with the chosen `DuplicateDecision`. The crate does not prompt.
+executor with the same preflight and chosen `DuplicateDecision`. The crate does not prompt.
 
 ```rust,no_run
 use bbdown::{
@@ -154,10 +154,16 @@ async fn main() -> bbdown::Result<()> {
     let decision = if preflight.requires_decision() {
         DuplicateDecision::KeepBoth
     } else {
-        DuplicateDecision::Replace
+        DuplicateDecision::Cancel
     };
     let report = client
-        .download_plan_with_archive_decision(&plan, options, &mut archive, decision)
+        .download_plan_with_archive_preflight_decision(
+            &plan,
+            options,
+            &mut archive,
+            &preflight,
+            decision,
+        )
         .await?;
     archive.save(archive_path)?;
 
@@ -170,9 +176,12 @@ async fn main() -> bbdown::Result<()> {
 that root already exists, then the completed record replaces any stale archive record that pointed at
 the same output path. `DuplicateDecision::KeepBoth` writes to the next suffixed output root and keeps
 prior archive records, including archive-only records whose old output directory has been removed.
-If a UI chooses to cancel, stop after preflight and do not call the download executor. Archive
-records contain content identity, absolute output paths, entry ids, absolute sidecar paths, absolute
-mux output paths, and completion timestamps; they do not contain media URLs or credentials.
+If a UI chooses to cancel after a duplicate preflight, stop after preflight and do not call the
+download executor. Passing `DuplicateDecision::Cancel` with a no-conflict preflight is a safe
+continue path: if an output conflict appears before execution, the executor reports it instead of
+implicitly replacing the new output root. Archive records contain content identity, absolute output
+paths, entry ids, absolute sidecar paths, absolute mux output paths, and completion timestamps; they
+do not contain media URLs or credentials.
 `DownloadPreflight::inspect` also treats archive records with the same planned output path as
 duplicates, even when the content identity differs and the old output directory is no longer on
 disk. Store the archive at a JSON file path outside the chosen output root and any archive save

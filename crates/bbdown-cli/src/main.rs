@@ -425,6 +425,11 @@ async fn handle_download(
         );
         let decision =
             duplicate_decision(args.on_duplicate, args.json, stdin_is_terminal, &preflight)?;
+        let execution_decision = if args.on_duplicate.is_none() && !preflight.requires_decision() {
+            DuplicateDecision::Cancel
+        } else {
+            decision
+        };
         if preflight.requires_decision() && decision == DuplicateDecision::Cancel {
             if args.json {
                 println!(
@@ -445,7 +450,13 @@ async fn handle_download(
         let decision_output_dir = preflight.output_dir_for_decision(decision)?;
         ensure_archive_file_is_not_output_root(&archive_file, &decision_output_dir)?;
         let report = client
-            .download_plan_with_archive_decision(&plan, args.options, &mut archive, decision)
+            .download_plan_with_archive_preflight_decision(
+                &plan,
+                args.options,
+                &mut archive,
+                &preflight,
+                execution_decision,
+            )
             .await?;
         archive
             .save(&archive_file)

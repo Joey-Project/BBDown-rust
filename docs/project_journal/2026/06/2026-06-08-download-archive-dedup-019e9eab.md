@@ -53,6 +53,9 @@ superseded_by:
 - Canonical archive overlap checks resolve existing symlink prefixes before folding parent
   components, so paths such as `link/../archive.json` cannot hide an archive target inside the
   chosen output root.
+- CLI archive downloads execute with the same preflight shown to the user or automation. A
+  no-conflict default uses `DuplicateDecision::Cancel` as safe-continue, so a late output conflict
+  reports an error instead of becoming an implicit replace.
 - User-facing docs, embedding docs, architecture docs, and top-level project state/TODO point to the
   archive and duplicate decision behavior.
 
@@ -80,6 +83,10 @@ superseded_by:
   `cargo test --locked -p bbdown archive_decision_keep_both_avoids_unrelated_archive_output_root`.
 - Targeted crate coverage:
   `cargo test --locked -p bbdown archive_decision_replace_forces_fresh_writes`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown archive_preflight_cancel_rejects_late_output_conflict`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown archive_preflight_replace_removes_late_output_conflict`.
 - Targeted crate coverage:
   `cargo test --locked -p bbdown archive_decision_replace_removes_broken_symlink_output_root`.
 - Targeted crate coverage:

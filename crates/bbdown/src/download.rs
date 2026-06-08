@@ -467,6 +467,21 @@ impl BiliClient {
         decision: DuplicateDecision,
     ) -> Result<DownloadReport> {
         let preflight = DownloadPreflight::inspect(plan, &options, Some(archive))?;
+        self.download_plan_with_archive_preflight_decision(
+            plan, options, archive, &preflight, decision,
+        )
+        .await
+    }
+
+    pub async fn download_plan_with_archive_preflight_decision(
+        &self,
+        plan: &DownloadPlan,
+        options: DownloadOptions,
+        archive: &mut DownloadArchive,
+        preflight: &DownloadPreflight,
+        decision: DuplicateDecision,
+    ) -> Result<DownloadReport> {
+        validate_archive_preflight(plan, &options, preflight)?;
         let mut effective_options = options;
         let output_dir = match decision {
             DuplicateDecision::Cancel if preflight.requires_decision() => {
@@ -477,15 +492,21 @@ impl BiliClient {
             }
             DuplicateDecision::Cancel => default_plan_output_dir(plan, &effective_options),
             DuplicateDecision::Replace => {
-                if preflight.output_conflict.is_some() {
+                if path_is_occupied(&preflight.planned_output_dir)? {
                     validate_plan_stream_selection(plan, effective_options.stream_selection)?;
                     remove_output_root_if_exists(&preflight.planned_output_dir).await?;
                     effective_options.resume = false;
                 }
-                preflight.planned_output_dir
+                preflight.planned_output_dir.clone()
             }
             DuplicateDecision::KeepBoth => preflight.output_dir_for_decision(decision)?,
         };
+        if decision != DuplicateDecision::Replace && path_is_occupied(&output_dir)? {
+            return Err(Error::InvalidInput(format!(
+                "output directory appeared after duplicate preflight: {}",
+                output_dir.display()
+            )));
+        }
         let report = self
             .download_plan_to_output_dir(plan, effective_options, output_dir)
             .await?;
@@ -1328,6 +1349,27 @@ fn path_is_reserved(path: &Path, reserved: &[PathBuf]) -> bool {
     reserved
         .iter()
         .any(|reserved_path| comparable_output_path_key(reserved_path) == path_key)
+}
+
+fn validate_archive_preflight(
+    plan: &DownloadPlan,
+    options: &DownloadOptions,
+    preflight: &DownloadPreflight,
+) -> Result<()> {
+    if preflight.content_key != download_plan_content_key(plan) {
+        return Err(Error::InvalidInput(
+            "download preflight does not match the download plan".to_owned(),
+        ));
+    }
+    let planned_output_dir = default_plan_output_dir(plan, options);
+    if comparable_output_path_key(&preflight.planned_output_dir)
+        != comparable_output_path_key(&planned_output_dir)
+    {
+        return Err(Error::InvalidInput(
+            "download preflight does not match the download output options".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn archive_records_for_preflight(
@@ -3977,6 +4019,93 @@ mod tests {
             download_plan_content_key(&plan)
         );
         assert_ne!(archive.records[0].content_key, stale_content_key);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn archive_preflight_cancel_rejects_late_output_conflict() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
+        let options = DownloadOptions::new(temp.path().join("downloads"))
+            .with_retry_policy(RetryPolicy::single_attempt())
+            .with_danmaku(false)
+            .with_mux(MuxOptions::Disabled);
+        let mut archive = DownloadArchive::default();
+        let preflight = DownloadPreflight::inspect(&plan, &options, Some(&archive))?;
+        let marker = preflight.planned_output_dir.join("marker.txt");
+        std::fs::create_dir_all(&preflight.planned_output_dir)?;
+        std::fs::write(&marker, "external")?;
+
+        let result = client
+            .download_plan_with_archive_preflight_decision(
+                &plan,
+                options,
+                &mut archive,
+                &preflight,
+                DuplicateDecision::Cancel,
+            )
+            .await;
+        let error = match result {
+            Ok(report) => anyhow::bail!(
+                "late output conflict must not be deleted by safe continue, got {report:?}"
+            ),
+            Err(error) => error,
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("output directory appeared after duplicate preflight")
+        );
+        assert_eq!(std::fs::read_to_string(marker)?, "external");
+        assert!(archive.records.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn archive_preflight_replace_removes_late_output_conflict() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/video.m4s");
+            then.status(200).body("video");
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/audio.m4s");
+            then.status(200).body("audio");
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
+        let options = DownloadOptions::new(temp.path().join("downloads"))
+            .with_retry_policy(RetryPolicy::single_attempt())
+            .with_danmaku(false)
+            .with_mux(MuxOptions::Disabled);
+        let entry_dir = test_entry_dir(&options.output_dir, &plan);
+        let video_path =
+            entry_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
+        let stale_sidecar = entry_dir.join("stale.txt");
+        let mut archive = DownloadArchive::default();
+        let preflight = DownloadPreflight::inspect(&plan, &options, Some(&archive))?;
+        std::fs::create_dir_all(&entry_dir)?;
+        std::fs::write(&video_path, "partial")?;
+        std::fs::write(&stale_sidecar, "stale")?;
+
+        let report = client
+            .download_plan_with_archive_preflight_decision(
+                &plan,
+                options,
+                &mut archive,
+                &preflight,
+                DuplicateDecision::Replace,
+            )
+            .await?;
+
+        assert_eq!(tokio::fs::read_to_string(video_path).await?, "video");
+        assert!(!stale_sidecar.exists());
+        assert_eq!(report.entries[0].files[0].resumed_from, 0);
+        assert_eq!(archive.records.len(), 1);
         Ok(())
     }
 
