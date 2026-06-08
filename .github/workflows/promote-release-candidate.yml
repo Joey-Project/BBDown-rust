@@ -64,8 +64,22 @@ jobs:
           final_tag="v${version}"
           rc_prefix="v${version}-rc."
           version_regex="${version//./\\.}"
+          list_matching_refs() {
+            local prefix=$1
+            local error_file
+            error_file=$(mktemp)
+            if refs=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${prefix}" --jq '.[].ref' 2>"${error_file}"); then
+              printf '%s\n' "${refs}"
+              return
+            fi
+            if grep -q "HTTP 404" "${error_file}"; then
+              return
+            fi
+            echo "::error::failed to list matching tags for ${prefix}: $(tr '\n' ' ' < "${error_file}")"
+            exit 2
+          }
           max_rc=0
-          refs=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${rc_prefix}" --jq '.[].ref')
+          refs=$(list_matching_refs "${rc_prefix}")
           while IFS= read -r ref; do
             tag="${ref#refs/tags/}"
             if [[ "${tag}" =~ ^v${version_regex}-rc\.([1-9][0-9]*)$ ]]; then
@@ -163,8 +177,22 @@ jobs:
           rc_prefix="${FINAL_TAG}-rc."
           version_regex="${VERSION//./\\.}"
           selected_rc="${RC_TAG##*.}"
+          list_matching_refs() {
+            local prefix=$1
+            local error_file
+            error_file=$(mktemp)
+            if refs=$(gh api --paginate "repos/${repo}/git/matching-refs/tags/${prefix}" --jq '.[].ref' 2>"${error_file}"); then
+              printf '%s\n' "${refs}"
+              return
+            fi
+            if grep -q "HTTP 404" "${error_file}"; then
+              return
+            fi
+            echo "::error::failed to list matching tags for ${prefix}: $(tr '\n' ' ' < "${error_file}")"
+            exit 2
+          }
           max_rc=0
-          refs=$(gh api --paginate "repos/${repo}/git/matching-refs/tags/${rc_prefix}" --jq '.[].ref')
+          refs=$(list_matching_refs "${rc_prefix}")
           while IFS= read -r ref; do
             tag="${ref#refs/tags/}"
             if [[ "${tag}" =~ ^v${version_regex}-rc\.([1-9][0-9]*)$ ]]; then

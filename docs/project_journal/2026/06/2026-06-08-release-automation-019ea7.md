@@ -81,3 +81,6 @@ superseded_by:
   now rejects existing final tags and GitHub Releases before creating another candidate.
 - Follow-up reviews found fail-open process substitutions around `gh api` tag enumeration; the
   workflows now capture those API results before looping so query failures stop the run.
+- Offline frozen review then confirmed GitHub `matching-refs` returns 404 for an empty first-RC tag
+  set; the workflows now treat that specific 404 as an empty tag list while keeping other API errors
+  fail-closed.
