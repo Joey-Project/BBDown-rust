@@ -80,6 +80,8 @@ superseded_by:
 - Follow-up review noted that floating stable Rust can still change rebuilt binary bytes across
   time. Published-release reuse now validates the already-published assets and checksum sidecars
   instead of comparing them to rebuilt archive digests.
+- Final independent review found checksum sidecars must be tied to the archive currently being
+  checked. Promotion now rejects sidecars whose recorded filename does not match the archive asset.
 
 ## Validation
 
@@ -127,3 +129,5 @@ superseded_by:
 - Follow-up independent review found the Windows ZIP timestamp needed to use the ZIP-supported
   minimum date and that floating stable Rust limits full-rerun byte identity guarantees; the workflow
   now verifies published release assets through their sidecar checksums before continuing to crates.io.
+- Final independent review found sidecar checksum success alone could validate the wrong filename;
+  the workflow now requires each sidecar to name its paired archive before running `sha256sum -c`.

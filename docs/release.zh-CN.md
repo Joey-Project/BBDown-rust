@@ -82,7 +82,7 @@ crates.io 已经存在 exact `bbdown-core` version，crate publish step 会把�
   `Re-run failed jobs`，只重试失败的 crate job，避免重新构建 artifacts。从同一个 RC tag 重
   跑整个 workflow 是 fail-closed 的：workflow 只会在已发布 GitHub Release 的 asset 名称与
   预期名称完全一致、每个 asset 都是 `uploaded` 且非空，并且下载后的归档能通过其已发布
-  `.sha256` sidecar 校验时复用它，然后继续发布到 crates.io。Release archives 会规范化条目
+  `.sha256` sidecar 点名并校验通过时复用它，然后继续发布到 crates.io。Release archives 会规范化条目
   顺序、时间戳、owner、group 和归档容器 metadata，因此相同已编译输入会得到稳定 checksum；
   但已发布 release 复用校验的是已经发布的 assets，而不是要求重新构建出的二进制字节一致。
   如果 exact crate version 已经被 crates.io 接受，crate publish step 会成功退出。

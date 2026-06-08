@@ -265,9 +265,9 @@ release tag when one exists, so the RC tag is not used as the comparison base fo
 Promotion also supports retry after GitHub Release creation is interrupted: draft releases are
 deleted and recreated, while published releases are reused only if the expected asset set is already
 complete. Reuse requires the exact expected asset name set, `uploaded` states, non-empty sizes, and
-downloaded archives that verify against their published `.sha256` sidecars. This validates the
-already-published release assets instead of requiring byte-identical rebuilt archives, which keeps
-crates.io recovery independent of later floating-stable compiler changes. Release archives still
+downloaded archives that are named by and verify against their published `.sha256` sidecars. This
+validates the already-published release assets instead of requiring byte-identical rebuilt archives,
+which keeps crates.io recovery independent of later floating-stable compiler changes. Release archives still
 normalize entry ordering, timestamps, owners, groups, and archive container metadata so the same
 compiled inputs produce stable package checksums. The workflow lists releases by `tag_name` instead
 of relying only on the published-release tag endpoint, so draft releases are visible to the release

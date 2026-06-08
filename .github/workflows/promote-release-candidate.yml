@@ -298,6 +298,12 @@ jobs:
                   echo "::error::release asset ${asset_name} is missing checksum sidecar ${checksum_name}"
                   exit 2
                 fi
+                checksum_target=$(tr -d '\r' < "${downloaded_assets}/${checksum_name}" | awk 'NF >= 2 { print $2; exit }')
+                checksum_target="${checksum_target#\*}"
+                if [[ "${checksum_target}" != "${asset_name}" ]]; then
+                  echo "::error::release checksum sidecar ${checksum_name} targets ${checksum_target}, expected ${asset_name}"
+                  exit 2
+                fi
                 if ! (cd "${downloaded_assets}" && tr -d '\r' < "${checksum_name}" | sha256sum -c -); then
                   echo "::error::release asset ${asset_name} does not match ${checksum_name}"
                   exit 2
