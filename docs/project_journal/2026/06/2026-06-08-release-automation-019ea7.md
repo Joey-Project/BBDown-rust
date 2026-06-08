@@ -25,14 +25,20 @@ superseded_by:
 - `.github/workflows/release.yml` is now `Release Artifacts`, a reusable/manual artifact builder. It
   no longer publishes on arbitrary `v*` tag pushes.
 - `.github/workflows/create-release-candidate.yml` validates `master`, runs formatter, clippy,
-  tests, crates.io dry run, builds release archives, and creates an annotated `vX.Y.Z-rc.N` tag
-  through the release GitHub App inside the `release-candidate` environment.
+  tests, crates.io dry run, builds release archives, auto-selects the next `vX.Y.Z-rc.N` tag, and
+  creates that annotated tag through the release GitHub App inside the `release-candidate`
+  environment.
 - `.github/workflows/promote-release-candidate.yml` must be dispatched from an RC tag. It reruns the
   same validation, rebuilds final artifacts, creates the final annotated `vX.Y.Z` tag, publishes the
   GitHub Release inside the `production-release` environment, and publishes `bbdown-core` inside the
   `crates-io` environment.
+- RC and promotion validation both require `bbdown-core` and `bbdown-cli` Cargo versions to match
+  the requested release version so GitHub Release archive names, CLI package metadata, and the
+  crates.io package do not drift.
 - Release archives now include the English and Simplified Chinese release runbooks alongside the
   existing README, user, embedding, architecture, and license files.
+- CI and release workflows now use runner-provided `rustup` with the floating stable channel from
+  `rust-toolchain.toml`; third-party Rust setup and cache actions are intentionally not used.
 - `docs/release.md` and `docs/release.zh-CN.md` document required environments, secrets, tag
   rulesets, RC creation, promotion, and failure recovery.
 - Offline frozen review found that promotion recovery would fail if final tag creation succeeded but

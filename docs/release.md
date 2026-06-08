@@ -44,12 +44,13 @@ Recommended rulesets:
 1. Ensure `crates/bbdown/Cargo.toml` has the final crate version, for example `0.1.0`.
 2. Ensure the intended branch is merged to `master`.
 3. In GitHub Actions, run `Create Release Candidate` from the `master` branch.
-4. Enter `version` without a leading `v`, for example `0.1.0`, and an RC number such as `1`.
+4. Enter `version` without a leading `v`, for example `0.1.0`. The workflow chooses the next
+   available RC number automatically.
 5. Approve the `release-candidate` environment deployment.
 
-The workflow checks that it is running from `master`, validates the `bbdown-core` Cargo version,
-runs formatter, clippy, tests, and a crates.io dry run, builds all release archives, then creates
-the annotated RC tag.
+The workflow checks that it is running from `master`, validates the `bbdown-core` and `bbdown-cli`
+Cargo versions, computes the next RC number, runs formatter, clippy, tests, and a crates.io dry run,
+builds all release archives, then creates the annotated RC tag.
 
 ## Promote An RC
 
@@ -59,9 +60,10 @@ the annotated RC tag.
 4. Approve the `production-release` environment deployment.
 5. Approve the `crates-io` environment deployment.
 
-The workflow validates that the selected ref is an RC tag, confirms the Cargo version matches the
-final tag, reruns formatter, clippy, tests, and crates.io dry run, rebuilds final release archives,
-creates the final annotated tag, publishes the GitHub Release, and then publishes `bbdown-core`.
+The workflow validates that the selected ref is an RC tag, confirms the `bbdown-core` and
+`bbdown-cli` Cargo versions match the final tag, reruns formatter, clippy, tests, and crates.io dry
+run, rebuilds final release archives, creates the final annotated tag, publishes the GitHub Release,
+and then publishes `bbdown-core`.
 
 ## Failure Recovery
 

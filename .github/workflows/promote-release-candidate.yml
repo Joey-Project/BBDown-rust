@@ -22,14 +22,8 @@ jobs:
           ref: ${{ github.ref }}
           fetch-depth: 0
 
-      # dtolnay/rust-toolchain@master
-      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
-        with:
-          toolchain: 1.95.0
-          components: rustfmt, clippy
-
-      # Swatinem/rust-cache@v2
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      - name: Install Rust stable
+        run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
 
       - name: Validate release metadata
         id: meta
@@ -47,9 +41,15 @@ jobs:
           fi
           version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
           final_tag="v${version}"
-          cargo_version=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; data = json.load(sys.stdin); print(next(pkg["version"] for pkg in data["packages"] if pkg["name"] == "bbdown-core"))')
-          if [[ "${cargo_version}" != "${version}" ]]; then
-            echo "::error::bbdown-core version ${cargo_version} does not match release tag ${final_tag}"
+          cargo_versions=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; data = json.load(sys.stdin); versions = {pkg["name"]: pkg["version"] for pkg in data["packages"]}; print(versions["bbdown-core"]); print(versions["bbdown-cli"])')
+          core_version=$(printf '%s\n' "${cargo_versions}" | sed -n '1p')
+          cli_version=$(printf '%s\n' "${cargo_versions}" | sed -n '2p')
+          if [[ "${core_version}" != "${version}" ]]; then
+            echo "::error::bbdown-core version ${core_version} does not match release tag ${final_tag}"
+            exit 2
+          fi
+          if [[ "${cli_version}" != "${version}" ]]; then
+            echo "::error::bbdown-cli version ${cli_version} does not match release tag ${final_tag}"
             exit 2
           fi
           target_sha=$(git rev-list -n 1 "${rc_tag}")
@@ -166,13 +166,8 @@ jobs:
         with:
           ref: ${{ needs.validate.outputs.target_sha }}
 
-      # dtolnay/rust-toolchain@master
-      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
-        with:
-          toolchain: 1.95.0
-
-      # Swatinem/rust-cache@v2
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      - name: Install Rust stable
+        run: rustup toolchain install stable --profile minimal
 
       - name: Publish crate
         env:

@@ -41,11 +41,12 @@ rulesets 应只允许这个 App 作为非人工 actor 写 tag。
 1. 确认 `crates/bbdown/Cargo.toml` 已经是最终 crate version，例如 `0.1.0`。
 2. 确认要发布的分支已经合入 `master`。
 3. 在 GitHub Actions 里，从 `master` branch 运行 `Create Release Candidate`。
-4. 输入不带前导 `v` 的 `version`，例如 `0.1.0`，以及 RC 编号，例如 `1`。
+4. 输入不带前导 `v` 的 `version`，例如 `0.1.0`。workflow 会自动选择下一个可用 RC 编号。
 5. 批准 `release-candidate` environment deployment。
 
-该 workflow 会检查它是否从 `master` 运行，验证 `bbdown-core` Cargo version，运行 formatter、
-clippy、测试和 crates.io dry run，构建所有 release archives，然后创建 annotated RC tag。
+该 workflow 会检查它是否从 `master` 运行，验证 `bbdown-core` 和 `bbdown-cli` Cargo
+version，计算下一个 RC 编号，运行 formatter、clippy、测试和 crates.io dry run，构建所有
+release archives，然后创建 annotated RC tag。
 
 ## 晋升 RC
 
@@ -55,9 +56,9 @@ clippy、测试和 crates.io dry run，构建所有 release archives，然后创
 4. 批准 `production-release` environment deployment。
 5. 批准 `crates-io` environment deployment。
 
-该 workflow 会验证选中的 ref 是 RC tag，确认 Cargo version 与正式 tag 匹配，重新运行
-formatter、clippy、测试和 crates.io dry run，重新构建正式 release archives，创建正式
-annotated tag，发布 GitHub Release，然后发布 `bbdown-core`。
+该 workflow 会验证选中的 ref 是 RC tag，确认 `bbdown-core` 和 `bbdown-cli` Cargo version
+与正式 tag 匹配，重新运行 formatter、clippy、测试和 crates.io dry run，重新构建正式
+release archives，创建正式 annotated tag，发布 GitHub Release，然后发布 `bbdown-core`。
 
 ## 失败恢复
 

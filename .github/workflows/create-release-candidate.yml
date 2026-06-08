@@ -7,11 +7,6 @@ on:
         description: "Final SemVer version without the leading v, for example 0.1.0."
         required: true
         type: string
-      rc:
-        description: "Release candidate number, for example 1."
-        required: true
-        default: "1"
-        type: string
 
 permissions:
   contents: read
@@ -29,21 +24,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      # dtolnay/rust-toolchain@master
-      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
-        with:
-          toolchain: 1.95.0
-          components: rustfmt, clippy
-
-      # Swatinem/rust-cache@v2
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      - name: Install Rust stable
+        run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
 
       - name: Validate release metadata
         id: meta
         shell: bash
         env:
           VERSION: ${{ inputs.version }}
-          RC: ${{ inputs.rc }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           if [[ "${GITHUB_REF}" != "refs/heads/master" ]]; then
@@ -54,17 +43,32 @@ jobs:
             echo "::error::version must be MAJOR.MINOR.PATCH without a leading v: ${VERSION}"
             exit 2
           fi
-          if [[ ! "${RC}" =~ ^[1-9][0-9]*$ ]]; then
-            echo "::error::rc must be a positive integer: ${RC}"
+          cargo_versions=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; data = json.load(sys.stdin); versions = {pkg["name"]: pkg["version"] for pkg in data["packages"]}; print(versions["bbdown-core"]); print(versions["bbdown-cli"])')
+          core_version=$(printf '%s\n' "${cargo_versions}" | sed -n '1p')
+          cli_version=$(printf '%s\n' "${cargo_versions}" | sed -n '2p')
+          if [[ "${core_version}" != "${VERSION}" ]]; then
+            echo "::error::bbdown-core version ${core_version} does not match requested release ${VERSION}"
             exit 2
           fi
-          cargo_version=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; data = json.load(sys.stdin); print(next(pkg["version"] for pkg in data["packages"] if pkg["name"] == "bbdown-core"))')
-          if [[ "${cargo_version}" != "${VERSION}" ]]; then
-            echo "::error::bbdown-core version ${cargo_version} does not match requested release ${VERSION}"
+          if [[ "${cli_version}" != "${VERSION}" ]]; then
+            echo "::error::bbdown-cli version ${cli_version} does not match requested release ${VERSION}"
             exit 2
           fi
+          rc_prefix="v${VERSION}-rc."
+          version_regex="${VERSION//./\\.}"
+          max_rc=0
+          while IFS= read -r ref; do
+            tag="${ref#refs/tags/}"
+            if [[ "${tag}" =~ ^v${version_regex}-rc\.([1-9][0-9]*)$ ]]; then
+              current_rc="${BASH_REMATCH[1]}"
+              if (( current_rc > max_rc )); then
+                max_rc="${current_rc}"
+              fi
+            fi
+          done < <(gh api --paginate "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${rc_prefix}" --jq '.[].ref')
+          rc_number=$((max_rc + 1))
           target_sha=$(git rev-parse HEAD)
-          rc_tag="v${VERSION}-rc.${RC}"
+          rc_tag="v${VERSION}-rc.${rc_number}"
           {
             echo "rc_tag=${rc_tag}"
             echo "target_sha=${target_sha}"

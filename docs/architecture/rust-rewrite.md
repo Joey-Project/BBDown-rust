@@ -254,9 +254,10 @@ archives, creates the final annotated `vX.Y.Z` tag, publishes the GitHub Release
 `bbdown-core` to crates.io through the protected `crates-io` environment. Archives contain the
 `bbdown` binary, English and Simplified Chinese README files, English and Simplified Chinese user,
 embedding, release, and architecture guides, and `LICENSE`. Each archive also has an adjacent
-platform-specific checksum file. Action references in the release workflows are pinned to commit
-SHAs. Package names normalize release refs to the packager-safe `[A-Za-z0-9._-]` character set, so
-tags such as SemVer build metadata do not fail at packaging time.
+platform-specific checksum file. Release workflows use the GitHub-hosted runner `rustup` and the
+floating stable Rust channel from `rust-toolchain.toml`; third-party Rust toolchain and cache
+actions are intentionally avoided. Package names normalize release refs to the packager-safe
+`[A-Za-z0-9._-]` character set, so tags such as SemVer build metadata do not fail at packaging time.
 
 Crate publishing is intentionally scoped to the reusable `bbdown-core` library package, imported as
 `bbdown_core` in Rust code. The crate has crates.io metadata, a package-local README and LICENSE,

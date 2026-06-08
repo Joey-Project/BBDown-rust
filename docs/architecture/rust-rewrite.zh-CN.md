@@ -224,9 +224,10 @@ x86_64 CLI 归档，但不发布 tag、GitHub Release 或 crate。`Create Releas
 annotated `vX.Y.Z` tag，发布 GitHub Release，然后通过受保护的 `crates-io` environment 发
 布 `bbdown-core` 到 crates.io。归档包含 `bbdown` 二进制、英文和简体中文 README、英文和
 简体中文用户指南、嵌入指南、发布 runbook 和架构指南，以及 `LICENSE`。每个归档旁边也有
-平台专用 checksum 文件。release workflows 中的 action 引用固定到 commit SHA。包名会把
-release ref 规范化到打包器安全的 `[A-Za-z0-9._-]` 字符集，因此 SemVer build metadata 等
-tag 不会导致打包失败。
+平台专用 checksum 文件。release workflows 使用 GitHub-hosted runner 自带的 `rustup` 和
+`rust-toolchain.toml` 中的 floating stable Rust channel；有意不使用第三方 Rust toolchain
+或 cache actions。包名会把 release ref 规范化到打包器安全的 `[A-Za-z0-9._-]` 字符集，因
+此 SemVer build metadata 等 tag 不会导致打包失败。
 
 Crate publishing 被有意限制在可复用 `bbdown-core` library package，在 Rust 代码中导入为
 `bbdown_core`。该 crate 有 crates.io metadata、package-local README 和 LICENSE、
