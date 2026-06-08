@@ -77,6 +77,9 @@ superseded_by:
 - Final frozen review found the stricter digest check required reproducible package archives for
   full promotion reruns. Unix tarballs and Windows zip files now normalize archive metadata so the
   same target commit rebuilds to stable package checksums.
+- Follow-up review noted that floating stable Rust can still change rebuilt binary bytes across
+  time. Published-release reuse now validates the already-published assets and checksum sidecars
+  instead of comparing them to rebuilt archive digests.
 
 ## Validation
 
@@ -121,3 +124,6 @@ superseded_by:
 - Final frozen review found non-reproducible archives would break full promotion reruns after a
   successful GitHub Release and failed crates.io publish; package scripts now create deterministic
   archives before digest-level release reuse.
+- Follow-up independent review found the Windows ZIP timestamp needed to use the ZIP-supported
+  minimum date and that floating stable Rust limits full-rerun byte identity guarantees; the workflow
+  now verifies published release assets through their sidecar checksums before continuing to crates.io.

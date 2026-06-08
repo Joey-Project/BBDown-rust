@@ -53,14 +53,14 @@ try {
     }
     Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $epoch = [DateTimeOffset]::FromUnixTimeSeconds(0)
+    $zipEpoch = [DateTimeOffset]::new(1980, 1, 1, 0, 0, 0, [TimeSpan]::Zero)
     $zip = [System.IO.Compression.ZipFile]::Open($archivePath, [System.IO.Compression.ZipArchiveMode]::Create)
     try {
         $files = Get-ChildItem -LiteralPath $stagingDir -Recurse -File | Sort-Object FullName
         foreach ($file in $files) {
             $relativePath = [System.IO.Path]::GetRelativePath($stagingParent, $file.FullName).Replace("\", "/")
             $entry = $zip.CreateEntry($relativePath, [System.IO.Compression.CompressionLevel]::Optimal)
-            $entry.LastWriteTime = $epoch
+            $entry.LastWriteTime = $zipEpoch
             $inputStream = [System.IO.File]::OpenRead($file.FullName)
             try {
                 $outputStream = $entry.Open()
@@ -81,7 +81,7 @@ try {
     }
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archivePath).Hash.ToLowerInvariant()
     $archiveName = Split-Path -Leaf $archivePath
-    Set-Content -LiteralPath $checksumPath -Value "$hash  $archiveName" -Encoding ascii
+    [System.IO.File]::WriteAllText($checksumPath, "$hash  $archiveName`n", [System.Text.Encoding]::ASCII)
     Write-Output $archivePath
 }
 finally {

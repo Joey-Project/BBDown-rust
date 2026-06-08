@@ -258,26 +258,52 @@ jobs:
               echo "Deleting draft GitHub Release ${FINAL_TAG} before retry"
               gh api --method DELETE "repos/${repo}/releases/${release_id}" >/dev/null
             else
-              expected_assets=$(mktemp)
-              existing_assets=$(mktemp)
+              expected_asset_names=$(mktemp)
+              existing_asset_details=$(mktemp)
+              existing_asset_names=$(mktemp)
               for asset in "${assets[@]}"; do
-                asset_name=$(basename "${asset}")
-                asset_size=$(wc -c < "${asset}" | tr -d '[:space:]')
-                asset_digest="sha256:$(sha256sum "${asset}" | awk '{print $1}')"
-                printf '%s\tuploaded\t%s\t%s\n' "${asset_name}" "${asset_size}" "${asset_digest}"
-              done | sort > "${expected_assets}"
-              printf '%s' "${release_json}" | python3 -c 'import json, sys; release = json.load(sys.stdin); print("\n".join("{}\t{}\t{}\t{}".format(asset.get("name", ""), asset.get("state", ""), asset.get("size", ""), asset.get("digest", "")) for asset in release.get("assets", [])))' | sort > "${existing_assets}"
-              asset_errors=$(comm -23 "${expected_assets}" "${existing_assets}")
-              unexpected_assets=$(comm -13 "${expected_assets}" "${existing_assets}")
-              if [[ -n "${asset_errors}" ]]; then
-                echo "::error::GitHub Release ${FINAL_TAG} already exists but has incomplete or mismatched assets: $(tr '\n' ' ' <<< "${asset_errors}")"
+                basename "${asset}"
+              done | sort > "${expected_asset_names}"
+              printf '%s' "${release_json}" | python3 -c 'import json, sys; release = json.load(sys.stdin); print("\n".join("{}\t{}\t{}".format(asset.get("name", ""), asset.get("state", ""), asset.get("size", "")) for asset in release.get("assets", [])))' | sort > "${existing_asset_details}"
+              cut -f1 "${existing_asset_details}" | sort > "${existing_asset_names}"
+              missing_assets=$(comm -23 "${expected_asset_names}" "${existing_asset_names}")
+              unexpected_assets=$(comm -13 "${expected_asset_names}" "${existing_asset_names}")
+              invalid_assets=$(awk -F '\t' '$2 != "uploaded" || $3 !~ /^[0-9]+$/ || $3 <= 0 { print $0 }' "${existing_asset_details}")
+              if [[ -n "${missing_assets}" ]]; then
+                echo "::error::GitHub Release ${FINAL_TAG} already exists but is missing assets: $(tr '\n' ' ' <<< "${missing_assets}")"
                 exit 2
               fi
               if [[ -n "${unexpected_assets}" ]]; then
                 echo "::error::GitHub Release ${FINAL_TAG} already exists but has unexpected assets: $(tr '\n' ' ' <<< "${unexpected_assets}")"
                 exit 2
               fi
-              echo "Reusing existing published GitHub Release ${FINAL_TAG} with complete assets"
+              if [[ -n "${invalid_assets}" ]]; then
+                echo "::error::GitHub Release ${FINAL_TAG} already exists but has incomplete assets: $(tr '\n' ' ' <<< "${invalid_assets}")"
+                exit 2
+              fi
+              downloaded_assets=$(mktemp -d)
+              gh release download "${FINAL_TAG}" --repo "${repo}" --dir "${downloaded_assets}" --clobber
+              while IFS= read -r asset_name; do
+                if [[ ! -f "${downloaded_assets}/${asset_name}" ]]; then
+                  echo "::error::failed to download release asset ${asset_name}"
+                  exit 2
+                fi
+              done < "${expected_asset_names}"
+              while IFS= read -r asset_name; do
+                if [[ "${asset_name}" == *.sha256 ]]; then
+                  continue
+                fi
+                checksum_name="${asset_name}.sha256"
+                if [[ ! -f "${downloaded_assets}/${checksum_name}" ]]; then
+                  echo "::error::release asset ${asset_name} is missing checksum sidecar ${checksum_name}"
+                  exit 2
+                fi
+                if ! (cd "${downloaded_assets}" && tr -d '\r' < "${checksum_name}" | sha256sum -c -); then
+                  echo "::error::release asset ${asset_name} does not match ${checksum_name}"
+                  exit 2
+                fi
+              done < "${expected_asset_names}"
+              echo "Reusing existing published GitHub Release ${FINAL_TAG} with complete self-validated assets"
               exit 0
             fi
           fi

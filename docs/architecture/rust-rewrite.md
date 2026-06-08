@@ -264,15 +264,18 @@ platform-specific checksum file. GitHub Release notes are generated from the pre
 release tag when one exists, so the RC tag is not used as the comparison base for the final release.
 Promotion also supports retry after GitHub Release creation is interrupted: draft releases are
 deleted and recreated, while published releases are reused only if the expected asset set is already
-an exact match for the rebuilt files, including names, `uploaded` states, byte sizes, and SHA-256
-digests. Release archives normalize entry ordering, timestamps, owners, groups, and archive container
-metadata so rebuilding the same target commit produces stable package checksums. The workflow lists
-releases by `tag_name` instead of relying only on the published-release tag endpoint, so draft
-releases are visible to the release GitHub App token. The crates.io publish step checks the exact
-`bbdown-core` version first and treats an already-published matching version as recovered success,
-which covers runner failures after the upload was accepted. Release workflows use the GitHub-hosted
-runner `rustup` and the floating stable Rust channel from `rust-toolchain.toml`; third-party Rust
-toolchain and cache actions are intentionally avoided. They also install Rust 1.95.0 for a
+complete. Reuse requires the exact expected asset name set, `uploaded` states, non-empty sizes, and
+downloaded archives that verify against their published `.sha256` sidecars. This validates the
+already-published release assets instead of requiring byte-identical rebuilt archives, which keeps
+crates.io recovery independent of later floating-stable compiler changes. Release archives still
+normalize entry ordering, timestamps, owners, groups, and archive container metadata so the same
+compiled inputs produce stable package checksums. The workflow lists releases by `tag_name` instead
+of relying only on the published-release tag endpoint, so draft releases are visible to the release
+GitHub App token. The crates.io publish step checks the exact `bbdown-core` version first and treats
+an already-published matching version as recovered success, which covers runner failures after the
+upload was accepted. Release workflows use the GitHub-hosted runner `rustup` and the floating stable
+Rust channel from `rust-toolchain.toml`; third-party Rust toolchain and cache actions are
+intentionally avoided. They also install Rust 1.95.0 for a
 `cargo check` gate matching the crate `rust-version` metadata. Package names normalize release refs
 to the packager-safe `[A-Za-z0-9._-]` character set, so tags such as SemVer build metadata do not
 fail at packaging time.

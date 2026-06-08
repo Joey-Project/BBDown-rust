@@ -79,14 +79,15 @@ crates.io 已经存在 exact `bbdown-core` version，crate publish step 会把�
 - 如果 promotion 留下了 draft GitHub Release，从同一个 RC tag 重跑即可。workflow 会删除该
   draft，并用重新构建的 assets 重新创建 release。
 - 如果 GitHub Release 已经发布成功，但 crates.io 发布失败，优先使用 GitHub Actions 的
-  `Re-run failed jobs`，只重试失败的 crate job。从同一个 RC tag 重跑整个 workflow 也是安全
-  的：workflow 只会在已发布 GitHub Release 的 asset set 与重新构建的文件在名称、
-  `uploaded` 状态、字节大小和 SHA-256 digest 上完全一致时复用它，然后继续发布到
-  crates.io。Release archives 会规范化条目顺序、时间戳、owner、group 和归档容器 metadata，
-  因此同一个 target commit 重新构建会得到稳定 checksum。如果 exact crate version 已经被
-  crates.io 接受，crate publish step 会成功退出。
+  `Re-run failed jobs`，只重试失败的 crate job，避免重新构建 artifacts。从同一个 RC tag 重
+  跑整个 workflow 是 fail-closed 的：workflow 只会在已发布 GitHub Release 的 asset 名称与
+  预期名称完全一致、每个 asset 都是 `uploaded` 且非空，并且下载后的归档能通过其已发布
+  `.sha256` sidecar 校验时复用它，然后继续发布到 crates.io。Release archives 会规范化条目
+  顺序、时间戳、owner、group 和归档容器 metadata，因此相同已编译输入会得到稳定 checksum；
+  但已发布 release 复用校验的是已经发布的 assets，而不是要求重新构建出的二进制字节一致。
+  如果 exact crate version 已经被 crates.io 接受，crate publish step 会成功退出。
 - 正式 release 被设计为不覆盖。正式 tag 只有在已经指向同一个 RC target commit 时才会被复
-  用；已发布 GitHub Release 只有在 asset set 与重新构建的文件完全一致时才会被复用。要替
+  用；已发布 GitHub Release 只有在 asset set 完整且 checksum 校验通过时才会被复用。要替
   换有问题的正式 release，请发布新版本。
 
 发布后验证：
