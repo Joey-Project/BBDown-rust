@@ -55,7 +55,7 @@ content or output directory is seen again, non-interactive JSON mode requires `-
 replace`, `--on-duplicate keep-both`, or `--on-duplicate cancel`; interactive human mode prompts
 when no decision is provided. `replace` removes the existing planned output root before a fresh
 download and replaces stale archive records for that output path, `keep-both` writes the next
-suffixed output root while avoiding matching archive record paths, and `cancel` reports the
+suffixed output root while avoiding all archive record output paths, and `cancel` reports the
 preflight state without downloading. The archive file itself must not be the chosen output root or
 inside that root; the CLI applies the same guard to archive save sidecar paths.
 

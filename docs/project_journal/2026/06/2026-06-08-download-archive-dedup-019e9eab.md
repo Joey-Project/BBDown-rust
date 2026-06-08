@@ -33,8 +33,9 @@ superseded_by:
 - `replace` removes the existing planned output root before a fresh download, so stale sidecars or
   mux outputs from the previous duplicate run do not remain, and completed records replace stale
   archive records that pointed at the same normalized output path.
-- `keep-both` reserves matching archive record output paths even when those paths are no longer on
-  disk, so archive-only duplicate history is preserved across equivalent path spellings.
+- `keep-both` reserves all archive record output paths even when those paths are no longer on disk,
+  so archive-only duplicate history is preserved across equivalent path spellings and unrelated
+  same-title records.
 - Entry-level archive identities ignore display indexes, so reordered pages or episodes can still
   be detected as duplicates by stable aid/bvid/cid/epid content ids.
 - Output-root occupancy uses symlink metadata, so broken symlink roots are treated as existing roots
@@ -63,6 +64,8 @@ superseded_by:
   `cargo test --locked -p bbdown archive_decision_keep_both_uses_new_output_root`.
 - Targeted crate coverage:
   `cargo test --locked -p bbdown archive_decision_keep_both_avoids_archive_only_output_root`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown archive_decision_keep_both_avoids_unrelated_archive_output_root`.
 - Targeted crate coverage:
   `cargo test --locked -p bbdown archive_decision_replace_forces_fresh_writes`.
 - Targeted crate coverage:

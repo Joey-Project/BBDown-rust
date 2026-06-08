@@ -1384,6 +1384,7 @@ mod tests {
             output_conflict: Some(DownloadOutputConflict {
                 path: PathBuf::from("Mock video"),
             }),
+            reserved_output_dirs: Vec::new(),
         };
         let clean_preflight = DownloadPreflight {
             output_conflict: None,

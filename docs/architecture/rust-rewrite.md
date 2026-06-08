@@ -126,7 +126,7 @@ credentials. `DownloadPreflight::inspect` reports archive hits and planned outpu
 conflicts, so embedding applications can show what already exists and choose a
 `DuplicateDecision`. `Replace` removes the existing planned output root before a fresh download,
 then replaces stale archive records for that output path. `KeepBoth` writes to the next suffixed
-output root while avoiding matching archive record paths, and both comparisons use normalized output
+output root while avoiding all archive record output paths, and comparisons use normalized output
 path keys instead of raw `PathBuf` equality. Entry-level archive identities use stable content ids
 instead of display indexes, so reordered pages or episodes can still be detected as duplicates.
 `Cancel` is a caller-level stop decision. The CLI exposes the same model with `--archive-file` and
@@ -266,9 +266,10 @@ Download archive and duplicate handling are covered at both crate and CLI levels
 preflight archive/output conflict detection, entry-level archive overlap detection, replace
 removing stale output-root artifacts before fresh writes, keep-both suffixed output roots, and
 archive JSON round trips/replacement without media URLs. They also cover archive-only keep-both path
-reservation, same-output archive record replacement, display-index-insensitive entry archive
-identity, broken-symlink output roots, metadata error reporting, and directory-target archive save
-rejection. CLI mock e2e tests cover JSON duplicate failure without an
+reservation, unrelated archive-only output path reservation, same-output archive record replacement,
+display-index-insensitive entry archive identity, broken-symlink output roots, metadata error
+reporting, and directory-target archive save rejection. CLI mock e2e tests cover JSON duplicate
+failure without an
 explicit decision, `cancel` preflight output, `keep-both` suffixed output roots, `replace`
 overwriting an existing file, and rejecting an archive file path that overlaps the chosen output root
 lexically or through canonicalized targets, including archive save sidecar paths.

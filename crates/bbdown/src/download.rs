@@ -331,6 +331,9 @@ pub struct DownloadPreflight {
     pub planned_output_dir: PathBuf,
     pub archived_records: Vec<DownloadArchiveRecord>,
     pub output_conflict: Option<DownloadOutputConflict>,
+    #[doc(hidden)]
+    #[serde(skip)]
+    pub reserved_output_dirs: Vec<PathBuf>,
 }
 
 impl DownloadPreflight {
@@ -344,13 +347,22 @@ impl DownloadPreflight {
             path_is_occupied(&planned_output_dir)?.then_some(DownloadOutputConflict {
                 path: planned_output_dir.clone(),
             });
+        let archived_records =
+            archive.map_or_else(Vec::new, |archive| archive.records_for_plan(plan));
+        let reserved_output_dirs = archive.map_or_else(Vec::new, |archive| {
+            archive
+                .records
+                .iter()
+                .map(|record| record.output_dir.clone())
+                .collect()
+        });
         Ok(Self {
             content_key: download_plan_content_key(plan),
             title: plan.title.clone(),
             planned_output_dir: planned_output_dir.clone(),
-            archived_records: archive
-                .map_or_else(Vec::new, |archive| archive.records_for_plan(plan)),
+            archived_records,
             output_conflict,
+            reserved_output_dirs,
         })
     }
 
@@ -366,14 +378,10 @@ impl DownloadPreflight {
 
     pub fn output_dir_for_decision(&self, decision: DuplicateDecision) -> Result<PathBuf> {
         match decision {
-            DuplicateDecision::KeepBoth => {
-                let reserved_output_dirs = self
-                    .archived_records
-                    .iter()
-                    .map(|record| record.output_dir.clone())
-                    .collect::<Vec<_>>();
-                next_available_output_dir_avoiding(&self.planned_output_dir, &reserved_output_dirs)
-            }
+            DuplicateDecision::KeepBoth => next_available_output_dir_avoiding(
+                &self.planned_output_dir,
+                &self.reserved_output_dirs,
+            ),
             DuplicateDecision::Replace | DuplicateDecision::Cancel => {
                 Ok(self.planned_output_dir.clone())
             }
@@ -3707,6 +3715,52 @@ mod tests {
         assert_eq!(report.output_dir, output_base.join("Mock video (2)"));
         assert_eq!(archive.records.len(), 2);
         assert_eq!(archive.records[0].output_dir, archived_output_dir);
+        assert_eq!(archive.records[1].output_dir, report.output_dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn archive_decision_keep_both_avoids_unrelated_archive_output_root() -> anyhow::Result<()>
+    {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/video.m4s");
+            then.status(200).body("video");
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/audio.m4s");
+            then.status(200).body("audio");
+        });
+        let temp = tempfile::tempdir()?;
+        let output_base = temp.path().join("downloads");
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
+        let options = DownloadOptions::new(output_base.clone())
+            .with_retry_policy(RetryPolicy::single_attempt())
+            .with_danmaku(false)
+            .with_mux(MuxOptions::Disabled);
+        std::fs::create_dir_all(default_plan_output_dir(&plan, &options))?;
+        let unrelated_output_dir = output_base.join("Mock video (2)");
+        let mut archive = DownloadArchive::new(vec![DownloadArchiveRecord {
+            content_key: "plan|unrelated".to_owned(),
+            title: "Unrelated archived content".to_owned(),
+            output_dir: unrelated_output_dir.clone(),
+            completed_at_unix: 42,
+            entries: Vec::new(),
+        }]);
+
+        let report = client
+            .download_plan_with_archive_decision(
+                &plan,
+                options,
+                &mut archive,
+                DuplicateDecision::KeepBoth,
+            )
+            .await?;
+
+        assert_eq!(report.output_dir, output_base.join("Mock video (3)"));
+        assert_eq!(archive.records.len(), 2);
+        assert_eq!(archive.records[0].output_dir, unrelated_output_dir);
         assert_eq!(archive.records[1].output_dir, report.output_dir);
         Ok(())
     }
