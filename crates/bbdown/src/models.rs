@@ -148,6 +148,7 @@ pub struct StreamSet {
     pub duration_seconds: Option<u32>,
 }
 
+#[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct StreamQuality {
     pub id: u32,

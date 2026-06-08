@@ -28,9 +28,9 @@ superseded_by:
 - Human `bbdown plan` output lists available quality ids plus video/audio stream summaries, while
   JSON output includes the same structured quality list.
 - `DownloadOptions::stream_selection` lets embedding callers request exact DASH video or audio
-  stream ids.
-- `DownloadOptions::new` gives embedders a constructor path while the first-publish API surface is
-  intentionally hardened with non-exhaustive public structs.
+  stream ids through `StreamSelection::new`.
+- `DownloadOptions::new` and `StreamSelection::new` give embedders constructor paths while the
+  first-publish API surface is intentionally hardened with non-exhaustive public structs.
 - CLI `download` exposes `--video-quality <ID>` and `--audio-quality <ID>` for the same selection
   path.
 - Invalid requested ids fail before media writes and report available ids. Explicit quality

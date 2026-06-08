@@ -59,6 +59,7 @@ impl DownloadOptions {
     }
 }
 
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct StreamSelection {
     pub video_quality: Option<u32>,
@@ -66,6 +67,14 @@ pub struct StreamSelection {
 }
 
 impl StreamSelection {
+    #[must_use]
+    pub const fn new(video_quality: Option<u32>, audio_quality: Option<u32>) -> Self {
+        Self {
+            video_quality,
+            audio_quality,
+        }
+    }
+
     #[must_use]
     pub const fn has_selection(self) -> bool {
         self.video_quality.is_some() || self.audio_quality.is_some()

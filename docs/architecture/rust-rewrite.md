@@ -82,9 +82,9 @@ Execution behavior is controlled by `DownloadOptions`:
 - disabled muxing or explicit `ffmpeg` binary path.
 
 For each entry, execution prefers a complete DASH video/audio pair from the plan. By default this is
-the first video and first audio stream; callers can set `StreamSelection` to request exact DASH video
-or audio stream ids. If a requested id is unavailable, the executor reports the available ids and
-fails before media writes. If DASH media is incomplete and FLV `durl` segments are available, it
+the first video and first audio stream; callers can set `StreamSelection::new(...)` to request exact
+DASH video or audio stream ids. If a requested id is unavailable, the executor reports the available
+ids and fails before media writes. If DASH media is incomplete and FLV `durl` segments are available, it
 downloads the FLV segments instead; explicit stream selection requires DASH media and therefore
 rejects FLV fallback. Otherwise the entry fails before media writes. Subtitle and danmaku files
 remain sidecars. When muxing is enabled, the executor invokes `ffmpeg` with explicit argv and returns
@@ -221,10 +221,10 @@ select exact DASH streams through `DownloadOptions::stream_selection`.
 
 The reusable crate is still preparing for its first crates.io release, so this branch intentionally
 hardens public structs before publishing rather than preserving local pre-release struct-literal
-experiments. Embedders should create download settings with `DownloadOptions::new` or
-`DownloadOptions::default` and then set fields instead of relying on struct literals. Public output
-containers such as `StreamSet` are marked non-exhaustive because plan models are consumed data
-surfaces and may gain fields while the crate matures.
+experiments. Embedders should create download settings with `DownloadOptions::new`,
+`DownloadOptions::default`, or `StreamSelection::new` instead of relying on struct literals. Public
+output containers such as `StreamSet` and `StreamQuality` are marked non-exhaustive because plan
+models are consumed data surfaces and may gain fields while the crate matures.
 
 Live tests against Bilibili are opt-in only through `just live-e2e`. The recipe fails fast unless an
 ignored `live-e2e.samples.json` manifest exists, so branch CI is not blocked by network, account, or

@@ -218,10 +218,7 @@ async fn main() -> anyhow::Result<()> {
                 max_attempts: retry_attempts,
                 backoff: Duration::from_millis(retry_backoff_ms),
             };
-            options.stream_selection = StreamSelection {
-                video_quality,
-                audio_quality,
-            };
+            options.stream_selection = StreamSelection::new(video_quality, audio_quality);
             options.download_idle_timeout = if download_idle_timeout_seconds == 0 {
                 None
             } else {
