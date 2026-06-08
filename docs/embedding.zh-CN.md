@@ -4,9 +4,9 @@
 
 ## 范围
 
-`bbdown` crate 是 Rust 项目的集成表面，适用于需要 typed Bilibili metadata、下载计划、媒
-体下载、字幕旁路文件、弹幕旁路文件、二维码登录状态和受限区域代理诊断，但不希望 shell
-out 到 CLI 的场景。
+`bbdown_core` crate 通过 `bbdown-core` package 发布，是 Rust 项目的集成表面，适用于需要
+typed Bilibili metadata、下载计划、媒体下载、字幕旁路文件、弹幕旁路文件、二维码登录状态
+和受限区域代理诊断，但不希望 shell out 到 CLI 的场景。
 
 crate 仍处于预发布阶段。配置应优先使用构造器和 builder 风格 API，并把 metadata 和 plan
 结构体视为只读输出表面。这样在第一次 crates.io 发布前新增字段时，嵌入代码更不容易受影
@@ -18,10 +18,10 @@ crate 仍处于预发布阶段。配置应优先使用构造器和 builder 风�
 `BiliClient::plan`。
 
 ```rust,no_run
-use bbdown::{BiliClient, ClientConfig, Selection};
+use bbdown_core::{BiliClient, ClientConfig, Selection};
 
 #[tokio::main]
-async fn main() -> bbdown::Result<()> {
+async fn main() -> bbdown_core::Result<()> {
     let client = BiliClient::new(ClientConfig::default());
     let plan = client
         .plan_download("https://www.bilibili.com/video/BV1qt4y1X7TW", Some(Selection::Current))
@@ -44,7 +44,7 @@ Season 和 media 输入需要显式 `Selection`，除非输入本身已经标识
 `Credentials` 的 debug 输出会脱敏，但应用日志仍应把凭据视为密钥。
 
 ```rust,no_run
-use bbdown::{ClientConfig, Credentials};
+use bbdown_core::{ClientConfig, Credentials};
 
 let credentials = Credentials::default()
     .with_cookie("SESSDATA=...")
@@ -59,12 +59,12 @@ crate 不会内置公共代理默认值。只配置你自己运营或信任的�
 PGC playurl 区域错误尝试，而不是针对任意官方 API 失败。
 
 ```rust,no_run
-use bbdown::{
+use bbdown_core::{
     BiliClient, ClientConfig, RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy, Selection,
 };
 
 #[tokio::main]
-async fn main() -> bbdown::Result<()> {
+async fn main() -> bbdown_core::Result<()> {
     let restricted_area = RestrictedAreaConfig::default()
         .with_area_hint(RestrictedArea::Hk)
         .with_proxy(RestrictedAreaProxy::playurl(
@@ -92,11 +92,11 @@ origin，诊断消息会脱敏常见密钥模式。
 下载是显式动作。library 默认禁用 mux，因此嵌入应用不会在未选择的情况下启动 `ffmpeg`。
 
 ```rust,no_run
-use bbdown::{BiliClient, ClientConfig, DownloadOptions, MuxOptions, RetryPolicy, StreamSelection};
+use bbdown_core::{BiliClient, ClientConfig, DownloadOptions, MuxOptions, RetryPolicy, StreamSelection};
 use std::time::Duration;
 
 #[tokio::main]
-async fn main() -> bbdown::Result<()> {
+async fn main() -> bbdown_core::Result<()> {
     let client = BiliClient::new(ClientConfig::default());
     let options = DownloadOptions::new("downloads")
         .with_stream_selection(StreamSelection::video(80))
@@ -128,13 +128,13 @@ async fn main() -> bbdown::Result<()> {
 preflight 仍匹配当前归档，因此当另一个进程可能更新归档时，调用方应重新检查。
 
 ```rust,no_run
-use bbdown::{
+use bbdown_core::{
     BiliClient, ClientConfig, DownloadArchive, DownloadOptions, DownloadPreflight,
     DuplicateDecision, MuxOptions,
 };
 
 #[tokio::main]
-async fn main() -> bbdown::Result<()> {
+async fn main() -> bbdown_core::Result<()> {
     let client = BiliClient::new(ClientConfig::default());
     let plan = client.plan_download("BV1qt4y1X7TW", None).await?;
     let options = DownloadOptions::new("downloads").with_mux(MuxOptions::Disabled);
@@ -192,7 +192,7 @@ JSON 文件路径；`DownloadArchive::save` 会拒绝目录目标。如果归档
 测试、本地 mock 或受控 gateway 部署可使用 endpoint builder。
 
 ```rust,no_run
-use bbdown::{ClientConfig, EndpointConfig};
+use bbdown_core::{ClientConfig, EndpointConfig};
 
 let endpoints = EndpointConfig::default()
     .with_api_base("http://127.0.0.1:8080")

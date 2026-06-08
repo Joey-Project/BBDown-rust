@@ -31,6 +31,8 @@ superseded_by:
   architecture, and related docs.
 - The root README links to the original `nilaoda/BBDown` project and thanks it as a practical
   Bilibili behavior reference.
+- The publishable library package is named `bbdown-core`; Rust code imports it as `bbdown_core`, and
+  the CLI binary remains `bbdown`.
 - Release packaging scripts now include English and Simplified Chinese README, user guide,
   embedding guide, and architecture docs so archive language links work after extraction.
 
@@ -58,7 +60,7 @@ superseded_by:
   `scripts/package-release.sh target/release/bbdown bbdown-bilingual-smoke .codex-tmp/bilingual-package-smoke`.
 - Release package contents:
   `tar -tzf .codex-tmp/bilingual-package-smoke/bbdown-bilingual-smoke.tar.gz | sort`.
-- Crate package listing: `cargo package --list -p bbdown --allow-dirty`.
+- Crate package listing: `cargo package --list -p bbdown-core --allow-dirty`.
 - Default local gate: `just ci`.
 - Live gate: `just live-e2e`.
 

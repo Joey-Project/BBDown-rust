@@ -11,8 +11,9 @@
 
 ## 工作区
 
-- `crates/bbdown`：library crate，包含 typed input parsing、metadata models、credential
-  store、client config 和 resolver API。
+- `crates/bbdown`：以 `bbdown-core` 发布、在 Rust 代码中以 `bbdown_core` 导入的 library
+  package，包含 typed input parsing、metadata models、credential store、client config 和
+  resolver API。
 - `crates/bbdown-cli`：只通过 crate public API 使用 crate 的 CLI wrapper。
 - `docs/`：架构、面向用户说明、项目状态和项目日志条目。
 
@@ -213,7 +214,7 @@ ticket key 和扫码 URL query string 可作为预认证密钥。HTTP request er
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - 单元测试
 - CLI mock e2e 测试
-- 对可发布 `bbdown` library crate 执行 crates.io dry-run packaging
+- 对可发布 `bbdown-core` library package 执行 crates.io dry-run packaging
 
 Release packaging 是单独的 GitHub Actions workflow。匹配 `v*` 的 tag push 会构建 Linux
 x86_64、macOS x86_64、macOS aarch64 和 Windows x86_64 CLI 归档，并用生成的 release notes
@@ -223,9 +224,10 @@ x86_64、macOS x86_64、macOS aarch64 和 Windows x86_64 CLI 归档，并用生�
 release workflow 中的 action 引用固定到 commit SHA。包名会把 release ref 规范化到打包器
 安全的 `[A-Za-z0-9._-]` 字符集，因此 SemVer build metadata 等 tag 不会导致打包失败。
 
-Crate publishing 被有意限制在可复用 `bbdown` library crate。该 crate 有 crates.io metadata、
-package-local README 和 LICENSE、dirty-tree-friendly 的本地 publish dry-run validation，以及
-CI 支持的 `cargo publish --dry-run -p bbdown --locked` validation。`bbdown-cli` 保持
+Crate publishing 被有意限制在可复用 `bbdown-core` library package，在 Rust 代码中导入为
+`bbdown_core`。该 crate 有 crates.io metadata、package-local README 和 LICENSE、
+dirty-tree-friendly 的本地 publish dry-run validation，以及 CI 支持的
+`cargo publish --dry-run -p bbdown-core --locked` validation。`bbdown-cli` 保持
 `publish = false`，因为 CLI 分发通过 GitHub release 归档处理。
 
 Plan output 现在暴露结构化 stream quality data。library 保留原始 `StreamSet::accept_quality`

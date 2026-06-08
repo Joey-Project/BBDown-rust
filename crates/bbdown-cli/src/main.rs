@@ -2,7 +2,7 @@
 #![allow(clippy::module_name_repetitions)]
 
 use anyhow::{Context, bail, ensure};
-use bbdown::{
+use bbdown_core::{
     BiliClient, ClientConfig, CredentialStore, Credentials, DownloadArchive, DownloadOptions,
     DownloadPreflight, DownloadReport, DuplicateDecision, EndpointConfig, MediaStream, MuxOptions,
     QrLoginKind, QrLoginState, QrLoginTicket, ResolvedContent, RestrictedArea,
@@ -339,7 +339,7 @@ async fn handle_plan(
     Ok(())
 }
 
-fn print_plan_summary(plan: &bbdown::DownloadPlan) {
+fn print_plan_summary(plan: &bbdown_core::DownloadPlan) {
     println!("title: {}", plan.title);
     println!("entries: {}", plan.entries.len());
     for entry in &plan.entries {
@@ -816,7 +816,7 @@ async fn handle_qr_login(
 fn save_qr_credentials(
     store: &CredentialStore,
     credentials: Credentials,
-) -> anyhow::Result<bbdown::CredentialSource> {
+) -> anyhow::Result<bbdown_core::CredentialSource> {
     let mut stored = store.load().context("failed to load credentials")?;
     merge_credentials(&mut stored, credentials);
     store.save(&stored).context("failed to save credentials")?;
@@ -1310,7 +1310,7 @@ mod tests {
         restricted_area_from_cli_with_env_values, save_qr_credentials,
         should_prompt_duplicate_decision,
     };
-    use bbdown::{
+    use bbdown_core::{
         CredentialStore, Credentials, DownloadOutputConflict, DownloadPreflight, DuplicateDecision,
         EndpointConfig,
     };

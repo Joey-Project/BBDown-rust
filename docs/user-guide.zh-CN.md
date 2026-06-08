@@ -4,8 +4,8 @@
 
 ## 范围
 
-BBDown Rust 当前提供可复用的 `bbdown` crate 和一个 CLI，用于确定性的元数据解析、下载计
-划解析、媒体下载执行、旁路文件下载，以及可选 `ffmpeg` 封装。
+BBDown Rust 当前提供可复用的 `bbdown-core` package / `bbdown_core` crate 和一个 CLI，用
+于确定性的元数据解析、下载计划解析、媒体下载执行、旁路文件下载，以及可选 `ffmpeg` 封装。
 
 ## 发布归档
 
@@ -16,20 +16,20 @@ macOS aarch64 和 Windows x86_64。下载与你的平台对应的归档，按需
 
 ## Crate 发布
 
-crates.io 发布目标是可复用的 `bbdown` library crate。使用 `just publish-dry-run` 可以在本
-地执行锁定版本的 dry run，并允许工作树存在未提交修改；使用 `just publish-dry-run-strict`
-或 `cargo publish --dry-run -p bbdown --locked` 可以复现干净 CI 门禁。`bbdown-cli` 包标记
-为 `publish = false`；CLI 应通过 GitHub release 归档安装或分发。library 仍在准备第一次
-crates.io 发布；这个预发布分支会在发布前刻意加固 public struct。嵌入调用方应优先使用
-`DownloadOptions::new`、`StreamSelection::new`、`Default` 等构造器，而不是 public struct
-字面量，并把公开的 plan 输出容器视为被消费的非穷尽数据表面。
+crates.io 发布目标是可复用的 `bbdown-core` library package。使用 `just publish-dry-run`
+可以在本地执行锁定版本的 dry run，并允许工作树存在未提交修改；使用
+`just publish-dry-run-strict` 或 `cargo publish --dry-run -p bbdown-core --locked` 可以复现
+干净 CI 门禁。`bbdown-cli` 包标记为 `publish = false`；CLI 应通过 GitHub release 归档安
+装或分发。library 仍在准备第一次 crates.io 发布；这个预发布分支会在发布前刻意加固 public
+struct。嵌入调用方应优先使用 `DownloadOptions::new`、`StreamSelection::new`、`Default`
+等构造器，而不是 public struct 字面量，并把公开的 plan 输出容器视为被消费的非穷尽数据表面。
 
 ## Library 嵌入
 
 当另一个 Rust 项目需要 typed metadata、下载计划、下载执行报告或受限区域解析器诊断，而
-不希望启动 CLI 时，可以使用 `bbdown` crate。仓库的[嵌入指南](embedding.zh-CN.md)提供了
-`ClientConfig`、`EndpointConfig`、credentials、受限区域代理和 `DownloadOptions` 的可复制
-示例。
+不希望启动 CLI 时，可以使用 `bbdown-core` package 中的 `bbdown_core` crate。仓库的
+[嵌入指南](embedding.zh-CN.md)提供了 `ClientConfig`、`EndpointConfig`、credentials、受限
+区域代理和 `DownloadOptions` 的可复制示例。
 
 嵌入调用方应保持配置构造基于 `Default`、`new` 和 `with_*` 方法。此工作区中的 CLI 使用
 同一路径，因此这些 builder 会被常规 CI 和 mock e2e 测试覆盖。

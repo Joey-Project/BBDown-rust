@@ -4,7 +4,7 @@
 
 `BBDown Rust` 是 BBDown 的 Rust 原生重写，目标有两个：
 
-- 提供可被其他 Rust 项目复用的 `bbdown` crate；
+- 提供可被其他 Rust 项目复用的 `bbdown-core` package / `bbdown_core` crate；
 - 提供一个 CLI，作为元数据解析和下载流程的端到端使用界面。
 
 本项目以原 [BBDown](https://github.com/nilaoda/BBDown) 项目的 Bilibili 实用行为为重要
@@ -139,8 +139,8 @@ just ci
 ```
 
 本地默认 `just ci` 会运行格式检查、clippy、单元测试、mock e2e 测试，以及对可发布的
-`bbdown` library crate 执行 dirty-tree-friendly 的 crates.io dry run。GitHub CI 运行相同测
-试门禁，并在干净 checkout 上执行严格 crates.io dry run。CLI crate 不是 crates.io 发布目
+`bbdown-core` library package 执行 dirty-tree-friendly 的 crates.io dry run。GitHub CI
+运行相同测试门禁，并在干净 checkout 上执行严格 crates.io dry run。CLI crate 不是 crates.io 发布目
 标；二进制分发使用 GitHub release 归档。`just live-e2e` 被有意排除在默认 CI 之外，且在
 被忽略的本地 `live-e2e.samples.json` 不存在时会快速失败。请从
 `live-e2e.samples.example.json` 开始，把 `credential_file` 和 `access_key_file` 指向本地
@@ -150,8 +150,9 @@ just ci
 
 ## 文档
 
-- Crate API 说明：此重写仍为 `0.1`；嵌入项目应优先使用 `Default`、`new` 和 `with_*` 构
-  造器，例如 `ClientConfig::default().with_*`、`EndpointConfig::default().with_*`、
+- Crate API 说明：可发布 package 是 `bbdown-core`，导入时使用 `bbdown_core`。此重写仍为
+  `0.1`；嵌入项目应优先使用 `Default`、`new` 和 `with_*` 构造器，例如
+  `ClientConfig::default().with_*`、`EndpointConfig::default().with_*`、
   `RestrictedAreaConfig::default().with_*`、`DownloadOptions::new(...).with_*` 和
   `RetryPolicy::new(...)`，而不是结构体字面量，这样新增配置字段时破坏性更小。输出模型
   结构体（例如 `DownloadEntry`）意图作为返回值消费或通过 serde 消费；在 crate 离开

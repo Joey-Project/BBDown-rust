@@ -4,9 +4,10 @@
 
 ## Scope
 
-The `bbdown` crate is the integration surface for Rust projects that need typed Bilibili metadata,
-download plans, media downloads, subtitle sidecars, danmaku sidecars, QR login state, and
-restricted-area proxy diagnostics without shelling out to the CLI.
+The `bbdown_core` crate, published as the `bbdown-core` package, is the integration surface for Rust
+projects that need typed Bilibili metadata, download plans, media downloads, subtitle sidecars,
+danmaku sidecars, QR login state, and restricted-area proxy diagnostics without shelling out to the
+CLI.
 
 The crate is still pre-release. Prefer constructors and builder-style APIs for configuration, and
 treat metadata and plan structs as read-only output surfaces. This keeps embedding code resilient
@@ -18,10 +19,10 @@ Use `BiliClient::plan_download` for raw CLI-style inputs, or parse an `Input` yo
 `BiliClient::plan`.
 
 ```rust,no_run
-use bbdown::{BiliClient, ClientConfig, Selection};
+use bbdown_core::{BiliClient, ClientConfig, Selection};
 
 #[tokio::main]
-async fn main() -> bbdown::Result<()> {
+async fn main() -> bbdown_core::Result<()> {
     let client = BiliClient::new(ClientConfig::default());
     let plan = client
         .plan_download("https://www.bilibili.com/video/BV1qt4y1X7TW", Some(Selection::Current))
@@ -45,7 +46,7 @@ Do not log raw credential values. `Credentials` debug output is redacted, but ap
 still treat credentials as secrets.
 
 ```rust,no_run
-use bbdown::{ClientConfig, Credentials};
+use bbdown_core::{ClientConfig, Credentials};
 
 let credentials = Credentials::default()
     .with_cookie("SESSDATA=...")
@@ -61,12 +62,12 @@ Restricted-area fallback is attempted for PGC playurl region errors, not for arb
 failures.
 
 ```rust,no_run
-use bbdown::{
+use bbdown_core::{
     BiliClient, ClientConfig, RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy, Selection,
 };
 
 #[tokio::main]
-async fn main() -> bbdown::Result<()> {
+async fn main() -> bbdown_core::Result<()> {
     let restricted_area = RestrictedAreaConfig::default()
         .with_area_hint(RestrictedArea::Hk)
         .with_proxy(RestrictedAreaProxy::playurl(
@@ -95,11 +96,11 @@ Downloads are explicit. The library default keeps muxing disabled so embedding a
 spawn `ffmpeg` unless they opt in.
 
 ```rust,no_run
-use bbdown::{BiliClient, ClientConfig, DownloadOptions, MuxOptions, RetryPolicy, StreamSelection};
+use bbdown_core::{BiliClient, ClientConfig, DownloadOptions, MuxOptions, RetryPolicy, StreamSelection};
 use std::time::Duration;
 
 #[tokio::main]
-async fn main() -> bbdown::Result<()> {
+async fn main() -> bbdown_core::Result<()> {
     let client = BiliClient::new(ClientConfig::default());
     let options = DownloadOptions::new("downloads")
         .with_stream_selection(StreamSelection::video(80))
@@ -133,13 +134,13 @@ executor validates that the preflight still matches the current archive before a
 so callers should reinspect when another process may have updated the archive.
 
 ```rust,no_run
-use bbdown::{
+use bbdown_core::{
     BiliClient, ClientConfig, DownloadArchive, DownloadOptions, DownloadPreflight,
     DuplicateDecision, MuxOptions,
 };
 
 #[tokio::main]
-async fn main() -> bbdown::Result<()> {
+async fn main() -> bbdown_core::Result<()> {
     let client = BiliClient::new(ClientConfig::default());
     let plan = client.plan_download("BV1qt4y1X7TW", None).await?;
     let options = DownloadOptions::new("downloads").with_mux(MuxOptions::Disabled);
@@ -201,7 +202,7 @@ sidecar paths; `DownloadArchive::save` rejects directory targets. If the archive
 Use endpoint builders for tests, local mocks, or controlled gateway deployments.
 
 ```rust,no_run
-use bbdown::{ClientConfig, EndpointConfig};
+use bbdown_core::{ClientConfig, EndpointConfig};
 
 let endpoints = EndpointConfig::default()
     .with_api_base("http://127.0.0.1:8080")

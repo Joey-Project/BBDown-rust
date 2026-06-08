@@ -19,10 +19,10 @@ e2e:
     cargo test -p bbdown-cli --test cli_e2e
 
 publish-dry-run:
-    cargo publish --dry-run -p bbdown --locked --allow-dirty
+    cargo publish --dry-run -p bbdown-core --locked --allow-dirty
 
 publish-dry-run-strict:
-    cargo publish --dry-run -p bbdown --locked
+    cargo publish --dry-run -p bbdown-core --locked
 
 live-e2e:
     test -f live-e2e.samples.json || { echo "live-e2e.samples.json is required for live-e2e; copy live-e2e.samples.example.json and fill local sample data" >&2; exit 2; }

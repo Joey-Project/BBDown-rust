@@ -22,6 +22,7 @@
   duplicate decision handling.
 - Human-facing docs now have English and Simplified Chinese versions, and the latest real live e2e
   gate passed against the configured public and restricted-area samples.
+- The publishable library package is named `bbdown-core`; Rust code imports it as `bbdown_core`.
 
 ## Recovery Pointers
 

@@ -1,6 +1,6 @@
 use anyhow::{Context, bail, ensure};
 use assert_cmd::Command;
-use bbdown::{CredentialStore, Credentials};
+use bbdown_core::{CredentialStore, Credentials};
 use serde::Deserialize;
 use serde_json::Value;
 use std::fs;

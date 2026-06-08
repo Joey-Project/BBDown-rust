@@ -161,7 +161,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
-name = "bbdown"
+name = "bbdown-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assert_cmd",
+ "bbdown-core",
+ "clap",
+ "dirs",
+ "httpmock",
+ "predicates",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "url",
+]
+
+[[package]]
+name = "bbdown-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -173,24 +191,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror",
- "tokio",
- "url",
-]
-
-[[package]]
-name = "bbdown-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "assert_cmd",
- "bbdown",
- "clap",
- "dirs",
- "httpmock",
- "predicates",
- "serde",
- "serde_json",
- "tempfile",
  "tokio",
  "url",
 ]

@@ -4,7 +4,7 @@
 
 `BBDown Rust` is a Rust-native rewrite of BBDown with two goals:
 
-- expose a reusable `bbdown` crate for other Rust projects;
+- expose a reusable `bbdown-core` package / `bbdown_core` crate for other Rust projects;
 - provide a CLI that can serve as the e2e surface for metadata resolution and downloads.
 
 This project uses the original [BBDown](https://github.com/nilaoda/BBDown) project as a practical
@@ -149,8 +149,8 @@ just ci
 ```
 
 Default local `just ci` runs formatter, clippy, unit tests, mock e2e tests, and a dirty-tree-friendly
-crates.io dry run for the publishable `bbdown` library crate. GitHub CI runs the same test gates and
-a strict clean-checkout crates.io dry run. The CLI crate is not a crates.io publish target; use the
+crates.io dry run for the publishable `bbdown-core` library package. GitHub CI runs the same test
+gates and a strict clean-checkout crates.io dry run. The CLI crate is not a crates.io publish target; use the
 GitHub release archives for binary distribution. `just live-e2e` is intentionally excluded from
 default CI and fails fast unless the ignored local `live-e2e.samples.json` exists. Start from
 `live-e2e.samples.example.json`, then point `credential_file` and `access_key_file` at local secret
@@ -160,15 +160,16 @@ running, so sample behavior is driven by the manifest rather than shell state.
 
 ## Documentation
 
-- Crate API note: this rewrite is still `0.1`; embedding projects should prefer `Default`, `new`,
-  and `with_*` constructors such as `ClientConfig::default().with_*`,
-  `EndpointConfig::default().with_*`, `RestrictedAreaConfig::default().with_*`,
-  `DownloadOptions::new(...).with_*`, and `RetryPolicy::new(...)` over struct literals so added
-  configuration fields are less disruptive. Output model structs such as `DownloadEntry` are
-  intended to be consumed as returned values or through serde; their struct-literal construction is
-  not treated as a stable compatibility surface before the crate leaves `0.1`. For duplicate
-  handling, embedding projects can inspect `DownloadPreflight`, present existing
-  `DownloadArchiveRecord` values to users, then pass an explicit `DuplicateDecision`.
+- Crate API note: the publishable package is `bbdown-core`, imported as `bbdown_core`. This rewrite
+  is still `0.1`; embedding projects should prefer `Default`, `new`, and `with_*` constructors such
+  as `ClientConfig::default().with_*`, `EndpointConfig::default().with_*`,
+  `RestrictedAreaConfig::default().with_*`, `DownloadOptions::new(...).with_*`, and
+  `RetryPolicy::new(...)` over struct literals so added configuration fields are less disruptive.
+  Output model structs such as `DownloadEntry` are intended to be consumed as returned values or
+  through serde; their struct-literal construction is not treated as a stable compatibility surface
+  before the crate leaves `0.1`. For duplicate handling, embedding projects can inspect
+  `DownloadPreflight`, present existing `DownloadArchiveRecord` values to users, then pass an
+  explicit `DuplicateDecision`.
 - User guide: [docs/user-guide.md](docs/user-guide.md)
 - Embedding guide: [docs/embedding.md](docs/embedding.md)
 - Architecture: [docs/architecture/rust-rewrite.md](docs/architecture/rust-rewrite.md)

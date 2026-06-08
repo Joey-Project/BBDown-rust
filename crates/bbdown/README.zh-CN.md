@@ -1,10 +1,12 @@
 [ [English](README.md) | 简体中文 ]
 
-# bbdown
+# bbdown-core
 
-`bbdown` 是 BBDown Rust 背后的可复用 Rust library。它把 Bilibili 和 Bilibili intl 输入解析
-为 typed metadata、下载计划、媒体下载、字幕、弹幕旁路文件、二维码登录凭据、下载归档预
-检查数据，以及受限区域代理诊断。
+`bbdown-core` 是 BBDown Rust 背后的可复用 Rust library package。Rust 代码中以
+`bbdown_core` 导入。它把 Bilibili 和 Bilibili intl 输入解析为 typed metadata、下载计划、
+媒体下载、字幕、弹幕旁路文件、二维码登录凭据、下载归档预检查数据，以及受限区域代理诊断。
+
+使用 `cargo add bbdown-core` 安装，然后用 `bbdown_core` 导入。
 
 crate 仍在准备第一次 crates.io 发布。这个预发布分支会在发布前刻意加固 public structs：
 嵌入项目应优先使用 constructor 和 builder 风格 API，例如
@@ -17,11 +19,11 @@ crate 仍在准备第一次 crates.io 发布。这个预发布分支会在发布
 ## 示例
 
 ```rust,no_run
-use bbdown::{BiliClient, ClientConfig, DownloadOptions, RetryPolicy, Selection, StreamSelection};
+use bbdown_core::{BiliClient, ClientConfig, DownloadOptions, RetryPolicy, Selection, StreamSelection};
 use std::time::Duration;
 
 #[tokio::main]
-async fn main() -> bbdown::Result<()> {
+async fn main() -> bbdown_core::Result<()> {
     let client = BiliClient::new(ClientConfig::default());
     let plan = client
         .plan_download("BV1qt4y1X7TW", Some(Selection::Current))
@@ -40,5 +42,5 @@ async fn main() -> bbdown::Result<()> {
 [英文](https://github.com/Joey-Project/BBDown-rust/blob/master/docs/embedding.md) /
 [简体中文](https://github.com/Joey-Project/BBDown-rust/blob/master/docs/embedding.zh-CN.md)。
 
-CLI 包通过 GitHub release 归档分发。此工作区的 crates.io dry-run 目标是 `bbdown` library
-crate。
+CLI 包通过 GitHub release 归档分发。此工作区的 crates.io dry-run 目标是 `bbdown-core` library
+package。

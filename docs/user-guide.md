@@ -4,8 +4,9 @@
 
 ## Scope
 
-BBDown Rust currently exposes a reusable `bbdown` crate and a CLI for deterministic metadata,
-download-plan resolution, media download execution, sidecar downloads, and optional ffmpeg muxing.
+BBDown Rust currently exposes a reusable `bbdown-core` package / `bbdown_core` crate and a CLI for
+deterministic metadata, download-plan resolution, media download execution, sidecar downloads, and
+optional ffmpeg muxing.
 
 ## Release Archives
 
@@ -17,22 +18,22 @@ guides, architecture guides, and `LICENSE`.
 
 ## Crate Publishing
 
-The crates.io publish target is the reusable `bbdown` library crate. Use `just publish-dry-run` for a
-local locked dry run that tolerates an uncommitted worktree, and use
-`just publish-dry-run-strict` or `cargo publish --dry-run -p bbdown --locked` to reproduce the clean
-CI gate. The `bbdown-cli` package is marked `publish = false`; install or distribute the CLI through
-GitHub release archives instead. The library is still preparing for its first crates.io release; this
-pre-release branch intentionally hardens public structs before publishing. Embedding callers should
-prefer constructors such as `DownloadOptions::new`, `StreamSelection::new`, and `Default` over
-public struct literals, and treat public plan output containers as consumed non-exhaustive data
-surfaces.
+The crates.io publish target is the reusable `bbdown-core` library package. Use
+`just publish-dry-run` for a local locked dry run that tolerates an uncommitted worktree, and use
+`just publish-dry-run-strict` or `cargo publish --dry-run -p bbdown-core --locked` to reproduce the
+clean CI gate. The `bbdown-cli` package is marked `publish = false`; install or distribute the CLI
+through GitHub release archives instead. The library is still preparing for its first crates.io
+release; this pre-release branch intentionally hardens public structs before publishing. Embedding
+callers should prefer constructors such as `DownloadOptions::new`, `StreamSelection::new`, and
+`Default` over public struct literals, and treat public plan output containers as consumed
+non-exhaustive data surfaces.
 
 ## Library Embedding
 
-Use the `bbdown` crate when another Rust project needs typed metadata, download plans, download
-execution reports, or restricted-area resolver diagnostics without spawning the CLI. The repository
-embedding guide has copyable examples for `ClientConfig`, `EndpointConfig`, credentials,
-restricted-area proxies, and `DownloadOptions`: `docs/embedding.md`.
+Use the `bbdown_core` crate from the `bbdown-core` package when another Rust project needs typed
+metadata, download plans, download execution reports, or restricted-area resolver diagnostics
+without spawning the CLI. The repository embedding guide has copyable examples for `ClientConfig`,
+`EndpointConfig`, credentials, restricted-area proxies, and `DownloadOptions`: `docs/embedding.md`.
 
 Embedding callers should keep configuration construction on `Default`, `new`, and `with_*` methods.
 The CLI in this workspace follows the same path, so these builders are covered by normal CI and mock
