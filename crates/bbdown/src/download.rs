@@ -249,21 +249,10 @@ impl DownloadArchive {
 
     #[must_use]
     pub fn records_for_plan(&self, plan: &DownloadPlan) -> Vec<DownloadArchiveRecord> {
-        let content_key = download_plan_content_key(plan);
-        let entry_keys = plan
-            .entries
-            .iter()
-            .map(download_entry_content_key)
-            .collect::<HashSet<_>>();
+        let plan_match = ArchivePlanMatch::new(plan);
         self.records
             .iter()
-            .filter(|record| {
-                record.content_key == content_key
-                    || record
-                        .entries
-                        .iter()
-                        .any(|entry| entry_keys.contains(&entry.content_key))
-            })
+            .filter(|record| plan_match.matches_record(record))
             .cloned()
             .collect()
     }
@@ -1346,26 +1335,43 @@ fn archive_records_for_preflight(
     plan: &DownloadPlan,
     planned_output_dir: &Path,
 ) -> Vec<DownloadArchiveRecord> {
-    let content_key = download_plan_content_key(plan);
-    let entry_keys = plan
-        .entries
-        .iter()
-        .map(download_entry_content_key)
-        .collect::<HashSet<_>>();
+    let plan_match = ArchivePlanMatch::new(plan);
     let output_key = comparable_output_path_key(planned_output_dir);
     archive
         .records
         .iter()
         .filter(|record| {
-            record.content_key == content_key
-                || record
-                    .entries
-                    .iter()
-                    .any(|entry| entry_keys.contains(&entry.content_key))
+            plan_match.matches_record(record)
                 || comparable_output_path_key(&record.output_dir) == output_key
         })
         .cloned()
         .collect()
+}
+
+struct ArchivePlanMatch {
+    content_key: String,
+    entry_keys: HashSet<String>,
+}
+
+impl ArchivePlanMatch {
+    fn new(plan: &DownloadPlan) -> Self {
+        Self {
+            content_key: download_plan_content_key(plan),
+            entry_keys: plan
+                .entries
+                .iter()
+                .map(download_entry_content_key)
+                .collect(),
+        }
+    }
+
+    fn matches_record(&self, record: &DownloadArchiveRecord) -> bool {
+        record.content_key == self.content_key
+            || record
+                .entries
+                .iter()
+                .any(|entry| self.entry_keys.contains(&entry.content_key))
+    }
 }
 
 fn archive_record_path(path: &Path) -> PathBuf {
