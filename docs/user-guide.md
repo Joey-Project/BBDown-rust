@@ -91,6 +91,7 @@ bbdown download av170001 --output-dir downloads
 bbdown download ss26801 --select latest --output-dir downloads
 bbdown download av170001 --output-dir downloads --no-mux --json
 bbdown download av170001 --video-quality 64 --audio-quality 30216 --output-dir downloads
+bbdown download av170001 --output-dir downloads --archive-file downloads/archive.json --on-duplicate keep-both
 ```
 
 The command downloads the first complete DASH video/audio pair for each entry by default. Use
@@ -112,6 +113,33 @@ bounded by `--retry-attempts` and `--retry-backoff-ms`. Entry directories includ
 identity, and DASH media filenames include stream metadata identity, so same-title videos and
 different codec variants do not share the same resume target. Media downloads that complete without
 writing any bytes are rejected.
+
+Use `--archive-file <path>` when a caller wants duplicate preflight and a durable record of
+completed downloads. The archive is a local JSON file keyed by content identity; it records output
+paths, entry ids, sidecar paths, mux output paths, and completion timestamps, but it does not store
+media URLs or credentials. Output, sidecar, and mux paths are stored as absolute paths at record
+time so the archive can be reused from another working directory. Entry identity uses stable
+aid/cid media ids, so the same PGC episode can still match when later planned through its BV/av URL
+even if one form lacks a BVID. When a planned content key, entry identity, or archive output
+directory already exists, the CLI needs a duplicate decision:
+
+- `--on-duplicate replace` removes the existing planned output directory or file before a fresh
+  download and replaces stale archive records that pointed at that output path.
+- `--on-duplicate keep-both` writes to the next available suffixed output directory such as
+  `Mock video (2)` and preserves prior archive records, including archive-only records whose old
+  output directory is no longer present on disk.
+- `--on-duplicate cancel` stops before downloading and, with `--json`, prints
+  `{"status":"canceled","preflight":...}` so automation can inspect existing records and output
+  conflicts.
+
+Without an explicit decision, human TTY mode prompts on stderr. `--json` mode and non-TTY mode never
+prompt; they fail with instructions to pass `--on-duplicate` instead. Without `--archive-file`,
+download behavior is unchanged and no duplicate preflight runs. `--archive-file` must point to a JSON
+file path that does not overlap the chosen output directory for the selected content and duplicate
+decision; for `keep-both`, that check is applied to the actual suffixed output directory. If
+`--archive-file` is a symlink, saves update the symlink target so multiple callers can share one
+archive path without forking history. The CLI also rechecks the archive-file guard against the
+actual output directory reported by the executor before saving the archive.
 
 `--request-timeout-seconds` applies to API requests. Media body reads use
 `--download-idle-timeout-seconds`; pass `0` to disable that idle timeout.

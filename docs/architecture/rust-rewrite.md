@@ -120,6 +120,35 @@ temporary files when replacing an existing target, so failed `--no-resume` retri
 previous output. DASH media output names prefer stable stream metadata and only fall back to URL
 path hashing when metadata is absent, so CDN host or query changes do not split resume targets.
 
+Duplicate handling is modeled before execution instead of hidden inside the downloader.
+`DownloadArchive` stores completed output records by content identity without media URLs or
+credentials, and records output, sidecar, and mux paths as absolute paths at completion time.
+`DownloadPreflight::inspect` reports content/archive hits, same-output archive records, and planned
+output directory conflicts, so embedding applications can show what already exists and choose a
+`DuplicateDecision`. `Replace` removes the existing planned output root before a fresh download,
+then replaces stale archive records for that output path. `KeepBoth` writes to the next suffixed
+output root while avoiding all archive record output paths, and comparisons use normalized output
+path keys instead of raw `PathBuf` equality. These keys resolve existing symlink prefixes before
+folding parent components, matching filesystem path resolution for archive records and CLI overlap
+guards. `DownloadPreflight` serializes its reserved output paths so embedding applications can
+round-trip preflight state before executing a `KeepBoth` decision without losing archive-only output
+reservations, and execution validates that the preflight still matches the current archive before
+applying a decision. Entry-level archive identities use stable aid/cid content ids instead of display
+indexes, optional BVIDs, or optional episode ids, so reordered pages and episode-vs-BV URL forms can
+still be detected as duplicates.
+`Cancel` is a caller-level stop decision. The CLI exposes the same model with `--archive-file` and
+`--on-duplicate`, rejects an archive file path that overlaps the chosen output root by checking both
+lexical paths and canonical targets, and applies the same guard to archive save sidecar paths.
+JSON/non-TTY mode requires an explicit decision instead of prompting. After showing preflight state,
+the CLI executes against the same preflight so a no-conflict default cannot be upgraded into an
+implicit replace if an output root appears between preflight and execution; it also rechecks the
+archive-file guard against the actual output directory before saving. `DownloadArchive::save` rejects
+directory targets before writing the archive file, and when the archive path is a symlink it writes
+through to the symlink target so shared archive files keep one history.
+Output-root occupancy checks use symlink metadata so stale or broken symlink roots are handled
+consistently with replacement cleanup, while metadata errors such as inaccessible parents are
+reported to callers instead of being retried as suffixed output roots forever.
+
 The crate default keeps muxing disabled so embedding projects do not spawn external processes by
 surprise. The CLI `download` command enables ffmpeg by default and exposes `--no-mux` for users and
 mock e2e tests. Mux subprocess stdin, stdout, and stderr are isolated from CLI stdio. Muxing writes
@@ -244,6 +273,21 @@ experiments. Embedders should create configuration with constructor and builder 
 marked non-exhaustive because plan models are consumed data surfaces and may gain fields while the
 crate matures.
 
+Download archive and duplicate handling are covered at both crate and CLI levels. Unit tests cover
+preflight archive/output conflict detection, entry-level archive overlap detection, replace
+removing stale output-root artifacts before fresh writes, keep-both suffixed output roots, and
+archive JSON round trips/replacement without media URLs. They also cover archive-only keep-both path
+reservation, unrelated archive-only output path reservation, same-output archive record replacement,
+display-index-insensitive entry archive identity, broken-symlink output roots, metadata error
+reporting, preflight JSON round-trip reservation preservation, stale archive/preflight rejection,
+episode-vs-video entry identity, symlink archive target saves, and directory-target archive save
+rejection. CLI mock e2e tests cover
+JSON duplicate failure without an
+explicit decision, `cancel` preflight output, `keep-both` suffixed output roots, `replace`
+overwriting an existing file, symlink archive target updates, and rejecting an archive file path that
+overlaps the chosen output root lexically or through canonicalized targets, including archive save
+sidecar paths.
+
 Live tests against Bilibili are opt-in only through `just live-e2e`. The recipe fails fast unless an
 ignored `live-e2e.samples.json` manifest exists, so branch CI is not blocked by network, account, or
 regional state. The tracked `live-e2e.samples.example.json` documents the manifest shape. Each live
@@ -272,3 +316,4 @@ fixed `cn`, `th`, `hk`, and `tw` ordering. Network requests have a configurable 
 9. Clearer stream quality selection and listing support. Completed in PR #10.
 10. Restricted-area proxy response compatibility expansion. Completed in PR #11.
 11. Integration API and documentation hardening. Completed in PR #12.
+12. Download archive and duplicate decision handling. Completed in PR #13.

@@ -16,8 +16,9 @@
   - `docs/project_journal/2026/06/2026-06-08-stream-quality-selection-019e9eab.md`.
   - `docs/project_journal/2026/06/2026-06-08-restricted-area-response-compat-019e9eab.md`.
   - `docs/project_journal/2026/06/2026-06-08-integration-api-docs-019e9eab.md`.
-- The originally planned rewrite continuation slices are complete through integration API and
-  embedding documentation hardening.
+  - `docs/project_journal/2026/06/2026-06-08-download-archive-dedup-019e9eab.md`.
+- The originally planned rewrite continuation slices are complete through download archive and
+  duplicate decision handling.
 
 ## Recovery Pointers
 

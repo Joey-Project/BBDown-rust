@@ -1,0 +1,163 @@
+---
+id: 20260608-019e9eab-download-archive-dedup
+title: Download Archive And Duplicate Decisions
+status: completed
+created: 2026-06-08
+updated: 2026-06-08
+branch: wip/download-archive-dedup
+pr: https://github.com/Joey-Project/BBDown-rust/pull/13
+supersedes: []
+superseded_by:
+---
+
+# Download Archive And Duplicate Decisions
+
+## Summary
+
+- Thirteenth PR slice for the BBDown Rust rewrite continuation track.
+- Scope is download archive and duplicate handling for both embedding callers and CLI users.
+- MP4Box muxing and subtitle-to-SRT conversion remain outside this slice.
+
+## Current State
+
+- The `bbdown` crate exposes `DownloadArchive`, archive records, `DownloadPreflight`, output
+  conflict reporting, and `DuplicateDecision`.
+- Embedding callers can inspect archive hits, entry-level archive overlaps, and output conflicts
+  before execution, then decide to replace, keep both, or cancel in their own UI.
+- The CLI supports `--archive-file` plus `--on-duplicate replace|keep-both|cancel`.
+- JSON/non-TTY download mode does not prompt when a duplicate decision is required; it fails with a
+  clear instruction unless the caller passed `--on-duplicate`.
+- Human TTY mode can prompt on stderr so stdout stays usable for normal output.
+- Archive records keep content identity, output paths, entry ids, sidecar paths, mux output paths,
+  and completion timestamps without storing media URLs or credentials.
+- `replace` removes the existing planned output root before a fresh download, so stale sidecars or
+  mux outputs from the previous duplicate run do not remain, and completed records replace stale
+  archive records that pointed at the same normalized output path.
+- Archive records store output, sidecar, and mux paths as absolute paths at completion time, so a
+  reused archive file is not interpreted relative to a later caller's working directory.
+- Preflight treats archive records with the same planned output root as duplicate records even when
+  the content identity differs and the old output root is no longer present on disk.
+- Archive path comparison and stored archive paths resolve existing symlink prefixes before folding
+  parent components, matching filesystem resolution for paths such as `link/../Mock video`.
+- `keep-both` reserves all archive record output paths even when those paths are no longer on disk,
+  so archive-only duplicate history is preserved across equivalent path spellings and unrelated
+  same-title records.
+- `DownloadPreflight` preserves reserved output roots through JSON serialization so embedding UIs
+  can round-trip preflight state before applying a `keep-both` decision.
+- Archive execution rejects stale preflight/archive combinations, so callers cannot inspect an empty
+  or older archive and then apply `keep-both` against a newer archive that reserves more output
+  roots.
+- Entry-level archive identities ignore display indexes, so reordered pages or episodes can still
+  be detected as duplicates by stable aid/cid content ids. Optional `bvid` and `epid` are not part
+  of the entry key so the same PGC media can match when planned through an episode URL or a BV/av URL
+  even if one form lacks a BVID.
+- Output-root occupancy uses symlink metadata, so broken symlink roots are treated as existing roots
+  for preflight, keep-both candidate selection, and replace cleanup. Non-`NotFound` metadata
+  errors are reported to callers instead of being retried as suffixed keep-both roots.
+- The CLI rejects `--archive-file` and archive save sidecar paths when they overlap the chosen
+  output root either lexically or through canonical targets. For explicit `keep-both`, this guard is
+  applied to the actual suffixed output root. `DownloadArchive::save` rejects directory targets
+  before replacing archive files, preserves symlink archive targets instead of replacing the link
+  itself, and `DownloadArchive::load` reports metadata errors instead of treating unreadable archive
+  paths as empty archives.
+- Canonical archive overlap checks resolve existing symlink prefixes before folding parent
+  components, so paths such as `link/../archive.json` cannot hide an archive target inside the
+  chosen output root.
+- CLI archive downloads execute with the same preflight shown to the user or automation. A
+  no-conflict default uses `DuplicateDecision::Cancel` as safe-continue, so a late output conflict
+  reports an error instead of becoming an implicit replace. Before saving the archive, the CLI
+  rechecks archive-file overlap against the actual output directory returned by the executor.
+- User-facing docs, embedding docs, architecture docs, and top-level project state/TODO point to the
+  archive and duplicate decision behavior.
+
+## Evidence
+
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown download_preflight_reports_archive_hit_and_output_conflict`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown download_preflight_reports_entry_overlap_from_archive`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown download_preflight_reports_entry_overlap_after_index_change`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown download_preflight_reports_same_output_archive_record`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown download_preflight_round_trip_preserves_reserved_output_dirs`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown archive_preflight_keep_both_rejects_stale_archive_reservations`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown download_preflight_matches_symlink_parent_archive_output`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown download_preflight_matches_legacy_bvid_entry_key`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown download_entry_content_key_ignores_display_index`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown download_entry_content_key_matches_episode_and_video_forms`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown download_archive_record_stores_absolute_paths`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown download_archive_record_resolves_symlink_parent_output_path`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown download_archive_load_reports_metadata_errors`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown archive_decision_keep_both_uses_new_output_root`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown archive_decision_keep_both_avoids_archive_only_output_root`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown archive_decision_keep_both_avoids_unrelated_archive_output_root`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown archive_decision_replace_forces_fresh_writes`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown archive_preflight_cancel_rejects_late_output_conflict`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown archive_preflight_replace_removes_late_output_conflict`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown archive_decision_replace_removes_broken_symlink_output_root`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown archive_decision_keep_both_skips_broken_symlink_output_root`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown download_preflight_reports_broken_symlink_output_conflict`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown output_occupancy_reports_metadata_errors`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown download_preflight_`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown archive_decision_`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown download_archive_round_trips_without_urls`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown download_archive_save_replaces_existing_file`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown download_archive_save_preserves_symlink_target`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown download_archive_save_rejects_directory_path`.
+- Targeted CLI archive coverage:
+  `cargo test --locked -p bbdown-cli download_archive_`.
+- Targeted CLI archive coverage:
+  `cargo test --locked -p bbdown-cli --test cli_e2e download_archive_symlink_updates_target_archive`.
+- Targeted CLI archive coverage:
+  `cargo test --locked -p bbdown-cli --test cli_e2e download_archive_keep_both_allows_archive_inside_old_output_root`.
+- Targeted CLI unit coverage:
+  `cargo test --locked -p bbdown-cli archive_file_guard_rejects_output_root_overlap`.
+- Targeted CLI unit coverage:
+  `cargo test --locked -p bbdown-cli archive_file_guard_rejects_sidecar_output_root_overlap`.
+- Targeted CLI unit coverage:
+  `cargo test --locked -p bbdown-cli archive_file_guard_rejects_lexical_symlink_inside_output_root`.
+- Targeted CLI unit coverage:
+  `cargo test --locked -p bbdown-cli archive_file_guard_resolves_symlink_before_parent_components`.
+- Targeted CLI unit coverage:
+  `cargo test --locked -p bbdown-cli archive_file_guard_rejects_symlink_target_sidecar_overlap`.
+- Targeted CLI unit coverage:
+  `cargo test --locked -p bbdown-cli duplicate_decision_prompt_state_tracks_displayed_preflight`.
+- Workspace tests: `cargo test --workspace --locked`.
+- Formatter and lint coverage:
+  `cargo fmt --all -- --check`; `cargo clippy --workspace --all-targets -- -D warnings`;
+  `git diff --check`.
+- Project journal validation passed with the project-journal helper.
+- Full local gate: `just ci` passed, including formatter, clippy, workspace tests, CLI e2e,
+  live-e2e harness tests with the local manifest case ignored, and the bbdown crate publish
+  dry-run.
+
+## Next Steps
+
+- Continue with the remaining roadmap slices after this PR lands; MP4Box muxing and subtitle-to-SRT
+  conversion are intentionally deferred.

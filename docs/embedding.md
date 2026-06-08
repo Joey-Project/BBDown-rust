@@ -120,6 +120,80 @@ Use `bbdown plan` or `BiliClient::plan_download` first when a UI needs to presen
 `StreamSelection::video`, `StreamSelection::audio`, and `StreamSelection::new` select exact DASH
 stream ids from the plan.
 
+## Download Archive And Duplicate Decisions
+
+Embedding applications should keep duplicate handling explicit. Inspect a plan with
+`DownloadPreflight`, show the existing archive records or output conflict to the user, then call the
+executor with the same preflight and chosen `DuplicateDecision`. The crate does not prompt. If the
+application serializes a preflight between display and execution, store the full preflight object so
+`KeepBoth` keeps avoiding archive-only output directories that were reserved during inspection. The
+executor validates that the preflight still matches the current archive before applying the decision,
+so callers should reinspect when another process may have updated the archive.
+
+```rust,no_run
+use bbdown::{
+    BiliClient, ClientConfig, DownloadArchive, DownloadOptions, DownloadPreflight,
+    DuplicateDecision, MuxOptions,
+};
+
+#[tokio::main]
+async fn main() -> bbdown::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let plan = client.plan_download("BV1qt4y1X7TW", None).await?;
+    let options = DownloadOptions::new("downloads").with_mux(MuxOptions::Disabled);
+    let archive_path = "downloads/archive.json";
+    let mut archive = DownloadArchive::load(archive_path)?;
+    let preflight = DownloadPreflight::inspect(&plan, &options, Some(&archive))?;
+
+    if preflight.requires_decision() {
+        println!(
+            "{} possible duplicate records",
+            preflight.archived_records.len()
+        );
+        if let Some(conflict) = &preflight.output_conflict {
+            println!("output exists: {}", conflict.path.display());
+        }
+    }
+
+    let decision = if preflight.requires_decision() {
+        DuplicateDecision::KeepBoth
+    } else {
+        DuplicateDecision::Cancel
+    };
+    let report = client
+        .download_plan_with_archive_preflight_decision(
+            &plan,
+            options,
+            &mut archive,
+            &preflight,
+            decision,
+        )
+        .await?;
+    archive.save(archive_path)?;
+
+    println!("wrote {}", report.output_dir.display());
+    Ok(())
+}
+```
+
+`DuplicateDecision::Replace` removes the existing planned output root before a fresh download when
+that root already exists, then the completed record replaces any stale archive record that pointed at
+the same output path. `DuplicateDecision::KeepBoth` writes to the next suffixed output root and keeps
+prior archive records, including archive-only records whose old output directory has been removed.
+If a UI chooses to cancel after a duplicate preflight, stop after preflight and do not call the
+download executor. Passing `DuplicateDecision::Cancel` with a no-conflict preflight is a safe
+continue path: if an output conflict appears before execution, the executor reports it instead of
+implicitly replacing the new output root. Archive records contain content identity, absolute output
+paths, entry ids, absolute sidecar paths, absolute mux output paths, and completion timestamps; they
+do not contain media URLs or credentials. Entry identities use aid/cid media ids instead of optional
+BVID or episode ids, so a PGC episode planned through an episode URL can match a later BV/av plan for
+the same media even when one plan lacks a BVID.
+`DownloadPreflight::inspect` also treats archive records with the same planned output path as
+duplicates, even when the content identity differs and the old output directory is no longer on
+disk. Store the archive at a JSON file path outside the chosen output root and any archive save
+sidecar paths; `DownloadArchive::save` rejects directory targets. If the archive path is a symlink,
+`DownloadArchive::save` updates the symlink target instead of replacing the link itself.
+
 ## Endpoint Overrides
 
 Use endpoint builders for tests, local mocks, or controlled gateway deployments.

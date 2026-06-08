@@ -8,7 +8,8 @@
 The current implementation establishes the crate/CLI/CI foundation, metadata resolver, stream
 planning, media downloads, sidecar downloads, retry/resume behavior, optional ffmpeg muxing, QR
 login, opt-in live test harnesses, configured restricted-area proxy ordering with diagnostics, and
-builder-style crate integration APIs.
+builder-style crate integration APIs. It also supports an explicit download archive for duplicate
+preflight and CLI replace / keep-both / cancel decisions.
 
 ## Current CLI
 
@@ -42,12 +43,26 @@ Download selected media files:
 bbdown download av170001 --output-dir downloads
 bbdown download ss26801 --select latest --output-dir downloads
 bbdown download av170001 --output-dir downloads --no-mux --json
+bbdown download av170001 --output-dir downloads --archive-file downloads/archive.json --on-duplicate keep-both
 ```
 
 `download` resolves a plan, downloads the first complete DASH video/audio pair or FLV segments,
 writes subtitle and danmaku sidecars by default, resumes partial files with HTTP range requests,
 retries bounded transient failures, validates advertised media sizes when present, fails incomplete
 media shapes, and runs `ffmpeg` unless `--no-mux` is supplied.
+Pass `--archive-file <path>` to record completed downloads by content identity. Archive output,
+sidecar, and mux paths are stored as absolute paths at record time so the same archive can be reused
+from another working directory. Entry identity uses stable aid/cid media ids, so the same PGC
+episode can still match when later planned through its BV/av URL even if one form lacks a BVID.
+When the same content, entry, or
+archive output directory is seen again, non-interactive JSON mode requires `--on-duplicate replace`,
+`--on-duplicate keep-both`, or `--on-duplicate cancel`; interactive human mode prompts when no
+decision is provided. `replace` removes the existing planned output root before a fresh download and
+replaces stale archive records for that output path, `keep-both` writes the next suffixed output root
+while avoiding all archive record output paths, and `cancel` reports the preflight state without
+downloading. The archive file itself must not be the chosen output root or inside that root; the CLI
+applies the same guard to archive save sidecar paths. If the archive file is a symlink, saves update
+the symlink target so shared archive history is not forked.
 
 `ss` and `md` inputs require an explicit selection in non-interactive mode:
 
@@ -146,7 +161,9 @@ running, so sample behavior is driven by the manifest rather than shell state.
   `DownloadOptions::new(...).with_*`, and `RetryPolicy::new(...)` over struct literals so added
   configuration fields are less disruptive. Output model structs such as `DownloadEntry` are
   intended to be consumed as returned values or through serde; their struct-literal construction is
-  not treated as a stable compatibility surface before the crate leaves `0.1`.
+  not treated as a stable compatibility surface before the crate leaves `0.1`. For duplicate
+  handling, embedding projects can inspect `DownloadPreflight`, present existing
+  `DownloadArchiveRecord` values to users, then pass an explicit `DuplicateDecision`.
 - User guide: [docs/user-guide.md](docs/user-guide.md)
 - Embedding guide: [docs/embedding.md](docs/embedding.md)
 - Architecture: [docs/architecture/rust-rewrite.md](docs/architecture/rust-rewrite.md)

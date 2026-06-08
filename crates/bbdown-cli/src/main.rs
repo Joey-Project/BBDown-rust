@@ -3,16 +3,17 @@
 
 use anyhow::{Context, bail, ensure};
 use bbdown::{
-    BiliClient, ClientConfig, CredentialStore, Credentials, DownloadOptions, DownloadReport,
-    EndpointConfig, MediaStream, MuxOptions, QrLoginKind, QrLoginState, QrLoginTicket,
-    ResolvedContent, RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy,
-    RestrictedAreaProxyKind, RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet,
+    BiliClient, ClientConfig, CredentialStore, Credentials, DownloadArchive, DownloadOptions,
+    DownloadPreflight, DownloadReport, DuplicateDecision, EndpointConfig, MediaStream, MuxOptions,
+    QrLoginKind, QrLoginState, QrLoginTicket, ResolvedContent, RestrictedArea,
+    RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection,
+    StreamQuality, StreamSelection, StreamSet,
 };
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::io::{self, Read};
-use std::path::PathBuf;
+use std::io::{self, IsTerminal, Read};
+use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Parser)]
@@ -121,6 +122,10 @@ enum Command {
         audio_quality: Option<u32>,
         #[arg(long, default_value = "ffmpeg")]
         ffmpeg: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        archive_file: Option<PathBuf>,
+        #[arg(long, value_enum)]
+        on_duplicate: Option<DuplicateDecisionArg>,
     },
     Auth {
         #[command(subcommand)]
@@ -136,6 +141,24 @@ enum AuthCommand {
     LoginWeb(QrLoginArgs),
     LoginTv(QrLoginArgs),
     Logout,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+enum DuplicateDecisionArg {
+    Replace,
+    KeepBoth,
+    Cancel,
+}
+
+impl From<DuplicateDecisionArg> for DuplicateDecision {
+    fn from(value: DuplicateDecisionArg) -> Self {
+        match value {
+            DuplicateDecisionArg::Replace => Self::Replace,
+            DuplicateDecisionArg::KeepBoth => Self::KeepBoth,
+            DuplicateDecisionArg::Cancel => Self::Cancel,
+        }
+    }
 }
 
 #[derive(Debug, Args)]
@@ -208,7 +231,13 @@ async fn main() -> anyhow::Result<()> {
             video_quality,
             audio_quality,
             ffmpeg,
+            archive_file,
+            on_duplicate,
         } => {
+            ensure!(
+                archive_file.is_some() || on_duplicate.is_none(),
+                "--on-duplicate requires --archive-file"
+            );
             ensure!(
                 retry_attempts > 0,
                 "--retry-attempts must be greater than 0"
@@ -239,6 +268,8 @@ async fn main() -> anyhow::Result<()> {
                 select,
                 json,
                 options,
+                archive_file,
+                on_duplicate: on_duplicate.map(Into::into),
             };
             handle_download(&store, endpoints, restricted_area, request_timeout, args).await?;
         }
@@ -254,6 +285,8 @@ struct DownloadCommandArgs {
     select: Option<Selection>,
     json: bool,
     options: DownloadOptions,
+    archive_file: Option<PathBuf>,
+    on_duplicate: Option<DuplicateDecision>,
 }
 
 async fn handle_info(
@@ -378,15 +411,282 @@ async fn handle_download(
         request_timeout,
         credentials,
     ));
-    let report = client
-        .download_input(&args.url, args.select, args.options)
-        .await?;
+    let report = if let Some(archive_file) = args.archive_file {
+        let plan = client.plan_download(&args.url, args.select).await?;
+        let mut archive = DownloadArchive::load(&archive_file)
+            .with_context(|| format!("failed to load archive {}", archive_file.display()))?;
+        let preflight = DownloadPreflight::inspect(&plan, &args.options, Some(&archive))?;
+        let stdin_is_terminal = io::stdin().is_terminal();
+        let duplicate_prompt_printed_preflight = should_prompt_duplicate_decision(
+            args.on_duplicate,
+            args.json,
+            &preflight,
+            stdin_is_terminal,
+        );
+        let decision =
+            duplicate_decision(args.on_duplicate, args.json, stdin_is_terminal, &preflight)?;
+        let execution_decision = if args.on_duplicate.is_none() && !preflight.requires_decision() {
+            DuplicateDecision::Cancel
+        } else {
+            decision
+        };
+        if preflight.requires_decision() && decision == DuplicateDecision::Cancel {
+            if args.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "status": "canceled",
+                        "preflight": preflight,
+                    }))?
+                );
+            } else {
+                if !duplicate_prompt_printed_preflight {
+                    print_duplicate_preflight(&preflight);
+                }
+                println!("download canceled");
+            }
+            return Ok(());
+        }
+        let decision_output_dir = preflight.output_dir_for_decision(decision)?;
+        ensure_archive_file_is_not_output_root(&archive_file, &decision_output_dir)?;
+        let report = client
+            .download_plan_with_archive_preflight_decision(
+                &plan,
+                args.options,
+                &mut archive,
+                &preflight,
+                execution_decision,
+            )
+            .await?;
+        ensure_archive_file_is_not_output_root(&archive_file, &report.output_dir)?;
+        archive
+            .save(&archive_file)
+            .with_context(|| format!("failed to save archive {}", archive_file.display()))?;
+        report
+    } else {
+        client
+            .download_input(&args.url, args.select, args.options)
+            .await?
+    };
     if args.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
         print_download_report(&report);
     }
     Ok(())
+}
+
+fn ensure_archive_file_is_not_output_root(
+    archive_file: &Path,
+    output_dir: &Path,
+) -> anyhow::Result<()> {
+    let output_dir_display = output_dir.display().to_string();
+    let output_lexical =
+        lexical_path_components(output_dir).context("failed to resolve output directory")?;
+    let output_canonical =
+        canonical_path_components(output_dir).context("failed to resolve output directory")?;
+    for archive_path in archive_write_paths(archive_file)? {
+        let archive_lexical =
+            lexical_path_components(&archive_path).context("failed to resolve archive path")?;
+        let archive_canonical =
+            canonical_path_components(&archive_path).context("failed to resolve archive path")?;
+        ensure!(
+            !paths_overlap(&archive_lexical, &output_lexical)
+                && !paths_overlap(&archive_canonical, &output_canonical),
+            "--archive-file and its sidecar files must not overlap the chosen output directory ({output_dir_display})"
+        );
+    }
+    Ok(())
+}
+
+fn archive_write_paths(archive_file: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    push_archive_write_paths(&mut paths, archive_file);
+    let storage_path = archive_storage_path(archive_file)?;
+    if storage_path != archive_file {
+        push_archive_write_paths(&mut paths, &storage_path);
+    }
+    Ok(paths)
+}
+
+fn push_archive_write_paths(paths: &mut Vec<PathBuf>, archive_file: &Path) {
+    for path in [
+        archive_file.to_path_buf(),
+        archive_sidecar_path(archive_file, ".bbdown-archive-tmp"),
+        archive_sidecar_path(archive_file, ".bbdown-archive-backup"),
+    ] {
+        if !paths.iter().any(|existing| existing == &path) {
+            paths.push(path);
+        }
+    }
+}
+
+fn archive_storage_path(path: &Path) -> anyhow::Result<PathBuf> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(path.to_path_buf());
+        }
+        Err(error) => return Err(error).context("failed to inspect archive path"),
+    };
+    if !metadata.file_type().is_symlink() {
+        return Ok(path.to_path_buf());
+    }
+    let target = fs::read_link(path).context("failed to read archive symlink")?;
+    let target = if target.is_absolute() {
+        target
+    } else {
+        path.parent().unwrap_or_else(|| Path::new("")).join(target)
+    };
+    Ok(canonicalize_existing_prefix(&absolute_path(&target)?))
+}
+
+fn archive_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
+    let base = path.file_name().map_or_else(
+        || "download-archive".to_owned(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    path.with_file_name(format!("{base}{suffix}"))
+}
+
+fn lexical_path_components(path: &Path) -> anyhow::Result<Vec<String>> {
+    Ok(absolute_lexical_path(path)?
+        .components()
+        .map(path_component_key)
+        .collect())
+}
+
+fn canonical_path_components(path: &Path) -> anyhow::Result<Vec<String>> {
+    let path = canonicalize_existing_prefix(&absolute_path(path)?);
+    Ok(path.components().map(path_component_key).collect())
+}
+
+fn paths_overlap(path: &[String], other: &[String]) -> bool {
+    components_start_with(path, other) || components_start_with(other, path)
+}
+
+fn components_start_with(path: &[String], prefix: &[String]) -> bool {
+    prefix.len() <= path.len()
+        && path
+            .iter()
+            .zip(prefix)
+            .all(|(component, prefix_component)| component == prefix_component)
+}
+
+fn absolute_lexical_path(path: &Path) -> anyhow::Result<PathBuf> {
+    Ok(lexical_clean_path(&absolute_path(path)?))
+}
+
+fn absolute_path(path: &Path) -> anyhow::Result<PathBuf> {
+    Ok(if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    })
+}
+
+fn canonicalize_existing_prefix(path: &Path) -> PathBuf {
+    let mut existing_prefix = path.to_path_buf();
+    let mut missing_components = Vec::new();
+    while !existing_prefix.exists() {
+        let Some(file_name) = existing_prefix.file_name() else {
+            break;
+        };
+        missing_components.push(file_name.to_os_string());
+        if !existing_prefix.pop() {
+            break;
+        }
+    }
+    let mut normalized = fs::canonicalize(&existing_prefix).unwrap_or(existing_prefix);
+    for component in missing_components.iter().rev() {
+        normalized.push(component);
+    }
+    lexical_clean_path(&normalized)
+}
+
+fn lexical_clean_path(path: &Path) -> PathBuf {
+    let mut clean = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => clean.push(prefix.as_os_str()),
+            Component::RootDir => clean.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                let _ = clean.pop();
+            }
+            Component::Normal(part) => clean.push(part),
+        }
+    }
+    clean
+}
+
+fn path_component_key(component: Component<'_>) -> String {
+    let value = component.as_os_str().to_string_lossy();
+    if cfg!(windows) || cfg!(target_os = "macos") {
+        value.to_lowercase()
+    } else {
+        value.into_owned()
+    }
+}
+
+fn duplicate_decision(
+    explicit: Option<DuplicateDecision>,
+    json: bool,
+    stdin_is_terminal: bool,
+    preflight: &DownloadPreflight,
+) -> anyhow::Result<DuplicateDecision> {
+    if let Some(decision) = explicit {
+        return Ok(decision);
+    }
+    if !preflight.requires_decision() {
+        return Ok(DuplicateDecision::Replace);
+    }
+    if json || !stdin_is_terminal {
+        bail!(
+            "download archive found an existing record or output conflict; pass --on-duplicate replace, keep-both, or cancel"
+        );
+    }
+    prompt_duplicate_decision(preflight)
+}
+
+fn should_prompt_duplicate_decision(
+    explicit: Option<DuplicateDecision>,
+    json: bool,
+    preflight: &DownloadPreflight,
+    stdin_is_terminal: bool,
+) -> bool {
+    explicit.is_none() && preflight.requires_decision() && !json && stdin_is_terminal
+}
+
+fn prompt_duplicate_decision(preflight: &DownloadPreflight) -> anyhow::Result<DuplicateDecision> {
+    print_duplicate_preflight(preflight);
+    eprintln!("Choose action: [r]eplace, [k]eep-both, [c]ancel");
+    let mut answer = String::new();
+    io::stdin()
+        .read_line(&mut answer)
+        .context("failed to read duplicate decision")?;
+    match answer.trim().to_ascii_lowercase().as_str() {
+        "r" | "replace" => Ok(DuplicateDecision::Replace),
+        "k" | "keep" | "keep-both" | "keep_both" => Ok(DuplicateDecision::KeepBoth),
+        "c" | "cancel" => Ok(DuplicateDecision::Cancel),
+        other => bail!("unsupported duplicate decision `{other}`"),
+    }
+}
+
+fn print_duplicate_preflight(preflight: &DownloadPreflight) {
+    eprintln!("possible duplicate download: {}", preflight.title);
+    eprintln!("planned output: {}", preflight.planned_output_dir.display());
+    if let Some(conflict) = &preflight.output_conflict {
+        eprintln!("output already exists: {}", conflict.path.display());
+    }
+    for record in &preflight.archived_records {
+        eprintln!(
+            "archive record: {} completed_at={} entries={}",
+            record.output_dir.display(),
+            record.completed_at_unix,
+            record.entries.len()
+        );
+    }
 }
 
 fn client_config(
@@ -1005,12 +1305,18 @@ fn _assert_credentials_send_sync(_: Credentials) {}
 #[cfg(test)]
 mod tests {
     use super::{
-        Cli, endpoints_from_cli, next_poll_sleep, remaining_until,
-        restricted_area_from_cli_with_args, restricted_area_from_cli_with_env_values,
-        save_qr_credentials,
+        Cli, archive_sidecar_path, endpoints_from_cli, ensure_archive_file_is_not_output_root,
+        next_poll_sleep, remaining_until, restricted_area_from_cli_with_args,
+        restricted_area_from_cli_with_env_values, save_qr_credentials,
+        should_prompt_duplicate_decision,
     };
-    use bbdown::{CredentialStore, Credentials, EndpointConfig};
+    use bbdown::{
+        CredentialStore, Credentials, DownloadOutputConflict, DownloadPreflight, DuplicateDecision,
+        EndpointConfig,
+    };
     use clap::Parser as _;
+    use std::fs;
+    use std::path::PathBuf;
     use std::time::{Duration, Instant};
 
     #[test]
@@ -1046,6 +1352,148 @@ mod tests {
             Some(Duration::from_secs(119))
         );
         assert_eq!(remaining_until(now, now), None);
+    }
+
+    #[test]
+    fn archive_file_guard_rejects_output_root_overlap() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let output_root = temp.path().join("downloads").join("Mock video");
+        let output_parent = output_root
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("missing output parent"))?;
+        let same_output_root = output_root.join(".");
+        let nested_archive = output_root.join("archive.json");
+        let sibling_archive = output_parent.join("archive.json");
+        #[cfg(any(windows, target_os = "macos"))]
+        let case_variant_archive = output_parent.join("mock video").join("archive.json");
+
+        assert!(ensure_archive_file_is_not_output_root(&same_output_root, &output_root).is_err());
+        assert!(ensure_archive_file_is_not_output_root(&nested_archive, &output_root).is_err());
+        assert!(ensure_archive_file_is_not_output_root(output_parent, &output_root).is_err());
+        #[cfg(any(windows, target_os = "macos"))]
+        assert!(
+            ensure_archive_file_is_not_output_root(&case_variant_archive, &output_root).is_err()
+        );
+        assert!(ensure_archive_file_is_not_output_root(&sibling_archive, &output_root).is_ok());
+        Ok(())
+    }
+
+    #[test]
+    fn archive_file_guard_rejects_sidecar_output_root_overlap() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let archive_file = temp.path().join("downloads").join("archive.json");
+        let temporary_output_root = archive_sidecar_path(&archive_file, ".bbdown-archive-tmp");
+        let backup_output_root = archive_sidecar_path(&archive_file, ".bbdown-archive-backup");
+        let unrelated_output_root = temp.path().join("downloads").join("Mock video");
+
+        assert!(
+            ensure_archive_file_is_not_output_root(&archive_file, &temporary_output_root).is_err()
+        );
+        assert!(
+            ensure_archive_file_is_not_output_root(&archive_file, &backup_output_root).is_err()
+        );
+        assert!(
+            ensure_archive_file_is_not_output_root(&archive_file, &unrelated_output_root).is_ok()
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn archive_file_guard_rejects_lexical_symlink_inside_output_root() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let output_root = temp.path().join("downloads").join("Mock video");
+        fs::create_dir_all(&output_root)?;
+        let external_archive = temp.path().join("external").join("archive.json");
+        let external_parent = external_archive
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("missing external archive parent"))?;
+        fs::create_dir_all(external_parent)?;
+        fs::write(&external_archive, "{}")?;
+        let archive_symlink = output_root.join("archive.json");
+        std::os::unix::fs::symlink(&external_archive, &archive_symlink)?;
+
+        assert!(ensure_archive_file_is_not_output_root(&archive_symlink, &output_root).is_err());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn archive_file_guard_resolves_symlink_before_parent_components() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let output_root = temp.path().join("downloads").join("Mock video");
+        let output_subdir = output_root.join("subdir");
+        fs::create_dir_all(&output_subdir)?;
+        let external_parent = temp.path().join("external");
+        fs::create_dir_all(&external_parent)?;
+        let link_to_output_subdir = external_parent.join("link");
+        std::os::unix::fs::symlink(&output_subdir, &link_to_output_subdir)?;
+        let archive_through_symlink_parent = link_to_output_subdir.join("..").join("archive.json");
+
+        assert!(
+            ensure_archive_file_is_not_output_root(&archive_through_symlink_parent, &output_root)
+                .is_err()
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn archive_file_guard_rejects_symlink_target_sidecar_overlap() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let shared_dir = temp.path().join("shared");
+        fs::create_dir_all(&shared_dir)?;
+        let archive_target = shared_dir.join("archive.json");
+        fs::write(&archive_target, "{\"records\":[]}")?;
+        let archive_link = temp.path().join("archive-link.json");
+        std::os::unix::fs::symlink(&archive_target, &archive_link)?;
+        let target_temporary_sidecar = archive_sidecar_path(&archive_target, ".bbdown-archive-tmp");
+
+        assert!(
+            ensure_archive_file_is_not_output_root(&archive_link, &target_temporary_sidecar)
+                .is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn duplicate_decision_prompt_state_tracks_displayed_preflight() {
+        let preflight = DownloadPreflight {
+            content_key: "plan|aid=1|cid=2".to_owned(),
+            title: "Mock video".to_owned(),
+            planned_output_dir: PathBuf::from("Mock video"),
+            archived_records: Vec::new(),
+            output_conflict: Some(DownloadOutputConflict {
+                path: PathBuf::from("Mock video"),
+            }),
+            reserved_output_dirs: Vec::new(),
+        };
+        let clean_preflight = DownloadPreflight {
+            output_conflict: None,
+            ..preflight.clone()
+        };
+
+        assert!(should_prompt_duplicate_decision(
+            None, false, &preflight, true
+        ));
+        assert!(!should_prompt_duplicate_decision(
+            Some(DuplicateDecision::Cancel),
+            false,
+            &preflight,
+            true
+        ));
+        assert!(!should_prompt_duplicate_decision(
+            None, true, &preflight, true
+        ));
+        assert!(!should_prompt_duplicate_decision(
+            None, false, &preflight, false
+        ));
+        assert!(!should_prompt_duplicate_decision(
+            None,
+            false,
+            &clean_preflight,
+            true
+        ));
     }
 
     #[test]
