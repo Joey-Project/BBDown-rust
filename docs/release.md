@@ -53,7 +53,8 @@ The workflow checks that it is running from the repository default branch, valid
 `bbdown-core` and `bbdown-cli` Cargo versions, serializes RC creation per release version, computes
 the next RC number, runs formatter, clippy, declared MSRV check, tests, and a crates.io dry run,
 rejects versions that already have a final tag or GitHub Release, builds all release archives, then
-creates the annotated RC tag.
+rechecks the final tag and GitHub Release state immediately before writing, and creates the
+annotated RC tag.
 
 ## Promote An RC
 

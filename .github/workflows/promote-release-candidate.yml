@@ -65,6 +65,7 @@ jobs:
           rc_prefix="v${version}-rc."
           version_regex="${version//./\\.}"
           max_rc=0
+          refs=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${rc_prefix}" --jq '.[].ref')
           while IFS= read -r ref; do
             tag="${ref#refs/tags/}"
             if [[ "${tag}" =~ ^v${version_regex}-rc\.([1-9][0-9]*)$ ]]; then
@@ -73,7 +74,7 @@ jobs:
                 max_rc="${current_rc}"
               fi
             fi
-          done < <(gh api --paginate "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${rc_prefix}" --jq '.[].ref')
+          done <<< "${refs}"
           if (( selected_rc != max_rc )); then
             echo "::error::release promotion must use the latest RC tag for ${final_tag}; selected ${rc_tag}, latest is v${version}-rc.${max_rc}"
             exit 2
@@ -163,6 +164,7 @@ jobs:
           version_regex="${VERSION//./\\.}"
           selected_rc="${RC_TAG##*.}"
           max_rc=0
+          refs=$(gh api --paginate "repos/${repo}/git/matching-refs/tags/${rc_prefix}" --jq '.[].ref')
           while IFS= read -r ref; do
             tag="${ref#refs/tags/}"
             if [[ "${tag}" =~ ^v${version_regex}-rc\.([1-9][0-9]*)$ ]]; then
@@ -171,13 +173,18 @@ jobs:
                 max_rc="${current_rc}"
               fi
             fi
-          done < <(gh api --paginate "repos/${repo}/git/matching-refs/tags/${rc_prefix}" --jq '.[].ref')
+          done <<< "${refs}"
           if (( selected_rc != max_rc )); then
             echo "::error::release promotion must use the latest RC tag for ${FINAL_TAG}; selected ${RC_TAG}, latest is v${VERSION}-rc.${max_rc}"
             exit 2
           fi
-          if gh release view "${FINAL_TAG}" --repo "${repo}" >/dev/null 2>&1; then
+          release_error=$(mktemp)
+          if gh api "repos/${repo}/releases/tags/${FINAL_TAG}" >/dev/null 2>"${release_error}"; then
             echo "::error::GitHub Release ${FINAL_TAG} already exists"
+            exit 2
+          fi
+          if ! grep -q "HTTP 404" "${release_error}"; then
+            echo "::error::failed to check GitHub Release ${FINAL_TAG}: $(tr '\n' ' ' < "${release_error}")"
             exit 2
           fi
           mapfile -t assets < <(find dist -type f | sort)
@@ -185,7 +192,8 @@ jobs:
             echo "::error::no release assets were downloaded"
             exit 2
           fi
-          if tag_ref_json=$(gh api "repos/${repo}/git/ref/tags/${FINAL_TAG}" 2>/dev/null); then
+          tag_ref_error=$(mktemp)
+          if tag_ref_json=$(gh api "repos/${repo}/git/ref/tags/${FINAL_TAG}" 2>"${tag_ref_error}"); then
             tag_object_type=$(printf '%s' "${tag_ref_json}" | python3 -c 'import json, sys; print(json.load(sys.stdin)["object"]["type"])')
             tag_object_sha=$(printf '%s' "${tag_ref_json}" | python3 -c 'import json, sys; print(json.load(sys.stdin)["object"]["sha"])')
             if [[ "${tag_object_type}" == "tag" ]]; then
@@ -199,6 +207,10 @@ jobs:
             fi
             echo "Reusing existing ${FINAL_TAG} tag at ${TARGET_SHA}"
           else
+            if ! grep -q "HTTP 404" "${tag_ref_error}"; then
+              echo "::error::failed to check tag ${FINAL_TAG}: $(tr '\n' ' ' < "${tag_ref_error}")"
+              exit 2
+            fi
             tag_sha=$(gh api --method POST "repos/${repo}/git/tags" \
               -f tag="${FINAL_TAG}" \
               -f message="Release ${FINAL_TAG}" \

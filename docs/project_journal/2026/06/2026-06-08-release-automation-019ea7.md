@@ -40,7 +40,9 @@ superseded_by:
   release version, so concurrent manual runs cannot race the automatic RC number or duplicate the
   same final release.
 - RC creation rejects versions that already have a final tag or GitHub Release, so maintainers cannot
-  create dead-end RC tags after a version has already shipped.
+  create dead-end RC tags after a version has already shipped. The create-tag job repeats that check
+  immediately before writing the RC tag because artifact builds and environment approval can add a
+  race window after validation.
 - Promotion workflow runs are now serialized per final release version through the manual `version`
   input, and the selected RC is rechecked as latest immediately before final tag and GitHub Release
   creation.
@@ -77,3 +79,5 @@ superseded_by:
   rejects non-latest RC tags before publication and CI/release gates check the declared MSRV.
 - Offline frozen review found that RC creation still allowed already-shipped versions; RC validation
   now rejects existing final tags and GitHub Releases before creating another candidate.
+- Follow-up reviews found fail-open process substitutions around `gh api` tag enumeration; the
+  workflows now capture those API results before looping so query failures stop the run.

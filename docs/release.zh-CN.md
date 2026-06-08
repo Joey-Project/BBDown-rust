@@ -48,7 +48,7 @@ rulesets 应只允许这个 App 作为非人工 actor 写 tag。
 `bbdown-cli` Cargo version，按 release version 串行化 RC 创建，计算下一个 RC 编号，运行
 formatter、clippy、declared MSRV check、测试和 crates.io dry run，构建所有 release
 archives，并拒绝已经存在 final tag 或 GitHub Release 的 version，然后创建 annotated RC
-tag。
+tag；真正写入前还会再次检查 final tag 和 GitHub Release 状态。
 
 ## 晋升 RC
 

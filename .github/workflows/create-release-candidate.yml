@@ -21,7 +21,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       rc_tag: ${{ steps.meta.outputs.rc_tag }}
+      final_tag: ${{ steps.meta.outputs.final_tag }}
       target_sha: ${{ steps.meta.outputs.target_sha }}
+      version: ${{ steps.meta.outputs.version }}
     steps:
       # actions/checkout@v4
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -40,6 +42,33 @@ jobs:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
+          repo="${GITHUB_REPOSITORY}"
+          ensure_release_absent() {
+            local tag=$1
+            local error_file
+            error_file=$(mktemp)
+            if gh api "repos/${repo}/releases/tags/${tag}" >/dev/null 2>"${error_file}"; then
+              echo "::error::GitHub Release ${tag} already exists; create a new version instead"
+              exit 2
+            fi
+            if ! grep -q "HTTP 404" "${error_file}"; then
+              echo "::error::failed to check GitHub Release ${tag}: $(tr '\n' ' ' < "${error_file}")"
+              exit 2
+            fi
+          }
+          ensure_tag_absent() {
+            local tag=$1
+            local error_file
+            error_file=$(mktemp)
+            if gh api "repos/${repo}/git/ref/tags/${tag}" >/dev/null 2>"${error_file}"; then
+              echo "::error::final tag ${tag} already exists; create a new version instead"
+              exit 2
+            fi
+            if ! grep -q "HTTP 404" "${error_file}"; then
+              echo "::error::failed to check tag ${tag}: $(tr '\n' ' ' < "${error_file}")"
+              exit 2
+            fi
+          }
           if [[ -z "${DEFAULT_BRANCH}" ]]; then
             echo "::error::repository default branch is not available"
             exit 2
@@ -64,17 +93,12 @@ jobs:
             exit 2
           fi
           final_tag="v${VERSION}"
-          if gh release view "${final_tag}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            echo "::error::GitHub Release ${final_tag} already exists; create a new version instead"
-            exit 2
-          fi
-          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${final_tag}" >/dev/null 2>&1; then
-            echo "::error::final tag ${final_tag} already exists; create a new version instead"
-            exit 2
-          fi
+          ensure_release_absent "${final_tag}"
+          ensure_tag_absent "${final_tag}"
           rc_prefix="v${VERSION}-rc."
           version_regex="${VERSION//./\\.}"
           max_rc=0
+          refs=$(gh api --paginate "repos/${repo}/git/matching-refs/tags/${rc_prefix}" --jq '.[].ref')
           while IFS= read -r ref; do
             tag="${ref#refs/tags/}"
             if [[ "${tag}" =~ ^v${version_regex}-rc\.([1-9][0-9]*)$ ]]; then
@@ -83,13 +107,15 @@ jobs:
                 max_rc="${current_rc}"
               fi
             fi
-          done < <(gh api --paginate "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${rc_prefix}" --jq '.[].ref')
+          done <<< "${refs}"
           rc_number=$((max_rc + 1))
           target_sha=$(git rev-parse HEAD)
           rc_tag="v${VERSION}-rc.${rc_number}"
           {
             echo "rc_tag=${rc_tag}"
+            echo "final_tag=${final_tag}"
             echo "target_sha=${target_sha}"
+            echo "version=${VERSION}"
           } >> "${GITHUB_OUTPUT}"
 
       - name: Format
@@ -142,14 +168,41 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           RC_TAG: ${{ needs.validate.outputs.rc_tag }}
+          FINAL_TAG: ${{ needs.validate.outputs.final_tag }}
           TARGET_SHA: ${{ needs.validate.outputs.target_sha }}
         run: |
           set -euo pipefail
           repo="${GITHUB_REPOSITORY}"
-          if gh api "repos/${repo}/git/ref/tags/${RC_TAG}" >/dev/null 2>&1; then
-            echo "::error::tag ${RC_TAG} already exists"
-            exit 2
-          fi
+          ensure_release_absent() {
+            local tag=$1
+            local error_file
+            error_file=$(mktemp)
+            if gh api "repos/${repo}/releases/tags/${tag}" >/dev/null 2>"${error_file}"; then
+              echo "::error::GitHub Release ${tag} already exists; create a new version instead"
+              exit 2
+            fi
+            if ! grep -q "HTTP 404" "${error_file}"; then
+              echo "::error::failed to check GitHub Release ${tag}: $(tr '\n' ' ' < "${error_file}")"
+              exit 2
+            fi
+          }
+          ensure_tag_absent() {
+            local tag=$1
+            local exists_message=$2
+            local error_file
+            error_file=$(mktemp)
+            if gh api "repos/${repo}/git/ref/tags/${tag}" >/dev/null 2>"${error_file}"; then
+              echo "::error::${exists_message}"
+              exit 2
+            fi
+            if ! grep -q "HTTP 404" "${error_file}"; then
+              echo "::error::failed to check tag ${tag}: $(tr '\n' ' ' < "${error_file}")"
+              exit 2
+            fi
+          }
+          ensure_release_absent "${FINAL_TAG}"
+          ensure_tag_absent "${FINAL_TAG}" "final tag ${FINAL_TAG} already exists; create a new version instead"
+          ensure_tag_absent "${RC_TAG}" "tag ${RC_TAG} already exists"
           tag_sha=$(gh api --method POST "repos/${repo}/git/tags" \
             -f tag="${RC_TAG}" \
             -f message="Release candidate ${RC_TAG}" \
