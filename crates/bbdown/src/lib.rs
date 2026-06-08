@@ -17,8 +17,9 @@ pub use client::{
 };
 pub use credentials::{CredentialSource, CredentialStore, Credentials};
 pub use download::{
-    DownloadFileKind, DownloadOptions, DownloadReport, DownloadedFile, EntryDownloadReport,
-    MuxOptions, MuxReport, RetryPolicy, StreamSelection,
+    DownloadArchive, DownloadArchiveEntryRecord, DownloadArchiveRecord, DownloadFileKind,
+    DownloadOptions, DownloadOutputConflict, DownloadPreflight, DownloadReport, DownloadedFile,
+    DuplicateDecision, EntryDownloadReport, MuxOptions, MuxReport, RetryPolicy, StreamSelection,
 };
 pub use error::{Error, Result};
 pub use input::Input;

@@ -11,3 +11,4 @@
 - [completed] Add clearer stream quality selection and listing support.
 - [completed] Expand restricted-area proxy response compatibility.
 - [completed] Harden integration APIs and embedding documentation.
+- [completed] Add download archive and duplicate decision handling.

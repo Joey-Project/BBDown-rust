@@ -7,7 +7,6 @@ use std::fs;
 use std::net::TcpListener;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-#[cfg(unix)]
 use std::path::Path;
 use std::sync::mpsc;
 use std::thread;
@@ -468,6 +467,155 @@ fn download_json_writes_mock_media_files() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test]
+fn download_archive_cancel_reports_preflight_json() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    mock_minimal_download(&server);
+
+    archive_download_command(&credential_file, &server, &output_dir, &archive_file, None)?
+        .assert()
+        .success();
+
+    let output = archive_download_command(
+        &credential_file,
+        &server,
+        &output_dir,
+        &archive_file,
+        Some("cancel"),
+    )?
+    .assert()
+    .success()
+    .get_output()
+    .stdout
+    .clone();
+    let json: Value = serde_json::from_slice(&output)?;
+
+    assert_eq!(json["status"], "canceled");
+    assert_eq!(
+        json["preflight"]["archived_records"]
+            .as_array()
+            .map(Vec::len),
+        Some(1)
+    );
+    assert!(
+        json["preflight"]["output_conflict"]["path"]
+            .as_str()
+            .is_some_and(|path| path.ends_with("Mock video"))
+    );
+    Ok(())
+}
+
+#[test]
+fn download_archive_json_requires_explicit_duplicate_decision() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    mock_minimal_download(&server);
+
+    archive_download_command(&credential_file, &server, &output_dir, &archive_file, None)?
+        .assert()
+        .success();
+
+    let stderr =
+        archive_download_command(&credential_file, &server, &output_dir, &archive_file, None)?
+            .assert()
+            .failure()
+            .get_output()
+            .stderr
+            .clone();
+
+    assert!(
+        String::from_utf8_lossy(&stderr).contains("--on-duplicate replace, keep-both, or cancel")
+    );
+    Ok(())
+}
+
+#[test]
+fn download_archive_keep_both_uses_suffixed_output_dir() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    mock_minimal_download(&server);
+
+    archive_download_command(&credential_file, &server, &output_dir, &archive_file, None)?
+        .assert()
+        .success();
+
+    let output = archive_download_command(
+        &credential_file,
+        &server,
+        &output_dir,
+        &archive_file,
+        Some("keep-both"),
+    )?
+    .assert()
+    .success()
+    .get_output()
+    .stdout
+    .clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    let archive: Value = serde_json::from_slice(&fs::read(&archive_file)?)?;
+
+    assert!(
+        json["output_dir"]
+            .as_str()
+            .is_some_and(|path| path.ends_with("Mock video (2)"))
+    );
+    assert!(output_dir.join("Mock video").exists());
+    assert!(output_dir.join("Mock video (2)").exists());
+    assert_eq!(archive["records"].as_array().map(Vec::len), Some(2));
+    Ok(())
+}
+
+#[test]
+fn download_archive_replace_overwrites_existing_file() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    mock_minimal_download(&server);
+
+    let output =
+        archive_download_command(&credential_file, &server, &output_dir, &archive_file, None)?
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    let video_path = downloaded_file_path(&json, "video")?.to_owned();
+    fs::write(&video_path, "partial")?;
+
+    let output = archive_download_command(
+        &credential_file,
+        &server,
+        &output_dir,
+        &archive_file,
+        Some("replace"),
+    )?
+    .assert()
+    .success()
+    .get_output()
+    .stdout
+    .clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    let archive: Value = serde_json::from_slice(&fs::read(&archive_file)?)?;
+
+    assert_eq!(fs::read_to_string(&video_path)?, "video");
+    assert_eq!(downloaded_file_path(&json, "video")?, video_path);
+    assert_eq!(archive["records"].as_array().map(Vec::len), Some(1));
+    Ok(())
+}
+
 #[cfg(unix)]
 #[test]
 #[allow(clippy::too_many_lines)]
@@ -907,6 +1055,95 @@ fn write_fake_ffmpeg(dir: &Path, body: &str) -> anyhow::Result<std::path::PathBu
     permissions.set_mode(0o755);
     fs::set_permissions(&path, permissions)?;
     Ok(path)
+}
+
+fn mock_minimal_download(server: &MockServer) {
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/view")
+            .query_param("aid", "170001");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "aid": 170_001,
+                "bvid": "BV1xx411c7mD",
+                "title": "Mock video",
+                "pages": [{"page": 1, "cid": 2, "part": "Main"}]
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/playurl")
+            .query_param("avid", "170001")
+            .query_param("cid", "2")
+            .query_param("try_look", "1");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "dash": {
+                    "duration": 3,
+                    "video": [{
+                        "id": 80,
+                        "baseUrl": format!("{}/video.m4s", server.base_url()),
+                        "base_url": format!("{}/video.m4s", server.base_url())
+                    }],
+                    "audio": [{
+                        "id": 30280,
+                        "baseUrl": format!("{}/audio.m4s", server.base_url()),
+                        "base_url": format!("{}/audio.m4s", server.base_url())
+                    }]
+                }
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/v2")
+            .query_param("aid", "170001")
+            .query_param("cid", "2");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {"subtitle": {"subtitles": []}}
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET).path("/video.m4s");
+        then.status(200).body("video");
+    });
+    server.mock(|when, then| {
+        when.method(GET).path("/audio.m4s");
+        then.status(200).body("audio");
+    });
+}
+
+fn archive_download_command(
+    credential_file: &Path,
+    server: &MockServer,
+    output_dir: &Path,
+    archive_file: &Path,
+    decision: Option<&str>,
+) -> anyhow::Result<Command> {
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("download")
+        .arg("av170001")
+        .arg("--output-dir")
+        .arg(output_dir)
+        .arg("--archive-file")
+        .arg(archive_file)
+        .arg("--no-mux")
+        .arg("--no-subtitles")
+        .arg("--no-danmaku")
+        .arg("--json");
+    if let Some(decision) = decision {
+        command.arg("--on-duplicate").arg(decision);
+    }
+    Ok(command)
 }
 
 fn downloaded_file_path<'a>(json: &'a Value, kind: &str) -> anyhow::Result<&'a str> {

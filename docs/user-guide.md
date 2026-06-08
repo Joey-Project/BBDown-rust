@@ -91,6 +91,7 @@ bbdown download av170001 --output-dir downloads
 bbdown download ss26801 --select latest --output-dir downloads
 bbdown download av170001 --output-dir downloads --no-mux --json
 bbdown download av170001 --video-quality 64 --audio-quality 30216 --output-dir downloads
+bbdown download av170001 --output-dir downloads --archive-file downloads/archive.json --on-duplicate keep-both
 ```
 
 The command downloads the first complete DASH video/audio pair for each entry by default. Use
@@ -112,6 +113,24 @@ bounded by `--retry-attempts` and `--retry-backoff-ms`. Entry directories includ
 identity, and DASH media filenames include stream metadata identity, so same-title videos and
 different codec variants do not share the same resume target. Media downloads that complete without
 writing any bytes are rejected.
+
+Use `--archive-file <path>` when a caller wants duplicate preflight and a durable record of
+completed downloads. The archive is a local JSON file keyed by content identity; it records output
+paths, entry ids, sidecar paths, mux output paths, and completion timestamps, but it does not store
+media URLs or credentials. When a planned content key or output directory already exists, the CLI
+needs a duplicate decision:
+
+- `--on-duplicate replace` writes to the planned output directory and disables resume for existing
+  files in that directory.
+- `--on-duplicate keep-both` writes to the next available suffixed output directory such as
+  `Mock video (2)` and preserves prior archive records.
+- `--on-duplicate cancel` stops before downloading and, with `--json`, prints
+  `{"status":"canceled","preflight":...}` so automation can inspect existing records and output
+  conflicts.
+
+Without an explicit decision, human TTY mode prompts on stderr. `--json` mode and non-TTY mode never
+prompt; they fail with instructions to pass `--on-duplicate` instead. Without `--archive-file`,
+download behavior is unchanged and no duplicate preflight runs.
 
 `--request-timeout-seconds` applies to API requests. Media body reads use
 `--download-idle-timeout-seconds`; pass `0` to disable that idle timeout.

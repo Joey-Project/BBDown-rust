@@ -120,6 +120,58 @@ Use `bbdown plan` or `BiliClient::plan_download` first when a UI needs to presen
 `StreamSelection::video`, `StreamSelection::audio`, and `StreamSelection::new` select exact DASH
 stream ids from the plan.
 
+## Download Archive And Duplicate Decisions
+
+Embedding applications should keep duplicate handling explicit. Inspect a plan with
+`DownloadPreflight`, show the existing archive records or output conflict to the user, then call the
+executor with the chosen `DuplicateDecision`. The crate does not prompt.
+
+```rust,no_run
+use bbdown::{
+    BiliClient, ClientConfig, DownloadArchive, DownloadOptions, DownloadPreflight,
+    DuplicateDecision, MuxOptions,
+};
+
+#[tokio::main]
+async fn main() -> bbdown::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let plan = client.plan_download("BV1qt4y1X7TW", None).await?;
+    let options = DownloadOptions::new("downloads").with_mux(MuxOptions::Disabled);
+    let archive_path = "downloads/archive.json";
+    let mut archive = DownloadArchive::load(archive_path)?;
+    let preflight = DownloadPreflight::inspect(&plan, &options, Some(&archive));
+
+    if preflight.requires_decision() {
+        println!(
+            "{} possible duplicate records",
+            preflight.archived_records.len()
+        );
+        if let Some(conflict) = &preflight.output_conflict {
+            println!("output exists: {}", conflict.path.display());
+        }
+    }
+
+    let decision = if preflight.requires_decision() {
+        DuplicateDecision::KeepBoth
+    } else {
+        DuplicateDecision::Replace
+    };
+    let report = client
+        .download_plan_with_archive_decision(&plan, options, &mut archive, decision)
+        .await?;
+    archive.save(archive_path)?;
+
+    println!("wrote {}", report.output_dir.display());
+    Ok(())
+}
+```
+
+`DuplicateDecision::Replace` writes to the planned output root and disables resume when that root
+already exists. `DuplicateDecision::KeepBoth` writes to the next suffixed output root and keeps prior
+archive records. If a UI chooses to cancel, stop after preflight and do not call the download
+executor. Archive records contain content identity, output paths, entry ids, sidecar paths, mux
+output paths, and completion timestamps; they do not contain media URLs or credentials.
+
 ## Endpoint Overrides
 
 Use endpoint builders for tests, local mocks, or controlled gateway deployments.

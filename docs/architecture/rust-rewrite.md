@@ -120,6 +120,16 @@ temporary files when replacing an existing target, so failed `--no-resume` retri
 previous output. DASH media output names prefer stable stream metadata and only fall back to URL
 path hashing when metadata is absent, so CDN host or query changes do not split resume targets.
 
+Duplicate handling is modeled before execution instead of hidden inside the downloader.
+`DownloadArchive` stores completed output records by content identity without media URLs or
+credentials. `DownloadPreflight::inspect` reports archive hits and planned output directory
+conflicts, so embedding applications can show what already exists and choose a
+`DuplicateDecision`. `Replace` writes to the planned output root and disables resume for existing
+targets in that root, `KeepBoth` writes to the next suffixed output root while preserving prior
+archive records, and `Cancel` is a caller-level stop decision. The CLI exposes the same model with
+`--archive-file` and `--on-duplicate`, and JSON/non-TTY mode requires an explicit decision instead
+of prompting.
+
 The crate default keeps muxing disabled so embedding projects do not spawn external processes by
 surprise. The CLI `download` command enables ffmpeg by default and exposes `--no-mux` for users and
 mock e2e tests. Mux subprocess stdin, stdout, and stderr are isolated from CLI stdio. Muxing writes
@@ -244,6 +254,12 @@ experiments. Embedders should create configuration with constructor and builder 
 marked non-exhaustive because plan models are consumed data surfaces and may gain fields while the
 crate matures.
 
+Download archive and duplicate handling are covered at both crate and CLI levels. Unit tests cover
+preflight archive/output conflict detection, replace disabling resume for existing output roots,
+keep-both suffixed output roots, and archive JSON round trips without media URLs. CLI mock e2e
+tests cover JSON duplicate failure without an explicit decision, `cancel` preflight output,
+`keep-both` suffixed output roots, and `replace` overwriting an existing file.
+
 Live tests against Bilibili are opt-in only through `just live-e2e`. The recipe fails fast unless an
 ignored `live-e2e.samples.json` manifest exists, so branch CI is not blocked by network, account, or
 regional state. The tracked `live-e2e.samples.example.json` documents the manifest shape. Each live
@@ -272,3 +288,4 @@ fixed `cn`, `th`, `hk`, and `tw` ordering. Network requests have a configurable 
 9. Clearer stream quality selection and listing support. Completed in PR #10.
 10. Restricted-area proxy response compatibility expansion. Completed in PR #11.
 11. Integration API and documentation hardening. Completed in PR #12.
+12. Download archive and duplicate decision handling. Completed in PR #13.

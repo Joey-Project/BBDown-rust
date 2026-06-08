@@ -2,7 +2,7 @@
 
 `bbdown` is the reusable Rust library behind BBDown Rust. It resolves Bilibili and Bilibili intl
 inputs into typed metadata, download plans, media downloads, subtitles, danmaku sidecars, QR login
-credentials, and restricted-area proxy diagnostics.
+credentials, download archive preflight data, and restricted-area proxy diagnostics.
 
 The crate is still preparing for its first crates.io release. This pre-release branch intentionally
 hardens public structs before publishing: embedding projects should prefer constructor and
@@ -34,8 +34,8 @@ async fn main() -> bbdown::Result<()> {
 }
 ```
 
-See the repository embedding guide for restricted-area proxy, endpoint override, credential, and
-download execution examples:
+See the repository embedding guide for restricted-area proxy, endpoint override, credential,
+download archive, and download execution examples:
 <https://github.com/Joey-Project/BBDown-rust/blob/master/docs/embedding.md>.
 
 The CLI package is distributed through GitHub release archives. The crates.io dry-run target for this

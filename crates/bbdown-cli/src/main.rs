@@ -3,15 +3,16 @@
 
 use anyhow::{Context, bail, ensure};
 use bbdown::{
-    BiliClient, ClientConfig, CredentialStore, Credentials, DownloadOptions, DownloadReport,
-    EndpointConfig, MediaStream, MuxOptions, QrLoginKind, QrLoginState, QrLoginTicket,
-    ResolvedContent, RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy,
-    RestrictedAreaProxyKind, RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet,
+    BiliClient, ClientConfig, CredentialStore, Credentials, DownloadArchive, DownloadOptions,
+    DownloadPreflight, DownloadReport, DuplicateDecision, EndpointConfig, MediaStream, MuxOptions,
+    QrLoginKind, QrLoginState, QrLoginTicket, ResolvedContent, RestrictedArea,
+    RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection,
+    StreamQuality, StreamSelection, StreamSet,
 };
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, IsTerminal, Read};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -121,6 +122,10 @@ enum Command {
         audio_quality: Option<u32>,
         #[arg(long, default_value = "ffmpeg")]
         ffmpeg: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        archive_file: Option<PathBuf>,
+        #[arg(long, value_enum)]
+        on_duplicate: Option<DuplicateDecisionArg>,
     },
     Auth {
         #[command(subcommand)]
@@ -136,6 +141,24 @@ enum AuthCommand {
     LoginWeb(QrLoginArgs),
     LoginTv(QrLoginArgs),
     Logout,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+enum DuplicateDecisionArg {
+    Replace,
+    KeepBoth,
+    Cancel,
+}
+
+impl From<DuplicateDecisionArg> for DuplicateDecision {
+    fn from(value: DuplicateDecisionArg) -> Self {
+        match value {
+            DuplicateDecisionArg::Replace => Self::Replace,
+            DuplicateDecisionArg::KeepBoth => Self::KeepBoth,
+            DuplicateDecisionArg::Cancel => Self::Cancel,
+        }
+    }
 }
 
 #[derive(Debug, Args)]
@@ -208,7 +231,13 @@ async fn main() -> anyhow::Result<()> {
             video_quality,
             audio_quality,
             ffmpeg,
+            archive_file,
+            on_duplicate,
         } => {
+            ensure!(
+                archive_file.is_some() || on_duplicate.is_none(),
+                "--on-duplicate requires --archive-file"
+            );
             ensure!(
                 retry_attempts > 0,
                 "--retry-attempts must be greater than 0"
@@ -239,6 +268,8 @@ async fn main() -> anyhow::Result<()> {
                 select,
                 json,
                 options,
+                archive_file,
+                on_duplicate: on_duplicate.map(Into::into),
             };
             handle_download(&store, endpoints, restricted_area, request_timeout, args).await?;
         }
@@ -254,6 +285,8 @@ struct DownloadCommandArgs {
     select: Option<Selection>,
     json: bool,
     options: DownloadOptions,
+    archive_file: Option<PathBuf>,
+    on_duplicate: Option<DuplicateDecision>,
 }
 
 async fn handle_info(
@@ -378,15 +411,95 @@ async fn handle_download(
         request_timeout,
         credentials,
     ));
-    let report = client
-        .download_input(&args.url, args.select, args.options)
-        .await?;
+    let report = if let Some(archive_file) = args.archive_file {
+        let plan = client.plan_download(&args.url, args.select).await?;
+        let mut archive = DownloadArchive::load(&archive_file)
+            .with_context(|| format!("failed to load archive {}", archive_file.display()))?;
+        let preflight = DownloadPreflight::inspect(&plan, &args.options, Some(&archive));
+        let decision = duplicate_decision(args.on_duplicate, args.json, &preflight)?;
+        if preflight.requires_decision() && decision == DuplicateDecision::Cancel {
+            if args.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "status": "canceled",
+                        "preflight": preflight,
+                    }))?
+                );
+            } else {
+                print_duplicate_preflight(&preflight);
+                println!("download canceled");
+            }
+            return Ok(());
+        }
+        let report = client
+            .download_plan_with_archive_decision(&plan, args.options, &mut archive, decision)
+            .await?;
+        archive
+            .save(&archive_file)
+            .with_context(|| format!("failed to save archive {}", archive_file.display()))?;
+        report
+    } else {
+        client
+            .download_input(&args.url, args.select, args.options)
+            .await?
+    };
     if args.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
         print_download_report(&report);
     }
     Ok(())
+}
+
+fn duplicate_decision(
+    explicit: Option<DuplicateDecision>,
+    json: bool,
+    preflight: &DownloadPreflight,
+) -> anyhow::Result<DuplicateDecision> {
+    if let Some(decision) = explicit {
+        return Ok(decision);
+    }
+    if !preflight.requires_decision() {
+        return Ok(DuplicateDecision::Replace);
+    }
+    if json || !io::stdin().is_terminal() {
+        bail!(
+            "download archive found an existing record or output conflict; pass --on-duplicate replace, keep-both, or cancel"
+        );
+    }
+    prompt_duplicate_decision(preflight)
+}
+
+fn prompt_duplicate_decision(preflight: &DownloadPreflight) -> anyhow::Result<DuplicateDecision> {
+    print_duplicate_preflight(preflight);
+    eprintln!("Choose action: [r]eplace, [k]eep-both, [c]ancel");
+    let mut answer = String::new();
+    io::stdin()
+        .read_line(&mut answer)
+        .context("failed to read duplicate decision")?;
+    match answer.trim().to_ascii_lowercase().as_str() {
+        "r" | "replace" => Ok(DuplicateDecision::Replace),
+        "k" | "keep" | "keep-both" | "keep_both" => Ok(DuplicateDecision::KeepBoth),
+        "c" | "cancel" => Ok(DuplicateDecision::Cancel),
+        other => bail!("unsupported duplicate decision `{other}`"),
+    }
+}
+
+fn print_duplicate_preflight(preflight: &DownloadPreflight) {
+    eprintln!("possible duplicate download: {}", preflight.title);
+    eprintln!("planned output: {}", preflight.planned_output_dir.display());
+    if let Some(conflict) = &preflight.output_conflict {
+        eprintln!("output already exists: {}", conflict.path.display());
+    }
+    for record in &preflight.archived_records {
+        eprintln!(
+            "archive record: {} completed_at={} entries={}",
+            record.output_dir.display(),
+            record.completed_at_unix,
+            record.entries.len()
+        );
+    }
 }
 
 fn client_config(
