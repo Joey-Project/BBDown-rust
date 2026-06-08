@@ -35,12 +35,15 @@ superseded_by:
   archive records that pointed at the same normalized output path.
 - `keep-both` reserves matching archive record output paths even when those paths are no longer on
   disk, so archive-only duplicate history is preserved across equivalent path spellings.
+- Entry-level archive identities ignore display indexes, so reordered pages or episodes can still
+  be detected as duplicates by stable aid/bvid/cid/epid content ids.
 - Output-root occupancy uses symlink metadata, so broken symlink roots are treated as existing roots
   for preflight, keep-both candidate selection, and replace cleanup. Non-`NotFound` metadata
   errors are reported to callers instead of being retried as suffixed keep-both roots.
-- The CLI rejects `--archive-file` when it overlaps the chosen output root either lexically or
-  through canonical targets, and `DownloadArchive::save` rejects directory targets before replacing
-  archive files.
+- The CLI rejects `--archive-file` and archive save sidecar paths when they overlap the chosen
+  output root either lexically or through canonical targets, and `DownloadArchive::save` rejects
+  directory targets before replacing archive files. `DownloadArchive::load` reports metadata errors
+  instead of treating unreadable archive paths as empty archives.
 - User-facing docs, embedding docs, architecture docs, and top-level project state/TODO point to the
   archive and duplicate decision behavior.
 
@@ -50,6 +53,12 @@ superseded_by:
   `cargo test --locked -p bbdown download_preflight_reports_archive_hit_and_output_conflict`.
 - Targeted crate coverage:
   `cargo test --locked -p bbdown download_preflight_reports_entry_overlap_from_archive`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown download_preflight_reports_entry_overlap_after_index_change`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown download_entry_content_key_ignores_display_index`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown download_archive_load_reports_metadata_errors`.
 - Targeted crate coverage:
   `cargo test --locked -p bbdown archive_decision_keep_both_uses_new_output_root`.
 - Targeted crate coverage:
@@ -78,6 +87,8 @@ superseded_by:
   `cargo test --locked -p bbdown-cli download_archive_`.
 - Targeted CLI unit coverage:
   `cargo test --locked -p bbdown-cli archive_file_guard_rejects_output_root_overlap`.
+- Targeted CLI unit coverage:
+  `cargo test --locked -p bbdown-cli archive_file_guard_rejects_sidecar_output_root_overlap`.
 - Targeted CLI unit coverage:
   `cargo test --locked -p bbdown-cli archive_file_guard_rejects_lexical_symlink_inside_output_root`.
 - Targeted CLI unit coverage:

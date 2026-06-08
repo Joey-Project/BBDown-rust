@@ -173,7 +173,8 @@ prior archive records, including archive-only records whose old output directory
 If a UI chooses to cancel, stop after preflight and do not call the download executor. Archive
 records contain content identity, output paths, entry ids, sidecar paths, mux output paths, and
 completion timestamps; they do not contain media URLs or credentials. Store the archive at a JSON
-file path outside the chosen output root; `DownloadArchive::save` rejects directory targets.
+file path outside the chosen output root and any archive save sidecar paths; `DownloadArchive::save`
+rejects directory targets.
 
 ## Endpoint Overrides
 

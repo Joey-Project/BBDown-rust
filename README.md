@@ -57,7 +57,7 @@ when no decision is provided. `replace` removes the existing planned output root
 download and replaces stale archive records for that output path, `keep-both` writes the next
 suffixed output root while avoiding matching archive record paths, and `cancel` reports the
 preflight state without downloading. The archive file itself must not be the chosen output root or
-inside that root.
+inside that root; the CLI applies the same guard to archive save sidecar paths.
 
 `ss` and `md` inputs require an explicit selection in non-interactive mode:
 

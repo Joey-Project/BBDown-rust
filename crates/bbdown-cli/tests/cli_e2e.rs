@@ -633,7 +633,7 @@ fn download_archive_rejects_archive_file_as_output_root() -> anyhow::Result<()> 
             .stderr
             .clone();
 
-    assert!(String::from_utf8_lossy(&stderr).contains("--archive-file must not overlap"));
+    assert!(String::from_utf8_lossy(&stderr).contains("must not overlap"));
     assert!(!archive_file.exists());
     Ok(())
 }
@@ -655,7 +655,7 @@ fn download_archive_rejects_archive_file_inside_output_root() -> anyhow::Result<
             .stderr
             .clone();
 
-    assert!(String::from_utf8_lossy(&stderr).contains("--archive-file must not overlap"));
+    assert!(String::from_utf8_lossy(&stderr).contains("must not overlap"));
     assert!(!archive_file.exists());
     Ok(())
 }
@@ -687,7 +687,7 @@ fn download_archive_rejects_archive_file_inside_keep_both_output_root() -> anyho
     .stderr
     .clone();
 
-    assert!(String::from_utf8_lossy(&stderr).contains("--archive-file must not overlap"));
+    assert!(String::from_utf8_lossy(&stderr).contains("must not overlap"));
     assert!(!keep_both_archive_file.exists());
     Ok(())
 }

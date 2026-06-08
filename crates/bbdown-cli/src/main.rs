@@ -474,20 +474,38 @@ fn ensure_archive_file_is_not_output_root(
     output_dir: &Path,
 ) -> anyhow::Result<()> {
     let output_dir_display = output_dir.display().to_string();
-    let archive_lexical =
-        lexical_path_components(archive_file).context("failed to resolve archive path")?;
     let output_lexical =
         lexical_path_components(output_dir).context("failed to resolve output directory")?;
-    let archive_canonical =
-        canonical_path_components(archive_file).context("failed to resolve archive path")?;
     let output_canonical =
         canonical_path_components(output_dir).context("failed to resolve output directory")?;
-    ensure!(
-        !paths_overlap(&archive_lexical, &output_lexical)
-            && !paths_overlap(&archive_canonical, &output_canonical),
-        "--archive-file must not overlap the chosen output directory ({output_dir_display})"
-    );
+    for archive_path in archive_write_paths(archive_file) {
+        let archive_lexical =
+            lexical_path_components(&archive_path).context("failed to resolve archive path")?;
+        let archive_canonical =
+            canonical_path_components(&archive_path).context("failed to resolve archive path")?;
+        ensure!(
+            !paths_overlap(&archive_lexical, &output_lexical)
+                && !paths_overlap(&archive_canonical, &output_canonical),
+            "--archive-file and its sidecar files must not overlap the chosen output directory ({output_dir_display})"
+        );
+    }
     Ok(())
+}
+
+fn archive_write_paths(archive_file: &Path) -> [PathBuf; 3] {
+    [
+        archive_file.to_path_buf(),
+        archive_sidecar_path(archive_file, ".bbdown-archive-tmp"),
+        archive_sidecar_path(archive_file, ".bbdown-archive-backup"),
+    ]
+}
+
+fn archive_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
+    let base = path.file_name().map_or_else(
+        || "download-archive".to_owned(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    path.with_file_name(format!("{base}{suffix}"))
 }
 
 fn lexical_path_components(path: &Path) -> anyhow::Result<Vec<String>> {
@@ -1244,8 +1262,8 @@ fn _assert_credentials_send_sync(_: Credentials) {}
 #[cfg(test)]
 mod tests {
     use super::{
-        Cli, endpoints_from_cli, ensure_archive_file_is_not_output_root, next_poll_sleep,
-        remaining_until, restricted_area_from_cli_with_args,
+        Cli, archive_sidecar_path, endpoints_from_cli, ensure_archive_file_is_not_output_root,
+        next_poll_sleep, remaining_until, restricted_area_from_cli_with_args,
         restricted_area_from_cli_with_env_values, save_qr_credentials,
         should_prompt_duplicate_decision,
     };
@@ -1314,6 +1332,26 @@ mod tests {
             ensure_archive_file_is_not_output_root(&case_variant_archive, &output_root).is_err()
         );
         assert!(ensure_archive_file_is_not_output_root(&sibling_archive, &output_root).is_ok());
+        Ok(())
+    }
+
+    #[test]
+    fn archive_file_guard_rejects_sidecar_output_root_overlap() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let archive_file = temp.path().join("downloads").join("archive.json");
+        let temporary_output_root = archive_sidecar_path(&archive_file, ".bbdown-archive-tmp");
+        let backup_output_root = archive_sidecar_path(&archive_file, ".bbdown-archive-backup");
+        let unrelated_output_root = temp.path().join("downloads").join("Mock video");
+
+        assert!(
+            ensure_archive_file_is_not_output_root(&archive_file, &temporary_output_root).is_err()
+        );
+        assert!(
+            ensure_archive_file_is_not_output_root(&archive_file, &backup_output_root).is_err()
+        );
+        assert!(
+            ensure_archive_file_is_not_output_root(&archive_file, &unrelated_output_root).is_ok()
+        );
         Ok(())
     }
 

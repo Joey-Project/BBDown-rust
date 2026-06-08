@@ -209,10 +209,13 @@ impl DownloadArchive {
 
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-        let raw = std::fs::read_to_string(path)?;
+        let raw = match std::fs::read_to_string(path) {
+            Ok(raw) => raw,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self::default());
+            }
+            Err(error) => return Err(Error::Io(error)),
+        };
         serde_json::from_str(&raw).map_err(Error::from)
     }
 
@@ -1403,8 +1406,7 @@ fn download_plan_content_key(plan: &DownloadPlan) -> String {
 
 fn download_entry_content_key(entry: &DownloadEntry) -> String {
     format!(
-        "index={};aid={};bvid={};cid={};epid={}",
-        entry.index,
+        "aid={};bvid={};cid={};epid={}",
         entry.aid,
         entry.bvid.as_deref().unwrap_or_default(),
         entry.cid,
@@ -1870,6 +1872,20 @@ mod tests {
 
         assert!(subtitle_extension(&subtitle).len() <= MAX_SUBTITLE_EXTENSION_BYTES);
         assert!(subtitle_file_name(0, &subtitle).len() <= MAX_FILE_COMPONENT_BYTES);
+    }
+
+    #[test]
+    fn download_entry_content_key_ignores_display_index() {
+        let server = MockServer::start();
+        let mut first = test_plan(&server).entries.remove(0);
+        let mut second = first.clone();
+        first.index = 1;
+        second.index = 99;
+
+        assert_eq!(
+            download_entry_content_key(&first),
+            download_entry_content_key(&second)
+        );
     }
 
     #[test]
@@ -3555,6 +3571,41 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn download_preflight_reports_entry_overlap_after_index_change() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let temp = tempfile::tempdir()?;
+        let plan = test_plan(&server);
+        let mut archived_entry = plan.entries[0].clone();
+        archived_entry.index += 10;
+        let archive = DownloadArchive::new(vec![DownloadArchiveRecord {
+            content_key: "plan|different-entry-set".to_owned(),
+            title: "Archived collection".to_owned(),
+            output_dir: temp.path().join("downloads").join("Archived collection"),
+            completed_at_unix: 42,
+            entries: vec![DownloadArchiveEntryRecord {
+                content_key: download_entry_content_key(&archived_entry),
+                index: archived_entry.index,
+                aid: archived_entry.aid,
+                bvid: archived_entry.bvid.clone(),
+                cid: archived_entry.cid,
+                epid: archived_entry.epid,
+                title: archived_entry.title,
+                directory: temp.path().join("downloads").join("Archived collection"),
+                files: Vec::new(),
+                mux_output: None,
+            }],
+        }]);
+
+        let preflight =
+            DownloadPreflight::inspect(&plan, &DownloadOptions::new(temp.path()), Some(&archive))?;
+
+        assert!(preflight.requires_decision());
+        assert_eq!(preflight.archived_records.len(), 1);
+        assert_eq!(preflight.archived_records[0].entries[0].index, 11);
+        Ok(())
+    }
+
     #[tokio::test]
     async fn archive_decision_keep_both_uses_new_output_root() -> anyhow::Result<()> {
         let server = MockServer::start();
@@ -3884,6 +3935,36 @@ mod tests {
             error,
             crate::Error::InvalidInput(message) if message.contains("directory")
         ));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn download_archive_load_reports_metadata_errors() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let restricted = temp.path().join("restricted");
+        std_fs::create_dir(&restricted)?;
+        let original_permissions = std_fs::metadata(&restricted)?.permissions();
+        let mut denied_permissions = original_permissions.clone();
+        denied_permissions.set_mode(0o000);
+        std_fs::set_permissions(&restricted, denied_permissions)?;
+
+        let result = DownloadArchive::load(restricted.join("archive.json"));
+
+        std_fs::set_permissions(&restricted, original_permissions)?;
+        match result {
+            Err(crate::Error::Io(error))
+                if error.kind() == std::io::ErrorKind::PermissionDenied => {}
+            Ok(archive) => {
+                anyhow::bail!(
+                    "expected archive load permission error, got {} records",
+                    archive.records.len()
+                );
+            }
+            Err(error) => {
+                anyhow::bail!("expected archive load permission error, got {error}");
+            }
+        }
         Ok(())
     }
 
