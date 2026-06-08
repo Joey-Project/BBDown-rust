@@ -1,9 +1,14 @@
+[ English | [简体中文](README.zh-CN.md) ]
+
 # BBDown Rust
 
 `BBDown Rust` is a Rust-native rewrite of BBDown with two goals:
 
 - expose a reusable `bbdown` crate for other Rust projects;
 - provide a CLI that can serve as the e2e surface for metadata resolution and downloads.
+
+This project uses the original [BBDown](https://github.com/nilaoda/BBDown) project as a practical
+Bilibili behavior reference. Thanks to BBDown and its contributors for that reference.
 
 The current implementation establishes the crate/CLI/CI foundation, metadata resolver, stream
 planning, media downloads, sidecar downloads, retry/resume behavior, optional ffmpeg muxing, QR
@@ -126,9 +131,9 @@ Resolver diagnostics reduce endpoints to URL origins and redact sensitive error-
 
 GitHub tag releases build prepackaged `bbdown` CLI archives for Linux x86_64, macOS x86_64,
 macOS aarch64, and Windows x86_64. Manual release workflow runs can also build the same archives
-without publishing a GitHub Release. Each archive includes the CLI binary, `README.md`,
-`docs/user-guide.md`, `docs/embedding.md`, and `LICENSE`. Each archive also has an adjacent
-`.sha256` checksum file.
+without publishing a GitHub Release. Each archive includes the CLI binary, English and Simplified
+Chinese README files, the English and Simplified Chinese user, embedding, and architecture guides,
+and `LICENSE`. Each archive also has an adjacent `.sha256` checksum file.
 
 ## Developer Commands
 
@@ -167,6 +172,10 @@ running, so sample behavior is driven by the manifest rather than shell state.
 - User guide: [docs/user-guide.md](docs/user-guide.md)
 - Embedding guide: [docs/embedding.md](docs/embedding.md)
 - Architecture: [docs/architecture/rust-rewrite.md](docs/architecture/rust-rewrite.md)
-- Project state: [docs/PROJECT_STATE.md](docs/PROJECT_STATE.md)
-- Project TODO: [docs/PROJECT_TODO.md](docs/PROJECT_TODO.md)
-- Workstream journals: [docs/project_journal/](docs/project_journal/)
+- Simplified Chinese README: [README.zh-CN.md](README.zh-CN.md)
+- Simplified Chinese user guide: [docs/user-guide.zh-CN.md](docs/user-guide.zh-CN.md)
+- Simplified Chinese embedding guide: [docs/embedding.zh-CN.md](docs/embedding.zh-CN.md)
+- Simplified Chinese architecture guide:
+  [docs/architecture/rust-rewrite.zh-CN.md](docs/architecture/rust-rewrite.zh-CN.md)
+- Agent-facing project tracking, not localized: [Project state](docs/PROJECT_STATE.md),
+  [Project TODO](docs/PROJECT_TODO.md), and [workstream journals](docs/project_journal/).

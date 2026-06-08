@@ -1,3 +1,5 @@
+[ English | [简体中文](user-guide.zh-CN.md) ]
+
 # User Guide
 
 ## Scope
@@ -10,7 +12,8 @@ download-plan resolution, media download execution, sidecar downloads, and optio
 GitHub releases provide prepackaged `bbdown` CLI archives for Linux x86_64, macOS x86_64,
 macOS aarch64, and Windows x86_64. Download the archive for your platform, verify it against the
 adjacent `.sha256` file if needed, extract it, and place the `bbdown` or `bbdown.exe` binary on your
-`PATH`. Archives also include `README.md`, this user guide, `docs/embedding.md`, and `LICENSE`.
+`PATH`. Archives also include English and Simplified Chinese README files, user guides, embedding
+guides, architecture guides, and `LICENSE`.
 
 ## Crate Publishing
 

@@ -1,3 +1,5 @@
+[ English | [简体中文](README.zh-CN.md) ]
+
 # bbdown
 
 `bbdown` is the reusable Rust library behind BBDown Rust. It resolves Bilibili and Bilibili intl
@@ -36,7 +38,8 @@ async fn main() -> bbdown::Result<()> {
 
 See the repository embedding guide for restricted-area proxy, endpoint override, credential,
 download archive, and download execution examples:
-<https://github.com/Joey-Project/BBDown-rust/blob/master/docs/embedding.md>.
+[English](https://github.com/Joey-Project/BBDown-rust/blob/master/docs/embedding.md) /
+[简体中文](https://github.com/Joey-Project/BBDown-rust/blob/master/docs/embedding.zh-CN.md).
 
 The CLI package is distributed through GitHub release archives. The crates.io dry-run target for this
 workspace is the `bbdown` library crate.

@@ -12,3 +12,4 @@
 - [completed] Expand restricted-area proxy response compatibility.
 - [completed] Harden integration APIs and embedding documentation.
 - [completed] Add download archive and duplicate decision handling.
+- [completed] Add bilingual human-facing docs and rerun real live e2e samples.

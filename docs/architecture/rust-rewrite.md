@@ -1,3 +1,5 @@
+[ English | [简体中文](rust-rewrite.zh-CN.md) ]
+
 # Rust Rewrite Architecture
 
 ## Goals
@@ -247,10 +249,11 @@ Release packaging is a separate GitHub Actions workflow. Tag pushes matching `v*
 x86_64, macOS x86_64, macOS aarch64, and Windows x86_64 CLI archives and publish them to the
 GitHub Release with generated release notes. Manual workflow dispatch builds the same archives as
 downloadable workflow artifacts without publishing a release. Archives contain the `bbdown` binary,
-`README.md`, `docs/user-guide.md`, `docs/embedding.md`, and `LICENSE`. Each archive also has an
-adjacent platform-specific checksum file. Action references in the release workflow are pinned to
-commit SHAs. Package names normalize release refs to the packager-safe `[A-Za-z0-9._-]` character
-set, so tags such as SemVer build metadata do not fail at packaging time.
+English and Simplified Chinese README files, English and Simplified Chinese user, embedding, and
+architecture guides, and `LICENSE`. Each archive also has an adjacent platform-specific checksum
+file. Action references in the release workflow are pinned to commit SHAs. Package names normalize
+release refs to the packager-safe `[A-Za-z0-9._-]` character set, so tags such as SemVer build
+metadata do not fail at packaging time.
 
 Crate publishing is intentionally scoped to the reusable `bbdown` library crate. The crate has
 crates.io metadata, a package-local README and LICENSE, dirty-tree-friendly local publish dry-run
