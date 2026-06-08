@@ -458,6 +458,7 @@ async fn handle_download(
                 execution_decision,
             )
             .await?;
+        ensure_archive_file_is_not_output_root(&archive_file, &report.output_dir)?;
         archive
             .save(&archive_file)
             .with_context(|| format!("failed to save archive {}", archive_file.display()))?;

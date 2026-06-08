@@ -52,8 +52,9 @@ retries bounded transient failures, validates advertised media sizes when presen
 media shapes, and runs `ffmpeg` unless `--no-mux` is supplied.
 Pass `--archive-file <path>` to record completed downloads by content identity. Archive output,
 sidecar, and mux paths are stored as absolute paths at record time so the same archive can be reused
-from another working directory. Entry identity uses stable aid/bvid/cid media ids, so the same PGC
-episode can still match when later planned through its BV/av URL. When the same content, entry, or
+from another working directory. Entry identity uses stable aid/cid media ids, so the same PGC
+episode can still match when later planned through its BV/av URL even if one form lacks a BVID.
+When the same content, entry, or
 archive output directory is seen again, non-interactive JSON mode requires `--on-duplicate replace`,
 `--on-duplicate keep-both`, or `--on-duplicate cancel`; interactive human mode prompts when no
 decision is provided. `replace` removes the existing planned output root before a fresh download and

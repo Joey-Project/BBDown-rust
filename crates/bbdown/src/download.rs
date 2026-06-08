@@ -492,7 +492,7 @@ impl BiliClient {
         preflight: &DownloadPreflight,
         decision: DuplicateDecision,
     ) -> Result<DownloadReport> {
-        validate_archive_preflight(plan, &options, preflight)?;
+        validate_archive_preflight(plan, &options, archive, preflight)?;
         let mut effective_options = options;
         let output_dir = match decision {
             DuplicateDecision::Cancel if preflight.requires_decision() => {
@@ -1053,24 +1053,25 @@ fn archive_storage_path(path: &Path) -> Result<PathBuf> {
 }
 
 fn replace_archive_file(source: &Path, target: &Path) -> Result<()> {
-    let backup = archive_sidecar_path(target, ".bbdown-archive-backup");
+    let target = archive_storage_path(target)?;
+    let backup = archive_sidecar_path(&target, ".bbdown-archive-backup");
     match std::fs::remove_file(&backup) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(Error::Io(error)),
     }
-    match std::fs::rename(target, &backup) {
+    match std::fs::rename(&target, &backup) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(Error::Io(error)),
     }
-    match std::fs::rename(source, target) {
+    match std::fs::rename(source, &target) {
         Ok(()) => {
             let _ = std::fs::remove_file(&backup);
             Ok(())
         }
         Err(error) => {
-            let _ = std::fs::rename(&backup, target);
+            let _ = std::fs::rename(&backup, &target);
             Err(Error::Io(error))
         }
     }
@@ -1385,6 +1386,7 @@ fn path_is_reserved(path: &Path, reserved: &[PathBuf]) -> bool {
 fn validate_archive_preflight(
     plan: &DownloadPlan,
     options: &DownloadOptions,
+    archive: &DownloadArchive,
     preflight: &DownloadPreflight,
 ) -> Result<()> {
     if preflight.content_key != download_plan_content_key(plan) {
@@ -1398,6 +1400,28 @@ fn validate_archive_preflight(
     {
         return Err(Error::InvalidInput(
             "download preflight does not match the download output options".to_owned(),
+        ));
+    }
+    let current_archived_records =
+        archive_records_for_preflight(archive, plan, &planned_output_dir);
+    if preflight.archived_records != current_archived_records {
+        return Err(Error::InvalidInput(
+            "download preflight does not match the current download archive".to_owned(),
+        ));
+    }
+    let current_reserved_keys = archive
+        .records
+        .iter()
+        .map(|record| comparable_output_path_key(&record.output_dir))
+        .collect::<HashSet<_>>();
+    let preflight_reserved_keys = preflight
+        .reserved_output_dirs_for_decision()
+        .iter()
+        .map(|path| comparable_output_path_key(path))
+        .collect::<HashSet<_>>();
+    if preflight_reserved_keys != current_reserved_keys {
+        return Err(Error::InvalidInput(
+            "download preflight does not match the current download archive".to_owned(),
         ));
     }
     Ok(())
@@ -1440,10 +1464,10 @@ impl ArchivePlanMatch {
 
     fn matches_record(&self, record: &DownloadArchiveRecord) -> bool {
         record.content_key == self.content_key
-            || record
-                .entries
-                .iter()
-                .any(|entry| self.entry_keys.contains(&entry.content_key))
+            || record.entries.iter().any(|entry| {
+                self.entry_keys.contains(&entry.content_key)
+                    || self.entry_keys.contains(&archive_entry_content_key(entry))
+            })
     }
 }
 
@@ -1525,12 +1549,11 @@ fn download_plan_content_key(plan: &DownloadPlan) -> String {
 }
 
 fn download_entry_content_key(entry: &DownloadEntry) -> String {
-    format!(
-        "aid={};bvid={};cid={}",
-        entry.aid,
-        entry.bvid.as_deref().unwrap_or_default(),
-        entry.cid
-    )
+    format!("aid={};cid={}", entry.aid, entry.cid)
+}
+
+fn archive_entry_content_key(entry: &DownloadArchiveEntryRecord) -> String {
+    format!("aid={};cid={}", entry.aid, entry.cid)
 }
 
 fn entry_dir_name(entry: &DownloadEntry) -> String {
@@ -2013,7 +2036,9 @@ mod tests {
         let mut video_entry = test_plan(&server).entries.remove(0);
         let mut episode_entry = video_entry.clone();
         video_entry.epid = None;
+        video_entry.bvid = Some("BV1xx411c7mD".to_owned());
         episode_entry.epid = Some(664_928);
+        episode_entry.bvid = None;
 
         assert_eq!(
             download_entry_content_key(&video_entry),
@@ -3740,6 +3765,47 @@ mod tests {
     }
 
     #[test]
+    fn download_preflight_matches_legacy_bvid_entry_key() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let temp = tempfile::tempdir()?;
+        let plan = test_plan(&server);
+        let mut archived_entry = plan.entries[0].clone();
+        archived_entry.bvid = None;
+        archived_entry.epid = Some(664_928);
+        let archive = DownloadArchive::new(vec![DownloadArchiveRecord {
+            content_key: "plan|legacy-entry-set".to_owned(),
+            title: "Archived collection".to_owned(),
+            output_dir: temp.path().join("downloads").join("Archived collection"),
+            completed_at_unix: 42,
+            entries: vec![DownloadArchiveEntryRecord {
+                content_key: format!(
+                    "aid={};bvid={};cid={};epid={}",
+                    archived_entry.aid,
+                    archived_entry.bvid.as_deref().unwrap_or_default(),
+                    archived_entry.cid,
+                    archived_entry.epid.unwrap_or_default()
+                ),
+                index: archived_entry.index,
+                aid: archived_entry.aid,
+                bvid: archived_entry.bvid.clone(),
+                cid: archived_entry.cid,
+                epid: archived_entry.epid,
+                title: archived_entry.title,
+                directory: temp.path().join("downloads").join("Archived collection"),
+                files: Vec::new(),
+                mux_output: None,
+            }],
+        }]);
+
+        let preflight =
+            DownloadPreflight::inspect(&plan, &DownloadOptions::new(temp.path()), Some(&archive))?;
+
+        assert!(preflight.requires_decision());
+        assert_eq!(preflight.archived_records.len(), 1);
+        Ok(())
+    }
+
+    #[test]
     fn download_preflight_reports_same_output_archive_record() -> anyhow::Result<()> {
         let server = MockServer::start();
         let temp = tempfile::tempdir()?;
@@ -3790,6 +3856,55 @@ mod tests {
             round_tripped.output_dir_for_decision(DuplicateDecision::KeepBoth)?,
             output_base.join("Mock video (3)")
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn archive_preflight_keep_both_rejects_stale_archive_reservations() -> anyhow::Result<()>
+    {
+        let server = MockServer::start();
+        let temp = tempfile::tempdir()?;
+        let output_base = temp.path().join("downloads");
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = test_plan(&server);
+        let options = DownloadOptions::new(output_base.clone())
+            .with_retry_policy(RetryPolicy::single_attempt())
+            .with_mux(MuxOptions::Disabled);
+        let planned_output_dir = default_plan_output_dir(&plan, &options);
+        std::fs::create_dir_all(&planned_output_dir)?;
+        let stale_preflight =
+            DownloadPreflight::inspect(&plan, &options, Some(&DownloadArchive::default()))?;
+        let mut archive = DownloadArchive::new(vec![DownloadArchiveRecord {
+            content_key: "plan|unrelated".to_owned(),
+            title: "Unrelated archived content".to_owned(),
+            output_dir: output_base.join("Mock video (2)"),
+            completed_at_unix: 42,
+            entries: Vec::new(),
+        }]);
+
+        let error = match client
+            .download_plan_with_archive_preflight_decision(
+                &plan,
+                options,
+                &mut archive,
+                &stale_preflight,
+                DuplicateDecision::KeepBoth,
+            )
+            .await
+        {
+            Ok(report) => anyhow::bail!(
+                "stale preflight unexpectedly downloaded to {}",
+                report.output_dir.display()
+            ),
+            Err(error) => error,
+        };
+
+        assert!(matches!(
+            error,
+            crate::Error::InvalidInput(message)
+                if message.contains("current download archive")
+        ));
+        assert!(!output_base.join("Mock video (2)").exists());
         Ok(())
     }
 

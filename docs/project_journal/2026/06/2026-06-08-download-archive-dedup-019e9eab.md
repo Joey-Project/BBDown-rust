@@ -44,9 +44,13 @@ superseded_by:
   same-title records.
 - `DownloadPreflight` preserves reserved output roots through JSON serialization so embedding UIs
   can round-trip preflight state before applying a `keep-both` decision.
+- Archive execution rejects stale preflight/archive combinations, so callers cannot inspect an empty
+  or older archive and then apply `keep-both` against a newer archive that reserves more output
+  roots.
 - Entry-level archive identities ignore display indexes, so reordered pages or episodes can still
-  be detected as duplicates by stable aid/bvid/cid content ids. Optional `epid` is not part of the
-  entry key so the same PGC media can match when planned through an episode URL or a BV/av URL.
+  be detected as duplicates by stable aid/cid content ids. Optional `bvid` and `epid` are not part
+  of the entry key so the same PGC media can match when planned through an episode URL or a BV/av URL
+  even if one form lacks a BVID.
 - Output-root occupancy uses symlink metadata, so broken symlink roots are treated as existing roots
   for preflight, keep-both candidate selection, and replace cleanup. Non-`NotFound` metadata
   errors are reported to callers instead of being retried as suffixed keep-both roots.
@@ -61,7 +65,8 @@ superseded_by:
   chosen output root.
 - CLI archive downloads execute with the same preflight shown to the user or automation. A
   no-conflict default uses `DuplicateDecision::Cancel` as safe-continue, so a late output conflict
-  reports an error instead of becoming an implicit replace.
+  reports an error instead of becoming an implicit replace. Before saving the archive, the CLI
+  rechecks archive-file overlap against the actual output directory returned by the executor.
 - User-facing docs, embedding docs, architecture docs, and top-level project state/TODO point to the
   archive and duplicate decision behavior.
 
@@ -78,7 +83,11 @@ superseded_by:
 - Targeted crate coverage:
   `cargo test --locked -p bbdown download_preflight_round_trip_preserves_reserved_output_dirs`.
 - Targeted crate coverage:
+  `cargo test --locked -p bbdown archive_preflight_keep_both_rejects_stale_archive_reservations`.
+- Targeted crate coverage:
   `cargo test --locked -p bbdown download_preflight_matches_symlink_parent_archive_output`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown download_preflight_matches_legacy_bvid_entry_key`.
 - Targeted crate coverage:
   `cargo test --locked -p bbdown download_entry_content_key_ignores_display_index`.
 - Targeted crate coverage:

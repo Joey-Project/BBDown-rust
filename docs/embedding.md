@@ -126,7 +126,9 @@ Embedding applications should keep duplicate handling explicit. Inspect a plan w
 `DownloadPreflight`, show the existing archive records or output conflict to the user, then call the
 executor with the same preflight and chosen `DuplicateDecision`. The crate does not prompt. If the
 application serializes a preflight between display and execution, store the full preflight object so
-`KeepBoth` keeps avoiding archive-only output directories that were reserved during inspection.
+`KeepBoth` keeps avoiding archive-only output directories that were reserved during inspection. The
+executor validates that the preflight still matches the current archive before applying the decision,
+so callers should reinspect when another process may have updated the archive.
 
 ```rust,no_run
 use bbdown::{
@@ -183,9 +185,9 @@ download executor. Passing `DuplicateDecision::Cancel` with a no-conflict prefli
 continue path: if an output conflict appears before execution, the executor reports it instead of
 implicitly replacing the new output root. Archive records contain content identity, absolute output
 paths, entry ids, absolute sidecar paths, absolute mux output paths, and completion timestamps; they
-do not contain media URLs or credentials. Entry identities use aid/bvid/cid media ids instead of the
-optional episode id, so a PGC episode planned through an episode URL can match a later BV/av plan for
-the same media.
+do not contain media URLs or credentials. Entry identities use aid/cid media ids instead of optional
+BVID or episode ids, so a PGC episode planned through an episode URL can match a later BV/av plan for
+the same media even when one plan lacks a BVID.
 `DownloadPreflight::inspect` also treats archive records with the same planned output path as
 duplicates, even when the content identity differs and the old output directory is no longer on
 disk. Store the archive at a JSON file path outside the chosen output root and any archive save
