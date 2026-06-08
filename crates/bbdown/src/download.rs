@@ -21,10 +21,12 @@ const MAX_FILE_NAME_BYTES: usize = 80;
 const MAX_FILE_COMPONENT_BYTES: usize = 240;
 const MAX_SUBTITLE_EXTENSION_BYTES: usize = 16;
 
+#[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct DownloadOptions {
     pub output_dir: PathBuf,
     pub retry: RetryPolicy,
+    pub stream_selection: StreamSelection,
     pub resume: bool,
     pub include_subtitles: bool,
     pub include_danmaku: bool,
@@ -37,12 +39,45 @@ impl Default for DownloadOptions {
         Self {
             output_dir: PathBuf::from("."),
             retry: RetryPolicy::default(),
+            stream_selection: StreamSelection::default(),
             resume: true,
             include_subtitles: true,
             include_danmaku: true,
             mux: MuxOptions::Disabled,
             download_idle_timeout: Some(Duration::from_secs(30)),
         }
+    }
+}
+
+impl DownloadOptions {
+    #[must_use]
+    pub fn new(output_dir: impl Into<PathBuf>) -> Self {
+        Self {
+            output_dir: output_dir.into(),
+            ..Self::default()
+        }
+    }
+}
+
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct StreamSelection {
+    pub video_quality: Option<u32>,
+    pub audio_quality: Option<u32>,
+}
+
+impl StreamSelection {
+    #[must_use]
+    pub const fn new(video_quality: Option<u32>, audio_quality: Option<u32>) -> Self {
+        Self {
+            video_quality,
+            audio_quality,
+        }
+    }
+
+    #[must_use]
+    pub const fn has_selection(self) -> bool {
+        self.video_quality.is_some() || self.audio_quality.is_some()
     }
 }
 
@@ -143,6 +178,7 @@ impl BiliClient {
         plan: &DownloadPlan,
         options: DownloadOptions,
     ) -> Result<DownloadReport> {
+        validate_plan_stream_selection(plan, options.stream_selection)?;
         let output_dir = options.output_dir.join(safe_file_name(&plan.title));
         fs::create_dir_all(&output_dir).await?;
         let mut entries = Vec::new();
@@ -168,19 +204,31 @@ impl BiliClient {
         let has_dash_pair = !entry.streams.videos.is_empty() && !entry.streams.audios.is_empty();
         let use_flv_fallback = !has_dash_pair && !entry.streams.flv_segments.is_empty();
         if has_dash_pair {
-            if let Some(video) = entry.streams.videos.first() {
-                files.push(
-                    self.download_media_stream(video, DownloadFileKind::Video, &entry_dir, options)
-                        .await?,
-                );
-            }
-            if let Some(audio) = entry.streams.audios.first() {
-                files.push(
-                    self.download_media_stream(audio, DownloadFileKind::Audio, &entry_dir, options)
-                        .await?,
-                );
-            }
+            let video = select_media_stream(
+                &entry.streams.videos,
+                options.stream_selection.video_quality,
+                "video",
+            )?;
+            let audio = select_media_stream(
+                &entry.streams.audios,
+                options.stream_selection.audio_quality,
+                "audio",
+            )?;
+            files.push(
+                self.download_media_stream(video, DownloadFileKind::Video, &entry_dir, options)
+                    .await?,
+            );
+            files.push(
+                self.download_media_stream(audio, DownloadFileKind::Audio, &entry_dir, options)
+                    .await?,
+            );
         } else if use_flv_fallback {
+            if options.stream_selection.has_selection() {
+                return Err(Error::InvalidInput(
+                    "stream quality selection requires DASH media; selected entry only has FLV segments"
+                        .to_owned(),
+                ));
+            }
             for segment in &entry.streams.flv_segments {
                 files.push(
                     self.download_flv_segment(segment, &entry_dir, options)
@@ -980,6 +1028,70 @@ fn media_file_name(label: &str, stream: &MediaStream) -> String {
     format_file_component(&prefix, &identity, &suffix)
 }
 
+fn select_media_stream<'a>(
+    streams: &'a [MediaStream],
+    requested_id: Option<u32>,
+    kind: &str,
+) -> Result<&'a MediaStream> {
+    if let Some(id) = requested_id {
+        return streams.iter().find(|stream| stream.id == id).ok_or_else(|| {
+            Error::InvalidInput(format!(
+                "requested {kind} quality {id} is not available; available {kind} qualities: {}",
+                available_stream_ids(streams)
+            ))
+        });
+    }
+    streams
+        .first()
+        .ok_or(Error::MissingField("selected media stream"))
+}
+
+fn validate_plan_stream_selection(plan: &DownloadPlan, selection: StreamSelection) -> Result<()> {
+    if !selection.has_selection() {
+        return Ok(());
+    }
+    for entry in &plan.entries {
+        validate_entry_stream_selection(entry, selection)?;
+    }
+    Ok(())
+}
+
+fn validate_entry_stream_selection(
+    entry: &DownloadEntry,
+    selection: StreamSelection,
+) -> Result<()> {
+    let has_dash_pair = !entry.streams.videos.is_empty() && !entry.streams.audios.is_empty();
+    let use_flv_fallback = !has_dash_pair && !entry.streams.flv_segments.is_empty();
+    if has_dash_pair {
+        let _ = select_media_stream(&entry.streams.videos, selection.video_quality, "video")?;
+        let _ = select_media_stream(&entry.streams.audios, selection.audio_quality, "audio")?;
+    } else if use_flv_fallback {
+        return Err(Error::InvalidInput(
+            "stream quality selection requires DASH media; selected entry only has FLV segments"
+                .to_owned(),
+        ));
+    } else {
+        return Err(Error::MissingField("complete DASH media or FLV segments"));
+    }
+    Ok(())
+}
+
+fn available_stream_ids(streams: &[MediaStream]) -> String {
+    if streams.is_empty() {
+        return "none".to_owned();
+    }
+    let mut ids = Vec::new();
+    for stream in streams {
+        if !ids.contains(&stream.id) {
+            ids.push(stream.id);
+        }
+    }
+    ids.into_iter()
+        .map(|id| id.to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn media_stream_identity(stream: &MediaStream) -> String {
     let mut parts = Vec::new();
     push_identity_part(&mut parts, stream.codecs.as_deref());
@@ -1092,12 +1204,13 @@ mod tests {
     use super::{
         DownloadOptions, MAX_FILE_COMPONENT_BYTES, MAX_FILE_NAME_BYTES,
         MAX_SUBTITLE_EXTENSION_BYTES, MuxOptions, RetryPolicy, entry_dir_name, media_file_name,
-        safe_file_name, safe_file_name_with_budget, subtitle_dedup_key, subtitle_extension,
-        subtitle_file_name, temporary_download_path, temporary_mux_path, temporary_replace_path,
+        safe_file_name, safe_file_name_with_budget, select_media_stream, subtitle_dedup_key,
+        subtitle_extension, subtitle_file_name, temporary_download_path, temporary_mux_path,
+        temporary_replace_path,
     };
     use crate::models::{
         DanmakuTrack, DownloadEntry, DownloadPlan, FlvSegment, MediaStream, StreamDiagnostics,
-        StreamSet, StreamSource, SubtitleFormat, SubtitleTrack,
+        StreamQuality, StreamSet, StreamSource, SubtitleFormat, SubtitleTrack,
     };
     use crate::{BiliClient, ClientConfig, Credentials, DownloadFileKind};
     use httpmock::MockServer;
@@ -1133,6 +1246,29 @@ mod tests {
         stream.codecs = None;
         stream.mime_type = None;
         assert!(media_file_name("video", &stream).starts_with("video-80-h"));
+    }
+
+    #[test]
+    fn select_media_stream_reports_available_ids() -> crate::Result<()> {
+        let streams = vec![
+            media_stream(80, "https://cdn.example/80.m4s"),
+            media_stream(80, "https://cdn.example/80-hevc.m4s"),
+            media_stream(64, "https://cdn.example/64.m4s"),
+        ];
+
+        let selected = select_media_stream(&streams, Some(64), "video")?;
+        assert_eq!(selected.id, 64);
+
+        let Err(error) = select_media_stream(&streams, Some(32), "video") else {
+            return Err(crate::Error::InvalidInput(
+                "unexpectedly selected missing video stream".to_owned(),
+            ));
+        };
+        assert_eq!(
+            error.to_string(),
+            "invalid input: requested video quality 32 is not available; available video qualities: 80, 64"
+        );
+        Ok(())
     }
 
     #[test]
@@ -1280,6 +1416,94 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("missing video"))?;
         assert_eq!(tokio::fs::read_to_string(&video.path).await?, "video");
         assert!(entry.mux.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn invalid_audio_selection_fails_before_media_writes() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/video.m4s");
+            then.status(200).body("video");
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/audio.m4s");
+            then.status(200).body("audio");
+        });
+        let temp = tempfile::tempdir()?;
+        let output_dir = temp.path().join("downloads");
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = test_plan(&server);
+
+        let Err(error) = client
+            .download_plan(
+                &plan,
+                DownloadOptions {
+                    output_dir: output_dir.clone(),
+                    retry: RetryPolicy::single_attempt(),
+                    stream_selection: super::StreamSelection {
+                        video_quality: Some(80),
+                        audio_quality: Some(30216),
+                    },
+                    mux: MuxOptions::Disabled,
+                    ..DownloadOptions::default()
+                },
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!("missing audio selection should fail"));
+        };
+
+        assert!(error.to_string().contains("requested audio quality 30216"));
+        assert!(!output_dir.exists());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn multi_entry_invalid_selection_fails_before_any_media_writes() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/video.m4s");
+            then.status(200).body("video");
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/audio.m4s");
+            then.status(200).body("audio");
+        });
+        let temp = tempfile::tempdir()?;
+        let output_dir = temp.path().join("downloads");
+        let client = BiliClient::new(ClientConfig::default());
+        let mut plan = test_plan(&server);
+        let mut second = plan.entries[0].clone();
+        second.index = 2;
+        second.cid = 3;
+        second.title = "Second".to_owned();
+        second.streams.audios[0].id = 30216;
+        plan.entries.push(second);
+
+        let Err(error) = client
+            .download_plan(
+                &plan,
+                DownloadOptions {
+                    output_dir: output_dir.clone(),
+                    retry: RetryPolicy::single_attempt(),
+                    stream_selection: super::StreamSelection {
+                        video_quality: Some(80),
+                        audio_quality: Some(30280),
+                    },
+                    include_subtitles: false,
+                    include_danmaku: false,
+                    mux: MuxOptions::Disabled,
+                    ..DownloadOptions::default()
+                },
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!("later missing audio selection should fail"));
+        };
+
+        assert!(error.to_string().contains("requested audio quality 30280"));
+        assert!(!output_dir.exists());
         Ok(())
     }
 
@@ -2684,6 +2908,21 @@ mod tests {
         Ok(())
     }
 
+    fn media_stream(id: u32, base_url: &str) -> MediaStream {
+        MediaStream {
+            id,
+            base_url: base_url.to_owned(),
+            backup_urls: Vec::new(),
+            codecs: None,
+            bandwidth: None,
+            width: None,
+            height: None,
+            frame_rate: None,
+            mime_type: Some("video/mp4".to_owned()),
+            size: None,
+        }
+    }
+
     fn test_plan(server: &MockServer) -> DownloadPlan {
         DownloadPlan {
             title: "Mock video".to_owned(),
@@ -2722,6 +2961,10 @@ mod tests {
                     }],
                     flv_segments: Vec::new(),
                     accept_quality: vec![80],
+                    qualities: vec![StreamQuality {
+                        id: 80,
+                        description: Some("1080P".to_owned()),
+                    }],
                     duration_seconds: Some(3),
                 },
                 diagnostics: StreamDiagnostics::default(),

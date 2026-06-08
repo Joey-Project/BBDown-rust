@@ -4,9 +4,9 @@
 use anyhow::{Context, bail, ensure};
 use bbdown::{
     BiliClient, ClientConfig, CredentialStore, Credentials, DownloadOptions, DownloadReport,
-    EndpointConfig, MuxOptions, QrLoginKind, QrLoginState, QrLoginTicket, ResolvedContent,
-    RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind,
-    RetryPolicy, Selection,
+    EndpointConfig, MediaStream, MuxOptions, QrLoginKind, QrLoginState, QrLoginTicket,
+    ResolvedContent, RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy,
+    RestrictedAreaProxyKind, RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet,
 };
 use clap::{Args, Parser, Subcommand};
 use std::ffi::{OsStr, OsString};
@@ -115,6 +115,10 @@ enum Command {
         no_danmaku: bool,
         #[arg(long)]
         no_mux: bool,
+        #[arg(long, value_name = "ID")]
+        video_quality: Option<u32>,
+        #[arg(long, value_name = "ID")]
+        audio_quality: Option<u32>,
         #[arg(long, default_value = "ffmpeg")]
         ffmpeg: PathBuf,
     },
@@ -201,36 +205,38 @@ async fn main() -> anyhow::Result<()> {
             no_subtitles,
             no_danmaku,
             no_mux,
+            video_quality,
+            audio_quality,
             ffmpeg,
         } => {
             ensure!(
                 retry_attempts > 0,
                 "--retry-attempts must be greater than 0"
             );
+            let mut options = DownloadOptions::new(output_dir);
+            options.retry = RetryPolicy {
+                max_attempts: retry_attempts,
+                backoff: Duration::from_millis(retry_backoff_ms),
+            };
+            options.stream_selection = StreamSelection::new(video_quality, audio_quality);
+            options.download_idle_timeout = if download_idle_timeout_seconds == 0 {
+                None
+            } else {
+                Some(Duration::from_secs(download_idle_timeout_seconds))
+            };
+            options.resume = !no_resume;
+            options.include_subtitles = !no_subtitles;
+            options.include_danmaku = !no_danmaku;
+            options.mux = if no_mux {
+                MuxOptions::Disabled
+            } else {
+                MuxOptions::Ffmpeg { binary: ffmpeg }
+            };
             let args = DownloadCommandArgs {
                 url,
                 select,
                 json,
-                options: DownloadOptions {
-                    output_dir,
-                    retry: RetryPolicy {
-                        max_attempts: retry_attempts,
-                        backoff: Duration::from_millis(retry_backoff_ms),
-                    },
-                    download_idle_timeout: if download_idle_timeout_seconds == 0 {
-                        None
-                    } else {
-                        Some(Duration::from_secs(download_idle_timeout_seconds))
-                    },
-                    resume: !no_resume,
-                    include_subtitles: !no_subtitles,
-                    include_danmaku: !no_danmaku,
-                    mux: if no_mux {
-                        MuxOptions::Disabled
-                    } else {
-                        MuxOptions::Ffmpeg { binary: ffmpeg }
-                    },
-                },
+                options,
             };
             handle_download(&store, endpoints, restricted_area, request_timeout, args).await?;
         }
@@ -293,24 +299,67 @@ async fn handle_plan(
     if json {
         println!("{}", serde_json::to_string_pretty(&plan)?);
     } else {
-        println!("title: {}", plan.title);
-        println!("entries: {}", plan.entries.len());
-        for entry in plan.entries {
-            println!(
-                "- P{} aid={} cid={} title={} video={} audio={} flv={} subtitles={} danmaku={}",
-                entry.index,
-                entry.aid,
-                entry.cid,
-                entry.title,
-                entry.streams.videos.len(),
-                entry.streams.audios.len(),
-                entry.streams.flv_segments.len(),
-                entry.subtitles.len(),
-                entry.danmaku.xml_url
-            );
-        }
+        print_plan_summary(&plan);
     }
     Ok(())
+}
+
+fn print_plan_summary(plan: &bbdown::DownloadPlan) {
+    println!("title: {}", plan.title);
+    println!("entries: {}", plan.entries.len());
+    for entry in &plan.entries {
+        println!(
+            "- P{} aid={} cid={} title={}",
+            entry.index, entry.aid, entry.cid, entry.title
+        );
+        print_streams(&entry.streams);
+        println!("  subtitles: {}", entry.subtitles.len());
+        println!("  danmaku: {}", entry.danmaku.xml_url);
+    }
+}
+
+fn print_streams(streams: &StreamSet) {
+    println!("  qualities: {}", quality_list(&streams.qualities));
+    println!("  videos: {}", streams.videos.len());
+    for stream in &streams.videos {
+        println!("    - {}", media_stream_summary("q", stream));
+    }
+    println!("  audios: {}", streams.audios.len());
+    for stream in &streams.audios {
+        println!("    - {}", media_stream_summary("id", stream));
+    }
+    println!("  flv_segments: {}", streams.flv_segments.len());
+}
+
+fn quality_list(qualities: &[StreamQuality]) -> String {
+    if qualities.is_empty() {
+        return "none".to_owned();
+    }
+    qualities
+        .iter()
+        .map(|quality| match quality.description.as_deref() {
+            Some(description) => format!("{} ({description})", quality.id),
+            None => quality.id.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn media_stream_summary(label: &str, stream: &MediaStream) -> String {
+    let mut parts = vec![format!("{label}={}", stream.id)];
+    if let (Some(width), Some(height)) = (stream.width, stream.height) {
+        parts.push(format!("{width}x{height}"));
+    }
+    if let Some(frame_rate) = stream.frame_rate.as_deref() {
+        parts.push(format!("{frame_rate}fps"));
+    }
+    if let Some(codecs) = stream.codecs.as_deref() {
+        parts.push(codecs.to_owned());
+    }
+    if let Some(bandwidth) = stream.bandwidth {
+        parts.push(format!("{bandwidth}bps"));
+    }
+    parts.join(" ")
 }
 
 async fn handle_download(

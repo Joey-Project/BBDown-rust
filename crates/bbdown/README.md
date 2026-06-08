@@ -4,9 +4,12 @@
 inputs into typed metadata, download plans, media downloads, subtitles, danmaku sidecars, QR login
 credentials, and restricted-area proxy diagnostics.
 
-The crate is still `0.1`; embedding projects should prefer constructor and builder-style APIs such
-as `ClientConfig::default()` and `ClientConfig::new(...).with_*()` instead of struct literals for
-configuration values that may grow between minor releases.
+The crate is still preparing for its first crates.io release. This pre-release branch intentionally
+hardens public structs before publishing: embedding projects should prefer constructor and
+builder-style APIs such as `ClientConfig::default()`, `ClientConfig::new(...).with_*()`, and
+`DownloadOptions::new(...)` or `StreamSelection::new(...)` instead of struct literals for
+configuration values that may grow between minor releases. Public plan output containers are
+consumed data surfaces and may be marked non-exhaustive.
 
 ## Example
 

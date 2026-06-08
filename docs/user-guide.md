@@ -18,7 +18,11 @@ The crates.io publish target is the reusable `bbdown` library crate. Use `just p
 local locked dry run that tolerates an uncommitted worktree, and use
 `just publish-dry-run-strict` or `cargo publish --dry-run -p bbdown --locked` to reproduce the clean
 CI gate. The `bbdown-cli` package is marked `publish = false`; install or distribute the CLI through
-GitHub release archives instead.
+GitHub release archives instead. The library is still preparing for its first crates.io release; this
+pre-release branch intentionally hardens public structs before publishing. Embedding callers should
+prefer constructors such as `DownloadOptions::new`, `StreamSelection::new`, and `Default` over
+public struct literals, and treat public plan output containers as consumed non-exhaustive data
+surfaces.
 
 ## Metadata
 
@@ -50,6 +54,9 @@ bbdown plan https://www.bilibili.tv/en/play/34613/341736 --json
 The JSON output contains:
 
 - `entries`: selected pages or episodes.
+- `streams.qualities`: currently selectable DASH video quality ids with optional descriptions from
+  the playurl response.
+- `streams.accept_quality`: raw accepted video quality ids retained for compatibility.
 - `streams.videos`: DASH video tracks.
 - `streams.audios`: DASH audio tracks, including available Dolby or FLAC audio.
 - `streams.flv_segments`: legacy FLV segments when the playurl response uses `durl`.
@@ -57,6 +64,8 @@ The JSON output contains:
 - `danmaku.xml_url`: the XML comment endpoint for the entry `cid`.
 
 Planning is side-effect free. It does not create files, download media, or call ffmpeg.
+Human-readable plan output lists the same selectable quality ids and stream summaries, so users can
+choose download quality without parsing JSON by hand.
 PGC and intl planning may still require eligible account or region access. When intl metadata
 returns a region-limit payload, the CLI reports it as an access restriction.
 When configured, PGC playurl resolution falls back to restricted-area proxy candidates and includes
@@ -70,12 +79,18 @@ Use `download` to resolve a plan and write files:
 bbdown download av170001 --output-dir downloads
 bbdown download ss26801 --select latest --output-dir downloads
 bbdown download av170001 --output-dir downloads --no-mux --json
+bbdown download av170001 --video-quality 64 --audio-quality 30216 --output-dir downloads
 ```
 
-The command downloads the first complete DASH video/audio pair for each entry. When DASH media is
-incomplete and legacy FLV `durl` segments are available, it downloads those segments instead; if
-neither shape is complete, the download fails before writing media. Subtitle and danmaku sidecars
-are enabled by default and can be disabled with `--no-subtitles` and `--no-danmaku`.
+The command downloads the first complete DASH video/audio pair for each entry by default. Use
+`bbdown plan` first to inspect available ids, then pass `--video-quality <ID>` or
+`--audio-quality <ID>` to select a specific DASH video or audio stream. A requested id must exist in
+the plan for that entry; otherwise the command reports the available ids and fails before writing
+media. When DASH media is incomplete and legacy FLV `durl` segments are available, it downloads
+those segments instead. Explicit quality selection requires DASH media and therefore disables FLV
+fallback for that entry. If neither shape is complete, the download fails before writing media.
+Subtitle and danmaku sidecars are enabled by default and can be disabled with `--no-subtitles` and
+`--no-danmaku`.
 
 Downloads resume partial files by default with HTTP range requests and validate `Content-Range`
 plus advertised media sizes when the plan provides them. Use `--no-resume` to force a fresh write;

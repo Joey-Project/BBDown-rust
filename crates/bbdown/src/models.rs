@@ -137,12 +137,22 @@ pub enum StreamResolverOutcome {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct StreamSet {
     pub videos: Vec<MediaStream>,
     pub audios: Vec<MediaStream>,
     pub flv_segments: Vec<FlvSegment>,
     pub accept_quality: Vec<u32>,
+    #[serde(default)]
+    pub qualities: Vec<StreamQuality>,
     pub duration_seconds: Option<u32>,
+}
+
+#[non_exhaustive]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct StreamQuality {
+    pub id: u32,
+    pub description: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

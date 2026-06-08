@@ -114,6 +114,12 @@ fn plan_json_resolves_mock_video_streams() -> anyhow::Result<()> {
         then.status(200).json_body_obj(&serde_json::json!({
             "code": 0,
             "data": {
+                "accept_quality": [80, 64],
+                "accept_description": ["1080P", "720P"],
+                "support_formats": [
+                    {"quality": 80, "new_description": "1080P 高码率"},
+                    {"quality": 64, "display_desc": "720P"}
+                ],
                 "dash": {
                     "duration": 3,
                     "video": [{
@@ -154,10 +160,50 @@ fn plan_json_resolves_mock_video_streams() -> anyhow::Result<()> {
     let json: Value = serde_json::from_slice(&output)?;
     assert_eq!(json["title"], "Mock video");
     assert_eq!(json["entries"][0]["streams"]["videos"][0]["id"], 80);
+    assert_plan_stream_qualities(&json);
     assert_eq!(
         json["entries"][0]["danmaku"]["xml_url"],
         "https://comment.bilibili.com/2.xml"
     );
+
+    assert_human_plan_lists_qualities(&credential_file, &server)?;
+    Ok(())
+}
+
+fn assert_plan_stream_qualities(json: &Value) {
+    assert_eq!(json["entries"][0]["streams"]["accept_quality"][0], 80);
+    assert_eq!(json["entries"][0]["streams"]["accept_quality"][1], 64);
+    assert_eq!(json["entries"][0]["streams"]["qualities"][0]["id"], 80);
+    assert_eq!(
+        json["entries"][0]["streams"]["qualities"][0]["description"],
+        "1080P 高码率"
+    );
+    assert_eq!(
+        json["entries"][0]["streams"]["qualities"]
+            .as_array()
+            .map(Vec::len),
+        Some(1)
+    );
+}
+
+fn assert_human_plan_lists_qualities(
+    credential_file: &std::path::Path,
+    server: &MockServer,
+) -> anyhow::Result<()> {
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("plan")
+        .arg("av170001");
+    let output = command.assert().success().get_output().stdout.clone();
+    let text = String::from_utf8(output)?;
+    assert!(text.contains("qualities: 80 (1080P 高码率)"));
+    assert!(!text.contains("64 (720P)"));
+    assert!(text.contains("videos: 1"));
+    assert!(text.contains("q=80"));
     Ok(())
 }
 
@@ -303,16 +349,30 @@ fn download_json_writes_mock_media_files() -> anyhow::Result<()> {
             "data": {
                 "dash": {
                     "duration": 3,
-                    "video": [{
-                        "id": 80,
-                        "baseUrl": format!("{}/video.m4s", server.base_url()),
-                        "base_url": format!("{}/video.m4s", server.base_url())
-                    }],
-                    "audio": [{
-                        "id": 30280,
-                        "baseUrl": format!("{}/audio.m4s", server.base_url()),
-                        "base_url": format!("{}/audio.m4s", server.base_url())
-                    }]
+                    "video": [
+                        {
+                            "id": 80,
+                            "baseUrl": format!("{}/video.m4s", server.base_url()),
+                            "base_url": format!("{}/video.m4s", server.base_url())
+                        },
+                        {
+                            "id": 64,
+                            "baseUrl": format!("{}/video-64.m4s", server.base_url()),
+                            "base_url": format!("{}/video-64.m4s", server.base_url())
+                        }
+                    ],
+                    "audio": [
+                        {
+                            "id": 30280,
+                            "baseUrl": format!("{}/audio.m4s", server.base_url()),
+                            "base_url": format!("{}/audio.m4s", server.base_url())
+                        },
+                        {
+                            "id": 30216,
+                            "baseUrl": format!("{}/audio-30216.m4s", server.base_url()),
+                            "base_url": format!("{}/audio-30216.m4s", server.base_url())
+                        }
+                    ]
                 }
             }
         }));
@@ -340,8 +400,16 @@ fn download_json_writes_mock_media_files() -> anyhow::Result<()> {
         then.status(200).body("video");
     });
     server.mock(|when, then| {
+        when.method(GET).path("/video-64.m4s");
+        then.status(200).body("video64");
+    });
+    server.mock(|when, then| {
         when.method(GET).path("/audio.m4s");
         then.status(200).body("audio");
+    });
+    server.mock(|when, then| {
+        when.method(GET).path("/audio-30216.m4s");
+        then.status(200).body("audio30216");
     });
     server.mock(|when, then| {
         when.method(GET).path("/subtitle.ass");
@@ -364,6 +432,10 @@ fn download_json_writes_mock_media_files() -> anyhow::Result<()> {
         .arg("av170001")
         .arg("--output-dir")
         .arg(&output_dir)
+        .arg("--video-quality")
+        .arg("64")
+        .arg("--audio-quality")
+        .arg("30216")
         .arg("--no-mux")
         .arg("--json");
     let output = command.assert().success().get_output().stdout.clone();
@@ -374,11 +446,11 @@ fn download_json_writes_mock_media_files() -> anyhow::Result<()> {
     );
     assert_eq!(
         fs::read_to_string(downloaded_file_path(&json, "video")?)?,
-        "video"
+        "video64"
     );
     assert_eq!(
         fs::read_to_string(downloaded_file_path(&json, "audio")?)?,
-        "audio"
+        "audio30216"
     );
     assert_eq!(
         fs::read_to_string(downloaded_file_path(&json, "subtitle")?)?,
