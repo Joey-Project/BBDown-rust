@@ -53,9 +53,9 @@ media shapes, and runs `ffmpeg` unless `--no-mux` is supplied.
 Pass `--archive-file <path>` to record completed downloads by content identity. When the same
 content or output directory is seen again, non-interactive JSON mode requires `--on-duplicate
 replace`, `--on-duplicate keep-both`, or `--on-duplicate cancel`; interactive human mode prompts
-when no decision is provided. `replace` overwrites the planned output root without resume,
-`keep-both` writes the next suffixed output root, and `cancel` reports the preflight state without
-downloading.
+when no decision is provided. `replace` removes the existing planned output root before a fresh
+download, `keep-both` writes the next suffixed output root, and `cancel` reports the preflight state
+without downloading.
 
 `ss` and `md` inputs require an explicit selection in non-interactive mode:
 

@@ -22,14 +22,16 @@ superseded_by:
 
 - The `bbdown` crate exposes `DownloadArchive`, archive records, `DownloadPreflight`, output
   conflict reporting, and `DuplicateDecision`.
-- Embedding callers can inspect archive hits and output conflicts before execution, then decide to
-  replace, keep both, or cancel in their own UI.
+- Embedding callers can inspect archive hits, entry-level archive overlaps, and output conflicts
+  before execution, then decide to replace, keep both, or cancel in their own UI.
 - The CLI supports `--archive-file` plus `--on-duplicate replace|keep-both|cancel`.
 - JSON/non-TTY download mode does not prompt when a duplicate decision is required; it fails with a
   clear instruction unless the caller passed `--on-duplicate`.
 - Human TTY mode can prompt on stderr so stdout stays usable for normal output.
 - Archive records keep content identity, output paths, entry ids, sidecar paths, mux output paths,
   and completion timestamps without storing media URLs or credentials.
+- `replace` removes the existing planned output root before a fresh download, so stale sidecars or
+  mux outputs from the previous duplicate run do not remain.
 - User-facing docs, embedding docs, architecture docs, and top-level project state/TODO point to the
   archive and duplicate decision behavior.
 
@@ -37,6 +39,8 @@ superseded_by:
 
 - Targeted crate coverage:
   `cargo test --locked -p bbdown download_preflight_reports_archive_hit_and_output_conflict`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown download_preflight_reports_entry_overlap_from_archive`.
 - Targeted crate coverage:
   `cargo test --locked -p bbdown archive_decision_keep_both_uses_new_output_root`.
 - Targeted crate coverage:

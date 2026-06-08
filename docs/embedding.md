@@ -166,11 +166,11 @@ async fn main() -> bbdown::Result<()> {
 }
 ```
 
-`DuplicateDecision::Replace` writes to the planned output root and disables resume when that root
-already exists. `DuplicateDecision::KeepBoth` writes to the next suffixed output root and keeps prior
-archive records. If a UI chooses to cancel, stop after preflight and do not call the download
-executor. Archive records contain content identity, output paths, entry ids, sidecar paths, mux
-output paths, and completion timestamps; they do not contain media URLs or credentials.
+`DuplicateDecision::Replace` removes the existing planned output root before a fresh download when
+that root already exists. `DuplicateDecision::KeepBoth` writes to the next suffixed output root and
+keeps prior archive records. If a UI chooses to cancel, stop after preflight and do not call the
+download executor. Archive records contain content identity, output paths, entry ids, sidecar paths,
+mux output paths, and completion timestamps; they do not contain media URLs or credentials.
 
 ## Endpoint Overrides
 

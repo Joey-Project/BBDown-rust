@@ -124,9 +124,9 @@ Duplicate handling is modeled before execution instead of hidden inside the down
 `DownloadArchive` stores completed output records by content identity without media URLs or
 credentials. `DownloadPreflight::inspect` reports archive hits and planned output directory
 conflicts, so embedding applications can show what already exists and choose a
-`DuplicateDecision`. `Replace` writes to the planned output root and disables resume for existing
-targets in that root, `KeepBoth` writes to the next suffixed output root while preserving prior
-archive records, and `Cancel` is a caller-level stop decision. The CLI exposes the same model with
+`DuplicateDecision`. `Replace` removes the existing planned output root before a fresh download,
+`KeepBoth` writes to the next suffixed output root while preserving prior archive records, and
+`Cancel` is a caller-level stop decision. The CLI exposes the same model with
 `--archive-file` and `--on-duplicate`, and JSON/non-TTY mode requires an explicit decision instead
 of prompting.
 
@@ -255,10 +255,11 @@ marked non-exhaustive because plan models are consumed data surfaces and may gai
 crate matures.
 
 Download archive and duplicate handling are covered at both crate and CLI levels. Unit tests cover
-preflight archive/output conflict detection, replace disabling resume for existing output roots,
-keep-both suffixed output roots, and archive JSON round trips without media URLs. CLI mock e2e
-tests cover JSON duplicate failure without an explicit decision, `cancel` preflight output,
-`keep-both` suffixed output roots, and `replace` overwriting an existing file.
+preflight archive/output conflict detection, entry-level archive overlap detection, replace
+removing stale output-root artifacts before fresh writes, keep-both suffixed output roots, and
+archive JSON round trips without media URLs. CLI mock e2e tests cover JSON duplicate failure without
+an explicit decision, `cancel` preflight output, `keep-both` suffixed output roots, and `replace`
+overwriting an existing file.
 
 Live tests against Bilibili are opt-in only through `just live-e2e`. The recipe fails fast unless an
 ignored `live-e2e.samples.json` manifest exists, so branch CI is not blocked by network, account, or

@@ -246,9 +246,20 @@ impl DownloadArchive {
     #[must_use]
     pub fn records_for_plan(&self, plan: &DownloadPlan) -> Vec<DownloadArchiveRecord> {
         let content_key = download_plan_content_key(plan);
+        let entry_keys = plan
+            .entries
+            .iter()
+            .map(download_entry_content_key)
+            .collect::<HashSet<_>>();
         self.records
             .iter()
-            .filter(|record| record.content_key == content_key)
+            .filter(|record| {
+                record.content_key == content_key
+                    || record
+                        .entries
+                        .iter()
+                        .any(|entry| entry_keys.contains(&entry.content_key))
+            })
             .cloned()
             .collect()
     }
@@ -447,6 +458,8 @@ impl BiliClient {
             DuplicateDecision::Cancel => default_plan_output_dir(plan, &effective_options),
             DuplicateDecision::Replace => {
                 if preflight.output_conflict.is_some() {
+                    validate_plan_stream_selection(plan, effective_options.stream_selection)?;
+                    remove_output_root_if_exists(&preflight.planned_output_dir).await?;
                     effective_options.resume = false;
                 }
                 preflight.planned_output_dir
@@ -1047,6 +1060,20 @@ async fn remove_file_if_exists(path: &Path) -> Result<()> {
     }
 }
 
+async fn remove_output_root_if_exists(path: &Path) -> Result<()> {
+    let metadata = match fs::symlink_metadata(path).await {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(Error::Io(error)),
+    };
+    if metadata.file_type().is_dir() {
+        fs::remove_dir_all(path).await?;
+    } else {
+        fs::remove_file(path).await?;
+    }
+    Ok(())
+}
+
 fn validate_resume_response(
     status: StatusCode,
     resume_from: u64,
@@ -1538,13 +1565,13 @@ fn subtitle_dedup_key(url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        DownloadArchive, DownloadArchiveRecord, DownloadOptions, DownloadPreflight, DownloadReport,
-        DownloadedFile, DuplicateDecision, EntryDownloadReport, MAX_FILE_COMPONENT_BYTES,
-        MAX_FILE_NAME_BYTES, MAX_SUBTITLE_EXTENSION_BYTES, MuxOptions, RetryPolicy,
-        default_plan_output_dir, download_plan_content_key, entry_dir_name, media_file_name,
-        safe_file_name, safe_file_name_with_budget, select_media_stream, subtitle_dedup_key,
-        subtitle_extension, subtitle_file_name, temporary_download_path, temporary_mux_path,
-        temporary_replace_path,
+        DownloadArchive, DownloadArchiveEntryRecord, DownloadArchiveRecord, DownloadOptions,
+        DownloadPreflight, DownloadReport, DownloadedFile, DuplicateDecision, EntryDownloadReport,
+        MAX_FILE_COMPONENT_BYTES, MAX_FILE_NAME_BYTES, MAX_SUBTITLE_EXTENSION_BYTES, MuxOptions,
+        RetryPolicy, default_plan_output_dir, download_entry_content_key,
+        download_plan_content_key, entry_dir_name, media_file_name, safe_file_name,
+        safe_file_name_with_budget, select_media_stream, subtitle_dedup_key, subtitle_extension,
+        subtitle_file_name, temporary_download_path, temporary_mux_path, temporary_replace_path,
     };
     use crate::models::{
         DanmakuTrack, DownloadEntry, DownloadPlan, FlvSegment, MediaStream, StreamDiagnostics,
@@ -3309,6 +3336,40 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn download_preflight_reports_entry_overlap_from_archive() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let temp = tempfile::tempdir()?;
+        let plan = test_plan(&server);
+        let entry = &plan.entries[0];
+        let archive = DownloadArchive::new(vec![DownloadArchiveRecord {
+            content_key: "plan|different-entry-set".to_owned(),
+            title: "Archived collection".to_owned(),
+            output_dir: temp.path().join("downloads").join("Archived collection"),
+            completed_at_unix: 42,
+            entries: vec![DownloadArchiveEntryRecord {
+                content_key: download_entry_content_key(entry),
+                index: entry.index,
+                aid: entry.aid,
+                bvid: entry.bvid.clone(),
+                cid: entry.cid,
+                epid: entry.epid,
+                title: entry.title.clone(),
+                directory: temp.path().join("downloads").join("Archived collection"),
+                files: Vec::new(),
+                mux_output: None,
+            }],
+        }]);
+
+        let preflight =
+            DownloadPreflight::inspect(&plan, &DownloadOptions::new(temp.path()), Some(&archive));
+
+        assert!(preflight.requires_decision());
+        assert_eq!(preflight.archived_records.len(), 1);
+        assert_eq!(preflight.archived_records[0].title, "Archived collection");
+        Ok(())
+    }
+
     #[tokio::test]
     async fn archive_decision_keep_both_uses_new_output_root() -> anyhow::Result<()> {
         let server = MockServer::start();
@@ -3384,6 +3445,8 @@ mod tests {
         let video_path =
             entry_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
         std::fs::write(&video_path, "partial")?;
+        let stale_sidecar = entry_dir.join("danmaku.xml");
+        std::fs::write(&stale_sidecar, "<old/>")?;
         let mut archive = DownloadArchive::default();
 
         let report = client
@@ -3396,6 +3459,7 @@ mod tests {
             .await?;
 
         assert_eq!(tokio::fs::read_to_string(video_path).await?, "video");
+        assert!(!stale_sidecar.exists());
         assert_eq!(report.entries[0].files[0].resumed_from, 0);
         assert_eq!(archive.records.len(), 1);
         Ok(())

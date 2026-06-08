@@ -120,8 +120,8 @@ paths, entry ids, sidecar paths, mux output paths, and completion timestamps, bu
 media URLs or credentials. When a planned content key or output directory already exists, the CLI
 needs a duplicate decision:
 
-- `--on-duplicate replace` writes to the planned output directory and disables resume for existing
-  files in that directory.
+- `--on-duplicate replace` removes the existing planned output directory or file before a fresh
+  download.
 - `--on-duplicate keep-both` writes to the next available suffixed output directory such as
   `Mock video (2)` and preserves prior archive records.
 - `--on-duplicate cancel` stops before downloading and, with `--json`, prints
