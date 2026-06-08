@@ -18,7 +18,7 @@ pub use client::{
 pub use credentials::{CredentialSource, CredentialStore, Credentials};
 pub use download::{
     DownloadFileKind, DownloadOptions, DownloadReport, DownloadedFile, EntryDownloadReport,
-    MuxOptions, MuxReport, RetryPolicy,
+    MuxOptions, MuxReport, RetryPolicy, StreamSelection,
 };
 pub use error::{Error, Result};
 pub use input::Input;
@@ -26,7 +26,7 @@ pub use login::{QrLoginKind, QrLoginState, QrLoginTicket};
 pub use models::{
     DanmakuTrack, DownloadEntry, DownloadPlan, EpisodeMetadata, FlvSegment, MediaStream, Owner,
     PageMetadata, ResolvedContent, SeasonMetadata, SeasonResolution, StreamDiagnostics,
-    StreamResolverAttempt, StreamResolverOutcome, StreamSet, StreamSource, SubtitleFormat,
-    SubtitleTrack, Tag, VideoMetadata,
+    StreamQuality, StreamResolverAttempt, StreamResolverOutcome, StreamSet, StreamSource,
+    SubtitleFormat, SubtitleTrack, Tag, VideoMetadata,
 };
 pub use selection::Selection;

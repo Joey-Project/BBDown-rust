@@ -30,7 +30,8 @@ The library resolves metadata into `ResolvedContent`:
 The library resolves media availability into `DownloadPlan`:
 
 - `DownloadEntry` records the selected `aid`, `bvid`, `cid`, optional `epid`, title, and source.
-- `StreamSet` keeps DASH video/audio tracks, FLV segments, accepted quality ids, and duration.
+- `StreamSet` keeps DASH video/audio tracks, FLV segments, raw accepted quality ids, structured
+  quality labels, and duration.
 - `StreamDiagnostics` records non-default resolver attempts such as restricted-area proxy fallback.
 - `SubtitleTrack` records language metadata, normalized URL, and basic format classification.
 - `DanmakuTrack` records the XML comment endpoint derived from `cid` and the configured comment
@@ -74,16 +75,20 @@ Execution behavior is controlled by `DownloadOptions`:
 
 - output directory;
 - bounded retry policy;
+- optional DASH video/audio stream id selection;
 - HTTP range resume on or off;
 - media read idle timeout;
 - subtitle and danmaku sidecar inclusion;
 - disabled muxing or explicit `ffmpeg` binary path.
 
-For each entry, execution prefers the first complete DASH video/audio pair from the plan. If DASH
-media is incomplete and FLV `durl` segments are available, it downloads the FLV segments instead;
-otherwise the entry fails before media writes. Subtitle and danmaku files remain sidecars. When
-muxing is enabled, the executor invokes `ffmpeg` with explicit argv and returns the command plus
-output path in the report.
+For each entry, execution prefers a complete DASH video/audio pair from the plan. By default this is
+the first video and first audio stream; callers can set `StreamSelection` to request exact DASH video
+or audio stream ids. If a requested id is unavailable, the executor reports the available ids and
+fails before media writes. If DASH media is incomplete and FLV `durl` segments are available, it
+downloads the FLV segments instead; explicit stream selection requires DASH media and therefore
+rejects FLV fallback. Otherwise the entry fails before media writes. Subtitle and danmaku files
+remain sidecars. When muxing is enabled, the executor invokes `ffmpeg` with explicit argv and returns
+the command plus output path in the report.
 
 Media and sidecar downloads use media headers without account cookies, because media URLs come from
 API payloads and can target CDN or proxy hosts. DASH and FLV backup URLs are part of the candidate
@@ -208,6 +213,12 @@ crates.io metadata, a package-local README and LICENSE, dirty-tree-friendly loca
 validation, and CI-backed `cargo publish --dry-run -p bbdown --locked` validation. `bbdown-cli`
 remains `publish = false` because CLI distribution is handled by GitHub release archives.
 
+Plan output now exposes structured stream quality data. The library keeps raw
+`StreamSet::accept_quality` for compatibility and adds `StreamSet::qualities` with ids and optional
+labels derived from `accept_description`, `support_formats`, and DASH track ids. The CLI human
+summary prints the same ids alongside video/audio stream summaries, while JSON callers can select
+exact DASH streams through `DownloadOptions::stream_selection`.
+
 Live tests against Bilibili are opt-in only through `just live-e2e`. The recipe fails fast unless an
 ignored `live-e2e.samples.json` manifest exists, so branch CI is not blocked by network, account, or
 regional state. The tracked `live-e2e.samples.example.json` documents the manifest shape. Each live
@@ -232,7 +243,7 @@ fixed `cn`, `th`, `hk`, and `tw` ordering. Network requests have a configurable 
 5. Restricted-area proxy resolver ordering and diagnostics. Completed in PR #5.
 6. Manifest-driven local live e2e sample matrix. Completed in PR #7.
 7. GitHub binary release packaging. Completed in PR #8.
-8. Crate publish readiness and dry-run validation. Completed in this slice.
-9. Clearer stream quality selection and listing support. Planned.
+8. Crate publish readiness and dry-run validation. Completed in PR #9.
+9. Clearer stream quality selection and listing support. Completed in this slice.
 10. Restricted-area proxy response compatibility expansion. Planned.
 11. Integration API and documentation hardening. Planned.

@@ -1,8 +1,8 @@
 use crate::models::{
     DanmakuTrack, DownloadEntry, DownloadPlan, EpisodeMetadata, FlvSegment, MediaStream, Owner,
     PageMetadata, ResolvedContent, SeasonMetadata, SeasonResolution, StreamDiagnostics,
-    StreamResolverAttempt, StreamResolverOutcome, StreamSet, StreamSource, SubtitleFormat,
-    SubtitleTrack, Tag, VideoMetadata,
+    StreamQuality, StreamResolverAttempt, StreamResolverOutcome, StreamSet, StreamSource,
+    SubtitleFormat, SubtitleTrack, Tag, VideoMetadata,
 };
 use crate::{Credentials, Error, Input, Result, Selection};
 use md5::{Digest, Md5};
@@ -1765,6 +1765,12 @@ impl PlayUrlRoot {
             return Err(Error::MissingField("playurl streams"));
         }
         Ok(StreamSet {
+            qualities: stream_qualities(
+                &payload.accept_quality,
+                &payload.accept_description,
+                &payload.support_formats,
+                &videos,
+            ),
             videos,
             audios,
             flv_segments,
@@ -1784,7 +1790,29 @@ struct PlayPayload {
     durl: Option<Vec<DurlSegment>>,
     #[serde(default)]
     accept_quality: Vec<u32>,
+    #[serde(default)]
+    accept_description: Vec<String>,
+    #[serde(default)]
+    support_formats: Vec<SupportFormat>,
     timelength: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SupportFormat {
+    quality: Option<u32>,
+    new_description: Option<String>,
+    display_desc: Option<String>,
+    description: Option<String>,
+}
+
+impl SupportFormat {
+    fn label(&self) -> Option<String> {
+        first_non_empty([
+            self.new_description.clone(),
+            self.display_desc.clone(),
+            self.description.clone(),
+        ])
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1812,12 +1840,13 @@ impl IntlPlayUrlPayload {
         if videos.is_empty() && audios.is_empty() {
             return Err(Error::MissingField("intl playurl streams"));
         }
-        let accept_quality = videos.iter().map(|stream| stream.id).collect();
+        let accept_quality = videos.iter().map(|stream| stream.id).collect::<Vec<_>>();
         let duration_seconds = self
             .timelength
             .or(fallback_timelength)
             .and_then(|value| u32::try_from(value / 1000).ok());
         Ok(StreamSet {
+            qualities: stream_qualities(&accept_quality, &[], &[], &videos),
             videos,
             audios,
             flv_segments: Vec::new(),
@@ -2054,6 +2083,54 @@ fn normalize_media_url(url: &str) -> String {
 
 fn first_non_empty<const N: usize>(values: [Option<String>; N]) -> Option<String> {
     values.into_iter().flatten().find(|value| !value.is_empty())
+}
+
+fn stream_qualities(
+    accept_quality: &[u32],
+    accept_description: &[String],
+    support_formats: &[SupportFormat],
+    videos: &[MediaStream],
+) -> Vec<StreamQuality> {
+    let mut qualities = Vec::new();
+    for (index, id) in accept_quality.iter().copied().enumerate() {
+        push_stream_quality(
+            &mut qualities,
+            id,
+            support_format_label(id, support_formats).or_else(|| {
+                accept_description
+                    .get(index)
+                    .filter(|value| !value.is_empty())
+                    .cloned()
+            }),
+        );
+    }
+    for format in support_formats {
+        if let Some(id) = format.quality {
+            push_stream_quality(&mut qualities, id, format.label());
+        }
+    }
+    for stream in videos {
+        push_stream_quality(
+            &mut qualities,
+            stream.id,
+            support_format_label(stream.id, support_formats),
+        );
+    }
+    qualities
+}
+
+fn support_format_label(id: u32, support_formats: &[SupportFormat]) -> Option<String> {
+    support_formats
+        .iter()
+        .find(|format| format.quality == Some(id))
+        .and_then(SupportFormat::label)
+}
+
+fn push_stream_quality(qualities: &mut Vec<StreamQuality>, id: u32, description: Option<String>) {
+    if qualities.iter().any(|quality| quality.id == id) {
+        return;
+    }
+    qualities.push(StreamQuality { id, description });
 }
 
 fn normalize_media_urls<const N: usize>(url_groups: [Option<Vec<String>>; N]) -> Vec<String> {
@@ -2474,6 +2551,11 @@ mod tests {
                 "data": {
                     "timelength": 123_000,
                     "accept_quality": [80, 64],
+                    "accept_description": ["1080P", "720P"],
+                    "support_formats": [
+                        {"quality": 80, "new_description": "1080P 高码率"},
+                        {"quality": 64, "display_desc": "720P"}
+                    ],
                     "dash": {
                         "duration": 123,
                         "video": [{
@@ -2555,6 +2637,16 @@ mod tests {
             "https://flv-backup.example/segment.flv"
         );
         assert_eq!(entry.streams.duration_seconds, Some(123));
+        assert_eq!(entry.streams.qualities[0].id, 80);
+        assert_eq!(
+            entry.streams.qualities[0].description.as_deref(),
+            Some("1080P 高码率")
+        );
+        assert_eq!(entry.streams.qualities[1].id, 64);
+        assert_eq!(
+            entry.streams.qualities[1].description.as_deref(),
+            Some("720P")
+        );
         assert_eq!(entry.subtitles[0].url, "https://subtitle.example/zh.json");
         assert_eq!(
             entry.danmaku.xml_url,
