@@ -221,20 +221,21 @@ impl DownloadArchive {
 
     pub fn save(&self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
-        if path.is_dir() {
+        let save_path = archive_storage_path(path)?;
+        if save_path.is_dir() {
             return Err(Error::InvalidInput(
                 "download archive path is a directory".to_owned(),
             ));
         }
-        if let Some(parent) = path
+        if let Some(parent) = save_path
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
         {
             std::fs::create_dir_all(parent)?;
         }
-        let temporary_path = archive_sidecar_path(path, ".bbdown-archive-tmp");
+        let temporary_path = archive_sidecar_path(&save_path, ".bbdown-archive-tmp");
         std::fs::write(&temporary_path, serde_json::to_vec_pretty(self)?)?;
-        replace_archive_file(&temporary_path, path)?;
+        replace_archive_file(&temporary_path, &save_path)?;
         Ok(())
     }
 
@@ -324,7 +325,7 @@ pub struct DownloadPreflight {
     pub archived_records: Vec<DownloadArchiveRecord>,
     pub output_conflict: Option<DownloadOutputConflict>,
     #[doc(hidden)]
-    #[serde(skip)]
+    #[serde(default)]
     pub reserved_output_dirs: Vec<PathBuf>,
 }
 
@@ -373,12 +374,22 @@ impl DownloadPreflight {
         match decision {
             DuplicateDecision::KeepBoth => next_available_output_dir_avoiding(
                 &self.planned_output_dir,
-                &self.reserved_output_dirs,
+                &self.reserved_output_dirs_for_decision(),
             ),
             DuplicateDecision::Replace | DuplicateDecision::Cancel => {
                 Ok(self.planned_output_dir.clone())
             }
         }
+    }
+
+    fn reserved_output_dirs_for_decision(&self) -> Vec<PathBuf> {
+        let mut reserved = self.reserved_output_dirs.clone();
+        for record in &self.archived_records {
+            if !path_is_reserved(&record.output_dir, &reserved) {
+                reserved.push(record.output_dir.clone());
+            }
+        }
+        reserved
     }
 }
 
@@ -1021,6 +1032,26 @@ fn archive_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
     path.with_file_name(format!("{base}{suffix}"))
 }
 
+fn archive_storage_path(path: &Path) -> Result<PathBuf> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(path.to_path_buf());
+        }
+        Err(error) => return Err(Error::Io(error)),
+    };
+    if !metadata.file_type().is_symlink() {
+        return Ok(path.to_path_buf());
+    }
+    let target = std::fs::read_link(path)?;
+    let target = if target.is_absolute() {
+        target
+    } else {
+        path.parent().unwrap_or_else(|| Path::new("")).join(target)
+    };
+    Ok(canonicalize_existing_prefix(&absolute_path(&target)))
+}
+
 fn replace_archive_file(source: &Path, target: &Path) -> Result<()> {
     let backup = archive_sidecar_path(target, ".bbdown-archive-backup");
     match std::fs::remove_file(&backup) {
@@ -1495,11 +1526,10 @@ fn download_plan_content_key(plan: &DownloadPlan) -> String {
 
 fn download_entry_content_key(entry: &DownloadEntry) -> String {
     format!(
-        "aid={};bvid={};cid={};epid={}",
+        "aid={};bvid={};cid={}",
         entry.aid,
         entry.bvid.as_deref().unwrap_or_default(),
-        entry.cid,
-        entry.epid.map_or_else(String::new, |epid| epid.to_string())
+        entry.cid
     )
 }
 
@@ -1974,6 +2004,20 @@ mod tests {
         assert_eq!(
             download_entry_content_key(&first),
             download_entry_content_key(&second)
+        );
+    }
+
+    #[test]
+    fn download_entry_content_key_matches_episode_and_video_forms() {
+        let server = MockServer::start();
+        let mut video_entry = test_plan(&server).entries.remove(0);
+        let mut episode_entry = video_entry.clone();
+        video_entry.epid = None;
+        episode_entry.epid = Some(664_928);
+
+        assert_eq!(
+            download_entry_content_key(&video_entry),
+            download_entry_content_key(&episode_entry)
         );
     }
 
@@ -3719,6 +3763,36 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn download_preflight_round_trip_preserves_reserved_output_dirs() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let temp = tempfile::tempdir()?;
+        let output_base = temp.path().join("downloads");
+        let plan = test_plan(&server);
+        let options = DownloadOptions::new(output_base.clone());
+        let planned_output_dir = default_plan_output_dir(&plan, &options);
+        std::fs::create_dir_all(&planned_output_dir)?;
+        let reserved_output_dir = output_base.join("Mock video (2)");
+        let archive = DownloadArchive::new(vec![DownloadArchiveRecord {
+            content_key: "plan|unrelated".to_owned(),
+            title: "Unrelated archived content".to_owned(),
+            output_dir: reserved_output_dir,
+            completed_at_unix: 42,
+            entries: Vec::new(),
+        }]);
+        let preflight = DownloadPreflight::inspect(&plan, &options, Some(&archive))?;
+        let raw = serde_json::to_string(&preflight)?;
+
+        let round_tripped: DownloadPreflight = serde_json::from_str(&raw)?;
+
+        assert!(raw.contains("reserved_output_dirs"));
+        assert_eq!(
+            round_tripped.output_dir_for_decision(DuplicateDecision::KeepBoth)?,
+            output_base.join("Mock video (3)")
+        );
+        Ok(())
+    }
+
     #[cfg(unix)]
     #[test]
     fn download_preflight_matches_symlink_parent_archive_output() -> anyhow::Result<()> {
@@ -4312,6 +4386,32 @@ mod tests {
         assert!(raw.contains("\"records\""));
         assert!(!raw.contains("\"old\""));
         assert!(!archive_sidecar_path(&archive_path, ".bbdown-archive-backup").exists());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn download_archive_save_preserves_symlink_target() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let shared_dir = temp.path().join("shared");
+        std::fs::create_dir_all(&shared_dir)?;
+        let archive_target = shared_dir.join("archive.json");
+        let archive_link = temp.path().join("archive-link.json");
+        std::fs::write(&archive_target, "{\"old\":true}")?;
+        std::os::unix::fs::symlink(&archive_target, &archive_link)?;
+
+        DownloadArchive::default().save(&archive_link)?;
+
+        let raw = std::fs::read_to_string(&archive_target)?;
+        assert!(
+            std::fs::symlink_metadata(&archive_link)?
+                .file_type()
+                .is_symlink()
+        );
+        assert!(raw.contains("\"records\""));
+        assert!(!raw.contains("\"old\""));
+        assert!(!archive_sidecar_path(&archive_target, ".bbdown-archive-backup").exists());
+        assert!(!archive_sidecar_path(&archive_link, ".bbdown-archive-backup").exists());
         Ok(())
     }
 

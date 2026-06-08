@@ -484,7 +484,7 @@ fn ensure_archive_file_is_not_output_root(
         lexical_path_components(output_dir).context("failed to resolve output directory")?;
     let output_canonical =
         canonical_path_components(output_dir).context("failed to resolve output directory")?;
-    for archive_path in archive_write_paths(archive_file) {
+    for archive_path in archive_write_paths(archive_file)? {
         let archive_lexical =
             lexical_path_components(&archive_path).context("failed to resolve archive path")?;
         let archive_canonical =
@@ -498,12 +498,46 @@ fn ensure_archive_file_is_not_output_root(
     Ok(())
 }
 
-fn archive_write_paths(archive_file: &Path) -> [PathBuf; 3] {
-    [
+fn archive_write_paths(archive_file: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    push_archive_write_paths(&mut paths, archive_file);
+    let storage_path = archive_storage_path(archive_file)?;
+    if storage_path != archive_file {
+        push_archive_write_paths(&mut paths, &storage_path);
+    }
+    Ok(paths)
+}
+
+fn push_archive_write_paths(paths: &mut Vec<PathBuf>, archive_file: &Path) {
+    for path in [
         archive_file.to_path_buf(),
         archive_sidecar_path(archive_file, ".bbdown-archive-tmp"),
         archive_sidecar_path(archive_file, ".bbdown-archive-backup"),
-    ]
+    ] {
+        if !paths.iter().any(|existing| existing == &path) {
+            paths.push(path);
+        }
+    }
+}
+
+fn archive_storage_path(path: &Path) -> anyhow::Result<PathBuf> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(path.to_path_buf());
+        }
+        Err(error) => return Err(error).context("failed to inspect archive path"),
+    };
+    if !metadata.file_type().is_symlink() {
+        return Ok(path.to_path_buf());
+    }
+    let target = fs::read_link(path).context("failed to read archive symlink")?;
+    let target = if target.is_absolute() {
+        target
+    } else {
+        path.parent().unwrap_or_else(|| Path::new("")).join(target)
+    };
+    Ok(canonicalize_existing_prefix(&absolute_path(&target)?))
 }
 
 fn archive_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
@@ -1397,6 +1431,25 @@ mod tests {
 
         assert!(
             ensure_archive_file_is_not_output_root(&archive_through_symlink_parent, &output_root)
+                .is_err()
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn archive_file_guard_rejects_symlink_target_sidecar_overlap() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let shared_dir = temp.path().join("shared");
+        fs::create_dir_all(&shared_dir)?;
+        let archive_target = shared_dir.join("archive.json");
+        fs::write(&archive_target, "{\"records\":[]}")?;
+        let archive_link = temp.path().join("archive-link.json");
+        std::os::unix::fs::symlink(&archive_target, &archive_link)?;
+        let target_temporary_sidecar = archive_sidecar_path(&archive_target, ".bbdown-archive-tmp");
+
+        assert!(
+            ensure_archive_file_is_not_output_root(&archive_link, &target_temporary_sidecar)
                 .is_err()
         );
         Ok(())

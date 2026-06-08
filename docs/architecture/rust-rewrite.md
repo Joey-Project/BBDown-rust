@@ -130,15 +130,19 @@ then replaces stale archive records for that output path. `KeepBoth` writes to t
 output root while avoiding all archive record output paths, and comparisons use normalized output
 path keys instead of raw `PathBuf` equality. These keys resolve existing symlink prefixes before
 folding parent components, matching filesystem path resolution for archive records and CLI overlap
-guards. Entry-level archive identities use stable content ids instead of display indexes, so
-reordered pages or episodes can still be detected as duplicates.
+guards. `DownloadPreflight` serializes its reserved output paths so embedding applications can
+round-trip preflight state before executing a `KeepBoth` decision without losing archive-only output
+reservations. Entry-level archive identities use stable aid/bvid/cid content ids instead of display
+indexes or optional episode ids, so reordered pages and episode-vs-BV URL forms can still be
+detected as duplicates.
 `Cancel` is a caller-level stop decision. The CLI exposes the same model with `--archive-file` and
 `--on-duplicate`, rejects an archive file path that overlaps the chosen output root by checking both
 lexical paths and canonical targets, and applies the same guard to archive save sidecar paths.
 JSON/non-TTY mode requires an explicit decision instead of prompting. After showing preflight state,
 the CLI executes against the same preflight so a no-conflict default cannot be upgraded into an
 implicit replace if an output root appears between preflight and execution. `DownloadArchive::save`
-also rejects directory targets before writing the archive file.
+also rejects directory targets before writing the archive file, and when the archive path is a
+symlink it writes through to the symlink target so shared archive files keep one history.
 Output-root occupancy checks use symlink metadata so stale or broken symlink roots are handled
 consistently with replacement cleanup, while metadata errors such as inaccessible parents are
 reported to callers instead of being retried as suffixed output roots forever.
@@ -273,11 +277,13 @@ removing stale output-root artifacts before fresh writes, keep-both suffixed out
 archive JSON round trips/replacement without media URLs. They also cover archive-only keep-both path
 reservation, unrelated archive-only output path reservation, same-output archive record replacement,
 display-index-insensitive entry archive identity, broken-symlink output roots, metadata error
-reporting, and directory-target archive save rejection. CLI mock e2e tests cover JSON duplicate
-failure without an
+reporting, preflight JSON round-trip reservation preservation, episode-vs-video entry identity,
+symlink archive target saves, and directory-target archive save rejection. CLI mock e2e tests cover
+JSON duplicate failure without an
 explicit decision, `cancel` preflight output, `keep-both` suffixed output roots, `replace`
-overwriting an existing file, and rejecting an archive file path that overlaps the chosen output root
-lexically or through canonicalized targets, including archive save sidecar paths.
+overwriting an existing file, symlink archive target updates, and rejecting an archive file path that
+overlaps the chosen output root lexically or through canonicalized targets, including archive save
+sidecar paths.
 
 Live tests against Bilibili are opt-in only through `just live-e2e`. The recipe fails fast unless an
 ignored `live-e2e.samples.json` manifest exists, so branch CI is not blocked by network, account, or

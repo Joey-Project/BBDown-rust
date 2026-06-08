@@ -42,16 +42,20 @@ superseded_by:
 - `keep-both` reserves all archive record output paths even when those paths are no longer on disk,
   so archive-only duplicate history is preserved across equivalent path spellings and unrelated
   same-title records.
+- `DownloadPreflight` preserves reserved output roots through JSON serialization so embedding UIs
+  can round-trip preflight state before applying a `keep-both` decision.
 - Entry-level archive identities ignore display indexes, so reordered pages or episodes can still
-  be detected as duplicates by stable aid/bvid/cid/epid content ids.
+  be detected as duplicates by stable aid/bvid/cid content ids. Optional `epid` is not part of the
+  entry key so the same PGC media can match when planned through an episode URL or a BV/av URL.
 - Output-root occupancy uses symlink metadata, so broken symlink roots are treated as existing roots
   for preflight, keep-both candidate selection, and replace cleanup. Non-`NotFound` metadata
   errors are reported to callers instead of being retried as suffixed keep-both roots.
 - The CLI rejects `--archive-file` and archive save sidecar paths when they overlap the chosen
   output root either lexically or through canonical targets. For explicit `keep-both`, this guard is
   applied to the actual suffixed output root. `DownloadArchive::save` rejects directory targets
-  before replacing archive files, and `DownloadArchive::load` reports metadata errors instead of
-  treating unreadable archive paths as empty archives.
+  before replacing archive files, preserves symlink archive targets instead of replacing the link
+  itself, and `DownloadArchive::load` reports metadata errors instead of treating unreadable archive
+  paths as empty archives.
 - Canonical archive overlap checks resolve existing symlink prefixes before folding parent
   components, so paths such as `link/../archive.json` cannot hide an archive target inside the
   chosen output root.
@@ -72,9 +76,13 @@ superseded_by:
 - Targeted crate coverage:
   `cargo test --locked -p bbdown download_preflight_reports_same_output_archive_record`.
 - Targeted crate coverage:
+  `cargo test --locked -p bbdown download_preflight_round_trip_preserves_reserved_output_dirs`.
+- Targeted crate coverage:
   `cargo test --locked -p bbdown download_preflight_matches_symlink_parent_archive_output`.
 - Targeted crate coverage:
   `cargo test --locked -p bbdown download_entry_content_key_ignores_display_index`.
+- Targeted crate coverage:
+  `cargo test --locked -p bbdown download_entry_content_key_matches_episode_and_video_forms`.
 - Targeted crate coverage:
   `cargo test --locked -p bbdown download_archive_record_stores_absolute_paths`.
 - Targeted crate coverage:
@@ -110,9 +118,13 @@ superseded_by:
 - Targeted crate coverage:
   `cargo test --locked -p bbdown download_archive_save_replaces_existing_file`.
 - Targeted crate coverage:
+  `cargo test --locked -p bbdown download_archive_save_preserves_symlink_target`.
+- Targeted crate coverage:
   `cargo test --locked -p bbdown download_archive_save_rejects_directory_path`.
 - Targeted CLI archive coverage:
   `cargo test --locked -p bbdown-cli download_archive_`.
+- Targeted CLI archive coverage:
+  `cargo test --locked -p bbdown-cli --test cli_e2e download_archive_symlink_updates_target_archive`.
 - Targeted CLI archive coverage:
   `cargo test --locked -p bbdown-cli --test cli_e2e download_archive_keep_both_allows_archive_inside_old_output_root`.
 - Targeted CLI unit coverage:
@@ -123,6 +135,8 @@ superseded_by:
   `cargo test --locked -p bbdown-cli archive_file_guard_rejects_lexical_symlink_inside_output_root`.
 - Targeted CLI unit coverage:
   `cargo test --locked -p bbdown-cli archive_file_guard_resolves_symlink_before_parent_components`.
+- Targeted CLI unit coverage:
+  `cargo test --locked -p bbdown-cli archive_file_guard_rejects_symlink_target_sidecar_overlap`.
 - Targeted CLI unit coverage:
   `cargo test --locked -p bbdown-cli duplicate_decision_prompt_state_tracks_displayed_preflight`.
 - Workspace tests: `cargo test --workspace --locked`.

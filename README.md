@@ -52,14 +52,16 @@ retries bounded transient failures, validates advertised media sizes when presen
 media shapes, and runs `ffmpeg` unless `--no-mux` is supplied.
 Pass `--archive-file <path>` to record completed downloads by content identity. Archive output,
 sidecar, and mux paths are stored as absolute paths at record time so the same archive can be reused
-from another working directory. When the same content, entry, or archive output directory is seen
-again, non-interactive JSON mode requires `--on-duplicate replace`, `--on-duplicate keep-both`, or
-`--on-duplicate cancel`; interactive human mode prompts when no decision is provided. `replace`
-removes the existing planned output root before a fresh download and replaces stale archive records
-for that output path, `keep-both` writes the next suffixed output root while avoiding all archive
-record output paths, and `cancel` reports the preflight state without downloading. The archive file
-itself must not be the chosen output root or inside that root; the CLI applies the same guard to
-archive save sidecar paths.
+from another working directory. Entry identity uses stable aid/bvid/cid media ids, so the same PGC
+episode can still match when later planned through its BV/av URL. When the same content, entry, or
+archive output directory is seen again, non-interactive JSON mode requires `--on-duplicate replace`,
+`--on-duplicate keep-both`, or `--on-duplicate cancel`; interactive human mode prompts when no
+decision is provided. `replace` removes the existing planned output root before a fresh download and
+replaces stale archive records for that output path, `keep-both` writes the next suffixed output root
+while avoiding all archive record output paths, and `cancel` reports the preflight state without
+downloading. The archive file itself must not be the chosen output root or inside that root; the CLI
+applies the same guard to archive save sidecar paths. If the archive file is a symlink, saves update
+the symlink target so shared archive history is not forked.
 
 `ss` and `md` inputs require an explicit selection in non-interactive mode:
 

@@ -118,8 +118,10 @@ Use `--archive-file <path>` when a caller wants duplicate preflight and a durabl
 completed downloads. The archive is a local JSON file keyed by content identity; it records output
 paths, entry ids, sidecar paths, mux output paths, and completion timestamps, but it does not store
 media URLs or credentials. Output, sidecar, and mux paths are stored as absolute paths at record
-time so the archive can be reused from another working directory. When a planned content key, entry
-identity, or archive output directory already exists, the CLI needs a duplicate decision:
+time so the archive can be reused from another working directory. Entry identity uses stable
+aid/bvid/cid media ids, so the same PGC episode can still match when later planned through its
+BV/av URL. When a planned content key, entry identity, or archive output directory already exists,
+the CLI needs a duplicate decision:
 
 - `--on-duplicate replace` removes the existing planned output directory or file before a fresh
   download and replaces stale archive records that pointed at that output path.
@@ -134,7 +136,9 @@ Without an explicit decision, human TTY mode prompts on stderr. `--json` mode an
 prompt; they fail with instructions to pass `--on-duplicate` instead. Without `--archive-file`,
 download behavior is unchanged and no duplicate preflight runs. `--archive-file` must point to a JSON
 file path that does not overlap the chosen output directory for the selected content and duplicate
-decision; for `keep-both`, that check is applied to the actual suffixed output directory.
+decision; for `keep-both`, that check is applied to the actual suffixed output directory. If
+`--archive-file` is a symlink, saves update the symlink target so multiple callers can share one
+archive path without forking history.
 
 `--request-timeout-seconds` applies to API requests. Media body reads use
 `--download-idle-timeout-seconds`; pass `0` to disable that idle timeout.

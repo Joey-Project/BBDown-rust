@@ -575,6 +575,42 @@ fn download_archive_keep_both_uses_suffixed_output_dir() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+fn download_archive_symlink_updates_target_archive() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let shared_dir = temp.path().join("shared");
+    let archive_target = shared_dir.join("archive.json");
+    let archive_link = temp.path().join("archive-link.json");
+    fs::create_dir_all(&shared_dir)?;
+    fs::write(&archive_target, "{\"records\":[]}")?;
+    std::os::unix::fs::symlink(&archive_target, &archive_link)?;
+    mock_minimal_download(&server);
+
+    archive_download_command(&credential_file, &server, &output_dir, &archive_link, None)?
+        .assert()
+        .success();
+    let archive: Value = serde_json::from_slice(&fs::read(&archive_target)?)?;
+
+    assert!(
+        fs::symlink_metadata(&archive_link)?
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(archive["records"].as_array().map(Vec::len), Some(1));
+    assert!(output_dir.join("Mock video").exists());
+    assert!(
+        !temp
+            .path()
+            .join("archive-link.json.bbdown-archive-backup")
+            .exists()
+    );
+    Ok(())
+}
+
 #[test]
 fn download_archive_keep_both_allows_archive_inside_old_output_root() -> anyhow::Result<()> {
     let server = MockServer::start();
