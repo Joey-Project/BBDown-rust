@@ -219,10 +219,12 @@ DASH video ids plus optional labels derived from `accept_description` and `suppo
 human summary prints the same ids alongside video/audio stream summaries, while JSON callers can
 select exact DASH streams through `DownloadOptions::stream_selection`.
 
-The reusable crate is still pre-1.0. Embedders should create download settings with
-`DownloadOptions::new` or `DownloadOptions::default` and then set fields instead of relying on struct
-literals. Public output containers such as `StreamSet` are marked non-exhaustive because plan models
-are consumed data surfaces and may gain fields while the crate matures.
+The reusable crate is still preparing for its first crates.io release, so this branch intentionally
+hardens public structs before publishing rather than preserving local pre-release struct-literal
+experiments. Embedders should create download settings with `DownloadOptions::new` or
+`DownloadOptions::default` and then set fields instead of relying on struct literals. Public output
+containers such as `StreamSet` are marked non-exhaustive because plan models are consumed data
+surfaces and may gain fields while the crate matures.
 
 Live tests against Bilibili are opt-in only through `just live-e2e`. The recipe fails fast unless an
 ignored `live-e2e.samples.json` manifest exists, so branch CI is not blocked by network, account, or

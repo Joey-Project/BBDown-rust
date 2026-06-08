@@ -18,8 +18,10 @@ The crates.io publish target is the reusable `bbdown` library crate. Use `just p
 local locked dry run that tolerates an uncommitted worktree, and use
 `just publish-dry-run-strict` or `cargo publish --dry-run -p bbdown --locked` to reproduce the clean
 CI gate. The `bbdown-cli` package is marked `publish = false`; install or distribute the CLI through
-GitHub release archives instead. The library is still pre-1.0; embedding callers should prefer
-constructors such as `DownloadOptions::new` and `Default` over public struct literals.
+GitHub release archives instead. The library is still preparing for its first crates.io release; this
+pre-release branch intentionally hardens public structs before publishing. Embedding callers should
+prefer constructors such as `DownloadOptions::new` and `Default` over public struct literals, and
+treat public plan output containers as consumed data surfaces.
 
 ## Metadata
 
