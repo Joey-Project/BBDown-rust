@@ -149,3 +149,6 @@ superseded_by:
 - Follow-up independent review found non-locked lint/test steps could update `Cargo.lock` before the
   later locked checks. CI, release verification, local tests, CLI e2e, and live e2e now run Cargo
   validation with `--locked`.
+- Follow-up independent review found GitHub Release reuse could accept an existing final release
+  marked as a prerelease. Promotion now rejects prerelease final releases instead of treating them as
+  recovered success.

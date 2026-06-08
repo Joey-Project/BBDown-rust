@@ -96,17 +96,18 @@ local `.crate` SHA256 matches the crates.io checksum.
 - If GitHub Release publication succeeds but crates.io publication fails, prefer GitHub Actions
   `Re-run failed jobs` so only the failed crate job is retried without rebuilding artifacts. A full
   rerun from the same RC tag is fail-closed: the workflow reuses an existing published GitHub Release
-  only when the release asset names exactly match the expected names, each asset is `uploaded` and
-  non-empty, and the downloaded archives are named by and verify against their published `.sha256`
-  sidecars, while the rebuilt `dist` archives also verify against their own sidecars and have the
-  same archive checksums as the published assets. It then continues to crates.io publication. Release
-  archives normalize entry ordering, timestamps, owners, groups, and archive container metadata so
-  identical compiled inputs have stable package checksums. If the exact crate version was already
-  accepted by crates.io, the crate publish step exits successfully only after the current RC package
-  checksum matches the crates.io checksum.
+  only when it is not marked as a prerelease, the release asset names exactly match the expected
+  names, each asset is `uploaded` and non-empty, and the downloaded archives are named by and verify
+  against their published `.sha256` sidecars, while the rebuilt `dist` archives also verify against
+  their own sidecars and have the same archive checksums as the published assets. It then continues
+  to crates.io publication. Release archives normalize entry ordering, timestamps, owners, groups,
+  and archive container metadata so identical compiled inputs have stable package checksums. If the
+  exact crate version was already accepted by crates.io, the crate publish step exits successfully
+  only after the current RC package checksum matches the crates.io checksum.
 - Final releases are intentionally non-overwriting. Final tags are reused only when they already
-  point at the same RC target commit, and published GitHub Releases are reused only when their asset
-  set is complete and checksum-verified. To replace a bad final release, create a new version.
+  point at the same RC target commit, and published GitHub Releases are reused only when they are
+  non-prerelease releases with a complete checksum-verified asset set. To replace a bad final
+  release, create a new version.
 
 After publication, verify:
 

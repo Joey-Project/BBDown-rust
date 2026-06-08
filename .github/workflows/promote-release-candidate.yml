@@ -189,10 +189,15 @@ jobs:
           if [[ -n "${release_id}" ]]; then
             release_json=$(gh api "repos/${repo}/releases/${release_id}")
             release_is_draft=$(printf '%s' "${release_json}" | python3 -c 'import json, sys; print("true" if json.load(sys.stdin)["draft"] else "false")')
+            release_is_prerelease=$(printf '%s' "${release_json}" | python3 -c 'import json, sys; print("true" if json.load(sys.stdin)["prerelease"] else "false")')
             if [[ "${release_is_draft}" == "true" ]]; then
               echo "Deleting draft GitHub Release ${FINAL_TAG} before retry"
               gh api --method DELETE "repos/${repo}/releases/${release_id}" >/dev/null
             else
+              if [[ "${release_is_prerelease}" == "true" ]]; then
+                echo "::error::GitHub Release ${FINAL_TAG} is marked as prerelease; final release recovery requires a published non-prerelease release"
+                exit 2
+              fi
               expected_asset_names=$(mktemp)
               existing_asset_details=$(mktemp)
               existing_asset_names=$(mktemp)
