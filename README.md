@@ -7,7 +7,8 @@
 
 The current implementation establishes the crate/CLI/CI foundation, metadata resolver, stream
 planning, media downloads, sidecar downloads, retry/resume behavior, optional ffmpeg muxing, QR
-login, opt-in live test harnesses, and configured restricted-area proxy ordering with diagnostics.
+login, opt-in live test harnesses, configured restricted-area proxy ordering with diagnostics, and
+builder-style crate integration APIs.
 
 ## Current CLI
 
@@ -111,7 +112,8 @@ Resolver diagnostics reduce endpoints to URL origins and redact sensitive error-
 GitHub tag releases build prepackaged `bbdown` CLI archives for Linux x86_64, macOS x86_64,
 macOS aarch64, and Windows x86_64. Manual release workflow runs can also build the same archives
 without publishing a GitHub Release. Each archive includes the CLI binary, `README.md`,
-`docs/user-guide.md`, and `LICENSE`. Each archive also has an adjacent `.sha256` checksum file.
+`docs/user-guide.md`, `docs/embedding.md`, and `LICENSE`. Each archive also has an adjacent
+`.sha256` checksum file.
 
 ## Developer Commands
 
@@ -138,12 +140,15 @@ running, so sample behavior is driven by the manifest rather than shell state.
 
 ## Documentation
 
-- Crate API note: this rewrite is still `0.1`; embedding projects should prefer
-  `ClientConfig::new(endpoints, credentials).with_*` over `ClientConfig { ... }` struct literals so
-  added configuration fields are less disruptive. Output model structs such as `DownloadEntry` are
+- Crate API note: this rewrite is still `0.1`; embedding projects should prefer `Default`, `new`,
+  and `with_*` constructors such as `ClientConfig::default().with_*`,
+  `EndpointConfig::default().with_*`, `RestrictedAreaConfig::default().with_*`,
+  `DownloadOptions::new(...).with_*`, and `RetryPolicy::new(...)` over struct literals so added
+  configuration fields are less disruptive. Output model structs such as `DownloadEntry` are
   intended to be consumed as returned values or through serde; their struct-literal construction is
   not treated as a stable compatibility surface before the crate leaves `0.1`.
 - User guide: [docs/user-guide.md](docs/user-guide.md)
+- Embedding guide: [docs/embedding.md](docs/embedding.md)
 - Architecture: [docs/architecture/rust-rewrite.md](docs/architecture/rust-rewrite.md)
 - Project state: [docs/PROJECT_STATE.md](docs/PROJECT_STATE.md)
 - Project TODO: [docs/PROJECT_TODO.md](docs/PROJECT_TODO.md)

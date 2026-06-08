@@ -10,4 +10,4 @@
 - [completed] Add crate publish readiness and dry-run validation.
 - [completed] Add clearer stream quality selection and listing support.
 - [completed] Expand restricted-area proxy response compatibility.
-- [pending] Harden integration APIs and embedding documentation.
+- [completed] Harden integration APIs and embedding documentation.

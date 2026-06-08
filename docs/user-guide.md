@@ -10,7 +10,7 @@ download-plan resolution, media download execution, sidecar downloads, and optio
 GitHub releases provide prepackaged `bbdown` CLI archives for Linux x86_64, macOS x86_64,
 macOS aarch64, and Windows x86_64. Download the archive for your platform, verify it against the
 adjacent `.sha256` file if needed, extract it, and place the `bbdown` or `bbdown.exe` binary on your
-`PATH`. Archives also include `README.md`, this user guide, and `LICENSE`.
+`PATH`. Archives also include `README.md`, this user guide, `docs/embedding.md`, and `LICENSE`.
 
 ## Crate Publishing
 
@@ -23,6 +23,17 @@ pre-release branch intentionally hardens public structs before publishing. Embed
 prefer constructors such as `DownloadOptions::new`, `StreamSelection::new`, and `Default` over
 public struct literals, and treat public plan output containers as consumed non-exhaustive data
 surfaces.
+
+## Library Embedding
+
+Use the `bbdown` crate when another Rust project needs typed metadata, download plans, download
+execution reports, or restricted-area resolver diagnostics without spawning the CLI. The repository
+embedding guide has copyable examples for `ClientConfig`, `EndpointConfig`, credentials,
+restricted-area proxies, and `DownloadOptions`: `docs/embedding.md`.
+
+Embedding callers should keep configuration construction on `Default`, `new`, and `with_*` methods.
+The CLI in this workspace follows the same path, so these builders are covered by normal CI and mock
+e2e tests.
 
 ## Metadata
 

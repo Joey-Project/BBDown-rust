@@ -213,25 +213,27 @@ async fn main() -> anyhow::Result<()> {
                 retry_attempts > 0,
                 "--retry-attempts must be greater than 0"
             );
-            let mut options = DownloadOptions::new(output_dir);
-            options.retry = RetryPolicy {
-                max_attempts: retry_attempts,
-                backoff: Duration::from_millis(retry_backoff_ms),
-            };
-            options.stream_selection = StreamSelection::new(video_quality, audio_quality);
-            options.download_idle_timeout = if download_idle_timeout_seconds == 0 {
+            let download_idle_timeout = if download_idle_timeout_seconds == 0 {
                 None
             } else {
                 Some(Duration::from_secs(download_idle_timeout_seconds))
             };
-            options.resume = !no_resume;
-            options.include_subtitles = !no_subtitles;
-            options.include_danmaku = !no_danmaku;
-            options.mux = if no_mux {
+            let mux = if no_mux {
                 MuxOptions::Disabled
             } else {
-                MuxOptions::Ffmpeg { binary: ffmpeg }
+                MuxOptions::ffmpeg(ffmpeg)
             };
+            let options = DownloadOptions::new(output_dir)
+                .with_retry_policy(RetryPolicy::new(
+                    retry_attempts,
+                    Duration::from_millis(retry_backoff_ms),
+                ))
+                .with_stream_selection(StreamSelection::new(video_quality, audio_quality))
+                .with_download_idle_timeout(download_idle_timeout)
+                .with_resume(!no_resume)
+                .with_subtitles(!no_subtitles)
+                .with_danmaku(!no_danmaku)
+                .with_mux(mux);
             let args = DownloadCommandArgs {
                 url,
                 select,
@@ -628,23 +630,22 @@ fn endpoints_from_cli(cli: &Cli) -> EndpointConfig {
     let tv_passport_base = cli
         .tv_passport_base
         .clone()
-        .unwrap_or(default_endpoints.tv_passport_base);
+        .unwrap_or_else(|| default_endpoints.tv_passport_base.clone());
     let tv_passport_poll_base = cli.tv_passport_poll_base.clone().unwrap_or_else(|| {
         if cli.tv_passport_base.is_some() {
             tv_passport_base.clone()
         } else {
-            default_endpoints.tv_passport_poll_base
+            default_endpoints.tv_passport_poll_base.clone()
         }
     });
-    EndpointConfig {
-        api_base: cli.api_base.clone(),
-        pgc_base: cli.pgc_base.clone(),
-        intl_base: cli.intl_base.clone(),
-        comment_base: cli.comment_base.clone(),
-        passport_base: cli.passport_base.clone(),
-        tv_passport_base,
-        tv_passport_poll_base,
-    }
+    EndpointConfig::default()
+        .with_api_base(cli.api_base.clone())
+        .with_pgc_base(cli.pgc_base.clone())
+        .with_intl_base(cli.intl_base.clone())
+        .with_comment_base(cli.comment_base.clone())
+        .with_passport_base(cli.passport_base.clone())
+        .with_tv_passport_base(tv_passport_base)
+        .with_tv_passport_poll_base(tv_passport_poll_base)
 }
 
 #[derive(Clone, Debug)]
@@ -684,7 +685,7 @@ fn restricted_area_from_cli_with_env_values(
         .iter()
         .map(|arg| parse_restricted_proxy_spec(&arg.spec, arg.kind, arg.order_priority))
         .collect::<anyhow::Result<Vec<_>>>()?;
-    Ok(RestrictedAreaConfig { area_hint, proxies })
+    Ok(RestrictedAreaConfig::new(area_hint, proxies))
 }
 
 fn proxy_args_from_sources(
