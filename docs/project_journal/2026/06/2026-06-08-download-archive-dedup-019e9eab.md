@@ -5,7 +5,7 @@ status: completed
 created: 2026-06-08
 updated: 2026-06-08
 branch: wip/download-archive-dedup
-pr:
+pr: https://github.com/Joey-Project/BBDown-rust/pull/13
 supersedes: []
 superseded_by:
 ---
