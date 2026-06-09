@@ -21,7 +21,7 @@ if (-not (Test-Path -LiteralPath $BinaryPath -PathType Leaf)) {
 }
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$repoRoot = Split-Path -Parent $scriptDir
+$repoRoot = Split-Path -Parent (Split-Path -Parent $scriptDir)
 $outputFullPath = [System.IO.Path]::GetFullPath($OutputDir)
 New-Item -ItemType Directory -Path $outputFullPath -Force | Out-Null
 
@@ -39,6 +39,8 @@ try {
     Copy-Item -LiteralPath (Join-Path $repoRoot "docs/embedding.zh-CN.md") -Destination (Join-Path $stagingDir "docs/embedding.zh-CN.md")
     Copy-Item -LiteralPath (Join-Path $repoRoot "docs/user-guide.md") -Destination (Join-Path $stagingDir "docs/user-guide.md")
     Copy-Item -LiteralPath (Join-Path $repoRoot "docs/user-guide.zh-CN.md") -Destination (Join-Path $stagingDir "docs/user-guide.zh-CN.md")
+    Copy-Item -LiteralPath (Join-Path $repoRoot "docs/release.md") -Destination (Join-Path $stagingDir "docs/release.md")
+    Copy-Item -LiteralPath (Join-Path $repoRoot "docs/release.zh-CN.md") -Destination (Join-Path $stagingDir "docs/release.zh-CN.md")
     Copy-Item -LiteralPath (Join-Path $repoRoot "docs/architecture/rust-rewrite.md") -Destination (Join-Path $stagingDir "docs/architecture/rust-rewrite.md")
     Copy-Item -LiteralPath (Join-Path $repoRoot "docs/architecture/rust-rewrite.zh-CN.md") -Destination (Join-Path $stagingDir "docs/architecture/rust-rewrite.zh-CN.md")
     $licensePath = Join-Path $repoRoot "LICENSE"
@@ -49,10 +51,37 @@ try {
     if (Test-Path -LiteralPath $archivePath) {
         Remove-Item -LiteralPath $archivePath -Force
     }
-    Compress-Archive -Path $stagingDir -DestinationPath $archivePath
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zipEpoch = [DateTimeOffset]::new(1980, 1, 1, 0, 0, 0, [TimeSpan]::Zero)
+    $zip = [System.IO.Compression.ZipFile]::Open($archivePath, [System.IO.Compression.ZipArchiveMode]::Create)
+    try {
+        $files = Get-ChildItem -LiteralPath $stagingDir -Recurse -File | Sort-Object FullName
+        foreach ($file in $files) {
+            $relativePath = [System.IO.Path]::GetRelativePath($stagingParent, $file.FullName).Replace("\", "/")
+            $entry = $zip.CreateEntry($relativePath, [System.IO.Compression.CompressionLevel]::Optimal)
+            $entry.LastWriteTime = $zipEpoch
+            $inputStream = [System.IO.File]::OpenRead($file.FullName)
+            try {
+                $outputStream = $entry.Open()
+                try {
+                    $inputStream.CopyTo($outputStream)
+                }
+                finally {
+                    $outputStream.Dispose()
+                }
+            }
+            finally {
+                $inputStream.Dispose()
+            }
+        }
+    }
+    finally {
+        $zip.Dispose()
+    }
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archivePath).Hash.ToLowerInvariant()
     $archiveName = Split-Path -Leaf $archivePath
-    Set-Content -LiteralPath $checksumPath -Value "$hash  $archiveName" -Encoding ascii
+    [System.IO.File]::WriteAllText($checksumPath, "$hash  $archiveName`n", [System.Text.Encoding]::ASCII)
     Write-Output $archivePath
 }
 finally {

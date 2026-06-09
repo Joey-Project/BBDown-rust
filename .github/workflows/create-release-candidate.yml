@@ -1,0 +1,149 @@
+name: Create Release Candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Final SemVer version without the leading v, for example 0.1.0."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release candidate
+    runs-on: ubuntu-latest
+    outputs:
+      rc_tag: ${{ steps.meta.outputs.rc_tag }}
+      final_tag: ${{ steps.meta.outputs.final_tag }}
+      target_sha: ${{ steps.meta.outputs.target_sha }}
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      # actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust stable
+        run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
+
+      - name: Validate release metadata
+        id: meta
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          repo="${GITHUB_REPOSITORY}"
+          source scripts/release/common.sh
+          if [[ -z "${DEFAULT_BRANCH}" ]]; then
+            echo "::error::repository default branch is not available"
+            exit 2
+          fi
+          if [[ "${GITHUB_REF}" != "refs/heads/${DEFAULT_BRANCH}" ]]; then
+            echo "::error::release candidates must be created from the default branch ${DEFAULT_BRANCH}; current ref is ${GITHUB_REF}"
+            exit 2
+          fi
+          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must be MAJOR.MINOR.PATCH without a leading v: ${VERSION}"
+            exit 2
+          fi
+          cargo_versions=$(release_workspace_versions)
+          core_version=$(printf '%s\n' "${cargo_versions}" | sed -n '1p')
+          cli_version=$(printf '%s\n' "${cargo_versions}" | sed -n '2p')
+          if [[ "${core_version}" != "${VERSION}" ]]; then
+            echo "::error::bbdown-core version ${core_version} does not match requested release ${VERSION}"
+            exit 2
+          fi
+          if [[ "${cli_version}" != "${VERSION}" ]]; then
+            echo "::error::bbdown-cli version ${cli_version} does not match requested release ${VERSION}"
+            exit 2
+          fi
+          final_tag="v${VERSION}"
+          release_ensure_release_absent "${repo}" "${final_tag}"
+          release_ensure_tag_absent "${repo}" "${final_tag}" "final tag ${final_tag} already exists; create a new version instead"
+          max_rc=$(release_max_rc_number "${repo}" "${VERSION}")
+          rc_number=$((max_rc + 1))
+          target_sha=$(git rev-parse HEAD)
+          rc_tag="v${VERSION}-rc.${rc_number}"
+          {
+            echo "rc_tag=${rc_tag}"
+            echo "final_tag=${final_tag}"
+            echo "target_sha=${target_sha}"
+            echo "version=${VERSION}"
+          } >> "${GITHUB_OUTPUT}"
+
+  verify:
+    name: Verify release source
+    needs: validate
+    uses: ./.github/workflows/release-verify.yml
+    with:
+      checkout_ref: ${{ needs.validate.outputs.target_sha }}
+
+  build-artifacts:
+    name: Build release candidate artifacts
+    needs:
+      - validate
+      - verify
+    uses: ./.github/workflows/release.yml
+    with:
+      checkout_ref: ${{ needs.validate.outputs.target_sha }}
+      package_version: ${{ needs.validate.outputs.rc_tag }}
+
+  create-tag:
+    name: Create release candidate tag
+    needs:
+      - validate
+      - verify
+      - build-artifacts
+    runs-on: ubuntu-latest
+    environment: release-candidate
+    permissions:
+      contents: read
+    steps:
+      # actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ needs.validate.outputs.target_sha }}
+
+      # actions/create-github-app-token@v2
+      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        id: app-token
+        with:
+          app-id: ${{ secrets.RELEASE_GITHUB_APP_ID }}
+          private-key: ${{ secrets.RELEASE_GITHUB_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+
+      - name: Create annotated RC tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          RC_TAG: ${{ needs.validate.outputs.rc_tag }}
+          FINAL_TAG: ${{ needs.validate.outputs.final_tag }}
+          TARGET_SHA: ${{ needs.validate.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          repo="${GITHUB_REPOSITORY}"
+          source scripts/release/common.sh
+          release_ensure_release_absent "${repo}" "${FINAL_TAG}"
+          release_ensure_tag_absent "${repo}" "${FINAL_TAG}" "final tag ${FINAL_TAG} already exists; create a new version instead"
+          release_ensure_tag_absent "${repo}" "${RC_TAG}" "tag ${RC_TAG} already exists"
+          tag_sha=$(gh api --method POST "repos/${repo}/git/tags" \
+            -f tag="${RC_TAG}" \
+            -f message="Release candidate ${RC_TAG}" \
+            -f object="${TARGET_SHA}" \
+            -f type=commit \
+            --jq .sha)
+          gh api --method POST "repos/${repo}/git/refs" \
+            -f ref="refs/tags/${RC_TAG}" \
+            -f sha="${tag_sha}" >/dev/null
+          echo "Created ${RC_TAG} at ${TARGET_SHA}"

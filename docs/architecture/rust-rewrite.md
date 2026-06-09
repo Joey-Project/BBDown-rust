@@ -239,21 +239,54 @@ HTTP request errors are converted without retaining full URLs so query secrets s
 
 Default CI is deterministic:
 
-- `cargo fmt --check`
-- `cargo clippy --workspace --all-targets -- -D warnings`
-- unit tests
-- CLI mock e2e tests
+- `cargo fmt --all -- --check`
+- `cargo clippy --workspace --all-targets --locked -- -D warnings`
+- declared MSRV check with `cargo +1.95.0 check --workspace --locked`
+- unit and workspace integration tests with `cargo test --workspace --locked`
+- local CLI mock e2e tests with `cargo test -p bbdown-cli --test cli_e2e --locked`
 - crates.io dry-run packaging for the publishable `bbdown-core` library package
 
-Release packaging is a separate GitHub Actions workflow. Tag pushes matching `v*` build Linux
-x86_64, macOS x86_64, macOS aarch64, and Windows x86_64 CLI archives and publish them to the
-GitHub Release with generated release notes. Manual workflow dispatch builds the same archives as
-downloadable workflow artifacts without publishing a release. Archives contain the `bbdown` binary,
-English and Simplified Chinese README files, English and Simplified Chinese user, embedding, and
-architecture guides, and `LICENSE`. Each archive also has an adjacent platform-specific checksum
-file. Action references in the release workflow are pinned to commit SHAs. Package names normalize
-release refs to the packager-safe `[A-Za-z0-9._-]` character set, so tags such as SemVer build
-metadata do not fail at packaging time.
+Release packaging is a separate GitHub Actions workflow stack. `Release Artifacts` is reusable and
+manual-only: it builds Linux x86_64, macOS x86_64, macOS aarch64, and Windows x86_64 CLI archives
+without publishing tags, GitHub Releases, or crates. `Release Verification` is also reusable: both
+RC creation and RC promotion call it to run formatter, clippy, declared MSRV, tests, and crates.io
+dry-run validation for the selected commit. `Create Release Candidate` validates the repository
+default branch, builds those archives, and creates an annotated `vX.Y.Z-rc.N` tag through the release
+GitHub App, but first rejects versions that already have a final tag or GitHub Release. It repeats
+that final tag and GitHub Release check immediately before writing the RC tag.
+`Promote Release Candidate` must be run from the latest RC tag for the requested version; it reruns
+validation, rebuilds final archives, rechecks that the selected RC is still latest immediately before
+publication, creates the final annotated `vX.Y.Z` tag, publishes the GitHub Release, then publishes
+`bbdown-core` to crates.io through the protected `crates-io` environment. It also checks any existing
+crates.io `bbdown-core` version is non-yanked and has the expected package checksum before creating
+the final tag or GitHub Release, and repeats that check in the publish job before treating an
+existing crate version as recovered success. RC
+creation and promotion share a version-scoped concurrency group, so a later RC cannot be created
+while the same version is being promoted. Archives contain the
+`bbdown` binary, English and Simplified Chinese README files, English and Simplified Chinese user,
+embedding, release, and architecture guides, and `LICENSE`. Each archive also has an adjacent
+platform-specific checksum file. GitHub Release notes are generated from the previous non-RC final
+release tag when one exists, so the RC tag is not used as the comparison base for the final release.
+Promotion also supports retry after GitHub Release creation is interrupted: draft releases are
+deleted and recreated, while published releases are reused only if the expected asset set is already
+complete. Reuse requires the exact expected asset name set, `uploaded` states, non-empty sizes, and
+downloaded archives that are named by and verify against their published `.sha256` sidecars. This
+also requires the rebuilt `dist` archives to verify against their own sidecars and have the same
+archive checksums as the published assets. Release archives normalize entry ordering, timestamps,
+owners, groups, and archive container metadata so the same compiled inputs produce stable package
+checksums. The workflow lists releases by `tag_name` instead
+of relying only on the published-release tag endpoint, so draft releases are visible to the release
+GitHub App token. The crates.io publish step checks the exact `bbdown-core` version first, then
+repackages the selected RC source and requires the local `.crate` SHA256 to match the crates.io
+checksum before treating an already-published version as recovered success. This covers runner
+failures after the upload was accepted without allowing a different package for the same version to
+pass recovery. Release workflows use the GitHub-hosted runner `rustup` and the floating stable
+Rust channel from `rust-toolchain.toml`; third-party Rust toolchain and cache actions are
+intentionally avoided. They also install Rust 1.95.0 for a
+`cargo check` gate matching the crate `rust-version` metadata. Package names normalize release refs
+to the packager-safe `[A-Za-z0-9._-]` character set, so tags such as SemVer build metadata do not
+fail at packaging time. Shared release shell helpers live in `scripts/release/` so tag/release API
+queries and Cargo version extraction can be linted outside YAML.
 
 Crate publishing is intentionally scoped to the reusable `bbdown-core` library package, imported as
 `bbdown_core` in Rust code. The crate has crates.io metadata, a package-local README and LICENSE,

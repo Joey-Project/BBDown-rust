@@ -1,0 +1,351 @@
+name: Promote Release Candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Final SemVer version without the leading v, matching the selected RC tag."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release candidate tag
+    runs-on: ubuntu-latest
+    outputs:
+      rc_tag: ${{ steps.meta.outputs.rc_tag }}
+      final_tag: ${{ steps.meta.outputs.final_tag }}
+      target_sha: ${{ steps.meta.outputs.target_sha }}
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      # actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - name: Install Rust stable
+        run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
+
+      - name: Validate release metadata
+        id: meta
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          repo="${GITHUB_REPOSITORY}"
+          source scripts/release/common.sh
+          if [[ ! "${REQUESTED_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must be MAJOR.MINOR.PATCH without a leading v: ${REQUESTED_VERSION}"
+            exit 2
+          fi
+          if [[ "${GITHUB_REF}" != refs/tags/* ]]; then
+            echo "::error::release promotion must be run from an RC tag; current ref is ${GITHUB_REF}"
+            exit 2
+          fi
+          rc_tag="${GITHUB_REF_NAME}"
+          if [[ ! "${rc_tag}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)-rc\.([1-9][0-9]*)$ ]]; then
+            echo "::error::release promotion ref must match vMAJOR.MINOR.PATCH-rc.N: ${rc_tag}"
+            exit 2
+          fi
+          version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+          if [[ "${version}" != "${REQUESTED_VERSION}" ]]; then
+            echo "::error::selected RC tag ${rc_tag} does not match requested version ${REQUESTED_VERSION}"
+            exit 2
+          fi
+          selected_rc="${BASH_REMATCH[4]}"
+          final_tag="v${version}"
+          max_rc=$(release_max_rc_number "${repo}" "${version}")
+          if (( selected_rc != max_rc )); then
+            echo "::error::release promotion must use the latest RC tag for ${final_tag}; selected ${rc_tag}, latest is v${version}-rc.${max_rc}"
+            exit 2
+          fi
+          cargo_versions=$(release_workspace_versions)
+          core_version=$(printf '%s\n' "${cargo_versions}" | sed -n '1p')
+          cli_version=$(printf '%s\n' "${cargo_versions}" | sed -n '2p')
+          if [[ "${core_version}" != "${version}" ]]; then
+            echo "::error::bbdown-core version ${core_version} does not match release tag ${final_tag}"
+            exit 2
+          fi
+          if [[ "${cli_version}" != "${version}" ]]; then
+            echo "::error::bbdown-cli version ${cli_version} does not match release tag ${final_tag}"
+            exit 2
+          fi
+          target_sha=$(git rev-list -n 1 "${rc_tag}")
+          {
+            echo "rc_tag=${rc_tag}"
+            echo "final_tag=${final_tag}"
+            echo "target_sha=${target_sha}"
+            echo "version=${version}"
+          } >> "${GITHUB_OUTPUT}"
+
+  verify:
+    name: Verify release source
+    needs: validate
+    uses: ./.github/workflows/release-verify.yml
+    with:
+      checkout_ref: ${{ needs.validate.outputs.target_sha }}
+
+  build-artifacts:
+    name: Build final release artifacts
+    needs:
+      - validate
+      - verify
+    uses: ./.github/workflows/release.yml
+    with:
+      checkout_ref: ${{ needs.validate.outputs.target_sha }}
+      package_version: ${{ needs.validate.outputs.final_tag }}
+
+  crate-preflight:
+    name: Preflight crates.io package
+    needs:
+      - validate
+      - verify
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ needs.validate.outputs.target_sha }}
+
+      - name: Install Rust stable
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Check crates.io package state
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          source scripts/release/common.sh
+          crate_state=$(release_crate_version_state "${VERSION}")
+          if [[ "${crate_state}" == "matching" ]]; then
+            echo "bbdown-core ${VERSION} already exists on crates.io with matching package checksum"
+          else
+            echo "bbdown-core ${VERSION} is not present on crates.io yet"
+          fi
+
+  publish-github-release:
+    name: Publish GitHub Release
+    needs:
+      - validate
+      - verify
+      - build-artifacts
+      - crate-preflight
+    runs-on: ubuntu-latest
+    environment: production-release
+    permissions:
+      contents: read
+    steps:
+      # actions/create-github-app-token@v2
+      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        id: app-token
+        with:
+          app-id: ${{ secrets.RELEASE_GITHUB_APP_ID }}
+          private-key: ${{ secrets.RELEASE_GITHUB_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+
+      # actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ needs.validate.outputs.target_sha }}
+
+      # actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          RC_TAG: ${{ needs.validate.outputs.rc_tag }}
+          FINAL_TAG: ${{ needs.validate.outputs.final_tag }}
+          TARGET_SHA: ${{ needs.validate.outputs.target_sha }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          repo="${GITHUB_REPOSITORY}"
+          source scripts/release/common.sh
+          selected_rc="${RC_TAG##*.}"
+          max_rc=$(release_max_rc_number "${repo}" "${VERSION}")
+          if (( selected_rc != max_rc )); then
+            echo "::error::release promotion must use the latest RC tag for ${FINAL_TAG}; selected ${RC_TAG}, latest is v${VERSION}-rc.${max_rc}"
+            exit 2
+          fi
+          mapfile -t assets < <(find dist -type f | sort)
+          if [[ "${#assets[@]}" -eq 0 ]]; then
+            echo "::error::no release assets were downloaded"
+            exit 2
+          fi
+          tag_ref_error=$(mktemp)
+          if tag_ref_json=$(gh api "repos/${repo}/git/ref/tags/${FINAL_TAG}" 2>"${tag_ref_error}"); then
+            tag_target_sha=$(printf '%s' "${tag_ref_json}" | python3 -c 'import json, sys; data = json.load(sys.stdin); print(data["object"]["sha"] if data["object"]["type"] != "tag" else "")')
+            if [[ -z "${tag_target_sha}" ]]; then
+              tag_target_sha=$(release_tag_target_sha "${repo}" "${FINAL_TAG}")
+            fi
+            if [[ "${tag_target_sha}" != "${TARGET_SHA}" ]]; then
+              echo "::error::tag ${FINAL_TAG} points to ${tag_target_sha}, expected ${TARGET_SHA}"
+              exit 2
+            fi
+            echo "Reusing existing ${FINAL_TAG} tag at ${TARGET_SHA}"
+          else
+            if ! grep -q "HTTP 404" "${tag_ref_error}"; then
+              echo "::error::failed to check tag ${FINAL_TAG}: $(tr '\n' ' ' < "${tag_ref_error}")"
+              exit 2
+            fi
+            tag_sha=$(gh api --method POST "repos/${repo}/git/tags" \
+              -f tag="${FINAL_TAG}" \
+              -f message="Release ${FINAL_TAG}" \
+              -f object="${TARGET_SHA}" \
+              -f type=commit \
+              --jq .sha)
+            gh api --method POST "repos/${repo}/git/refs" \
+              -f ref="refs/tags/${FINAL_TAG}" \
+              -f sha="${tag_sha}" >/dev/null
+          fi
+          release_id=$(release_id_for_tag "${repo}" "${FINAL_TAG}")
+          if [[ -n "${release_id}" ]]; then
+            release_json=$(gh api "repos/${repo}/releases/${release_id}")
+            release_is_draft=$(printf '%s' "${release_json}" | python3 -c 'import json, sys; print("true" if json.load(sys.stdin)["draft"] else "false")')
+            release_is_prerelease=$(printf '%s' "${release_json}" | python3 -c 'import json, sys; print("true" if json.load(sys.stdin)["prerelease"] else "false")')
+            if [[ "${release_is_draft}" == "true" ]]; then
+              echo "Deleting draft GitHub Release ${FINAL_TAG} before retry"
+              gh api --method DELETE "repos/${repo}/releases/${release_id}" >/dev/null
+            else
+              if [[ "${release_is_prerelease}" == "true" ]]; then
+                echo "::error::GitHub Release ${FINAL_TAG} is marked as prerelease; final release recovery requires a published non-prerelease release"
+                exit 2
+              fi
+              expected_asset_names=$(mktemp)
+              existing_asset_details=$(mktemp)
+              existing_asset_names=$(mktemp)
+              for asset in "${assets[@]}"; do
+                basename "${asset}"
+              done | sort > "${expected_asset_names}"
+              printf '%s' "${release_json}" | python3 -c 'import json, sys; release = json.load(sys.stdin); print("\n".join("{}\t{}\t{}".format(asset.get("name", ""), asset.get("state", ""), asset.get("size", "")) for asset in release.get("assets", [])))' | sort > "${existing_asset_details}"
+              cut -f1 "${existing_asset_details}" | sort > "${existing_asset_names}"
+              missing_assets=$(comm -23 "${expected_asset_names}" "${existing_asset_names}")
+              unexpected_assets=$(comm -13 "${expected_asset_names}" "${existing_asset_names}")
+              invalid_assets=$(awk -F '\t' '$2 != "uploaded" || $3 !~ /^[0-9]+$/ || $3 <= 0 { print $0 }' "${existing_asset_details}")
+              if [[ -n "${missing_assets}" ]]; then
+                echo "::error::GitHub Release ${FINAL_TAG} already exists but is missing assets: $(tr '\n' ' ' <<< "${missing_assets}")"
+                exit 2
+              fi
+              if [[ -n "${unexpected_assets}" ]]; then
+                echo "::error::GitHub Release ${FINAL_TAG} already exists but has unexpected assets: $(tr '\n' ' ' <<< "${unexpected_assets}")"
+                exit 2
+              fi
+              if [[ -n "${invalid_assets}" ]]; then
+                echo "::error::GitHub Release ${FINAL_TAG} already exists but has incomplete assets: $(tr '\n' ' ' <<< "${invalid_assets}")"
+                exit 2
+              fi
+              downloaded_assets=$(mktemp -d)
+              gh release download "${FINAL_TAG}" --repo "${repo}" --dir "${downloaded_assets}" --clobber
+              while IFS= read -r asset_name; do
+                if [[ ! -f "${downloaded_assets}/${asset_name}" ]]; then
+                  echo "::error::failed to download release asset ${asset_name}"
+                  exit 2
+                fi
+              done < "${expected_asset_names}"
+              while IFS= read -r asset_name; do
+                if [[ "${asset_name}" == *.sha256 ]]; then
+                  continue
+                fi
+                checksum_name="${asset_name}.sha256"
+                if [[ ! -f "${downloaded_assets}/${checksum_name}" ]]; then
+                  echo "::error::release asset ${asset_name} is missing checksum sidecar ${checksum_name}"
+                  exit 2
+                fi
+                if [[ ! -f "dist/${asset_name}" ]]; then
+                  echo "::error::rebuilt artifact ${asset_name} is missing from dist"
+                  exit 2
+                fi
+                if [[ ! -f "dist/${checksum_name}" ]]; then
+                  echo "::error::rebuilt artifact ${asset_name} is missing checksum sidecar ${checksum_name}"
+                  exit 2
+                fi
+                checksum_target=$(tr -d '\r' < "${downloaded_assets}/${checksum_name}" | awk 'NF >= 2 { print $2; exit }')
+                checksum_target="${checksum_target#\*}"
+                if [[ "${checksum_target}" != "${asset_name}" ]]; then
+                  echo "::error::release checksum sidecar ${checksum_name} targets ${checksum_target}, expected ${asset_name}"
+                  exit 2
+                fi
+                rebuilt_checksum_target=$(tr -d '\r' < "dist/${checksum_name}" | awk 'NF >= 2 { print $2; exit }')
+                rebuilt_checksum_target="${rebuilt_checksum_target#\*}"
+                if [[ "${rebuilt_checksum_target}" != "${asset_name}" ]]; then
+                  echo "::error::rebuilt checksum sidecar ${checksum_name} targets ${rebuilt_checksum_target}, expected ${asset_name}"
+                  exit 2
+                fi
+                if ! (cd "${downloaded_assets}" && tr -d '\r' < "${checksum_name}" | sha256sum -c -); then
+                  echo "::error::release asset ${asset_name} does not match ${checksum_name}"
+                  exit 2
+                fi
+                if ! (cd dist && tr -d '\r' < "${checksum_name}" | sha256sum -c -); then
+                  echo "::error::rebuilt artifact ${asset_name} does not match ${checksum_name}"
+                  exit 2
+                fi
+                published_hash=$(tr -d '\r' < "${downloaded_assets}/${checksum_name}" | awk 'NF >= 2 { print $1; exit }')
+                rebuilt_hash=$(tr -d '\r' < "dist/${checksum_name}" | awk 'NF >= 2 { print $1; exit }')
+                if [[ "${published_hash}" != "${rebuilt_hash}" ]]; then
+                  echo "::error::release asset ${asset_name} checksum ${published_hash} does not match rebuilt checksum ${rebuilt_hash}"
+                  exit 2
+                fi
+              done < "${expected_asset_names}"
+              echo "Reusing existing published GitHub Release ${FINAL_TAG} with complete assets matching rebuilt checksums"
+              exit 0
+            fi
+          fi
+          release_refs=$(release_list_matching_refs "${repo}" "v")
+          previous_final_tag=$(printf '%s\n' "${release_refs}" | python3 -c 'import os, re, sys; current = tuple(map(int, os.environ["VERSION"].split("."))); candidates = [(tuple(map(int, match.groups())), tag) for line in sys.stdin for tag in [line.strip().removeprefix("refs/tags/")] for match in [re.fullmatch(r"v([0-9]+)\.([0-9]+)\.([0-9]+)", tag)] if match and tuple(map(int, match.groups())) < current]; print(max(candidates)[1] if candidates else "")')
+          release_note_args=(--generate-notes)
+          if [[ -n "${previous_final_tag}" ]]; then
+            release_note_args+=(--notes-start-tag "${previous_final_tag}")
+          fi
+          gh release create "${FINAL_TAG}" "${assets[@]}" \
+            --repo "${repo}" \
+            --target "${TARGET_SHA}" \
+            --verify-tag \
+            "${release_note_args[@]}"
+
+  publish-crate:
+    name: Publish bbdown-core to crates.io
+    needs:
+      - validate
+      - publish-github-release
+    runs-on: ubuntu-latest
+    environment: crates-io
+    steps:
+      # actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ needs.validate.outputs.target_sha }}
+
+      - name: Install Rust stable
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Publish crate
+        shell: bash
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          source scripts/release/common.sh
+          crate_state=$(release_crate_version_state "${VERSION}")
+          if [[ "${crate_state}" == "matching" ]]; then
+            echo "bbdown-core ${VERSION} already exists on crates.io with matching package checksum; treating publish as recovered"
+            exit 0
+          fi
+          cargo publish -p bbdown-core --locked --token "${CARGO_REGISTRY_TOKEN}"

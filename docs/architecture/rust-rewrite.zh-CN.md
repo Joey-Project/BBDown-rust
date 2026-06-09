@@ -210,19 +210,47 @@ ticket key 和扫码 URL query string 可作为预认证密钥。HTTP request er
 
 默认 CI 是确定性的：
 
-- `cargo fmt --check`
-- `cargo clippy --workspace --all-targets -- -D warnings`
-- 单元测试
-- CLI mock e2e 测试
+- `cargo fmt --all -- --check`
+- `cargo clippy --workspace --all-targets --locked -- -D warnings`
+- 使用 `cargo +1.95.0 check --workspace --locked` 检查 declared MSRV
+- 使用 `cargo test --workspace --locked` 运行单元测试和 workspace integration tests
+- 本地 CLI mock e2e 测试使用 `cargo test -p bbdown-cli --test cli_e2e --locked`
 - 对可发布 `bbdown-core` library package 执行 crates.io dry-run packaging
 
-Release packaging 是单独的 GitHub Actions workflow。匹配 `v*` 的 tag push 会构建 Linux
-x86_64、macOS x86_64、macOS aarch64 和 Windows x86_64 CLI 归档，并用生成的 release notes
-发布到 GitHub Release。手动 workflow dispatch 会把相同归档构建为可下载 workflow artifact，
-但不发布 release。归档包含 `bbdown` 二进制、英文和简体中文 README、英文和简体中文用户
-指南、嵌入指南和架构指南，以及 `LICENSE`。每个归档旁边也有平台专用 checksum 文件。
-release workflow 中的 action 引用固定到 commit SHA。包名会把 release ref 规范化到打包器
-安全的 `[A-Za-z0-9._-]` 字符集，因此 SemVer build metadata 等 tag 不会导致打包失败。
+Release packaging 是单独的 GitHub Actions workflow stack。`Release Artifacts` 是可复用且
+仅手动/被调用的 workflow：它会构建 Linux x86_64、macOS x86_64、macOS aarch64 和 Windows
+x86_64 CLI 归档，但不发布 tag、GitHub Release 或 crate。`Release Verification` 也是可复用
+workflow：RC 创建和 RC promotion 都会调用它，对选中 commit 运行 formatter、clippy、
+declared MSRV、测试和 crates.io dry-run validation。`Create Release Candidate` 会验证
+repository default branch、构建这些归档，并通过 release GitHub App 创建 annotated
+`vX.Y.Z-rc.N` tag，但会先拒绝已经存在 final tag 或 GitHub Release 的 version。Create
+workflow 也会在真正写入 RC tag 前重复 final tag 和 GitHub Release 检查。`Promote Release
+Candidate` 必须从请求版本的最新 RC tag 运行；它会重新验证、重新构建正式归档，在
+发布前再次确认选中的 RC 仍然最新，创建正式 annotated `vX.Y.Z` tag，发布 GitHub Release，
+然后通过受保护的 `crates-io` environment 发布 `bbdown-core` 到 crates.io。它也会在创建
+正式 tag 或 GitHub Release 前检查 crates.io 上任何已存在的 `bbdown-core` version 没有被
+yank 且 package checksum 符合预期，并在 publish job 中重复检查，之后才会把已存在 crate
+version 视为恢复成功。RC 创建和
+promotion 共用按 version 分组的 concurrency group，因此同一 version 正在 promotion 时不会
+再创建更高编号 RC。归档包含 `bbdown` 二进制、英文和简体中文 README、英文和简
+体中文用户指南、嵌入指南、发布 runbook 和架构指南，以及 `LICENSE`。每个归档旁边也有平
+台专用 checksum 文件。GitHub Release notes 会从上一条非 RC 正式 release tag 生成，避免
+把 RC tag 当成正式 release 的比较起点。promotion 也支持 GitHub Release 创建被中断后的重
+试：draft release 会被删除并重新创建，已发布 release 只有在预期 asset 集合已经完整时才
+会被复用。复用要求 asset 名称集合与预期完全一致、状态为 `uploaded`、大小非零，并且下载
+后的归档会被其已发布 `.sha256` sidecar 点名并校验通过；重新构建出的 `dist` 归档也必须通
+过自己的 sidecar 校验，并且 archive checksum 与已发布 assets 相同。Release archives 会规
+范化条目顺序、时间戳、owner、group 和归档容器 metadata，因此同一组已编译输入会产生稳定
+package checksum。workflow 会按 `tag_name`
+列出 releases，而不是只依赖仅面向 published release 的 tag endpoint，因此 release GitHub App token 能看到 draft release。crates.io publish step 会先检查 exact
+`bbdown-core` version，然后重新打包选中的 RC 源码，并要求本地 `.crate` SHA256 与
+crates.io checksum 匹配后，才把已发布版本视为恢复成功。这样可以覆盖 upload 已被接受但
+runner 失败的情况，同时不会让同一版本的不同 package 通过恢复路径。release workflows 使用 GitHub-hosted runner 自带的 `rustup` 和
+`rust-toolchain.toml` 中的 floating stable Rust channel；有意不使用第三方 Rust toolchain
+或 cache actions。它们也会安装 Rust 1.95.0 来运行与 crate `rust-version` metadata 匹配的
+`cargo check` gate。包名会把 release ref 规范化到打包器安全的 `[A-Za-z0-9._-]` 字符集，
+因此 SemVer build metadata 等 tag 不会导致打包失败。共享 release shell helpers 放在
+`scripts/release/`，这样 tag/release API query 和 Cargo version 提取逻辑可以脱离 YAML 做 lint。
 
 Crate publishing 被有意限制在可复用 `bbdown-core` library package，在 Rust 代码中导入为
 `bbdown_core`。该 crate 有 crates.io metadata、package-local README 和 LICENSE、

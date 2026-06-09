@@ -130,10 +130,12 @@ Resolver diagnostics reduce endpoints to URL origins and redact sensitive error-
 ## Release Builds
 
 GitHub tag releases build prepackaged `bbdown` CLI archives for Linux x86_64, macOS x86_64,
-macOS aarch64, and Windows x86_64. Manual release workflow runs can also build the same archives
-without publishing a GitHub Release. Each archive includes the CLI binary, English and Simplified
-Chinese README files, the English and Simplified Chinese user, embedding, and architecture guides,
-and `LICENSE`. Each archive also has an adjacent `.sha256` checksum file.
+macOS aarch64, and Windows x86_64 through the two-phase release candidate and promotion workflow.
+Manual release artifact workflow runs can also build the same archives without publishing a tag,
+GitHub Release, or crate. Each archive includes the CLI binary, English and Simplified Chinese
+README files, the English and Simplified Chinese user, embedding, release, and architecture guides,
+and `LICENSE`. Each archive also has an adjacent `.sha256` checksum file. Maintainer release steps
+are documented in [docs/release.md](docs/release.md).
 
 ## Developer Commands
 
