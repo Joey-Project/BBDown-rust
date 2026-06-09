@@ -30,6 +30,23 @@ const CLI_OVERRIDE_ENV_VARS: &[&str] = &[
 ];
 
 #[test]
+fn cli_version_reports_package_version() -> anyhow::Result<()> {
+    let mut command = bbdown_command()?;
+    let output = command
+        .arg("--version")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(
+        String::from_utf8(output)?,
+        format!("bbdown {}\n", env!("CARGO_PKG_VERSION"))
+    );
+    Ok(())
+}
+
+#[test]
 fn info_json_resolves_mock_video() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;
