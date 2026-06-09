@@ -36,8 +36,9 @@ superseded_by:
   shared release verification, rebuilds final artifacts, verifies the selected RC is the latest for
   that version, creates the final annotated `vX.Y.Z` tag, publishes the GitHub Release inside the
   `production-release` environment, and publishes `bbdown-core` inside the `crates-io` environment.
-- Shared release shell helpers live in `scripts/release/common.sh`, which centralizes GitHub
-  tag/release queries, latest RC calculation, and Cargo workspace version extraction outside YAML.
+- Shared release scripts live under `scripts/release/`: `common.sh` centralizes GitHub tag/release
+  queries, latest RC calculation, and Cargo workspace version extraction outside YAML, while
+  `package-release.sh` and `package-release.ps1` package Unix and Windows release archives.
 - RC and promotion validation both require `bbdown-core` and `bbdown-cli` Cargo versions to match
   the requested release version so GitHub Release archive names, CLI package metadata, and the
   crates.io package do not drift.
@@ -91,11 +92,11 @@ superseded_by:
 ## Validation
 
 - Workflow lint: `actionlint .github/workflows/*.yml`.
-- Shell syntax: `bash -n scripts/package-release.sh`.
-- Shell lint: `shellcheck scripts/package-release.sh`.
+- Shell syntax: `bash -n scripts/release/package-release.sh scripts/release/common.sh`.
+- Shell lint: `shellcheck scripts/release/package-release.sh scripts/release/common.sh`.
 - Release build: `cargo build -p bbdown-cli --bin bbdown --release --locked`.
 - Local release package smoke:
-  `scripts/package-release.sh target/release/bbdown bbdown-local-smoke .codex-tmp/release-package-smoke`.
+  `scripts/release/package-release.sh target/release/bbdown bbdown-local-smoke .codex-tmp/release-package-smoke`.
 - Local package content check: `tar -tzf .codex-tmp/release-package-smoke/bbdown-local-smoke.tar.gz`.
 - Local package checksum check:
   `shasum -a 256 -c bbdown-local-smoke.tar.gz.sha256` from the package output directory.
@@ -170,3 +171,8 @@ superseded_by:
 - Follow-up independent review found the release write jobs granted the default `GITHUB_TOKEN`
   `contents: write` even though tag and release writes use the release GitHub App token. Those jobs
   now keep the default token read-only so the App remains the only intended write actor.
+- Follow-up maintainability cleanup moved both release packaging scripts into `scripts/release/`, so
+  all release shell and PowerShell helpers live under the same CODEOWNERS-protected subtree.
+- Local package smoke after the move found both packaging scripts still derived the repository root
+  from the old `scripts/` location. `package-release.sh` and `package-release.ps1` now resolve the
+  repository root from `scripts/release/`.

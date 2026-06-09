@@ -29,7 +29,7 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 2
 fi
 
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 mkdir -p "$output_dir"
 output_dir=$(cd "$output_dir" && pwd)
 

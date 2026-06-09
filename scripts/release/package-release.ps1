@@ -21,7 +21,7 @@ if (-not (Test-Path -LiteralPath $BinaryPath -PathType Leaf)) {
 }
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$repoRoot = Split-Path -Parent $scriptDir
+$repoRoot = Split-Path -Parent (Split-Path -Parent $scriptDir)
 $outputFullPath = [System.IO.Path]::GetFullPath($OutputDir)
 New-Item -ItemType Directory -Path $outputFullPath -Force | Out-Null
 

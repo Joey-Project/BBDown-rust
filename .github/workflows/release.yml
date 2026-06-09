@@ -91,13 +91,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          scripts/package-release.sh "${{ matrix.binary }}" "${{ steps.package.outputs.name }}" dist
+          scripts/release/package-release.sh "${{ matrix.binary }}" "${{ steps.package.outputs.name }}" dist
 
       - name: Package Windows archive
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          ./scripts/package-release.ps1 `
+          ./scripts/release/package-release.ps1 `
             -BinaryPath "${{ matrix.binary }}" `
             -PackageName "${{ steps.package.outputs.name }}" `
             -OutputDir dist
