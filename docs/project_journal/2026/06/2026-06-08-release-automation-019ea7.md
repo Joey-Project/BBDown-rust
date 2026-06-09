@@ -92,7 +92,8 @@ superseded_by:
 ## Validation
 
 - Workflow lint: `actionlint .github/workflows/*.yml`.
-- Shell syntax: `bash -n scripts/release/package-release.sh scripts/release/common.sh`.
+- Shell syntax: `bash -n scripts/release/package-release.sh`.
+- Shell syntax: `bash -n scripts/release/common.sh`.
 - Shell lint: `shellcheck scripts/release/package-release.sh scripts/release/common.sh`.
 - Release build: `cargo build -p bbdown-cli --bin bbdown --release --locked`.
 - Local release package smoke:
@@ -176,3 +177,6 @@ superseded_by:
 - Local package smoke after the move found both packaging scripts still derived the repository root
   from the old `scripts/` location. `package-release.sh` and `package-release.ps1` now resolve the
   repository root from `scripts/release/`.
+- Follow-up independent review found the validation journal used a multi-file `bash -n` command even
+  though Bash parses only the first script argument. The journal now records the two shell syntax
+  checks as separate commands.
