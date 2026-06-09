@@ -19,6 +19,7 @@
   - `docs/project_journal/2026/06/2026-06-08-download-archive-dedup-019e9eab.md`.
   - `docs/project_journal/2026/06/2026-06-08-bilingual-docs-live-e2e-019ea775.md`.
   - `docs/project_journal/2026/06/2026-06-08-release-automation-019ea7.md`.
+  - `docs/project_journal/2026/06/2026-06-09-release-0-1-0-019ead.md`.
 - The originally planned rewrite continuation slices are complete through download archive and
   duplicate decision handling.
 - Human-facing docs now have English and Simplified Chinese versions, and the latest real live e2e
@@ -26,6 +27,8 @@
 - The publishable library package is named `bbdown-core`; Rust code imports it as `bbdown_core`.
 - First-release automation now uses a protected RC tag workflow followed by RC promotion to GitHub
   Release and crates.io.
+- Version `0.1.0` has shipped through that flow as GitHub Release `v0.1.0` and crates.io package
+  `bbdown-core` `0.1.0`.
 
 ## Recovery Pointers
 
