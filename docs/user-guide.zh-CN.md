@@ -12,7 +12,8 @@ BBDown Rust 当前提供可复用的 `bbdown-core` package / `bbdown_core` crate
 GitHub release 提供预打包的 `bbdown` CLI 归档，覆盖 Linux x86_64、macOS x86_64、
 macOS aarch64 和 Windows x86_64。下载与你的平台对应的归档，按需使用旁边的 `.sha256`
 文件校验，解压后把 `bbdown` 或 `bbdown.exe` 二进制放到 `PATH` 中。归档也包含英文和简体
-中文 README、用户指南、嵌入指南、架构指南，以及 `LICENSE`。
+中文 README、用户指南、嵌入指南、架构指南，以及 `LICENSE`。安装二进制后，可运行
+`bbdown --version` 确认归档版本。
 
 ## Crate 发布
 
