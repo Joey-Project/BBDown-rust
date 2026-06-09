@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 
 #[derive(Debug, Parser)]
 #[command(name = "bbdown")]
+#[command(version)]
 #[command(about = "Rust-native Bilibili metadata and download tooling")]
 struct Cli {
     #[arg(

@@ -14,7 +14,8 @@ GitHub releases provide prepackaged `bbdown` CLI archives for Linux x86_64, macO
 macOS aarch64, and Windows x86_64. Download the archive for your platform, verify it against the
 adjacent `.sha256` file if needed, extract it, and place the `bbdown` or `bbdown.exe` binary on your
 `PATH`. Archives also include English and Simplified Chinese README files, user guides, embedding
-guides, architecture guides, and `LICENSE`.
+guides, architecture guides, and `LICENSE`. After installing the binary, run `bbdown --version` to
+confirm the archive version.
 
 ## Crate Publishing
 
