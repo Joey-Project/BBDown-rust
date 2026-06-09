@@ -20,10 +20,12 @@ lint、declared MSRV、测试和 crates.io dry-run validation。
 配置这些 environments：
 
 - `release-candidate`：只允许从 repository default branch 部署，目前是 `master`。把
-  `RELEASE_GITHUB_APP_ID` 和 `RELEASE_GITHUB_APP_PRIVATE_KEY` 放在这里，或让等价的
-  repository secrets 对这个 environment 可用。
+  `RELEASE_APP_CLIENT_ID` 作为 environment variable 放在这里，它的值是传给
+  `actions/create-github-app-token` 的 release GitHub App ID；把 `RELEASE_APP_PRIVATE_KEY`
+  作为 environment secret 放在这里；也可以让等价的 repository-level 配置对这个 environment
+  可用。
 - `production-release`：只允许从匹配 `v*-rc.*` 的 tag 部署。这里也放同一组 release
-  GitHub App secrets。
+  GitHub App variable 和 secret。
 - `crates-io`：只允许从匹配 `v*-rc.*` 的 tag 部署。这里放 `CARGO_REGISTRY_TOKEN`。
 
 release GitHub App 需要 repository metadata read 和 contents write 权限。release tag

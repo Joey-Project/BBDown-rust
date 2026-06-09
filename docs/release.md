@@ -20,11 +20,12 @@ lint, declared MSRV, tests, and crates.io dry-run validation.
 Configure these environments:
 
 - `release-candidate`: allow deployment from the repository default branch only, currently
-  `master`. Store
-  `RELEASE_GITHUB_APP_ID` and `RELEASE_GITHUB_APP_PRIVATE_KEY` here, or make equivalent repository
-  secrets available to this environment.
+  `master`. Store `RELEASE_APP_CLIENT_ID` as an environment variable containing the release
+  GitHub App ID used by `actions/create-github-app-token`, and
+  `RELEASE_APP_PRIVATE_KEY` as an environment secret here, or make equivalent repository-level
+  configuration available to this environment.
 - `production-release`: allow deployment from tags matching `v*-rc.*` only. Store the same release
-  GitHub App secrets here.
+  GitHub App variable and secret here.
 - `crates-io`: allow deployment from tags matching `v*-rc.*` only. Store
   `CARGO_REGISTRY_TOKEN` here.
 
