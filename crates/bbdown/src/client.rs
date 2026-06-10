@@ -940,7 +940,7 @@ impl BiliClient {
             .append_pair("pn", &page_number.to_string())
             .append_pair("ps", &page_size.to_string())
             .append_pair("order", "mtime")
-            .append_pair("type", "2")
+            .append_pair("type", "0")
             .append_pair("tid", "0")
             .append_pair("platform", "web");
         let response: ApiData<FavoriteResourceListData> = self.get_json(url).await?;
@@ -952,6 +952,9 @@ impl BiliClient {
         items: &mut Vec<VideoCollectionItem>,
         media: FavoriteMedia,
     ) -> Result<()> {
+        if media.media_type.is_some_and(|media_type| media_type != 2) {
+            return Ok(());
+        }
         if media.attr.is_some_and(|attr| attr != 0) {
             return Ok(());
         }
@@ -2567,6 +2570,8 @@ impl FavoriteUpper {
 #[derive(Debug, Deserialize)]
 struct FavoriteMedia {
     id: Option<u64>,
+    #[serde(rename = "type")]
+    media_type: Option<u8>,
     bvid: Option<String>,
     title: Option<String>,
     intro: Option<String>,
@@ -2602,6 +2607,7 @@ struct MediaListResourcePageData {
 #[derive(Debug, Deserialize)]
 struct MediaListMedia {
     id: Option<u64>,
+    #[serde(alias = "bv_id")]
     bvid: Option<String>,
     title: Option<String>,
     intro: Option<String>,
@@ -2795,8 +2801,7 @@ impl MediaListKind {
 
     const fn desc_value(self) -> &'static str {
         match self {
-            Self::Collection => "false",
-            Self::Series => "true",
+            Self::Collection | Self::Series => "true",
         }
     }
 
@@ -4829,7 +4834,8 @@ mod tests {
                 .path("/x/v3/fav/resource/list")
                 .query_param("media_id", "456")
                 .query_param("pn", "1")
-                .query_param("ps", "20");
+                .query_param("ps", "20")
+                .query_param("type", "0");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {
@@ -4840,6 +4846,7 @@ mod tests {
                     },
                     "medias": [{
                         "id": 170_001,
+                        "type": 2,
                         "bvid": "BV1xx411c7mD",
                         "title": "Saved video",
                         "attr": 0,
@@ -4869,6 +4876,56 @@ mod tests {
             ResolvedContent::Collection(collection) => {
                 assert_eq!(collection.collection.items.len(), 1);
                 assert_eq!(collection.selected_items[0].cid, 9988);
+                assert_eq!(collection.selected_items[0].title, "Saved video");
+            }
+            ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
+                return Err(anyhow::anyhow!("expected collection"));
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn favorite_collection_skips_non_video_entries() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/v3/fav/resource/list")
+                .query_param("media_id", "456")
+                .query_param("pn", "1")
+                .query_param("ps", "20")
+                .query_param("type", "0");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "info": {
+                        "media_count": 2,
+                        "title": "Favorite",
+                        "upper": {"mid": 1, "name": "Tester"}
+                    },
+                    "medias": [{
+                        "id": 990_001,
+                        "type": 12,
+                        "title": "Audio entry",
+                        "attr": 0
+                    }, {
+                        "id": 170_001,
+                        "type": 2,
+                        "bvid": "BV1xx411c7mD",
+                        "title": "Saved video",
+                        "attr": 0,
+                        "page": 1,
+                        "ugc": {"first_cid": 9988}
+                    }]
+                }
+            }));
+        });
+
+        let resolved = test_client(&server).resolve_input("fav456", None).await?;
+        match resolved {
+            ResolvedContent::Collection(collection) => {
+                assert_eq!(collection.collection.items.len(), 1);
+                assert_eq!(collection.selected_items[0].aid, 170_001);
                 assert_eq!(collection.selected_items[0].title, "Saved video");
             }
             ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
@@ -5128,7 +5185,8 @@ mod tests {
                 .path("/x/v2/medialist/resource/list")
                 .query_param("biz_id", "456")
                 .query_param("oid", "")
-                .query_param("with_current", "true");
+                .query_param("with_current", "true")
+                .query_param("desc", "true");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {
@@ -5146,14 +5204,16 @@ mod tests {
             when.method(GET)
                 .path("/x/v2/medialist/resource/list")
                 .query_param("biz_id", "456")
-                .query_param("oid", "170000");
+                .query_param("oid", "170000")
+                .query_param("with_current", "false")
+                .query_param("desc", "true");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {
                     "has_more": false,
                     "media_list": [{
                         "id": 170_001,
-                        "bvid": "BV1xx411c7mD",
+                        "bv_id": "BV1xx411c7mD",
                         "title": "Visible video",
                         "intro": "Visible intro",
                         "cover": "https://example.invalid/visible.jpg",
@@ -5172,6 +5232,10 @@ mod tests {
                 assert_eq!(collection.collection.kind, VideoCollectionKind::Collection);
                 assert_eq!(collection.collection.items.len(), 1);
                 assert_eq!(collection.selected_items[0].title, "Visible video");
+                assert_eq!(
+                    collection.selected_items[0].bvid.as_deref(),
+                    Some("BV1xx411c7mD")
+                );
             }
             ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
                 return Err(anyhow::anyhow!("expected collection"));
@@ -5200,7 +5264,9 @@ mod tests {
             when.method(GET)
                 .path("/x/v2/medialist/resource/list")
                 .query_param("biz_id", "456")
-                .query_param("oid", "");
+                .query_param("oid", "")
+                .query_param("with_current", "true")
+                .query_param("desc", "true");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {
@@ -5267,7 +5333,9 @@ mod tests {
             when.method(GET)
                 .path("/x/v2/medialist/resource/list")
                 .query_param("biz_id", "456")
-                .query_param("oid", "");
+                .query_param("oid", "")
+                .query_param("with_current", "true")
+                .query_param("desc", "true");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {
@@ -5287,7 +5355,8 @@ mod tests {
                 .path("/x/v2/medialist/resource/list")
                 .query_param("biz_id", "456")
                 .query_param("oid", "170001")
-                .query_param("with_current", "false");
+                .query_param("with_current", "false")
+                .query_param("desc", "true");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {
@@ -6607,7 +6676,8 @@ mod tests {
                 .path("/x/v3/fav/resource/list")
                 .query_param("media_id", "456")
                 .query_param("pn", "1")
-                .query_param("ps", "20");
+                .query_param("ps", "20")
+                .query_param("type", "0");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {
@@ -6621,6 +6691,7 @@ mod tests {
                     },
                     "medias": [{
                         "id": 170_001,
+                        "type": 2,
                         "bvid": "BV1xx411c7mD",
                         "title": "Saved video",
                         "intro": "Saved intro",
@@ -6651,7 +6722,8 @@ mod tests {
                 .path("/x/v3/fav/resource/list")
                 .query_param("media_id", "456")
                 .query_param("pn", page_number.to_string())
-                .query_param("ps", "20");
+                .query_param("ps", "20")
+                .query_param("type", "0");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {
@@ -6665,6 +6737,7 @@ mod tests {
                     },
                     "medias": [{
                         "id": aid,
+                        "type": 2,
                         "bvid": bvid,
                         "title": title,
                         "intro": "Saved intro",

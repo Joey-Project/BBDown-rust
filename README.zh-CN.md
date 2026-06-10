@@ -32,7 +32,7 @@ bbdown info https://b23.tv/example --json
 bbdown info cheese/ep101 --json
 bbdown info fav456 --json
 bbdown info https://www.bilibili.com/list/ml1103407912 --json
-bbdown info https://space.bilibili.com/123/lists/456?type=series --json
+bbdown info 'https://space.bilibili.com/123/lists/456?type=series' --json
 ```
 
 生成下载计划并输出 JSON：

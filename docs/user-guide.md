@@ -60,9 +60,9 @@ bbdown info collection456 --json
 bbdown info series456 --select latest --json
 bbdown info https://www.bilibili.com/medialist/detail/ml1103407912 --json
 bbdown info https://www.bilibili.com/list/ml1103407912 --json
-bbdown info https://www.bilibili.com/list/1958703906?sid=547718 --json
-bbdown info https://space.bilibili.com/123/favlist?fid=456 --json
-bbdown info https://space.bilibili.com/123/lists/456?type=series --json
+bbdown info 'https://www.bilibili.com/list/1958703906?sid=547718' --json
+bbdown info 'https://space.bilibili.com/123/favlist?fid=456' --json
+bbdown info 'https://space.bilibili.com/123/lists/456?type=series' --json
 ```
 
 Season, media, and `cheese/ss...` inputs require `--select` in non-interactive mode. Supported
@@ -91,7 +91,7 @@ bbdown plan ss26801 --select latest --json
 bbdown plan https://www.bilibili.tv/en/play/34613/341736 --json
 bbdown plan cheese/ep101 --json
 bbdown plan fav456 --select page:1 --json
-bbdown plan https://space.bilibili.com/123/channel/collectiondetail?sid=456 --select all --json
+bbdown plan 'https://space.bilibili.com/123/channel/collectiondetail?sid=456' --select all --json
 ```
 
 The JSON output contains:

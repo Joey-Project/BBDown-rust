@@ -317,7 +317,8 @@ fn mock_favorite_collection(server: &MockServer) {
             .path("/x/v3/fav/resource/list")
             .query_param("media_id", "456")
             .query_param("pn", "1")
-            .query_param("ps", "20");
+            .query_param("ps", "20")
+            .query_param("type", "0");
         then.status(200).json_body_obj(&serde_json::json!({
             "code": 0,
             "data": {
@@ -331,6 +332,7 @@ fn mock_favorite_collection(server: &MockServer) {
                 },
                 "medias": [{
                     "id": 170_001,
+                    "type": 2,
                     "bvid": "BV1xx411c7mD",
                     "title": "Saved video",
                     "intro": "Saved intro",

@@ -89,6 +89,9 @@ superseded_by:
 - The GitHub Codex review gate still had a current-head medialist cursor thread; follow-up medialist
   page requests now send `with_current=false` when advancing with `oid`, while retaining duplicate
   suppression as a defensive guard.
+- The final review pass corrected favorite-list scope semantics (`type=0` request plus video-entry
+  filtering), switched collection medialist paging to newest-first order, accepted medialist
+  `bv_id` payloads, and quoted query-string URL examples for shell-safe copy/paste.
 
 ## Next Steps
 
