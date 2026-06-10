@@ -29,6 +29,8 @@ pub struct DownloadOptions {
     pub retry: RetryPolicy,
     pub stream_selection: StreamSelection,
     pub resume: bool,
+    pub include_subtitles: bool,
+    pub include_danmaku: bool,
     pub sidecars: SidecarOptions,
     pub mux: MuxOptions,
     pub download_idle_timeout: Option<Duration>,
@@ -41,6 +43,8 @@ impl Default for DownloadOptions {
             retry: RetryPolicy::default(),
             stream_selection: StreamSelection::default(),
             resume: true,
+            include_subtitles: true,
+            include_danmaku: true,
             sidecars: SidecarOptions::default(),
             mux: MuxOptions::Disabled,
             download_idle_timeout: Some(Duration::from_secs(30)),
@@ -83,12 +87,14 @@ impl DownloadOptions {
 
     #[must_use]
     pub fn with_subtitles(mut self, include_subtitles: bool) -> Self {
+        self.include_subtitles = include_subtitles;
         self.sidecars.subtitles = include_subtitles;
         self
     }
 
     #[must_use]
     pub fn with_danmaku(mut self, include_danmaku: bool) -> Self {
+        self.include_danmaku = include_danmaku;
         self.sidecars.danmaku = include_danmaku;
         self
     }
@@ -639,7 +645,7 @@ impl BiliClient {
                 .await?,
             );
         }
-        if options.sidecars.subtitles {
+        if options.include_subtitles && options.sidecars.subtitles {
             let mut seen_subtitles = HashSet::new();
             for (index, subtitle) in entry.subtitles.iter().enumerate() {
                 if !seen_subtitles.insert(subtitle_dedup_key(&subtitle.url)) {
@@ -651,7 +657,7 @@ impl BiliClient {
                 );
             }
         }
-        if options.sidecars.danmaku {
+        if options.include_danmaku && options.sidecars.danmaku {
             files.push(
                 self.download_url_to_file(
                     &entry.danmaku.xml_url,
@@ -1996,6 +2002,8 @@ mod tests {
         assert_eq!(options.stream_selection.audio_quality, None);
         assert_eq!(options.download_idle_timeout, None);
         assert!(!options.resume);
+        assert!(!options.include_subtitles);
+        assert!(!options.include_danmaku);
         assert!(options.sidecars.cover);
         assert!(!options.sidecars.subtitles);
         assert!(!options.sidecars.danmaku);

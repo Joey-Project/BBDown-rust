@@ -23,7 +23,8 @@ superseded_by:
 - `DownloadEntry` carries an optional `cover_url` from normal video, PGC/PUGV season, and batch
   collection planning paths, normalizing protocol-relative URLs before download execution.
 - `DownloadOptions` includes `sidecars.cover`, keeps the crate default conservative, and exposes
-  `with_cover(...)` for embedding callers that want cover sidecars.
+  `with_cover(...)` for embedding callers that want cover sidecars. Legacy
+  `include_subtitles`/`include_danmaku` fields remain available for existing embedders.
 - Download execution writes cover files as `DownloadFileKind::Cover` using the same retry, resume,
   timeout, media-header, and report paths as other sidecars.
 - CLI `download` enables cover sidecars by default and supports `--no-cover` to skip them.
@@ -38,7 +39,8 @@ superseded_by:
 - `just live-e2e` passes: 1 ignored live manifest test executed.
 - Independent Codex review and offline frozen diff review findings were addressed: re-export
   `SidecarOptions`, normalize protocol-relative cover URLs, and default missing `cover_url` during
-  plan deserialization.
+  plan deserialization. A follow-up independent review finding about `DownloadOptions` field
+  compatibility was addressed by preserving the legacy subtitle and danmaku fields.
 
 ## Next Steps
 
