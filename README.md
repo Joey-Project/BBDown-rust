@@ -14,7 +14,9 @@ The current implementation establishes the crate/CLI/CI foundation, metadata res
 planning, media downloads, sidecar downloads, retry/resume behavior, optional ffmpeg muxing, QR
 login, opt-in live test harnesses, configured restricted-area proxy ordering with diagnostics, and
 builder-style crate integration APIs. It also supports an explicit download archive for duplicate
-preflight and CLI replace / keep-both / cancel decisions.
+preflight and CLI replace / keep-both / cancel decisions. Input parsing covers normal videos, PGC
+and intl episodes, PUGV/cheese courses, B23 short links, favorite lists, space videos, collections,
+and series.
 
 ## Current CLI
 
@@ -26,6 +28,10 @@ bbdown info BV1qt4y1X7TW --json
 bbdown info ep267851 --json
 bbdown info ss26801 --select latest --json
 bbdown info md22718131 --select latest --json
+bbdown info https://b23.tv/example --json
+bbdown info cheese/ep101 --json
+bbdown info fav456 --json
+bbdown info https://space.bilibili.com/123/lists/456?type=series --json
 ```
 
 Build a download plan as JSON:
@@ -35,18 +41,23 @@ bbdown plan av170001 --json
 bbdown plan ep267851 --json
 bbdown plan ss26801 --select latest --json
 bbdown plan https://www.bilibili.tv/en/play/34613/341736 --json
+bbdown plan fav456 --select page:1 --json
+bbdown plan cheese/ss202 --select latest --json
 ```
 
 `plan` resolves the selected entries, available DASH or FLV stream URLs, subtitle URLs, and the
 danmaku XML URL for each `cid`. PGC and intl planning may still require eligible account or region
 access. PGC playurl resolution can fall back to user-configured restricted-area proxies. It does
-not download files.
+not download files. Collection-like inputs default to all items; use `--select page:<index>` to plan
+one collection item or `--select latest` for the newest parsed item. `info --json` keeps full
+parsed collection metadata under `collection.collection.items`; `plan` emits only selected entries.
 
 Download selected media files:
 
 ```bash
 bbdown download av170001 --output-dir downloads
 bbdown download ss26801 --select latest --output-dir downloads
+bbdown download fav456 --select page:1 --output-dir downloads
 bbdown download av170001 --output-dir downloads --no-mux --json
 bbdown download av170001 --output-dir downloads --archive-file downloads/archive.json --on-duplicate keep-both
 ```
@@ -77,6 +88,9 @@ bbdown info ss26801 --select all
 bbdown info ss26801 --select episode:267851
 bbdown info ss26801 --select page:1
 ```
+
+`cheese/ss...` inputs follow the same explicit-selection rule. Favorite lists, space videos,
+collections, and series are batch inputs; without `--select`, they resolve all parsed items.
 
 Manage local credentials:
 
@@ -171,7 +185,8 @@ running, so sample behavior is driven by the manifest rather than shell state.
   through serde; their struct-literal construction is not treated as a stable compatibility surface
   before the crate leaves `0.1`. For duplicate handling, embedding projects can inspect
   `DownloadPreflight`, present existing `DownloadArchiveRecord` values to users, then pass an
-  explicit `DuplicateDecision`.
+  explicit `DuplicateDecision`. Batch metadata resolves through `ResolvedContent::Collection`, and
+  download planning maps selected collection items back to normal video stream planning entries.
 - User guide: [docs/user-guide.md](docs/user-guide.md)
 - Embedding guide: [docs/embedding.md](docs/embedding.md)
 - Architecture: [docs/architecture/rust-rewrite.md](docs/architecture/rust-rewrite.md)

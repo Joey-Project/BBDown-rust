@@ -7,7 +7,8 @@
 - Build a Rust crate that other projects can embed without shelling out to a CLI.
 - Keep the CLI as the user-facing tool and e2e test surface.
 - Preserve BBDown's practical Bilibili knowledge while replacing CLI-log parsing with typed data.
-- Support normal videos, `ep`, `ss`, `md`, intl episodes, and configured restricted-area resolvers.
+- Support normal videos, `ep`, `ss`, `md`, intl episodes, PUGV/cheese inputs, batch collection
+  inputs, B23 short links, and configured restricted-area resolvers.
 
 ## Workspace
 
@@ -26,7 +27,8 @@ The CLI uses the same public builders, which makes it an in-repo integration tes
 crate API.
 
 Output models remain typed data surfaces. Callers should read fields or serialize them rather than
-treating output structs as stable construction targets while the crate remains pre-release.
+treating output structs as stable construction targets while the crate remains in the `0.1`
+compatibility phase.
 
 ## Resolver Model
 
@@ -34,16 +36,23 @@ Inputs normalize into `Input`:
 
 - `Aid` and `Bvid` for normal videos.
 - `Episode`, `Season`, and `Media` for Bilibili PGC URLs and ids.
+- `CheeseEpisode` and `CheeseSeason` for PUGV/cheese courses.
 - `IntlEpisode` for `bilibili.tv` episode URLs.
+- `SpaceVideos`, `FavoriteList`, `CollectionList`, and `SeriesList` for batch content.
+- `ShortLink` for B23 links, resolved through HTTP redirect before normal input dispatch.
 
 The library resolves metadata into `ResolvedContent`:
 
 - `VideoMetadata` includes title, description, owner, tags, cover, pub time, and pages.
 - `SeasonResolution` includes season metadata plus the selected episode set.
+- `VideoCollectionResolution` includes collection metadata plus the selected item set for
+  favorites, space uploads, collections, and series. `resolve_input` keeps full parsed collection
+  metadata even when a selector narrows `selected_items`.
 
 The library resolves media availability into `DownloadPlan`:
 
 - `DownloadEntry` records the selected `aid`, `bvid`, `cid`, optional `epid`, title, and source.
+  Batch collection items are mapped back to normal video entries before stream planning.
 - `StreamSet` keeps DASH video/audio tracks, FLV segments, raw accepted quality ids, structured
   selectable DASH quality labels, and duration.
 - `StreamDiagnostics` records non-default resolver attempts such as restricted-area proxy fallback.
@@ -51,9 +60,13 @@ The library resolves media availability into `DownloadPlan`:
 - `DanmakuTrack` records the XML comment endpoint derived from `cid` and the configured comment
   endpoint base.
 
-`ss` and `md` require a `Selection` in non-interactive contexts. The CLI will later add
-interactive prompting, but the library keeps the contract explicit so integrations cannot
-accidentally download a full season.
+`ss`, `md`, and `cheese/ss` require a `Selection` in non-interactive contexts. Batch collection
+inputs default to all parsed items; callers can pass `Selection::Page(...)` for one item or
+`Selection::Latest` for the newest parsed item. Empty batch collections resolve as empty selected
+item lists for the default/all selection. `plan_download` may fetch only the selected batch items
+because `DownloadPlan` does not expose collection metadata. The CLI will later add interactive
+prompting, but the library keeps season-like contracts explicit so integrations cannot accidentally
+download a full season.
 
 ## Stream Planning
 
@@ -63,6 +76,8 @@ wrapper for CLI-style callers. Planning currently supports three official source
 
 - `NormalWeb` uses the normal web playurl endpoint for `aid`/`bvid` inputs.
 - `PgcWeb` uses the PGC web playurl endpoint for `ep`, `ss`, and `md` inputs.
+- `PugvWeb` uses the PUGV/cheese playurl endpoint for `cheese/ep` and selected `cheese/ss` inputs.
+  PUGV metadata follows `episode_page` pagination before applying season selection.
 - `IntlWeb` uses the intl OGV playurl endpoint with BiliIntl mobile signing parameters for
   `bilibili.tv` episode inputs and includes the caller-provided access key when configured.
 
@@ -201,10 +216,12 @@ are reduced to URL origins so path/query/userinfo secrets are not printed; diagn
 also redact URL tokens and common sensitive key-value patterns before they are exposed through JSON or
 final errors.
 
-The current implementation supports endpoint override, intl metadata shape, official PGC stream
-planning, official intl OGV signed stream planning, configured PGC proxy fallback, top-level helper
-playurl response parsing, typed source reporting, resolver diagnostics, and download execution.
-Browser-only mobile response rewriting remains intentionally out of scope.
+The current implementation supports endpoint override, B23 redirect resolution, PUGV/cheese
+metadata and stream planning, batch favorite/space/collection/series metadata planning, intl
+metadata shape, official PGC stream planning, official intl OGV signed stream planning, configured
+PGC proxy fallback, top-level helper playurl response parsing, typed source reporting, resolver
+diagnostics, and download execution. Browser-only mobile response rewriting remains intentionally
+out of scope.
 
 ## Credentials
 
@@ -300,9 +317,9 @@ DASH video ids plus optional labels derived from `accept_description` and `suppo
 human summary prints the same ids alongside video/audio stream summaries, while JSON callers can
 select exact DASH streams through `DownloadOptions::stream_selection`.
 
-The reusable crate is still preparing for its first crates.io release, so this branch intentionally
-hardens public structs before publishing rather than preserving local pre-release struct-literal
-experiments. Embedders should create configuration with constructor and builder APIs, including
+The reusable crate is still in the `0.1` compatibility phase, so public structs are intentionally
+hardened through constructor and builder APIs rather than preserving local struct-literal
+experiments. Embedders should create configuration with those APIs, including
 `ClientConfig::default().with_*`, `EndpointConfig::default().with_*`,
 `RestrictedAreaConfig::default().with_*`, `DownloadOptions::new(...).with_*`,
 `RetryPolicy::new`, `StreamSelection::new`, `StreamSelection::video`, and
@@ -354,3 +371,5 @@ fixed `cn`, `th`, `hk`, and `tw` ordering. Network requests have a configurable 
 10. Restricted-area proxy response compatibility expansion. Completed in PR #11.
 11. Integration API and documentation hardening. Completed in PR #12.
 12. Download archive and duplicate decision handling. Completed in PR #13.
+13. More input parsing and batch collection parsing for short links, PUGV/cheese, favorites, space
+    uploads, collections, and series. Completed in this slice.

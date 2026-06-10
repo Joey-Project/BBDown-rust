@@ -5,17 +5,18 @@
 `bbdown-core` is the reusable Rust library package behind BBDown Rust. Rust code imports it as
 `bbdown_core`. It resolves Bilibili and Bilibili intl inputs into typed metadata, download plans,
 media downloads, subtitles, danmaku sidecars, QR login credentials, download archive preflight data,
-and restricted-area proxy diagnostics.
+batch collection metadata, and restricted-area proxy diagnostics. Raw input parsing covers normal
+videos, PGC and intl episodes, PUGV/cheese courses, B23 short links, favorite lists, space videos,
+collections, and series.
 
 Install with `cargo add bbdown-core`, then import with `bbdown_core`.
 
-The crate is still preparing for its first crates.io release. This pre-release branch intentionally
-hardens public structs before publishing: embedding projects should prefer constructor and
+The crate is published as a `0.1` library. Embedding projects should prefer constructor and
 builder-style APIs such as `ClientConfig::default().with_*()`, `EndpointConfig::default().with_*()`,
 `RestrictedAreaConfig::default().with_*()`, `DownloadOptions::new(...).with_*()`,
 `RetryPolicy::new(...)`, and `StreamSelection::new(...)` instead of struct literals for
-configuration values that may grow between minor releases. Public plan output containers are
-consumed data surfaces and may be marked non-exhaustive.
+configuration values that may grow while the crate matures. Public plan output containers are
+consumed data surfaces and may gain fields.
 
 ## Example
 
@@ -38,6 +39,11 @@ async fn main() -> bbdown_core::Result<()> {
     Ok(())
 }
 ```
+
+Batch inputs such as `fav456`, `mid123`, `collection456`, and `series456` resolve through
+`ResolvedContent::Collection`; `resolve_input` keeps full parsed collection metadata while
+`selected_items` carries the active subset. Selected items then plan and download through the normal
+video pipeline.
 
 See the repository embedding guide for restricted-area proxy, endpoint override, credential,
 download archive, and download execution examples:

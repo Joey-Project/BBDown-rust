@@ -94,6 +94,33 @@ fn info_json_resolves_mock_video() -> anyhow::Result<()> {
 }
 
 #[test]
+fn info_json_resolves_mock_favorite_collection() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    mock_favorite_collection(&server);
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("info")
+        .arg("fav456")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    assert_eq!(json["collection"]["collection"]["kind"], "favorite");
+    assert_eq!(json["collection"]["collection"]["title"], "Favorite");
+    assert_eq!(
+        json["collection"]["selected_items"][0]["title"],
+        "Saved video"
+    );
+    Ok(())
+}
+
+#[test]
 fn plan_json_resolves_mock_video_streams() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;
@@ -186,6 +213,67 @@ fn plan_json_resolves_mock_video_streams() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test]
+fn plan_json_resolves_mock_favorite_collection_streams() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    mock_favorite_collection(&server);
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/playurl")
+            .query_param("avid", "170001")
+            .query_param("cid", "9988")
+            .query_param("try_look", "1");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "dash": {
+                    "duration": 3,
+                    "video": [{
+                        "id": 80,
+                        "baseUrl": "https://video.example/favorite.m4s",
+                        "base_url": "https://video.example/favorite.m4s"
+                    }],
+                    "audio": [{
+                        "id": 30280,
+                        "baseUrl": "https://audio.example/favorite.m4s",
+                        "base_url": "https://audio.example/favorite.m4s"
+                    }]
+                }
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/v2")
+            .query_param("aid", "170001")
+            .query_param("cid", "9988");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {"subtitle": {"subtitles": []}}
+        }));
+    });
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("plan")
+        .arg("fav456")
+        .arg("--select")
+        .arg("page:1")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    assert_eq!(json["title"], "Favorite");
+    assert_eq!(json["entries"][0]["title"], "Saved video");
+    assert_eq!(json["entries"][0]["streams"]["videos"][0]["id"], 80);
+    Ok(())
+}
+
 fn assert_plan_stream_qualities(json: &Value) {
     assert_eq!(json["entries"][0]["streams"]["accept_quality"][0], 80);
     assert_eq!(json["entries"][0]["streams"]["accept_quality"][1], 64);
@@ -221,6 +309,42 @@ fn assert_human_plan_lists_qualities(
     assert!(text.contains("videos: 1"));
     assert!(text.contains("q=80"));
     Ok(())
+}
+
+fn mock_favorite_collection(server: &MockServer) {
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/v3/fav/resource/list")
+            .query_param("media_id", "456")
+            .query_param("pn", "1")
+            .query_param("ps", "20");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "info": {
+                    "media_count": 1,
+                    "title": "Favorite",
+                    "intro": "Favorite intro",
+                    "cover": "https://example.invalid/favorite.jpg",
+                    "ctime": 1_700_000_000,
+                    "upper": {"mid": 1, "name": "Tester"}
+                },
+                "medias": [{
+                    "id": 170_001,
+                    "bvid": "BV1xx411c7mD",
+                    "title": "Saved video",
+                    "intro": "Saved intro",
+                    "cover": "https://example.invalid/saved.jpg",
+                    "pubtime": 1_700_000_001,
+                    "duration": 3,
+                    "attr": 0,
+                    "page": 1,
+                    "upper": {"mid": 1, "name": "Tester"},
+                    "ugc": {"first_cid": 9988}
+                }]
+            }
+        }));
+    });
 }
 
 #[test]

@@ -6,11 +6,10 @@
 
 `bbdown_core` crate 通过 `bbdown-core` package 发布，是 Rust 项目的集成表面，适用于需要
 typed Bilibili metadata、下载计划、媒体下载、字幕旁路文件、弹幕旁路文件、二维码登录状态
-和受限区域代理诊断，但不希望 shell out 到 CLI 的场景。
+、批量集合解析和受限区域代理诊断，但不希望 shell out 到 CLI 的场景。
 
-crate 仍处于预发布阶段。配置应优先使用构造器和 builder 风格 API，并把 metadata 和 plan
-结构体视为只读输出表面。这样在第一次 crates.io 发布前新增字段时，嵌入代码更不容易受影
-响。
+crate 仍处于 `0.1` 兼容阶段。配置应优先使用构造器和 builder 风格 API，并把 metadata 和
+plan 结构体视为只读输出表面。这样在 crate 成熟过程中新增字段时，嵌入代码更不容易受影响。
 
 ## 仅规划
 
@@ -37,6 +36,43 @@ async fn main() -> bbdown_core::Result<()> {
 
 Season 和 media 输入需要显式 `Selection`，除非输入本身已经标识某个分集。这是有意设计，
 避免 library 意外规划整季内容。
+
+## 批量和集合输入
+
+`BiliClient::resolve_input` 接受 CLI 风格原始输入，例如 B23 短链接、`fav...`、`mid...`、
+`collection...`、`series...`、空间合集 URL 和空间系列 URL。批量输入会解析为
+`ResolvedContent::Collection`，其中包含完整 collection metadata 和选中的条目。不带
+selector 时，集合类输入会选择全部解析条目；传入 `Selection::Page(index)` 可选择一个条目，
+传入 `Selection::Latest` 可选择最新解析到的条目。空集合会表示为空 item 列表，而不是
+missing-field 错误。
+
+```rust,no_run
+use bbdown_core::{BiliClient, ClientConfig, ResolvedContent, Selection};
+
+#[tokio::main]
+async fn main() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let resolved = client
+        .resolve_input("fav456", Some(Selection::Page(1)))
+        .await?;
+
+    if let ResolvedContent::Collection(collection) = resolved {
+        println!(
+            "{} selected from {}",
+            collection.selected_items.len(),
+            collection.collection.title
+        );
+    }
+
+    Ok(())
+}
+```
+
+下载规划会把选中的集合条目映射回普通视频条目，因此下游下载执行、归档重复检查、stream
+selection、字幕和弹幕旁路文件仍使用与普通视频下载相同的 API。因为 `DownloadPlan` 不暴
+露 collection metadata，规划阶段可以只抓取选中的批量条目集合。PUGV/cheese 分集输入会
+解析为 season；当 API 报告还有更多 episode 页时会继续跟进分页，并通过
+`StreamSource::PugvWeb` 规划。
 
 ## 凭据
 

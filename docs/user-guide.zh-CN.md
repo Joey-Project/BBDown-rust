@@ -6,6 +6,8 @@
 
 BBDown Rust 当前提供可复用的 `bbdown-core` package / `bbdown_core` crate 和一个 CLI，用
 于确定性的元数据解析、下载计划解析、媒体下载执行、旁路文件下载，以及可选 `ffmpeg` 封装。
+支持的输入家族包括普通视频、PGC 和 intl 分集、PUGV/cheese 课程、B23 短链接、收藏夹、
+空间投稿、合集和系列。
 
 ## 发布归档
 
@@ -21,9 +23,9 @@ crates.io 发布目标是可复用的 `bbdown-core` library package。使用 `ju
 可以在本地执行锁定版本的 dry run，并允许工作树存在未提交修改；使用
 `just publish-dry-run-strict` 或 `cargo publish --dry-run -p bbdown-core --locked` 可以复现
 干净 CI 门禁。`bbdown-cli` 包标记为 `publish = false`；CLI 应通过 GitHub release 归档安
-装或分发。library 仍在准备第一次 crates.io 发布；这个预发布分支会在发布前刻意加固 public
-struct。嵌入调用方应优先使用 `DownloadOptions::new`、`StreamSelection::new`、`Default`
-等构造器，而不是 public struct 字面量，并把公开的 plan 输出容器视为被消费的非穷尽数据表面。
+装或分发。library 已作为 `0.1` crate 发布，因此嵌入调用方仍应优先使用
+`DownloadOptions::new`、`StreamSelection::new`、`Default` 等构造器，而不是 public struct
+字面量，并把公开的 plan 输出容器视为会随 crate 成熟继续新增字段的被消费数据表面。
 
 ## Library 嵌入
 
@@ -45,11 +47,24 @@ bbdown info BV1qt4y1X7TW --json
 bbdown info ep267851 --json
 bbdown info ss26801 --select latest --json
 bbdown info md22718131 --select episode:267851 --json
+bbdown info https://b23.tv/example --json
+bbdown info cheese/ep101 --json
+bbdown info cheese/ss202 --select latest --json
+bbdown info fav456 --json
+bbdown info mid123 --select page:1 --json
+bbdown info collection456 --json
+bbdown info series456 --select latest --json
+bbdown info https://space.bilibili.com/123/favlist?fid=456 --json
+bbdown info https://space.bilibili.com/123/lists/456?type=series --json
 ```
 
-Season 和 media 输入在非交互模式下需要 `--select`。支持的 selector 是 `latest`、`all`、
-`episode:<epid>` 和 `page:<index>`。`current` 只对 `ep` 和 `bilibili.tv` 分集 URL 有意义，
-因为这些输入本身已经标识当前分集。
+Season、media 和 `cheese/ss...` 输入在非交互模式下需要 `--select`。支持的 selector 是
+`latest`、`all`、`episode:<epid>` 和 `page:<index>`。`current` 只对 `ep`、`cheese/ep`
+和 `bilibili.tv` 分集 URL 有意义，因为这些输入本身已经标识当前分集。收藏夹、空间投稿、
+合集和系列是批量输入；不传 `--select` 时会解析全部条目。使用 `--select page:<index>` 可
+选择一个集合条目，使用 `--select latest` 可选择最新解析到的条目。JSON metadata 会在
+`collection.collection.items` 保留完整解析到的集合条目列表，并在
+`collection.selected_items` 报告当前选中子集；空集合是有效的空列表。
 
 ## 下载计划
 
@@ -60,11 +75,14 @@ bbdown plan av170001 --json
 bbdown plan ep267851 --json
 bbdown plan ss26801 --select latest --json
 bbdown plan https://www.bilibili.tv/en/play/34613/341736 --json
+bbdown plan cheese/ep101 --json
+bbdown plan fav456 --select page:1 --json
+bbdown plan https://space.bilibili.com/123/channel/collectiondetail?sid=456 --select all --json
 ```
 
 JSON 输出包含：
 
-- `entries`：选中的页面或分集。
+- `entries`：选中的页面、分集或批量集合条目。
 - `streams.qualities`：当前可选择的 DASH 视频质量 id，并可附带 playurl 响应中的说明。
 - `streams.accept_quality`：为兼容保留的原始 accepted video quality id。
 - `streams.videos`：DASH 视频轨道。
@@ -73,7 +91,8 @@ JSON 输出包含：
 - `subtitles`：发现的字幕轨道。
 - `danmaku.xml_url`：条目 `cid` 对应的 XML 弹幕端点。
 
-规划没有副作用。它不会创建文件、下载媒体或调用 ffmpeg。面向人类的 plan 输出会列出相同
+规划没有副作用。它不会创建文件、下载媒体或调用 ffmpeg。对于批量输入，规划只抓取并输
+出选中的条目，因为 collection metadata 属于 `info` 输出。面向人类的 plan 输出会列出相同
 的可选质量 id 和流摘要，因此用户无需手动解析 JSON 也能选择下载质量。
 PGC 和 intl 规划仍可能需要符合条件的账号或区域访问。当 intl 元数据返回 region-limit
 payload 时，CLI 会把它报告为访问限制。配置后，PGC playurl 解析会回退到受限区域代理候选，
@@ -86,6 +105,7 @@ payload 时，CLI 会把它报告为访问限制。配置后，PGC playurl 解�
 ```bash
 bbdown download av170001 --output-dir downloads
 bbdown download ss26801 --select latest --output-dir downloads
+bbdown download fav456 --select page:1 --output-dir downloads
 bbdown download av170001 --output-dir downloads --no-mux --json
 bbdown download av170001 --video-quality 64 --audio-quality 30216 --output-dir downloads
 bbdown download av170001 --output-dir downloads --archive-file downloads/archive.json --on-duplicate keep-both

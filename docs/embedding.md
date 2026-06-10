@@ -6,12 +6,12 @@
 
 The `bbdown_core` crate, published as the `bbdown-core` package, is the integration surface for Rust
 projects that need typed Bilibili metadata, download plans, media downloads, subtitle sidecars,
-danmaku sidecars, QR login state, and restricted-area proxy diagnostics without shelling out to the
-CLI.
+danmaku sidecars, QR login state, batch collection parsing, and restricted-area proxy diagnostics
+without shelling out to the CLI.
 
-The crate is still pre-release. Prefer constructors and builder-style APIs for configuration, and
-treat metadata and plan structs as read-only output surfaces. This keeps embedding code resilient
-when new fields are added before the first crates.io release.
+The crate is still in the `0.1` compatibility phase. Prefer constructors and builder-style APIs for
+configuration, and treat metadata and plan structs as read-only output surfaces. This keeps
+embedding code resilient when new fields are added while the crate matures.
 
 ## Planning Only
 
@@ -38,6 +38,44 @@ async fn main() -> bbdown_core::Result<()> {
 
 Season and media inputs require an explicit `Selection` unless the input itself identifies an
 episode. This is intentional so libraries cannot accidentally plan a full season.
+
+## Batch And Collection Inputs
+
+`BiliClient::resolve_input` accepts CLI-style raw inputs such as B23 short links, `fav...`,
+`mid...`, `collection...`, `series...`, space collection URLs, and space series URLs. Batch inputs
+resolve to `ResolvedContent::Collection`, which carries full collection metadata plus the selected
+items. Without a selector, collection-like inputs select all parsed items; pass
+`Selection::Page(index)` for one item or `Selection::Latest` for the newest parsed item. Empty
+collections are represented as empty item lists, not as missing-field errors.
+
+```rust,no_run
+use bbdown_core::{BiliClient, ClientConfig, ResolvedContent, Selection};
+
+#[tokio::main]
+async fn main() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let resolved = client
+        .resolve_input("fav456", Some(Selection::Page(1)))
+        .await?;
+
+    if let ResolvedContent::Collection(collection) = resolved {
+        println!(
+            "{} selected from {}",
+            collection.selected_items.len(),
+            collection.collection.title
+        );
+    }
+
+    Ok(())
+}
+```
+
+Download planning maps selected collection items back to normal video entries, so downstream
+download execution, archive duplicate checks, stream selection, subtitles, and danmaku sidecars use
+the same APIs as normal video downloads. Planning may fetch only the selected batch item set because
+`DownloadPlan` does not expose collection metadata. PUGV/cheese episode inputs resolve as seasons,
+follow paginated episode lists when the API reports additional pages, and plan through
+`StreamSource::PugvWeb`.
 
 ## Credentials
 

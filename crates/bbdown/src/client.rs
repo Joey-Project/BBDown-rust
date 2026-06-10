@@ -2,7 +2,8 @@ use crate::models::{
     DanmakuTrack, DownloadEntry, DownloadPlan, EpisodeMetadata, FlvSegment, MediaStream, Owner,
     PageMetadata, ResolvedContent, SeasonMetadata, SeasonResolution, StreamDiagnostics,
     StreamQuality, StreamResolverAttempt, StreamResolverOutcome, StreamSet, StreamSource,
-    SubtitleFormat, SubtitleTrack, Tag, VideoMetadata,
+    SubtitleFormat, SubtitleTrack, Tag, VideoCollectionItem, VideoCollectionKind,
+    VideoCollectionMetadata, VideoCollectionResolution, VideoMetadata,
 };
 use crate::{Credentials, Error, Input, Result, Selection};
 use md5::{Digest, Md5};
@@ -330,7 +331,7 @@ impl BiliClient {
         raw: &str,
         selection: Option<Selection>,
     ) -> Result<ResolvedContent> {
-        let input = Input::parse(raw)?;
+        let input = self.parse_input(raw).await?;
         self.resolve(input, selection).await
     }
 
@@ -368,10 +369,63 @@ impl BiliClient {
                     .await
                     .map(ResolvedContent::Season)
             }
+            Input::CheeseEpisode(epid) => self
+                .fetch_pugv_season_by_ep(epid, selection.or(Some(Selection::Current)))
+                .await
+                .map(ResolvedContent::Season),
+            Input::CheeseSeason(season_id) => {
+                let selection = selection.ok_or(Error::SelectionRequired {
+                    input_kind: "cheese season",
+                })?;
+                self.fetch_pugv_season_by_season_id(season_id, selection)
+                    .await
+                    .map(ResolvedContent::Season)
+            }
+            Input::SpaceVideos(mid) => {
+                let fetch_mode = Self::collection_info_fetch_mode(selection.as_ref())?;
+                self.fetch_space_video_collection(mid, selection, fetch_mode)
+                    .await
+                    .map(ResolvedContent::Collection)
+            }
+            Input::FavoriteList {
+                media_id,
+                owner_mid,
+            } => {
+                let fetch_mode = Self::collection_info_fetch_mode(selection.as_ref())?;
+                self.fetch_favorite_collection(media_id, owner_mid, selection, fetch_mode)
+                    .await
+                    .map(ResolvedContent::Collection)
+            }
+            Input::CollectionList(list_id) => {
+                let fetch_mode = Self::collection_info_fetch_mode(selection.as_ref())?;
+                self.fetch_medialist_collection(
+                    list_id,
+                    MediaListKind::Collection,
+                    selection,
+                    fetch_mode,
+                )
+                .await
+                .map(ResolvedContent::Collection)
+            }
+            Input::SeriesList(list_id) => {
+                let fetch_mode = Self::collection_info_fetch_mode(selection.as_ref())?;
+                self.fetch_medialist_collection(
+                    list_id,
+                    MediaListKind::Series,
+                    selection,
+                    fetch_mode,
+                )
+                .await
+                .map(ResolvedContent::Collection)
+            }
             Input::IntlEpisode(epid) => self
                 .fetch_intl_season_by_ep(epid, selection.or(Some(Selection::Current)))
                 .await
                 .map(ResolvedContent::Season),
+            Input::ShortLink(raw) => {
+                let input = self.resolve_short_link_input(&raw).await?;
+                Box::pin(self.resolve(input, selection)).await
+            }
         }
     }
 
@@ -380,7 +434,7 @@ impl BiliClient {
         raw: &str,
         selection: Option<Selection>,
     ) -> Result<DownloadPlan> {
-        let input = Input::parse(raw)?;
+        let input = self.parse_input(raw).await?;
         self.plan(input, selection).await
     }
 
@@ -414,12 +468,103 @@ impl BiliClient {
                 let season = self.fetch_season_by_media_id(media_id, selection).await?;
                 self.plan_season(season, StreamSource::PgcWeb).await
             }
+            Input::CheeseEpisode(epid) => {
+                let season = self
+                    .fetch_pugv_season_by_ep(epid, selection.or(Some(Selection::Current)))
+                    .await?;
+                self.plan_season(season, StreamSource::PugvWeb).await
+            }
+            Input::CheeseSeason(season_id) => {
+                let selection = selection.ok_or(Error::SelectionRequired {
+                    input_kind: "cheese season",
+                })?;
+                let season = self
+                    .fetch_pugv_season_by_season_id(season_id, selection)
+                    .await?;
+                self.plan_season(season, StreamSource::PugvWeb).await
+            }
+            Input::SpaceVideos(mid) => {
+                let fetch_mode = Self::collection_fetch_mode(selection.as_ref())?;
+                let collection = self
+                    .fetch_space_video_collection(mid, selection, fetch_mode)
+                    .await?;
+                self.plan_collection(collection).await
+            }
+            Input::FavoriteList {
+                media_id,
+                owner_mid,
+            } => {
+                let fetch_mode = Self::collection_fetch_mode(selection.as_ref())?;
+                let collection = self
+                    .fetch_favorite_collection(media_id, owner_mid, selection, fetch_mode)
+                    .await?;
+                self.plan_collection(collection).await
+            }
+            Input::CollectionList(list_id) => {
+                let fetch_mode = Self::collection_fetch_mode(selection.as_ref())?;
+                let collection = self
+                    .fetch_medialist_collection(
+                        list_id,
+                        MediaListKind::Collection,
+                        selection,
+                        fetch_mode,
+                    )
+                    .await?;
+                self.plan_collection(collection).await
+            }
+            Input::SeriesList(list_id) => {
+                let fetch_mode = Self::collection_fetch_mode(selection.as_ref())?;
+                let collection = self
+                    .fetch_medialist_collection(
+                        list_id,
+                        MediaListKind::Series,
+                        selection,
+                        fetch_mode,
+                    )
+                    .await?;
+                self.plan_collection(collection).await
+            }
             Input::IntlEpisode(epid) => {
                 let season = self
                     .fetch_intl_season_by_ep(epid, selection.or(Some(Selection::Current)))
                     .await?;
                 self.plan_season(season, StreamSource::IntlWeb).await
             }
+            Input::ShortLink(raw) => {
+                let input = self.resolve_short_link_input(&raw).await?;
+                Box::pin(self.plan(input, selection)).await
+            }
+        }
+    }
+
+    async fn parse_input(&self, raw: &str) -> Result<Input> {
+        match Input::parse(raw)? {
+            Input::ShortLink(short_link) => self.resolve_short_link_input(&short_link).await,
+            input => Ok(input),
+        }
+    }
+
+    async fn resolve_short_link_input(&self, raw: &str) -> Result<Input> {
+        let url = Url::parse(raw)?;
+        let response = self
+            .http
+            .get(url)
+            .headers(self.anonymous_headers()?)
+            .timeout(self.config.request_timeout)
+            .send()
+            .await
+            .map_err(Self::http_error_without_url)?;
+        let final_url = response.url().clone();
+        if final_url.as_str() == raw {
+            return Err(Error::InvalidInput(
+                "short link did not redirect to a supported Bilibili URL".to_owned(),
+            ));
+        }
+        match Input::parse(final_url.as_str())? {
+            Input::ShortLink(_) => Err(Error::InvalidInput(
+                "short link redirected to another short link".to_owned(),
+            )),
+            input => Ok(input),
         }
     }
 
@@ -536,6 +681,514 @@ impl BiliClient {
         let mut resolution = self.fetch_season_by_ep(epid, Some(selection)).await?;
         resolution.season.media_id = Some(media_id);
         Ok(resolution)
+    }
+
+    async fn fetch_pugv_season_by_ep(
+        &self,
+        epid: u64,
+        selection: Option<Selection>,
+    ) -> Result<SeasonResolution> {
+        let mut url = Self::endpoint_url(&self.config.endpoints.api_base, "/pugv/view/web/season")?;
+        url.query_pairs_mut()
+            .append_pair("ep_id", &epid.to_string());
+        let selection = selection.unwrap_or(Selection::Current);
+        let season = if selection == Selection::Current {
+            self.fetch_pugv_season(url).await?
+        } else {
+            self.fetch_pugv_season_from_beginning(url).await?
+        };
+        Self::resolve_season_selection(season, Some(&selection), Some(epid), "cheese episode")
+    }
+
+    async fn fetch_pugv_season_by_season_id(
+        &self,
+        season_id: u64,
+        selection: Selection,
+    ) -> Result<SeasonResolution> {
+        let mut url = Self::endpoint_url(&self.config.endpoints.api_base, "/pugv/view/web/season")?;
+        url.query_pairs_mut()
+            .append_pair("season_id", &season_id.to_string());
+        let season = self.fetch_pugv_season(url).await?;
+        Self::resolve_season_selection(season, Some(&selection), None, "cheese season")
+    }
+
+    async fn fetch_pugv_season(&self, url: Url) -> Result<SeasonMetadata> {
+        let mut data = self.fetch_pugv_season_data(url.clone()).await?;
+        self.fetch_remaining_pugv_episodes(&url, &mut data).await?;
+        Ok(season_from_pugv(data))
+    }
+
+    async fn fetch_pugv_season_from_beginning(&self, url: Url) -> Result<SeasonMetadata> {
+        let data = self.fetch_pugv_season_data(url.clone()).await?;
+        let page_number = data
+            .episode_page
+            .and_then(|episode_page| episode_page.num)
+            .unwrap_or(1);
+        if page_number <= 1 {
+            let mut data = data;
+            self.fetch_remaining_pugv_episodes(&url, &mut data).await?;
+            return Ok(season_from_pugv(data));
+        }
+
+        let page_size = data
+            .episode_page
+            .as_ref()
+            .map_or(20, |page| pugv_episode_page_size(page, data.episodes.len()));
+        let mut start_url = if let Some(season_id) = data.season_id {
+            let mut url =
+                Self::endpoint_url(&self.config.endpoints.api_base, "/pugv/view/web/season")?;
+            url.query_pairs_mut()
+                .append_pair("season_id", &season_id.to_string());
+            url
+        } else {
+            url
+        };
+        start_url = pugv_season_page_url(&start_url, 1, page_size);
+        let mut data = self.fetch_pugv_season_data(start_url.clone()).await?;
+        let page_number = data
+            .episode_page
+            .and_then(|episode_page| episode_page.num)
+            .unwrap_or(1);
+        if page_number > 1 {
+            return Err(Error::MissingField("data.episode_page first page"));
+        }
+        self.fetch_remaining_pugv_episodes(&start_url, &mut data)
+            .await?;
+        Ok(season_from_pugv(data))
+    }
+
+    async fn fetch_pugv_season_data(&self, url: Url) -> Result<PugvSeasonData> {
+        let response: ApiData<PugvSeasonData> = self.get_json(url).await?;
+        response.into_data()
+    }
+
+    async fn fetch_remaining_pugv_episodes(
+        &self,
+        base_url: &Url,
+        data: &mut PugvSeasonData,
+    ) -> Result<()> {
+        let Some(mut page) = data.episode_page else {
+            return Ok(());
+        };
+        let page_size = pugv_episode_page_size(&page, data.episodes.len());
+        let mut last_page_number = page.num.unwrap_or(1);
+        while page.next.unwrap_or(false) {
+            let Some(next_page_number) = last_page_number.checked_add(1) else {
+                return Err(Error::MissingField("data.episode_page.num"));
+            };
+            if let Some(total_pages) = page.total.map(|total| total.div_ceil(page_size))
+                && next_page_number > total_pages
+            {
+                break;
+            }
+            let next_url = pugv_season_page_url(base_url, next_page_number, page_size);
+            let next_data = self.fetch_pugv_season_data(next_url).await?;
+            let returned_page_number = next_data
+                .episode_page
+                .and_then(|episode_page| episode_page.num)
+                .unwrap_or(next_page_number);
+            if returned_page_number <= last_page_number {
+                return Err(Error::MissingField("data.episode_page pagination cursor"));
+            }
+            last_page_number = returned_page_number;
+            data.episodes.extend(next_data.episodes);
+            let Some(next_page) = next_data.episode_page else {
+                break;
+            };
+            page = next_page;
+        }
+        Ok(())
+    }
+
+    async fn fetch_favorite_collection(
+        &self,
+        media_id: Option<u64>,
+        owner_mid: Option<u64>,
+        selection: Option<Selection>,
+        fetch_mode: CollectionFetchMode,
+    ) -> Result<VideoCollectionResolution> {
+        let media_id = match media_id {
+            Some(media_id) => media_id,
+            None => {
+                self.fetch_default_favorite_id(owner_mid.ok_or(Error::MissingField("space mid"))?)
+                    .await?
+            }
+        };
+        let collection = self
+            .fetch_favorite_collection_all(media_id, fetch_mode)
+            .await?;
+        Self::resolve_collection_selection(collection, selection.as_ref())
+    }
+
+    async fn fetch_default_favorite_id(&self, owner_mid: u64) -> Result<u64> {
+        let mut url = Self::endpoint_url(
+            &self.config.endpoints.api_base,
+            "/x/v3/fav/folder/created/list-all",
+        )?;
+        url.query_pairs_mut()
+            .append_pair("up_mid", &owner_mid.to_string());
+        let response: ApiData<FavoriteFolderListData> = self.get_json(url).await?;
+        response
+            .into_data()?
+            .list
+            .into_iter()
+            .find_map(|folder| folder.id)
+            .ok_or(Error::MissingField("data.list[0].id"))
+    }
+
+    async fn fetch_favorite_collection_all(
+        &self,
+        media_id: u64,
+        fetch_mode: CollectionFetchMode,
+    ) -> Result<VideoCollectionMetadata> {
+        let page_size = 20_u32;
+        let mut page_number = 1_u32;
+        let first = self
+            .fetch_favorite_collection_page(media_id, page_number, page_size)
+            .await?;
+        let info = first.info;
+        let total_count = info.media_count.unwrap_or(first.medias.len());
+        let total_pages = total_count.div_ceil(page_size as usize);
+        let mut page_medias = first.medias;
+        let mut items = Vec::new();
+        loop {
+            for media in page_medias {
+                self.push_favorite_media_items(&mut items, media).await?;
+                if fetch_mode.is_satisfied_by(items.len()) {
+                    break;
+                }
+            }
+            if fetch_mode.is_satisfied_by(items.len()) || (page_number as usize) >= total_pages {
+                break;
+            }
+            page_number += 1;
+            page_medias = self
+                .fetch_favorite_collection_page(media_id, page_number, page_size)
+                .await?
+                .medias;
+        }
+        renumber_collection_items(&mut items);
+        Ok(VideoCollectionMetadata {
+            id: Some(media_id),
+            kind: VideoCollectionKind::Favorite,
+            title: info.title.unwrap_or_else(|| format!("Favorite {media_id}")),
+            description: info.intro.unwrap_or_default(),
+            cover_url: info.cover,
+            pub_time: info.ctime,
+            owner: info.upper.and_then(FavoriteUpper::into_owner),
+            items,
+        })
+    }
+
+    async fn fetch_favorite_collection_page(
+        &self,
+        media_id: u64,
+        page_number: u32,
+        page_size: u32,
+    ) -> Result<FavoriteResourceListData> {
+        let mut url =
+            Self::endpoint_url(&self.config.endpoints.api_base, "/x/v3/fav/resource/list")?;
+        url.query_pairs_mut()
+            .append_pair("media_id", &media_id.to_string())
+            .append_pair("pn", &page_number.to_string())
+            .append_pair("ps", &page_size.to_string())
+            .append_pair("order", "mtime")
+            .append_pair("type", "2")
+            .append_pair("tid", "0")
+            .append_pair("platform", "web");
+        let response: ApiData<FavoriteResourceListData> = self.get_json(url).await?;
+        response.into_data()
+    }
+
+    async fn push_favorite_media_items(
+        &self,
+        items: &mut Vec<VideoCollectionItem>,
+        media: FavoriteMedia,
+    ) -> Result<()> {
+        if media.attr.is_some_and(|attr| attr != 0) {
+            return Ok(());
+        }
+        let aid = media.id.ok_or(Error::MissingField("data.medias[].id"))?;
+        if media.page.unwrap_or(1) > 1 {
+            let video = self.fetch_video_by_aid(aid, TagPolicy::Skip).await?;
+            for page in video.pages {
+                items.push(VideoCollectionItem {
+                    index: 0,
+                    aid: page.aid,
+                    bvid: video.bvid.clone(),
+                    cid: page.cid,
+                    title: format_collection_page_title(
+                        media.title.as_deref().unwrap_or(&video.title),
+                        page.index,
+                        &page.title,
+                    ),
+                    cover_url: video.cover_url.clone().or_else(|| media.cover.clone()),
+                    description: media
+                        .intro
+                        .clone()
+                        .unwrap_or_else(|| video.description.clone()),
+                    pub_time: media.pubtime.or(video.pub_time),
+                    owner: media
+                        .upper
+                        .clone()
+                        .and_then(FavoriteUpper::into_owner)
+                        .or(video.owner.clone()),
+                    duration_seconds: page.duration_seconds,
+                });
+            }
+        } else {
+            let cid = media
+                .ugc
+                .as_ref()
+                .and_then(|ugc| ugc.first_cid)
+                .ok_or(Error::MissingField("data.medias[].ugc.first_cid"))?;
+            items.push(VideoCollectionItem {
+                index: 0,
+                aid,
+                bvid: media.bvid,
+                cid,
+                title: media.title.unwrap_or_else(|| aid.to_string()),
+                cover_url: media.cover,
+                description: media.intro.unwrap_or_default(),
+                pub_time: media.pubtime,
+                owner: media.upper.and_then(FavoriteUpper::into_owner),
+                duration_seconds: media.duration,
+            });
+        }
+        Ok(())
+    }
+
+    async fn fetch_medialist_collection(
+        &self,
+        list_id: u64,
+        kind: MediaListKind,
+        selection: Option<Selection>,
+        fetch_mode: CollectionFetchMode,
+    ) -> Result<VideoCollectionResolution> {
+        let collection = self
+            .fetch_medialist_collection_all(list_id, kind, fetch_mode)
+            .await?;
+        Self::resolve_collection_selection(collection, selection.as_ref())
+    }
+
+    async fn fetch_medialist_collection_all(
+        &self,
+        list_id: u64,
+        kind: MediaListKind,
+        fetch_mode: CollectionFetchMode,
+    ) -> Result<VideoCollectionMetadata> {
+        let info = self.fetch_medialist_info(list_id, kind).await?;
+        let mut items = Vec::new();
+        let mut oid = None;
+        loop {
+            let page = self.fetch_medialist_page(list_id, kind, oid).await?;
+            let has_more = page.has_more.unwrap_or(false);
+            let mut next_oid = oid;
+            let mut selected_item_found = false;
+            for media in page.media_list {
+                if media.id.is_some() {
+                    next_oid = media.id;
+                }
+                if media.attr.is_some_and(|attr| attr != 0) {
+                    continue;
+                }
+                push_medialist_media_items(&mut items, media)?;
+                if fetch_mode.is_satisfied_by(items.len()) {
+                    selected_item_found = true;
+                    break;
+                }
+            }
+            if selected_item_found || !has_more {
+                break;
+            }
+            if next_oid == oid {
+                return Err(Error::MissingField("data.media_list pagination cursor"));
+            }
+            oid = next_oid;
+        }
+        renumber_collection_items(&mut items);
+        Ok(VideoCollectionMetadata {
+            id: Some(list_id),
+            kind: kind.into_collection_kind(),
+            title: info
+                .title
+                .unwrap_or_else(|| format!("{} {list_id}", kind.title())),
+            description: info.intro.unwrap_or_default(),
+            cover_url: info.cover,
+            pub_time: info.ctime,
+            owner: None,
+            items,
+        })
+    }
+
+    async fn fetch_medialist_info(
+        &self,
+        list_id: u64,
+        kind: MediaListKind,
+    ) -> Result<MediaListInfoData> {
+        let mut url = Self::endpoint_url(&self.config.endpoints.api_base, "/x/v1/medialist/info")?;
+        url.query_pairs_mut()
+            .append_pair("type", kind.type_id())
+            .append_pair("biz_id", &list_id.to_string())
+            .append_pair("tid", "0");
+        let response: ApiData<MediaListInfoData> = self.get_json(url).await?;
+        response.into_data()
+    }
+
+    async fn fetch_medialist_page(
+        &self,
+        list_id: u64,
+        kind: MediaListKind,
+        oid: Option<u64>,
+    ) -> Result<MediaListResourcePageData> {
+        let mut url = Self::endpoint_url(
+            &self.config.endpoints.api_base,
+            "/x/v2/medialist/resource/list",
+        )?;
+        url.query_pairs_mut()
+            .append_pair("type", kind.type_id())
+            .append_pair(
+                "oid",
+                &oid.map_or_else(String::new, |value| value.to_string()),
+            )
+            .append_pair("otype", "2")
+            .append_pair("biz_id", &list_id.to_string())
+            .append_pair("with_current", "true")
+            .append_pair("mobi_app", "web")
+            .append_pair("ps", "20")
+            .append_pair("direction", "false")
+            .append_pair("sort_field", "1")
+            .append_pair("tid", "0")
+            .append_pair("desc", kind.desc_value());
+        if kind == MediaListKind::Series {
+            url.query_pairs_mut().append_pair("bvid", "");
+        }
+        let response: ApiData<MediaListResourcePageData> = self.get_json(url).await?;
+        response.into_data()
+    }
+
+    async fn fetch_space_video_collection(
+        &self,
+        mid: u64,
+        selection: Option<Selection>,
+        fetch_mode: CollectionFetchMode,
+    ) -> Result<VideoCollectionResolution> {
+        let collection = self
+            .fetch_space_video_collection_all(mid, fetch_mode)
+            .await?;
+        Self::resolve_collection_selection(collection, selection.as_ref())
+    }
+
+    async fn fetch_space_video_collection_all(
+        &self,
+        mid: u64,
+        fetch_mode: CollectionFetchMode,
+    ) -> Result<VideoCollectionMetadata> {
+        let page_size = 50_u32;
+        let mut page_number = 1_u32;
+        let first = self
+            .fetch_space_video_page(mid, page_number, page_size)
+            .await?;
+        let total_count = first.page.count.unwrap_or(first.videos.len());
+        let total_pages = total_count.div_ceil(page_size as usize);
+        let mut page_videos = first.videos;
+        let mut items = Vec::new();
+        loop {
+            for video in page_videos {
+                let aid = video
+                    .aid
+                    .ok_or(Error::MissingField("data.list.vlist[].aid"))?;
+                let metadata = self.fetch_video_by_aid(aid, TagPolicy::Skip).await?;
+                for page in metadata.pages {
+                    items.push(VideoCollectionItem {
+                        index: 0,
+                        aid: page.aid,
+                        bvid: metadata.bvid.clone().or_else(|| video.bvid.clone()),
+                        cid: page.cid,
+                        title: format_collection_page_title(
+                            &metadata.title,
+                            page.index,
+                            &page.title,
+                        ),
+                        cover_url: metadata.cover_url.clone().or_else(|| video.pic.clone()),
+                        description: metadata.description.clone(),
+                        pub_time: metadata.pub_time.or(video.created),
+                        owner: metadata.owner.clone(),
+                        duration_seconds: page.duration_seconds,
+                    });
+                    if fetch_mode.is_satisfied_by(items.len()) {
+                        break;
+                    }
+                }
+                if fetch_mode.is_satisfied_by(items.len()) {
+                    break;
+                }
+            }
+            if fetch_mode.is_satisfied_by(items.len()) || (page_number as usize) >= total_pages {
+                break;
+            }
+            page_number += 1;
+            page_videos = self
+                .fetch_space_video_page(mid, page_number, page_size)
+                .await?
+                .videos;
+        }
+        renumber_collection_items(&mut items);
+        Ok(VideoCollectionMetadata {
+            id: Some(mid),
+            kind: VideoCollectionKind::Space,
+            title: format!("Space {mid} videos"),
+            description: String::new(),
+            cover_url: None,
+            pub_time: None,
+            owner: Some(Owner {
+                mid,
+                name: mid.to_string(),
+            }),
+            items,
+        })
+    }
+
+    async fn fetch_space_video_page(
+        &self,
+        mid: u64,
+        page_number: u32,
+        page_size: u32,
+    ) -> Result<SpaceArcSearchData> {
+        let mixin_key = self.fetch_wbi_mixin_key().await?;
+        let params = vec![
+            ("mid", mid.to_string()),
+            ("order", "pubdate".to_owned()),
+            ("pn", page_number.to_string()),
+            ("ps", page_size.to_string()),
+            ("tid", "0".to_owned()),
+            ("wts", current_unix_timestamp().to_string()),
+        ];
+        let mut url =
+            Self::endpoint_url(&self.config.endpoints.api_base, "/x/space/wbi/arc/search")?;
+        url.set_query(Some(&wbi_signed_query(params, &mixin_key)));
+        let response: ApiData<SpaceArcSearchRootData> = self.get_json(url).await?;
+        let data = response.into_data()?;
+        Ok(SpaceArcSearchData {
+            videos: data.list.videos,
+            page: data.page,
+        })
+    }
+
+    async fn fetch_wbi_mixin_key(&self) -> Result<String> {
+        let url = Self::endpoint_url(&self.config.endpoints.api_base, "/x/web-interface/nav")?;
+        let response: ApiData<NavData> = self.get_json(url).await?;
+        let data = response.into_data()?;
+        wbi_mixin_key(
+            data.wbi_img
+                .img_url
+                .as_deref()
+                .ok_or(Error::MissingField("data.wbi_img.img_url"))?,
+            data.wbi_img
+                .sub_url
+                .as_deref()
+                .ok_or(Error::MissingField("data.wbi_img.sub_url"))?,
+        )
     }
 
     async fn fetch_intl_season_by_ep(
@@ -675,6 +1328,28 @@ impl BiliClient {
         })
     }
 
+    async fn plan_collection(&self, collection: VideoCollectionResolution) -> Result<DownloadPlan> {
+        let mut entries = Vec::new();
+        for item in collection.selected_items {
+            entries.push(
+                self.plan_entry(PlanEntrySeed {
+                    index: item.index,
+                    aid: item.aid,
+                    bvid: item.bvid,
+                    cid: item.cid,
+                    epid: None,
+                    title: item.title,
+                    source: StreamSource::NormalWeb,
+                })
+                .await?,
+            );
+        }
+        Ok(DownloadPlan {
+            title: collection.collection.title,
+            entries,
+        })
+    }
+
     async fn plan_entry(&self, seed: PlanEntrySeed) -> Result<DownloadEntry> {
         let resolved_streams = self
             .fetch_stream_set(seed.source.clone(), seed.aid, seed.cid, seed.epid)
@@ -737,6 +1412,61 @@ impl BiliClient {
         Ok(pages)
     }
 
+    fn resolve_collection_selection(
+        collection: VideoCollectionMetadata,
+        selection: Option<&Selection>,
+    ) -> Result<VideoCollectionResolution> {
+        let selected_items = match selection {
+            Some(Selection::Latest) => collection.items.first().cloned().into_iter().collect(),
+            Some(Selection::Page(page)) => collection
+                .items
+                .iter()
+                .find(|item| item.index == *page)
+                .cloned()
+                .into_iter()
+                .collect(),
+            Some(Selection::Episode(_)) => {
+                return Err(Error::InvalidInput(
+                    "episode selection is only valid for PGC inputs".to_owned(),
+                ));
+            }
+            Some(Selection::Current) => {
+                return Err(Error::InvalidInput(
+                    "current selection is only valid for inputs that identify a single current item"
+                        .to_owned(),
+                ));
+            }
+            Some(Selection::All) | None => collection.items.clone(),
+        };
+        let allow_empty_selection = matches!(selection, Some(Selection::All) | None);
+        if selected_items.is_empty() && !allow_empty_selection {
+            return Err(Error::MissingField("selected collection item"));
+        }
+        Ok(VideoCollectionResolution {
+            collection,
+            selected_items,
+        })
+    }
+
+    fn collection_fetch_mode(selection: Option<&Selection>) -> Result<CollectionFetchMode> {
+        match selection {
+            Some(Selection::Current) => Err(Error::InvalidInput(
+                "current selection is only valid for inputs that identify a single current item"
+                    .to_owned(),
+            )),
+            Some(Selection::Episode(_)) => Err(Error::InvalidInput(
+                "episode selection is only valid for PGC inputs".to_owned(),
+            )),
+            Some(Selection::Latest) => Ok(CollectionFetchMode::Latest),
+            Some(Selection::Page(page)) => Ok(CollectionFetchMode::Page(*page)),
+            Some(Selection::All) | None => Ok(CollectionFetchMode::All),
+        }
+    }
+
+    fn collection_info_fetch_mode(selection: Option<&Selection>) -> Result<CollectionFetchMode> {
+        Self::collection_fetch_mode(selection).map(|_| CollectionFetchMode::All)
+    }
+
     async fn fetch_stream_set(
         &self,
         source: StreamSource,
@@ -750,6 +1480,9 @@ impl BiliClient {
         let mut url = match source {
             StreamSource::NormalWeb => {
                 Self::endpoint_url(&self.config.endpoints.api_base, "/x/player/playurl")?
+            }
+            StreamSource::PugvWeb => {
+                Self::endpoint_url(&self.config.endpoints.api_base, "/pugv/player/web/playurl")?
             }
             StreamSource::PgcWeb | StreamSource::PgcProxy => unreachable!(),
             StreamSource::IntlWeb => Self::endpoint_url(
@@ -769,6 +1502,19 @@ impl BiliClient {
                         .append_pair("fnver", "0")
                         .append_pair("fourk", "1")
                         .append_pair("try_look", "1")
+                        .append_pair("otype", "json");
+                }
+                StreamSource::PugvWeb => {
+                    let epid = epid.ok_or(Error::MissingField("epid"))?;
+                    query
+                        .append_pair("avid", &aid.to_string())
+                        .append_pair("cid", &cid.to_string())
+                        .append_pair("ep_id", &epid.to_string())
+                        .append_pair("module", "bangumi")
+                        .append_pair("qn", "0")
+                        .append_pair("fnval", "4048")
+                        .append_pair("fnver", "0")
+                        .append_pair("fourk", "1")
                         .append_pair("otype", "json");
                 }
                 StreamSource::PgcWeb | StreamSource::PgcProxy => unreachable!(),
@@ -915,7 +1661,10 @@ impl BiliClient {
         epid: Option<u64>,
     ) -> Result<Vec<SubtitleTrack>> {
         match source {
-            StreamSource::NormalWeb | StreamSource::PgcWeb | StreamSource::PgcProxy => {
+            StreamSource::NormalWeb
+            | StreamSource::PgcWeb
+            | StreamSource::PgcProxy
+            | StreamSource::PugvWeb => {
                 let mut url = Self::endpoint_url(&self.config.endpoints.api_base, "/x/player/v2")?;
                 url.query_pairs_mut()
                     .append_pair("aid", &aid.to_string())
@@ -1041,6 +1790,33 @@ fn set_endpoint_path(url: &mut Url, path: &str) {
     url.set_path(&next_path);
 }
 
+fn pugv_episode_page_size(page: &PugvEpisodePage, loaded_episode_count: usize) -> u32 {
+    page.size
+        .or_else(|| u32::try_from(loaded_episode_count).ok())
+        .filter(|size| *size > 0)
+        .unwrap_or(20)
+}
+
+fn pugv_season_page_url(base_url: &Url, page_number: u32, page_size: u32) -> Url {
+    let query_pairs = base_url
+        .query_pairs()
+        .filter(|(key, _)| key != "pn" && key != "ps")
+        .map(|(key, value)| (key.into_owned(), value.into_owned()))
+        .collect::<Vec<_>>();
+    let mut url = base_url.clone();
+    url.set_query(None);
+    {
+        let mut query = url.query_pairs_mut();
+        for (key, value) in query_pairs {
+            query.append_pair(&key, &value);
+        }
+        query
+            .append_pair("pn", &page_number.to_string())
+            .append_pair("ps", &page_size.to_string());
+    }
+    url
+}
+
 fn season_from_pgc(result: PgcSeasonResult) -> SeasonMetadata {
     let PgcSeasonResult {
         season_id,
@@ -1118,6 +1894,51 @@ fn season_from_intl(result: IntlSeasonResult, current_epid: Option<u64>) -> Seas
         main_episode_count,
         areas: areas.into_iter().filter_map(PgcName::into_name).collect(),
         tags: styles.into_iter().filter_map(PgcName::into_name).collect(),
+        episodes,
+    }
+}
+
+fn season_from_pugv(data: PugvSeasonData) -> SeasonMetadata {
+    let owner = data.up_info.and_then(FavoriteUpper::into_owner);
+    let mut episodes = Vec::new();
+    for (index, episode) in data.episodes.into_iter().enumerate() {
+        let Some(epid) = episode.id else {
+            continue;
+        };
+        let Some(aid) = episode.aid else {
+            continue;
+        };
+        let Some(cid) = episode.cid else {
+            continue;
+        };
+        let Some(index) = u32::try_from(index + 1).ok() else {
+            continue;
+        };
+        episodes.push(EpisodeMetadata {
+            index,
+            aid,
+            bvid: None,
+            cid,
+            epid,
+            title: episode
+                .index
+                .map_or_else(|| index.to_string(), |value| value.to_string()),
+            long_title: episode.title,
+            pub_time: episode.release_date,
+        });
+    }
+    let main_episode_count = episodes.len();
+    SeasonMetadata {
+        season_id: data.season_id,
+        media_id: None,
+        title: data.title.unwrap_or_default(),
+        description: data.subtitle.unwrap_or_default(),
+        cover_url: data.cover,
+        main_episode_count,
+        areas: Vec::new(),
+        tags: owner
+            .map(|owner| vec![format!("UP: {}", owner.name)])
+            .unwrap_or_default(),
         episodes,
     }
 }
@@ -1390,6 +2211,181 @@ struct PgcReviewEpisode {
     id: u64,
 }
 
+#[derive(Debug, Deserialize)]
+struct PugvSeasonData {
+    season_id: Option<u64>,
+    title: Option<String>,
+    subtitle: Option<String>,
+    cover: Option<String>,
+    up_info: Option<FavoriteUpper>,
+    episode_page: Option<PugvEpisodePage>,
+    #[serde(default)]
+    episodes: Vec<PugvEpisode>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+struct PugvEpisodePage {
+    next: Option<bool>,
+    num: Option<u32>,
+    size: Option<u32>,
+    total: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PugvEpisode {
+    id: Option<u64>,
+    aid: Option<u64>,
+    cid: Option<u64>,
+    #[serde(rename = "index")]
+    index: Option<u32>,
+    title: Option<String>,
+    release_date: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FavoriteFolderListData {
+    #[serde(default)]
+    list: Vec<FavoriteFolder>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FavoriteFolder {
+    id: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FavoriteResourceListData {
+    info: FavoriteInfo,
+    #[serde(default)]
+    medias: Vec<FavoriteMedia>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FavoriteInfo {
+    media_count: Option<usize>,
+    title: Option<String>,
+    intro: Option<String>,
+    cover: Option<String>,
+    ctime: Option<i64>,
+    upper: Option<FavoriteUpper>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct FavoriteUpper {
+    mid: Option<u64>,
+    name: Option<String>,
+    uname: Option<String>,
+}
+
+impl FavoriteUpper {
+    fn into_owner(self) -> Option<Owner> {
+        Some(Owner {
+            mid: self.mid?,
+            name: self.name.or(self.uname).unwrap_or_default(),
+        })
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct FavoriteMedia {
+    id: Option<u64>,
+    bvid: Option<String>,
+    title: Option<String>,
+    intro: Option<String>,
+    cover: Option<String>,
+    pubtime: Option<i64>,
+    duration: Option<u32>,
+    attr: Option<i64>,
+    page: Option<u32>,
+    upper: Option<FavoriteUpper>,
+    ugc: Option<FavoriteUgc>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FavoriteUgc {
+    first_cid: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MediaListInfoData {
+    title: Option<String>,
+    intro: Option<String>,
+    cover: Option<String>,
+    ctime: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MediaListResourcePageData {
+    has_more: Option<bool>,
+    #[serde(default)]
+    media_list: Vec<MediaListMedia>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MediaListMedia {
+    id: Option<u64>,
+    bvid: Option<String>,
+    title: Option<String>,
+    intro: Option<String>,
+    cover: Option<String>,
+    pubtime: Option<i64>,
+    attr: Option<i64>,
+    page: Option<u32>,
+    upper: Option<FavoriteUpper>,
+    #[serde(default)]
+    pages: Vec<MediaListPage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MediaListPage {
+    id: Option<u64>,
+    page: Option<u32>,
+    title: Option<String>,
+    duration: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SpaceArcSearchRootData {
+    list: SpaceArcVideoList,
+    page: SpaceArcPage,
+}
+
+#[derive(Debug)]
+struct SpaceArcSearchData {
+    videos: Vec<SpaceArcVideo>,
+    page: SpaceArcPage,
+}
+
+#[derive(Debug, Deserialize)]
+struct SpaceArcVideoList {
+    #[serde(default, rename = "vlist")]
+    videos: Vec<SpaceArcVideo>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SpaceArcPage {
+    count: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SpaceArcVideo {
+    aid: Option<u64>,
+    bvid: Option<String>,
+    pic: Option<String>,
+    created: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NavData {
+    wbi_img: WbiImage,
+}
+
+#[derive(Debug, Deserialize)]
+struct WbiImage {
+    img_url: Option<String>,
+    sub_url: Option<String>,
+}
+
 #[derive(Clone, Debug)]
 struct PlanEntrySeed {
     index: u32,
@@ -1424,12 +2420,174 @@ enum TagPolicy {
     Skip,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MediaListKind {
+    Collection,
+    Series,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CollectionFetchMode {
+    All,
+    Latest,
+    Page(u32),
+}
+
+impl CollectionFetchMode {
+    fn is_satisfied_by(self, item_count: usize) -> bool {
+        match self {
+            Self::All => false,
+            Self::Latest => item_count > 0,
+            Self::Page(page) => {
+                page != 0 && usize::try_from(page).is_ok_and(|target| item_count >= target)
+            }
+        }
+    }
+}
+
+impl MediaListKind {
+    const fn type_id(self) -> &'static str {
+        match self {
+            Self::Collection => "8",
+            Self::Series => "5",
+        }
+    }
+
+    const fn desc_value(self) -> &'static str {
+        match self {
+            Self::Collection => "false",
+            Self::Series => "true",
+        }
+    }
+
+    const fn title(self) -> &'static str {
+        match self {
+            Self::Collection => "Collection",
+            Self::Series => "Series",
+        }
+    }
+
+    const fn into_collection_kind(self) -> VideoCollectionKind {
+        match self {
+            Self::Collection => VideoCollectionKind::Collection,
+            Self::Series => VideoCollectionKind::Series,
+        }
+    }
+}
+
 fn episode_display_title(title: &str, long_title: Option<&str>) -> String {
     match long_title.filter(|value| !value.is_empty()) {
         Some(long_title) if title.is_empty() => long_title.to_owned(),
         Some(long_title) => format!("{title} {long_title}"),
         None => title.to_owned(),
     }
+}
+
+fn push_medialist_media_items(
+    items: &mut Vec<VideoCollectionItem>,
+    media: MediaListMedia,
+) -> Result<()> {
+    let aid = media
+        .id
+        .ok_or(Error::MissingField("data.media_list[].id"))?;
+    let title = media.title.unwrap_or_else(|| aid.to_string());
+    let page_count = media.page.unwrap_or_else(|| {
+        u32::try_from(media.pages.len())
+            .ok()
+            .filter(|count| *count > 0)
+            .unwrap_or(1)
+    });
+    for page in media.pages {
+        let cid = page
+            .id
+            .ok_or(Error::MissingField("data.media_list[].pages[].id"))?;
+        let page_index = page.page.unwrap_or(1);
+        items.push(VideoCollectionItem {
+            index: 0,
+            aid,
+            bvid: media.bvid.clone(),
+            cid,
+            title: if page_count == 1 {
+                title.clone()
+            } else {
+                format_collection_page_title(
+                    &title,
+                    page_index,
+                    page.title.as_deref().unwrap_or_default(),
+                )
+            },
+            cover_url: media.cover.clone(),
+            description: media.intro.clone().unwrap_or_default(),
+            pub_time: media.pubtime,
+            owner: media.upper.clone().and_then(FavoriteUpper::into_owner),
+            duration_seconds: page.duration,
+        });
+    }
+    Ok(())
+}
+
+fn renumber_collection_items(items: &mut [VideoCollectionItem]) {
+    for (index, item) in items.iter_mut().enumerate() {
+        if let Ok(next_index) = u32::try_from(index + 1) {
+            item.index = next_index;
+        }
+    }
+}
+
+fn format_collection_page_title(video_title: &str, page_index: u32, page_title: &str) -> String {
+    if page_index == 1 && (page_title.is_empty() || page_title == video_title) {
+        return video_title.to_owned();
+    }
+    if page_title.is_empty() {
+        format!("{video_title}_P{page_index}")
+    } else {
+        format!("{video_title}_P{page_index}_{page_title}")
+    }
+}
+
+fn wbi_signed_query(mut params: Vec<(&'static str, String)>, mixin_key: &str) -> String {
+    params.sort_by(|left, right| left.0.cmp(right.0));
+    let encoded = encode_query(&params);
+    let sign = format!(
+        "{:x}",
+        Md5::digest(format!("{encoded}{mixin_key}").as_bytes())
+    );
+    params.push(("w_rid", sign));
+    encode_query(&params)
+}
+
+fn encode_query(params: &[(&'static str, String)]) -> String {
+    let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+    for (key, value) in params {
+        serializer.append_pair(key, value);
+    }
+    serializer.finish()
+}
+
+fn wbi_mixin_key(img_url: &str, sub_url: &str) -> Result<String> {
+    const MIXIN_KEY_ENC_TAB: [usize; 32] = [
+        46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49, 33, 9, 42, 19,
+        29, 28, 14, 39, 12, 38, 41, 13,
+    ];
+    let source = format!("{}{}", wbi_key_part(img_url)?, wbi_key_part(sub_url)?);
+    let mut output = String::with_capacity(32);
+    for index in MIXIN_KEY_ENC_TAB {
+        output.push(char::from(
+            *source
+                .as_bytes()
+                .get(index)
+                .ok_or(Error::MissingField("data.wbi_img mixin key"))?,
+        ));
+    }
+    Ok(output)
+}
+
+fn wbi_key_part(raw: &str) -> Result<&str> {
+    raw.rsplit('/')
+        .next()
+        .and_then(|file_name| file_name.split('.').next())
+        .filter(|part| !part.is_empty())
+        .ok_or(Error::MissingField("data.wbi_img key part"))
 }
 
 fn append_pgc_playurl_params(
@@ -2339,6 +3497,7 @@ mod tests {
     };
     use crate::{
         Credentials, Error, Input, ResolvedContent, Selection, StreamSource, SubtitleFormat,
+        VideoCollectionItem, VideoCollectionKind, VideoCollectionMetadata,
     };
     use httpmock::MockServer;
     use httpmock::prelude::*;
@@ -2383,7 +3542,9 @@ mod tests {
                 assert_eq!(video.tags[0].name, "anime");
                 assert_eq!(video.pages[0].cid, 9988);
             }
-            ResolvedContent::Season(_) => return Err(anyhow::anyhow!("expected video")),
+            ResolvedContent::Season(_) | ResolvedContent::Collection(_) => {
+                return Err(anyhow::anyhow!("expected video"));
+            }
         }
         Ok(())
     }
@@ -2840,6 +4001,685 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn plans_cheese_download_with_pugv_source() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/pugv/view/web/season")
+                .query_param("ep_id", "101");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "season_id": 202,
+                    "title": "Course",
+                    "subtitle": "Course subtitle",
+                    "cover": "https://example.invalid/course.jpg",
+                    "up_info": {"mid": 1, "uname": "Teacher"},
+                    "episodes": [{
+                        "id": 101,
+                        "aid": 170_001,
+                        "cid": 9988,
+                        "index": 1,
+                        "title": "Lesson",
+                        "duration": 12,
+                        "release_date": 1_700_000_000
+                    }]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/pugv/player/web/playurl")
+                .query_param("avid", "170001")
+                .query_param("cid", "9988")
+                .query_param("ep_id", "101");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "dash": {
+                        "duration": 12,
+                        "video": [{
+                            "id": 80,
+                            "baseUrl": "https://video.example/course.m4s",
+                            "base_url": "https://video.example/course.m4s"
+                        }],
+                        "audio": [{
+                            "id": 30280,
+                            "baseUrl": "https://audio.example/course.m4s",
+                            "base_url": "https://audio.example/course.m4s"
+                        }]
+                    }
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/player/v2")
+                .query_param("aid", "170001")
+                .query_param("cid", "9988");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {"subtitle": {"subtitles": []}}
+            }));
+        });
+
+        let client = test_client(&server);
+        let plan = client.plan_download("cheese/ep101", None).await?;
+
+        assert_eq!(plan.title, "Course");
+        assert_eq!(plan.entries[0].source, StreamSource::PugvWeb);
+        assert_eq!(plan.entries[0].epid, Some(101));
+        assert_eq!(plan.entries[0].streams.videos[0].id, 80);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolves_paginated_cheese_season_latest() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/pugv/view/web/season")
+                .query_param("season_id", "202")
+                .query_param_missing("pn");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "season_id": 202,
+                    "title": "Course",
+                    "subtitle": "Course subtitle",
+                    "cover": "https://example.invalid/course.jpg",
+                    "up_info": {"mid": 1, "uname": "Teacher"},
+                    "episode_page": {"next": true, "num": 1, "size": 1, "total": 2},
+                    "episodes": [{
+                        "id": 101,
+                        "aid": 170_001,
+                        "cid": 9988,
+                        "index": 1,
+                        "title": "First lesson",
+                        "release_date": 1_700_000_000
+                    }]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/pugv/view/web/season")
+                .query_param("pn", "2");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "season_id": 202,
+                    "title": "Course",
+                    "subtitle": "Course subtitle",
+                    "cover": "https://example.invalid/course.jpg",
+                    "up_info": {"mid": 1, "uname": "Teacher"},
+                    "episode_page": {"next": false, "num": 2, "size": 1, "total": 2},
+                    "episodes": [{
+                        "id": 102,
+                        "aid": 170_002,
+                        "cid": 9989,
+                        "index": 2,
+                        "title": "Second lesson",
+                        "release_date": 1_700_000_001
+                    }]
+                }
+            }));
+        });
+
+        let resolved = test_client(&server)
+            .resolve_input("cheese/ss202", Some(Selection::Latest))
+            .await?;
+        match resolved {
+            ResolvedContent::Season(season) => {
+                assert_eq!(season.season.episodes.len(), 2);
+                assert_eq!(season.selected_episodes[0].epid, 102);
+                assert_eq!(
+                    season.selected_episodes[0].long_title.as_deref(),
+                    Some("Second lesson")
+                );
+            }
+            ResolvedContent::Video(_) | ResolvedContent::Collection(_) => {
+                return Err(anyhow::anyhow!("expected season"));
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pugv_pagination_uses_stable_page_size_when_size_is_missing() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        for (page_number, episode_id, title, has_next) in [
+            (1_u32, 101_u64, "First lesson", true),
+            (2, 102, "Second lesson", true),
+            (3, 103, "Third lesson", false),
+        ] {
+            server.mock(|when, then| {
+                let when = when
+                    .method(GET)
+                    .path("/pugv/view/web/season")
+                    .query_param("season_id", "202");
+                if page_number == 1 {
+                    when.query_param_missing("pn");
+                } else {
+                    when.query_param("pn", page_number.to_string());
+                }
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "code": 0,
+                    "data": {
+                        "season_id": 202,
+                        "title": "Course",
+                        "episode_page": {"next": has_next, "num": page_number, "total": 3},
+                        "episodes": [{
+                            "id": episode_id,
+                            "aid": 170_000 + episode_id,
+                            "cid": 9_000 + episode_id,
+                            "index": page_number,
+                            "title": title
+                        }]
+                    }
+                }));
+            });
+        }
+
+        let resolved = test_client(&server)
+            .resolve_input("cheese/ss202", Some(Selection::Latest))
+            .await?;
+        match resolved {
+            ResolvedContent::Season(season) => {
+                assert_eq!(season.season.episodes.len(), 3);
+                assert_eq!(season.selected_episodes[0].epid, 103);
+            }
+            ResolvedContent::Video(_) | ResolvedContent::Collection(_) => {
+                return Err(anyhow::anyhow!("expected season"));
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cheese_episode_non_current_selection_refetches_from_first_page() -> anyhow::Result<()>
+    {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/pugv/view/web/season")
+                .query_param("ep_id", "102");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "season_id": 202,
+                    "title": "Course",
+                    "episode_page": {"next": false, "num": 2, "size": 1, "total": 2},
+                    "episodes": [{
+                        "id": 102,
+                        "aid": 170_002,
+                        "cid": 9989,
+                        "index": 2,
+                        "title": "Second lesson"
+                    }]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/pugv/view/web/season")
+                .query_param("season_id", "202")
+                .query_param("pn", "1")
+                .query_param("ps", "1");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "season_id": 202,
+                    "title": "Course",
+                    "episode_page": {"next": true, "num": 1, "size": 1, "total": 2},
+                    "episodes": [{
+                        "id": 101,
+                        "aid": 170_001,
+                        "cid": 9988,
+                        "index": 1,
+                        "title": "First lesson"
+                    }]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/pugv/view/web/season")
+                .query_param("season_id", "202")
+                .query_param("pn", "2")
+                .query_param("ps", "1");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "season_id": 202,
+                    "title": "Course",
+                    "episode_page": {"next": false, "num": 2, "size": 1, "total": 2},
+                    "episodes": [{
+                        "id": 102,
+                        "aid": 170_002,
+                        "cid": 9989,
+                        "index": 2,
+                        "title": "Second lesson"
+                    }]
+                }
+            }));
+        });
+
+        let resolved = test_client(&server)
+            .resolve_input("cheese/ep102", Some(Selection::Page(1)))
+            .await?;
+        match resolved {
+            ResolvedContent::Season(season) => {
+                assert_eq!(season.season.episodes.len(), 2);
+                assert_eq!(season.selected_episodes[0].epid, 101);
+            }
+            ResolvedContent::Video(_) | ResolvedContent::Collection(_) => {
+                return Err(anyhow::anyhow!("expected season"));
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolves_favorite_collection_and_plans_selected_item() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        mock_favorite_collection(&server);
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/player/playurl")
+                .query_param("avid", "170001")
+                .query_param("cid", "9988");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "dash": {
+                        "duration": 3,
+                        "video": [{
+                            "id": 80,
+                            "baseUrl": "https://video.example/fav.m4s",
+                            "base_url": "https://video.example/fav.m4s"
+                        }],
+                        "audio": [{
+                            "id": 30280,
+                            "baseUrl": "https://audio.example/fav.m4s",
+                            "base_url": "https://audio.example/fav.m4s"
+                        }]
+                    }
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/player/v2")
+                .query_param("aid", "170001")
+                .query_param("cid", "9988");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {"subtitle": {"subtitles": []}}
+            }));
+        });
+
+        let client = test_client(&server);
+        let resolved = client.resolve_input("fav456", None).await?;
+        match resolved {
+            ResolvedContent::Collection(collection) => {
+                assert_eq!(collection.collection.title, "Favorite");
+                assert_eq!(
+                    collection.collection.kind,
+                    crate::VideoCollectionKind::Favorite
+                );
+                assert_eq!(collection.selected_items[0].title, "Saved video");
+            }
+            ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
+                return Err(anyhow::anyhow!("expected collection"));
+            }
+        }
+
+        let plan = client
+            .plan_download("fav456", Some(Selection::Page(1)))
+            .await?;
+        assert_eq!(plan.title, "Favorite");
+        assert_eq!(plan.entries[0].title, "Saved video");
+        assert_eq!(plan.entries[0].streams.audios[0].id, 30280);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolve_collection_selection_keeps_full_items_while_plan_fetches_selected_item()
+    -> anyhow::Result<()> {
+        let resolve_server = MockServer::start();
+        mock_favorite_collection_page(
+            &resolve_server,
+            1,
+            21,
+            170_001,
+            "BV1xx411c7mD",
+            "Newest video",
+            9988,
+        );
+        mock_favorite_collection_page(
+            &resolve_server,
+            2,
+            21,
+            170_002,
+            "BV1xx411c7mE",
+            "Older video",
+            9989,
+        );
+
+        let resolved = test_client(&resolve_server)
+            .resolve_input("fav456", Some(Selection::Latest))
+            .await?;
+        match resolved {
+            ResolvedContent::Collection(collection) => {
+                assert_eq!(collection.collection.items.len(), 2);
+                assert_eq!(collection.collection.items[1].title, "Older video");
+                assert_eq!(collection.selected_items.len(), 1);
+                assert_eq!(collection.selected_items[0].title, "Newest video");
+            }
+            ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
+                return Err(anyhow::anyhow!("expected collection"));
+            }
+        }
+
+        let plan_server = MockServer::start();
+        mock_favorite_collection_page(
+            &plan_server,
+            1,
+            21,
+            170_001,
+            "BV1xx411c7mD",
+            "Newest video",
+            9988,
+        );
+        server_mock_playurl(&plan_server, 170_001, 9988, "fav");
+        server_mock_player_v2(&plan_server, 170_001, 9988);
+
+        let plan = test_client(&plan_server)
+            .plan_download("fav456", Some(Selection::Latest))
+            .await?;
+        assert_eq!(plan.entries.len(), 1);
+        assert_eq!(plan.entries[0].title, "Newest video");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolves_space_videos_from_wbi_response_shape() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/nav");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "wbi_img": {
+                        "img_url": "https://i0.hdslb.com/bfs/wbi/0123456789abcdef0123456789abcdef.png",
+                        "sub_url": "https://i0.hdslb.com/bfs/wbi/fedcba9876543210fedcba9876543210.png"
+                    }
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/space/wbi/arc/search")
+                .query_param("mid", "123")
+                .query_param("pn", "1")
+                .query_param("ps", "50");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "list": {
+                        "vlist": [{
+                            "aid": 170_001,
+                            "bvid": "BV1xx411c7mD",
+                            "pic": "https://example.invalid/space.jpg",
+                            "created": 1_700_000_000
+                        }, {
+                            "aid": 170_002,
+                            "bvid": "BV1xx411c7mE",
+                            "pic": "https://example.invalid/unselected.jpg",
+                            "created": 1_699_999_999
+                        }]
+                    },
+                    "page": {"count": 2}
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("aid", "170001");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "aid": 170_001,
+                    "bvid": "BV1xx411c7mD",
+                    "title": "Space video",
+                    "desc": "Space description",
+                    "owner": {"mid": 123, "name": "Uploader"},
+                    "pages": [{"page": 1, "cid": 9988, "part": "Space video", "duration": 3}]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("aid", "170002");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "aid": 170_002,
+                    "bvid": "BV1xx411c7mE",
+                    "title": "Unselected space video",
+                    "desc": "Unselected description",
+                    "owner": {"mid": 123, "name": "Uploader"},
+                    "pages": [{"page": 1, "cid": 9989, "part": "Unselected space video", "duration": 3}]
+                }
+            }));
+        });
+
+        let client = test_client(&server);
+        let resolved = client
+            .resolve_input("mid123", Some(Selection::Page(1)))
+            .await?;
+
+        match resolved {
+            ResolvedContent::Collection(collection) => {
+                assert_eq!(collection.collection.kind, VideoCollectionKind::Space);
+                assert_eq!(collection.selected_items[0].title, "Space video");
+                assert_eq!(collection.selected_items[0].cid, 9988);
+            }
+            ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
+                return Err(anyhow::anyhow!("expected collection"));
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolves_medialist_collection_after_filtered_cursor_page() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/v1/medialist/info")
+                .query_param("type", "8")
+                .query_param("biz_id", "456");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "title": "Collection",
+                    "intro": "Collection intro",
+                    "cover": "https://example.invalid/collection.jpg"
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/v2/medialist/resource/list")
+                .query_param("biz_id", "456")
+                .query_param("oid", "");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "has_more": true,
+                    "media_list": [{
+                        "id": 170_000,
+                        "title": "Filtered video",
+                        "attr": 1,
+                        "pages": [{"id": 9987, "page": 1, "title": "Filtered"}]
+                    }]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/v2/medialist/resource/list")
+                .query_param("biz_id", "456")
+                .query_param("oid", "170000");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "has_more": false,
+                    "media_list": [{
+                        "id": 170_001,
+                        "bvid": "BV1xx411c7mD",
+                        "title": "Visible video",
+                        "intro": "Visible intro",
+                        "cover": "https://example.invalid/visible.jpg",
+                        "attr": 0,
+                        "pages": [{"id": 9988, "page": 1, "title": "Main", "duration": 3}]
+                    }]
+                }
+            }));
+        });
+
+        let client = test_client(&server);
+        let resolved = client.resolve_input("collection456", None).await?;
+
+        match resolved {
+            ResolvedContent::Collection(collection) => {
+                assert_eq!(collection.collection.kind, VideoCollectionKind::Collection);
+                assert_eq!(collection.collection.items.len(), 1);
+                assert_eq!(collection.selected_items[0].title, "Visible video");
+            }
+            ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
+                return Err(anyhow::anyhow!("expected collection"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn collection_latest_selects_first_parsed_item() -> anyhow::Result<()> {
+        let collection = VideoCollectionMetadata {
+            id: Some(456),
+            kind: VideoCollectionKind::Favorite,
+            title: "Favorite".to_owned(),
+            description: String::new(),
+            cover_url: None,
+            pub_time: None,
+            owner: None,
+            items: vec![
+                collection_item(1, "Newest video"),
+                collection_item(2, "Older video"),
+            ],
+        };
+
+        let resolved =
+            BiliClient::resolve_collection_selection(collection, Some(&Selection::Latest))?;
+
+        assert_eq!(resolved.selected_items[0].title, "Newest video");
+        Ok(())
+    }
+
+    #[test]
+    fn collection_all_selection_allows_empty_items() -> anyhow::Result<()> {
+        let collection = VideoCollectionMetadata {
+            id: Some(456),
+            kind: VideoCollectionKind::Favorite,
+            title: "Favorite".to_owned(),
+            description: String::new(),
+            cover_url: None,
+            pub_time: None,
+            owner: None,
+            items: Vec::new(),
+        };
+
+        let default_resolved = BiliClient::resolve_collection_selection(collection.clone(), None)?;
+        assert!(default_resolved.selected_items.is_empty());
+        let all_resolved =
+            BiliClient::resolve_collection_selection(collection, Some(&Selection::All))?;
+        assert!(all_resolved.selected_items.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn collection_current_selection_is_rejected() {
+        let collection = VideoCollectionMetadata {
+            id: Some(456),
+            kind: VideoCollectionKind::Favorite,
+            title: "Favorite".to_owned(),
+            description: String::new(),
+            cover_url: None,
+            pub_time: None,
+            owner: None,
+            items: vec![collection_item(1, "Saved video")],
+        };
+
+        let error =
+            BiliClient::resolve_collection_selection(collection, Some(&Selection::Current)).err();
+
+        assert!(
+            matches!(error, Some(Error::InvalidInput(message)) if message.contains("current selection"))
+        );
+    }
+
+    #[tokio::test]
+    async fn resolves_short_link_input_from_redirect_target() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/short");
+            then.status(302).header("location", "/video/av170001");
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("aid", "170001");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "aid": 170_001,
+                    "title": "Redirected video",
+                    "pages": [{"page": 1, "cid": 9988, "part": "Main"}]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/tag/archive/tags")
+                .query_param("aid", "170001");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": []
+            }));
+        });
+
+        let client = test_client(&server);
+        let resolved = client
+            .resolve(
+                Input::ShortLink(format!("{}/short", server.base_url())),
+                None,
+            )
+            .await?;
+        match resolved {
+            ResolvedContent::Video(video) => assert_eq!(video.title, "Redirected video"),
+            ResolvedContent::Season(_) | ResolvedContent::Collection(_) => {
+                return Err(anyhow::anyhow!("expected video"));
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn intl_access_key_is_redacted_from_http_errors() -> anyhow::Result<()> {
         let server = MockServer::start();
         let client = BiliClient::new(ClientConfig {
@@ -2918,7 +4758,9 @@ mod tests {
                 assert_eq!(season.season.episodes.len(), 1);
                 assert_eq!(season.selected_episodes[0].epid, 341_736);
             }
-            ResolvedContent::Video(_) => return Err(anyhow::anyhow!("expected season")),
+            ResolvedContent::Video(_) | ResolvedContent::Collection(_) => {
+                return Err(anyhow::anyhow!("expected season"));
+            }
         }
         Ok(())
     }
@@ -3840,7 +5682,9 @@ mod tests {
                 assert_eq!(season.selected_episodes.len(), 1);
                 assert_eq!(season.selected_episodes[0].epid, 1001);
             }
-            ResolvedContent::Video(_) => return Err(anyhow::anyhow!("expected season")),
+            ResolvedContent::Video(_) | ResolvedContent::Collection(_) => {
+                return Err(anyhow::anyhow!("expected season"));
+            }
         }
         Ok(())
     }
@@ -3878,7 +5722,9 @@ mod tests {
                 assert_eq!(season.season.episodes.len(), 2);
                 assert_eq!(season.selected_episodes[0].epid, 2000);
             }
-            ResolvedContent::Video(_) => return Err(anyhow::anyhow!("expected season")),
+            ResolvedContent::Video(_) | ResolvedContent::Collection(_) => {
+                return Err(anyhow::anyhow!("expected season"));
+            }
         }
         Ok(())
     }
@@ -3919,7 +5765,9 @@ mod tests {
                 assert_eq!(season.season.main_episode_count, 2);
                 assert_eq!(season.selected_episodes[0].epid, 1001);
             }
-            ResolvedContent::Video(_) => return Err(anyhow::anyhow!("expected season")),
+            ResolvedContent::Video(_) | ResolvedContent::Collection(_) => {
+                return Err(anyhow::anyhow!("expected season"));
+            }
         }
         Ok(())
     }
@@ -3959,7 +5807,9 @@ mod tests {
                 assert_eq!(season.season.main_episode_count, 1);
                 assert_eq!(season.selected_episodes[0].epid, 1001);
             }
-            ResolvedContent::Video(_) => return Err(anyhow::anyhow!("expected season")),
+            ResolvedContent::Video(_) | ResolvedContent::Collection(_) => {
+                return Err(anyhow::anyhow!("expected season"));
+            }
         }
         Ok(())
     }
@@ -3991,5 +5841,140 @@ mod tests {
             user_agent: "test".to_owned(),
             request_timeout: Duration::from_secs(30),
         })
+    }
+
+    fn mock_favorite_collection(server: &MockServer) {
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/v3/fav/resource/list")
+                .query_param("media_id", "456")
+                .query_param("pn", "1")
+                .query_param("ps", "20");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "info": {
+                        "media_count": 1,
+                        "title": "Favorite",
+                        "intro": "Favorite intro",
+                        "cover": "https://example.invalid/favorite.jpg",
+                        "ctime": 1_700_000_000,
+                        "upper": {"mid": 1, "name": "Tester"}
+                    },
+                    "medias": [{
+                        "id": 170_001,
+                        "bvid": "BV1xx411c7mD",
+                        "title": "Saved video",
+                        "intro": "Saved intro",
+                        "cover": "https://example.invalid/saved.jpg",
+                        "pubtime": 1_700_000_001,
+                        "duration": 3,
+                        "attr": 0,
+                        "page": 1,
+                        "upper": {"mid": 1, "name": "Tester"},
+                        "ugc": {"first_cid": 9988}
+                    }]
+                }
+            }));
+        });
+    }
+
+    fn mock_favorite_collection_page(
+        server: &MockServer,
+        page_number: u32,
+        media_count: usize,
+        aid: u64,
+        bvid: &str,
+        title: &str,
+        cid: u64,
+    ) {
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/v3/fav/resource/list")
+                .query_param("media_id", "456")
+                .query_param("pn", page_number.to_string())
+                .query_param("ps", "20");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "info": {
+                        "media_count": media_count,
+                        "title": "Favorite",
+                        "intro": "Favorite intro",
+                        "cover": "https://example.invalid/favorite.jpg",
+                        "ctime": 1_700_000_000,
+                        "upper": {"mid": 1, "name": "Tester"}
+                    },
+                    "medias": [{
+                        "id": aid,
+                        "bvid": bvid,
+                        "title": title,
+                        "intro": "Saved intro",
+                        "cover": "https://example.invalid/saved.jpg",
+                        "pubtime": 1_700_000_001,
+                        "duration": 3,
+                        "attr": 0,
+                        "page": 1,
+                        "upper": {"mid": 1, "name": "Tester"},
+                        "ugc": {"first_cid": cid}
+                    }]
+                }
+            }));
+        });
+    }
+
+    fn server_mock_playurl(server: &MockServer, aid: u64, cid: u64, label: &str) {
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/player/playurl")
+                .query_param("avid", aid.to_string())
+                .query_param("cid", cid.to_string());
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "dash": {
+                        "duration": 3,
+                        "video": [{
+                            "id": 80,
+                            "baseUrl": format!("https://video.example/{label}.m4s"),
+                            "base_url": format!("https://video.example/{label}.m4s")
+                        }],
+                        "audio": [{
+                            "id": 30280,
+                            "baseUrl": format!("https://audio.example/{label}.m4s"),
+                            "base_url": format!("https://audio.example/{label}.m4s")
+                        }]
+                    }
+                }
+            }));
+        });
+    }
+
+    fn server_mock_player_v2(server: &MockServer, aid: u64, cid: u64) {
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/player/v2")
+                .query_param("aid", aid.to_string())
+                .query_param("cid", cid.to_string());
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {"subtitle": {"subtitles": []}}
+            }));
+        });
+    }
+
+    fn collection_item(index: u32, title: &str) -> VideoCollectionItem {
+        VideoCollectionItem {
+            index,
+            aid: 170_000 + u64::from(index),
+            bvid: Some(format!("BV1mock{index}")),
+            cid: 9_000 + u64::from(index),
+            title: title.to_owned(),
+            cover_url: None,
+            description: String::new(),
+            pub_time: None,
+            owner: None,
+            duration_seconds: None,
+        }
     }
 }
