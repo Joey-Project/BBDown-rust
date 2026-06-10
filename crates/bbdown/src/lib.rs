@@ -28,6 +28,7 @@ pub use models::{
     DanmakuTrack, DownloadEntry, DownloadPlan, EpisodeMetadata, FlvSegment, MediaStream, Owner,
     PageMetadata, ResolvedContent, SeasonMetadata, SeasonResolution, StreamDiagnostics,
     StreamQuality, StreamResolverAttempt, StreamResolverOutcome, StreamSet, StreamSource,
-    SubtitleFormat, SubtitleTrack, Tag, VideoMetadata,
+    SubtitleFormat, SubtitleTrack, Tag, VideoCollectionItem, VideoCollectionKind,
+    VideoCollectionMetadata, VideoCollectionResolution, VideoMetadata,
 };
 pub use selection::Selection;

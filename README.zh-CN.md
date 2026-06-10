@@ -13,7 +13,10 @@
 当前实现已经建立 crate / CLI / CI 基础、元数据解析器、流规划、媒体下载、旁路文件下载、
 重试和断点续传、可选 `ffmpeg` 封装、二维码登录、可选 live 测试框架、带诊断信息的受限
 区域代理排序，以及 builder 风格的 crate 集成 API。它还支持显式下载归档，用于重复下载预
-检查，以及 CLI 的 replace / keep-both / cancel 决策。
+检查，以及 CLI 的 replace / keep-both / cancel 决策。输入解析覆盖普通视频、PGC 和 intl
+分集、PUGV/cheese 课程、B23 短链接、收藏夹、空间投稿、合集和系列。URL 解析包括
+canonical `bilibili.com/list/...` 页面、path-based medialist 收藏夹 URL，以及带 uploader
+mid 的空间合集 / 系列 URL，以便使用较新的空间 API。
 
 ## 当前 CLI
 
@@ -25,6 +28,11 @@ bbdown info BV1qt4y1X7TW --json
 bbdown info ep267851 --json
 bbdown info ss26801 --select latest --json
 bbdown info md22718131 --select latest --json
+bbdown info https://b23.tv/example --json
+bbdown info cheese/ep101 --json
+bbdown info fav456 --json
+bbdown info https://www.bilibili.com/list/ml1103407912 --json
+bbdown info 'https://space.bilibili.com/123/lists/456?type=series' --json
 ```
 
 生成下载计划并输出 JSON：
@@ -34,17 +42,23 @@ bbdown plan av170001 --json
 bbdown plan ep267851 --json
 bbdown plan ss26801 --select latest --json
 bbdown plan https://www.bilibili.tv/en/play/34613/341736 --json
+bbdown plan fav456 --select page:1 --json
+bbdown plan cheese/ss202 --select latest --json
 ```
 
 `plan` 会解析所选条目、可用 DASH 或 FLV 流 URL、字幕 URL，以及每个 `cid` 的弹幕 XML
 URL。PGC 和 intl 规划仍可能需要符合条件的账号或区域访问。PGC playurl 解析可以回退到
-用户配置的受限区域代理。它不会下载文件。
+用户配置的受限区域代理。它不会下载文件。集合类输入默认解析全部条目；使用
+`--select page:<index>` 可规划一个集合条目，使用 `--select latest` 可规划上游列表顺序中的第一个解析条目。
+`info --json` 会在 `collection.collection.items` 保留完整解析到的集合 metadata；`plan` 只
+输出选中条目。
 
 下载所选媒体文件：
 
 ```bash
 bbdown download av170001 --output-dir downloads
 bbdown download ss26801 --select latest --output-dir downloads
+bbdown download fav456 --select page:1 --output-dir downloads
 bbdown download av170001 --output-dir downloads --no-mux --json
 bbdown download av170001 --output-dir downloads --archive-file downloads/archive.json --on-duplicate keep-both
 ```
@@ -72,6 +86,9 @@ bbdown info ss26801 --select all
 bbdown info ss26801 --select episode:267851
 bbdown info ss26801 --select page:1
 ```
+
+`cheese/ss...` 输入遵循相同的显式选择规则。收藏夹、空间投稿、合集和系列是批量输入；
+不传 `--select` 时会解析全部条目。
 
 管理本地凭据：
 
@@ -152,15 +169,17 @@ just ci
 
 ## 文档
 
-- Crate API 说明：可发布 package 是 `bbdown-core`，导入时使用 `bbdown_core`。此重写仍为
-  `0.1`；嵌入项目应优先使用 `Default`、`new` 和 `with_*` 构造器，例如
-  `ClientConfig::default().with_*`、`EndpointConfig::default().with_*`、
+- Crate API 说明：可发布 package 是 `bbdown-core`，导入时使用 `bbdown_core`。此重写处于
+  已发布 `0.1.0` 之后的 `0.2` 开发线，因为批量 collection metadata 增加了新的
+  `ResolvedContent::Collection` API 形态；嵌入项目应优先使用 `Default`、`new` 和
+  `with_*` 构造器，例如 `ClientConfig::default().with_*`、`EndpointConfig::default().with_*`、
   `RestrictedAreaConfig::default().with_*`、`DownloadOptions::new(...).with_*` 和
   `RetryPolicy::new(...)`，而不是结构体字面量，这样新增配置字段时破坏性更小。输出模型
-  结构体（例如 `DownloadEntry`）意图作为返回值消费或通过 serde 消费；在 crate 离开
-  `0.1` 之前，结构体字面量构造不被视为稳定兼容面。对于重复处理，嵌入项目可以检查
+  结构体（例如 `DownloadEntry`）意图作为返回值消费或通过 serde 消费；结构体字面量构造
+  不被视为稳定兼容面。对于重复处理，嵌入项目可以检查
   `DownloadPreflight`，把已有 `DownloadArchiveRecord` 展示给用户，然后传入显式
-  `DuplicateDecision`。
+  `DuplicateDecision`。批量元数据通过 `ResolvedContent::Collection` 返回；下载规划会把
+  选中的集合条目映射回普通视频的 stream planning 条目。
 - 用户指南：[docs/user-guide.zh-CN.md](docs/user-guide.zh-CN.md)
 - 嵌入指南：[docs/embedding.zh-CN.md](docs/embedding.zh-CN.md)
 - 架构：[docs/architecture/rust-rewrite.zh-CN.md](docs/architecture/rust-rewrite.zh-CN.md)

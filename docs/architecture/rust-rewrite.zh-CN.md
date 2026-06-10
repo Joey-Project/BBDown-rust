@@ -7,7 +7,8 @@
 - 构建一个 Rust crate，让其他项目无需 shell out 到 CLI 即可嵌入。
 - 保持 CLI 作为用户面工具和 e2e 测试表面。
 - 保留 BBDown 的实用 Bilibili 知识，同时用 typed data 取代 CLI 日志解析。
-- 支持普通视频、`ep`、`ss`、`md`、intl 分集，以及用户配置的受限区域解析器。
+- 支持普通视频、`ep`、`ss`、`md`、intl 分集、PUGV/cheese 输入、批量集合输入、B23 短链
+  接，以及用户配置的受限区域解析器。
 
 ## 工作区
 
@@ -25,8 +26,9 @@
 项目在普通集成代码中不需要结构体字面量。CLI 使用相同 public builder，这让它成为 crate
 API 的仓库内集成测试表面。
 
-输出模型保持为 typed data surfaces。当 crate 仍处于预发布阶段时，调用方应读取字段或序列
-化它们，而不是把输出结构体视为稳定的构造目标。
+输出模型保持为 typed data surfaces。当前 crate 版本是 `0.2.0`，属于已发布 `0.1.0` 之后
+的开发线，并增加了 `ResolvedContent::Collection`；调用方应读取字段或序列化输出值，而
+不是把输出结构体视为稳定的构造目标。
 
 ## 解析器模型
 
@@ -34,24 +36,38 @@ API 的仓库内集成测试表面。
 
 - `Aid` 和 `Bvid` 用于普通视频。
 - `Episode`、`Season` 和 `Media` 用于 Bilibili PGC URL 和 id。
+- `CheeseEpisode` 和 `CheeseSeason` 用于 PUGV/cheese 课程。
 - `IntlEpisode` 用于 `bilibili.tv` 分集 URL。
+- `SpaceVideos`、`FavoriteList`、`CollectionList`、`SeriesList`、`SpaceCollectionList` 和
+  `SpaceSeriesList` 用于批量内容。owner-scoped 空间合集 / 系列 variant 会保留 canonical
+  URL 中的 uploader mid，以便直接调用较新的空间 API。
+- `ShortLink` 用于 B23 链接，会先通过 HTTP redirect 解析，再进入普通输入分发。
 
 library 会把元数据解析为 `ResolvedContent`：
 
 - `VideoMetadata` 包含标题、描述、owner、tag、封面、发布时间和页面。
 - `SeasonResolution` 包含 season metadata 和选中的分集集合。
+- `VideoCollectionResolution` 包含 collection metadata，以及收藏夹、空间投稿、合集和系
+  列中选中的条目集合。收藏夹解析支持 shorthand id、path-based medialist 页面和 canonical
+  `/list/ml...` 页面。即使 selector 缩小了 `selected_items`，`resolve_input` 也会保留完
+  整解析到的 collection metadata。
 
 library 会把媒体可用性解析为 `DownloadPlan`：
 
-- `DownloadEntry` 记录选中的 `aid`、`bvid`、`cid`、可选 `epid`、标题和来源。
+- `DownloadEntry` 记录选中的 `aid`、`bvid`、`cid`、可选 `epid`、标题和来源。批量集合条
+  目在 stream planning 前会映射回普通视频条目。
 - `StreamSet` 保存 DASH video/audio 轨道、FLV 分段、原始 accepted quality id、结构化可选
   DASH 质量标签和时长。
 - `StreamDiagnostics` 记录非默认解析尝试，例如受限区域代理回退。
 - `SubtitleTrack` 记录语言元数据、规范化 URL 和基本格式分类。
 - `DanmakuTrack` 记录从 `cid` 和配置的 comment endpoint base 推导出的 XML 弹幕端点。
 
-`ss` 和 `md` 在非交互上下文中需要 `Selection`。CLI 未来会增加交互式提示，但 library 保
-持契约显式，避免集成方意外下载整季。
+`ss`、`md` 和 `cheese/ss` 在非交互上下文中需要 `Selection`。批量集合输入默认选择全部解
+析条目；调用方可以传入 `Selection::Page(...)` 选择一个条目，或传入 `Selection::Latest`
+选择上游列表顺序中的第一个解析条目。空批量集合在默认/all selection 下会解析为空 selected item 列表。
+因为 `DownloadPlan` 不暴露 collection metadata，`plan_download` 可以只抓取选中的批量条
+目。CLI 未来会增加交互式提示，但 library 保持 season-like 契约显式，避免集成方意外下载
+整季。
 
 ## 流规划
 
@@ -61,6 +77,9 @@ wrapper。规划当前支持三种官方来源模式：
 
 - `NormalWeb` 用普通 web playurl 端点处理 `aid` / `bvid` 输入。
 - `PgcWeb` 用 PGC web playurl 端点处理 `ep`、`ss` 和 `md` 输入。
+- `PugvWeb` 用 PUGV/cheese playurl 端点处理 `cheese/ep` 和选中的 `cheese/ss` 输入。
+  PUGV metadata 会通过 episode-list 端点跟进 `episode_page` 分页，再应用 season
+  selection。
 - `IntlWeb` 用 BiliIntl mobile signing 参数调用 intl OGV playurl 端点，并在调用方配置时包
   含 access key。
 
@@ -176,10 +195,11 @@ PGC stream planning 首先调用官方 PGC web playurl 端点。如果响应明�
 尝试。诊断 endpoint 字段会压缩到 URL origin，以免打印 path/query/userinfo 密钥；诊断错
 误消息也会在通过 JSON 或最终错误暴露前脱敏 URL token 和常见敏感 key-value 模式。
 
-当前实现支持端点覆盖、intl metadata 形态、官方 PGC stream planning、官方 intl OGV 签名
-stream planning、配置化 PGC proxy fallback、顶层 helper playurl 响应解析、typed source
-reporting、resolver diagnostics 和下载执行。浏览器专用 mobile response rewriting 有意不
-在范围内。
+当前实现支持端点覆盖、B23 redirect 解析、PUGV/cheese metadata 和 stream planning、收藏
+夹/空间投稿/合集/系列的批量 metadata planning、intl metadata 形态、官方 PGC stream
+planning、官方 intl OGV 签名 stream planning、配置化 PGC proxy fallback、顶层 helper
+playurl 响应解析、typed source reporting、resolver diagnostics 和下载执行。浏览器专用
+mobile response rewriting 有意不在范围内。
 
 ## 凭据
 
@@ -264,9 +284,10 @@ Plan output 现在暴露结构化 stream quality data。library 保留原始 `St
 stream 摘要旁打印相同 id，而 JSON 调用方可以通过 `DownloadOptions::stream_selection` 选
 择精确 DASH stream。
 
-可复用 crate 仍在准备第一次 crates.io 发布，因此此分支会在发布前刻意加固 public structs，
-而不是保留本地预发布 struct-literal 实验。嵌入者应通过 constructor 和 builder API 创建配
-置，包括 `ClientConfig::default().with_*`、`EndpointConfig::default().with_*`、
+可复用 crate 当前处于已发布 `0.1.0` 之后的 `0.2` 开发线，因此 public configuration
+structs 会通过 constructor 和 builder API 刻意加固，而不是保留本地 struct-literal 实验。
+嵌入者应通过这些 API 创建配置，包括
+`ClientConfig::default().with_*`、`EndpointConfig::default().with_*`、
 `RestrictedAreaConfig::default().with_*`、`DownloadOptions::new(...).with_*`、
 `RetryPolicy::new`、`StreamSelection::new`、`StreamSelection::video` 和
 `StreamSelection::audio`。`StreamSet` 和 `StreamQuality` 等 public output containers 标记为
@@ -314,3 +335,5 @@ credential 和 access-key 文件为每个 case 写入临时 credential store，�
 10. Restricted-area proxy response compatibility expansion。已在 PR #11 完成。
 11. Integration API 和 documentation hardening。已在 PR #12 完成。
 12. Download archive 和 duplicate decision handling。已在 PR #13 完成。
+13. 更多输入解析和批量集合解析，覆盖短链接、PUGV/cheese、收藏夹、空间投稿、合集和系
+    列。已在本切片完成。

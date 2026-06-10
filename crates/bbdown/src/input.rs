@@ -9,7 +9,25 @@ pub enum Input {
     Episode(u64),
     Season(u64),
     Media(u64),
+    CheeseEpisode(u64),
+    CheeseSeason(u64),
+    SpaceVideos(u64),
+    FavoriteList {
+        media_id: Option<u64>,
+        owner_mid: Option<u64>,
+    },
+    CollectionList(u64),
+    SeriesList(u64),
+    SpaceCollectionList {
+        list_id: u64,
+        owner_mid: u64,
+    },
+    SpaceSeriesList {
+        list_id: u64,
+        owner_mid: u64,
+    },
     IntlEpisode(u64),
+    ShortLink(String),
 }
 
 impl Input {
@@ -39,6 +57,27 @@ impl Input {
         if let Some(id) = lower.strip_prefix("md") {
             return parse_number(id, "md").map(Self::Media);
         }
+        if let Some(id) = lower.strip_prefix("cheese/ep") {
+            return parse_number(id, "cheese ep").map(Self::CheeseEpisode);
+        }
+        if let Some(id) = lower.strip_prefix("cheese/ss") {
+            return parse_number(id, "cheese season").map(Self::CheeseSeason);
+        }
+        if let Some(id) = lower.strip_prefix("mid") {
+            return parse_number(id, "space mid").map(Self::SpaceVideos);
+        }
+        if let Some(id) = lower.strip_prefix("fav") {
+            return parse_number(id, "favorite list").map(|media_id| Self::FavoriteList {
+                media_id: Some(media_id),
+                owner_mid: None,
+            });
+        }
+        if let Some(id) = lower.strip_prefix("collection") {
+            return parse_number(id, "collection list").map(Self::CollectionList);
+        }
+        if let Some(id) = lower.strip_prefix("series") {
+            return parse_number(id, "series list").map(Self::SeriesList);
+        }
         if trimmed.chars().all(|ch| ch.is_ascii_digit()) {
             return parse_number(trimmed, "aid").map(Self::Aid);
         }
@@ -50,7 +89,19 @@ impl Input {
         match self {
             Self::Aid(aid) => Ok(Some(*aid)),
             Self::Bvid(bvid) => bv::decode(bvid).map(Some),
-            Self::Episode(_) | Self::Season(_) | Self::Media(_) | Self::IntlEpisode(_) => Ok(None),
+            Self::Episode(_)
+            | Self::Season(_)
+            | Self::Media(_)
+            | Self::CheeseEpisode(_)
+            | Self::CheeseSeason(_)
+            | Self::SpaceVideos(_)
+            | Self::FavoriteList { .. }
+            | Self::CollectionList(_)
+            | Self::SeriesList(_)
+            | Self::SpaceCollectionList { .. }
+            | Self::SpaceSeriesList { .. }
+            | Self::IntlEpisode(_)
+            | Self::ShortLink(_) => Ok(None),
         }
     }
 }
@@ -61,9 +112,7 @@ fn parse_url(raw: &str) -> Result<Input> {
     let path = url.path();
 
     if host == "b23.tv" {
-        return Err(Error::Unsupported(
-            "short-link redirect resolution is not in the first PR slice".to_owned(),
-        ));
+        return Ok(Input::ShortLink(raw.to_owned()));
     }
 
     if host.ends_with("bilibili.tv") {
@@ -74,6 +123,31 @@ fn parse_url(raw: &str) -> Result<Input> {
         if segments.len() >= 4 && segments[1] == "play" {
             return parse_number(segments[3], "intl episode").map(Input::IntlEpisode);
         }
+    }
+
+    if host == "space.bilibili.com"
+        && let Some(input) = parse_space_url(&url)?
+    {
+        return Ok(input);
+    }
+
+    if path.contains("/cheese/") {
+        for segment in path.split('/').filter(|segment| !segment.is_empty()) {
+            let lower = segment.to_ascii_lowercase();
+            if let Some(id) = lower.strip_prefix("ep") {
+                return parse_number(id, "cheese ep").map(Input::CheeseEpisode);
+            }
+            if let Some(id) = lower.strip_prefix("ss") {
+                return parse_number(id, "cheese season").map(Input::CheeseSeason);
+            }
+        }
+    }
+
+    if let Some(input) = parse_medialist_url(&url)? {
+        return Ok(input);
+    }
+    if let Some(input) = parse_list_url(&url)? {
+        return Ok(input);
     }
 
     if let Some(value) = query_number(&url, "ep_id")? {
@@ -105,6 +179,121 @@ fn parse_url(raw: &str) -> Result<Input> {
     Err(Error::InvalidInput(raw.to_owned()))
 }
 
+fn parse_space_url(url: &Url) -> Result<Option<Input>> {
+    let path_segments = url
+        .path_segments()
+        .map(std::iter::Iterator::collect::<Vec<_>>)
+        .unwrap_or_default();
+    let owner_mid = path_segments
+        .first()
+        .filter(|segment| segment.chars().all(|ch| ch.is_ascii_digit()))
+        .map(|segment| parse_number(segment, "space mid"))
+        .transpose()?;
+
+    if path_segments.contains(&"favlist") {
+        let media_id = query_number(url, "fid")?;
+        return Ok(Some(Input::FavoriteList {
+            media_id,
+            owner_mid,
+        }));
+    }
+
+    if path_segments.contains(&"channel")
+        && path_segments
+            .iter()
+            .any(|segment| segment.starts_with("collectiondetail"))
+    {
+        let Some(list_id) = query_number(url, "sid")? else {
+            return Ok(None);
+        };
+        return Ok(Some(match owner_mid {
+            Some(owner_mid) => Input::SpaceCollectionList { list_id, owner_mid },
+            None => Input::CollectionList(list_id),
+        }));
+    }
+    if path_segments.contains(&"channel")
+        && path_segments
+            .iter()
+            .any(|segment| segment.starts_with("seriesdetail"))
+    {
+        let Some(list_id) = query_number(url, "sid")? else {
+            return Ok(None);
+        };
+        return Ok(Some(match owner_mid {
+            Some(owner_mid) => Input::SpaceSeriesList { list_id, owner_mid },
+            None => Input::SeriesList(list_id),
+        }));
+    }
+    if let Some(list_index) = path_segments.iter().position(|segment| *segment == "lists")
+        && let Some(id) = path_segments.get(list_index + 1)
+    {
+        let list_id = parse_number(id, "space list")?;
+        return Ok(
+            owner_mid.map(|owner_mid| match query_value(url, "type").as_deref() {
+                Some("series") => Input::SpaceSeriesList { list_id, owner_mid },
+                _ => Input::SpaceCollectionList { list_id, owner_mid },
+            }),
+        );
+    }
+
+    Ok(owner_mid.map(Input::SpaceVideos))
+}
+
+fn parse_medialist_url(url: &Url) -> Result<Option<Input>> {
+    if !url.path().contains("/medialist/") {
+        return Ok(None);
+    }
+    for segment in url.path_segments().into_iter().flatten() {
+        let lower = segment.to_ascii_lowercase();
+        if let Some(id) = lower.strip_prefix("ml") {
+            return parse_number(id, "favorite list").map(|media_id| {
+                Some(Input::FavoriteList {
+                    media_id: Some(media_id),
+                    owner_mid: None,
+                })
+            });
+        }
+    }
+    let Some(business_id) = query_number(url, "business_id")? else {
+        return Ok(None);
+    };
+    Ok(match query_value(url, "business").as_deref() {
+        Some("space_series") => Some(Input::SeriesList(business_id)),
+        Some("space_collection") | None => Some(Input::CollectionList(business_id)),
+        Some(_) => None,
+    })
+}
+
+fn parse_list_url(url: &Url) -> Result<Option<Input>> {
+    let path_segments = url
+        .path_segments()
+        .map(std::iter::Iterator::collect::<Vec<_>>)
+        .unwrap_or_default();
+    if path_segments.first() != Some(&"list") {
+        return Ok(None);
+    }
+    let Some(list_segment) = path_segments.get(1) else {
+        return Ok(None);
+    };
+    let lower_list_segment = list_segment.to_ascii_lowercase();
+    if let Some(id) = lower_list_segment.strip_prefix("ml") {
+        return parse_number(id, "favorite list").map(|media_id| {
+            Some(Input::FavoriteList {
+                media_id: Some(media_id),
+                owner_mid: None,
+            })
+        });
+    }
+    let owner_mid = parse_number(list_segment, "space mid")?;
+    let Some(list_id) = query_number(url, "sid")? else {
+        return Ok(None);
+    };
+    Ok(Some(match query_value(url, "type").as_deref() {
+        Some("series") => Input::SpaceSeriesList { list_id, owner_mid },
+        _ => Input::SpaceCollectionList { list_id, owner_mid },
+    }))
+}
+
 fn parse_bvid(text: &str) -> Result<Input> {
     bv::decode(text)?;
     Ok(Input::Bvid(text.to_owned()))
@@ -115,6 +304,12 @@ fn query_number(url: &Url, key: &str) -> Result<Option<u64>> {
         .find(|(name, _)| name == key)
         .map(|(_, value)| parse_number(value.as_ref(), key))
         .transpose()
+}
+
+fn query_value(url: &Url, key: &str) -> Option<String> {
+    url.query_pairs()
+        .find(|(name, _)| name == key)
+        .map(|(_, value)| value.into_owned())
 }
 
 fn parse_number(text: &str, label: &str) -> Result<u64> {
@@ -148,6 +343,68 @@ mod tests {
         assert_eq!(
             Input::parse("https://www.bilibili.tv/en/play/34613/341736")?,
             Input::IntlEpisode(341_736)
+        );
+        assert_eq!(
+            Input::parse("https://www.bilibili.com/cheese/play/ep101")?,
+            Input::CheeseEpisode(101)
+        );
+        assert_eq!(Input::parse("cheese/ss202")?, Input::CheeseSeason(202));
+        assert_eq!(
+            Input::parse("https://space.bilibili.com/123/favlist?fid=456")?,
+            Input::FavoriteList {
+                media_id: Some(456),
+                owner_mid: Some(123),
+            }
+        );
+        assert_eq!(
+            Input::parse("https://space.bilibili.com/123/channel/collectiondetail?sid=456")?,
+            Input::SpaceCollectionList {
+                list_id: 456,
+                owner_mid: 123,
+            }
+        );
+        assert_eq!(
+            Input::parse("https://space.bilibili.com/123/lists/456?type=series")?,
+            Input::SpaceSeriesList {
+                list_id: 456,
+                owner_mid: 123,
+            }
+        );
+        assert_eq!(
+            Input::parse("https://www.bilibili.com/medialist/detail/ml1103407912")?,
+            Input::FavoriteList {
+                media_id: Some(1_103_407_912),
+                owner_mid: None,
+            }
+        );
+        assert_eq!(
+            Input::parse("https://www.bilibili.com/list/ml1103407912")?,
+            Input::FavoriteList {
+                media_id: Some(1_103_407_912),
+                owner_mid: None,
+            }
+        );
+        assert_eq!(
+            Input::parse("https://www.bilibili.com/list/1958703906?sid=547718&type=series")?,
+            Input::SpaceSeriesList {
+                list_id: 547_718,
+                owner_mid: 1_958_703_906,
+            }
+        );
+        assert_eq!(
+            Input::parse("https://www.bilibili.com/list/1958703906?sid=547718")?,
+            Input::SpaceCollectionList {
+                list_id: 547_718,
+                owner_mid: 1_958_703_906,
+            }
+        );
+        assert_eq!(
+            Input::parse("https://space.bilibili.com/123")?,
+            Input::SpaceVideos(123)
+        );
+        assert_eq!(
+            Input::parse("https://b23.tv/example")?,
+            Input::ShortLink("https://b23.tv/example".to_owned())
         );
         assert!(Input::parse("bvideo").is_err());
         assert!(Input::parse("bv1qt4y1X7TW").is_err());

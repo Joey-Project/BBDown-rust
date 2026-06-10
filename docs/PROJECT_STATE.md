@@ -29,6 +29,8 @@
   Release and crates.io.
 - Version `0.1.0` has shipped through that flow as GitHub Release `v0.1.0` and crates.io package
   `bbdown-core` `0.1.0`.
+- Current post-release development is on version `0.2.0` because batch collection metadata adds the
+  breaking `ResolvedContent::Collection` API shape after `0.1.0`.
 
 ## Recovery Pointers
 

@@ -1280,6 +1280,12 @@ fn print_human_summary(resolved: &ResolvedContent) {
             println!("episodes: {}", season.season.episodes.len());
             println!("selected: {}", season.selected_episodes.len());
         }
+        ResolvedContent::Collection(collection) => {
+            println!("title: {}", collection.collection.title);
+            println!("kind: {:?}", collection.collection.kind);
+            println!("items: {}", collection.collection.items.len());
+            println!("selected: {}", collection.selected_items.len());
+        }
     }
 }
 
