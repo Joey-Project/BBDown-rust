@@ -1113,7 +1113,7 @@ impl BiliClient {
             )
             .append_pair("otype", "2")
             .append_pair("biz_id", &list_id.to_string())
-            .append_pair("with_current", "true")
+            .append_pair("with_current", if oid.is_some() { "false" } else { "true" })
             .append_pair("mobi_app", "web")
             .append_pair("ps", "20")
             .append_pair("direction", "false")
@@ -5127,7 +5127,8 @@ mod tests {
             when.method(GET)
                 .path("/x/v2/medialist/resource/list")
                 .query_param("biz_id", "456")
-                .query_param("oid", "");
+                .query_param("oid", "")
+                .query_param("with_current", "true");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {
@@ -5285,7 +5286,8 @@ mod tests {
             when.method(GET)
                 .path("/x/v2/medialist/resource/list")
                 .query_param("biz_id", "456")
-                .query_param("oid", "170001");
+                .query_param("oid", "170001")
+                .query_param("with_current", "false");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {

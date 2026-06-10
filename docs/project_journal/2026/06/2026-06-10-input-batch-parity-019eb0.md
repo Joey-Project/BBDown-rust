@@ -86,6 +86,9 @@ superseded_by:
   entries, and the batch collection output API was breaking while package manifests still said
   `0.1.0`. Medialist fallback now fetches archive metadata, and manifests/docs now identify this as
   the `0.2.0` development line.
+- The GitHub Codex review gate still had a current-head medialist cursor thread; follow-up medialist
+  page requests now send `with_current=false` when advancing with `oid`, while retaining duplicate
+  suppression as a defensive guard.
 
 ## Next Steps
 
