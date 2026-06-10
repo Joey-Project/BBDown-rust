@@ -1595,6 +1595,7 @@ impl BiliClient {
                     cid: page.cid,
                     epid: None,
                     title: page.title,
+                    cover_url: video.cover_url.clone(),
                     source: StreamSource::NormalWeb,
                 })
                 .await?,
@@ -1621,6 +1622,7 @@ impl BiliClient {
                     cid: episode.cid,
                     epid: Some(episode.epid),
                     title: episode_display_title(&episode.title, episode.long_title.as_deref()),
+                    cover_url: season.season.cover_url.clone(),
                     source: source.clone(),
                 })
                 .await?,
@@ -1643,6 +1645,7 @@ impl BiliClient {
                     cid: item.cid,
                     epid: None,
                     title: item.title,
+                    cover_url: item.cover_url,
                     source: StreamSource::NormalWeb,
                 })
                 .await?,
@@ -1674,6 +1677,7 @@ impl BiliClient {
             cid: seed.cid,
             epid: seed.epid,
             title: seed.title,
+            cover_url: seed.cover_url,
             source: resolved_streams.source,
             streams: resolved_streams.streams,
             diagnostics: resolved_streams.diagnostics,
@@ -2758,6 +2762,7 @@ struct PlanEntrySeed {
     cid: u64,
     epid: Option<u64>,
     title: String,
+    cover_url: Option<String>,
     source: StreamSource,
 }
 

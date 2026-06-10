@@ -111,7 +111,7 @@ Execution behavior is controlled by `DownloadOptions`:
 - optional DASH video/audio stream id selection;
 - HTTP range resume on or off;
 - media read idle timeout;
-- subtitle and danmaku sidecar inclusion;
+- cover, subtitle, and danmaku sidecar inclusion;
 - disabled muxing or explicit `ffmpeg` binary path.
 
 For each entry, execution prefers a complete DASH video/audio pair from the plan. By default this is
@@ -119,9 +119,9 @@ the first video and first audio stream; callers can set `StreamSelection::new(..
 DASH video or audio stream ids. If a requested id is unavailable, the executor reports the available
 ids and fails before media writes. If DASH media is incomplete and FLV `durl` segments are available, it
 downloads the FLV segments instead; explicit stream selection requires DASH media and therefore
-rejects FLV fallback. Otherwise the entry fails before media writes. Subtitle and danmaku files
-remain sidecars. When muxing is enabled, the executor invokes `ffmpeg` with explicit argv and returns
-the command plus output path in the report.
+rejects FLV fallback. Otherwise the entry fails before media writes. Cover, subtitle, and danmaku
+files remain sidecars. When muxing is enabled, the executor invokes `ffmpeg` with explicit argv and
+returns the command plus output path in the report.
 
 Media and sidecar downloads use media headers without account cookies, because media URLs come from
 API payloads and can target CDN or proxy hosts. DASH and FLV backup URLs are part of the candidate

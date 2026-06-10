@@ -103,6 +103,7 @@ The JSON output contains:
 - `streams.videos`: DASH video tracks.
 - `streams.audios`: DASH audio tracks, including available Dolby or FLAC audio.
 - `streams.flv_segments`: legacy FLV segments when the playurl response uses `durl`.
+- `cover_url`: optional cover image URL used by download cover sidecars.
 - `subtitles`: discovered subtitle tracks.
 - `danmaku.xml_url`: the XML comment endpoint for the entry `cid`.
 
@@ -136,8 +137,8 @@ the plan for that entry; otherwise the command reports the available ids and fai
 media. When DASH media is incomplete and legacy FLV `durl` segments are available, it downloads
 those segments instead. Explicit quality selection requires DASH media and therefore disables FLV
 fallback for that entry. If neither shape is complete, the download fails before writing media.
-Subtitle and danmaku sidecars are enabled by default and can be disabled with `--no-subtitles` and
-`--no-danmaku`.
+Cover, subtitle, and danmaku sidecars are enabled by default when the plan has those URLs. Disable
+them individually with `--no-cover`, `--no-subtitles`, and `--no-danmaku`.
 
 Downloads resume partial files by default with HTTP range requests and validate `Content-Range`
 plus advertised media sizes when the plan provides them. Use `--no-resume` to force a fresh write;

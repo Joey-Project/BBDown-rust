@@ -18,7 +18,7 @@
 - [completed] Rename the publishable library package to `bbdown-core` before the 0.1.0 release.
 - [completed] Add protected release candidate creation and RC promotion workflows for GitHub
   Release and crates.io publication.
-- [pending] Add cover download support to the crate and CLI.
+- [completed] Add cover download support to the crate and CLI.
 - [pending] Add single-download modes for video-only, audio-only, subtitle-only, danmaku-only, and
   cover-only workflows.
 - [pending] Add ASS-format danmaku sidecar generation.

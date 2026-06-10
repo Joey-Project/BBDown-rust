@@ -129,6 +129,7 @@ pub struct DownloadEntry {
     pub cid: u64,
     pub epid: Option<u64>,
     pub title: String,
+    pub cover_url: Option<String>,
     pub source: StreamSource,
     pub streams: StreamSet,
     #[serde(default, skip_serializing_if = "StreamDiagnostics::is_empty")]

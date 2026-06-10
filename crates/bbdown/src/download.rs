@@ -20,6 +20,7 @@ use tokio::process::Command;
 const MAX_FILE_NAME_BYTES: usize = 80;
 const MAX_FILE_COMPONENT_BYTES: usize = 240;
 const MAX_SUBTITLE_EXTENSION_BYTES: usize = 16;
+const MAX_COVER_EXTENSION_BYTES: usize = 16;
 
 #[non_exhaustive]
 #[derive(Clone, Debug)]
@@ -28,8 +29,7 @@ pub struct DownloadOptions {
     pub retry: RetryPolicy,
     pub stream_selection: StreamSelection,
     pub resume: bool,
-    pub include_subtitles: bool,
-    pub include_danmaku: bool,
+    pub sidecars: SidecarOptions,
     pub mux: MuxOptions,
     pub download_idle_timeout: Option<Duration>,
 }
@@ -41,8 +41,7 @@ impl Default for DownloadOptions {
             retry: RetryPolicy::default(),
             stream_selection: StreamSelection::default(),
             resume: true,
-            include_subtitles: true,
-            include_danmaku: true,
+            sidecars: SidecarOptions::default(),
             mux: MuxOptions::Disabled,
             download_idle_timeout: Some(Duration::from_secs(30)),
         }
@@ -77,14 +76,20 @@ impl DownloadOptions {
     }
 
     #[must_use]
+    pub fn with_cover(mut self, include_cover: bool) -> Self {
+        self.sidecars.cover = include_cover;
+        self
+    }
+
+    #[must_use]
     pub fn with_subtitles(mut self, include_subtitles: bool) -> Self {
-        self.include_subtitles = include_subtitles;
+        self.sidecars.subtitles = include_subtitles;
         self
     }
 
     #[must_use]
     pub fn with_danmaku(mut self, include_danmaku: bool) -> Self {
-        self.include_danmaku = include_danmaku;
+        self.sidecars.danmaku = include_danmaku;
         self
     }
 
@@ -98,6 +103,35 @@ impl DownloadOptions {
     pub fn with_download_idle_timeout(mut self, download_idle_timeout: Option<Duration>) -> Self {
         self.download_idle_timeout = download_idle_timeout;
         self
+    }
+}
+
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SidecarOptions {
+    pub cover: bool,
+    pub subtitles: bool,
+    pub danmaku: bool,
+}
+
+impl Default for SidecarOptions {
+    fn default() -> Self {
+        Self {
+            cover: false,
+            subtitles: true,
+            danmaku: true,
+        }
+    }
+}
+
+impl SidecarOptions {
+    #[must_use]
+    pub const fn new(cover: bool, subtitles: bool, danmaku: bool) -> Self {
+        Self {
+            cover,
+            subtitles,
+            danmaku,
+        }
     }
 }
 
@@ -428,6 +462,7 @@ pub enum DownloadFileKind {
     Video,
     Audio,
     FlvSegment,
+    Cover,
     Subtitle,
     Danmaku,
 }
@@ -590,7 +625,21 @@ impl BiliClient {
         } else {
             return Err(Error::MissingField("complete DASH media or FLV segments"));
         }
-        if options.include_subtitles {
+        if options.sidecars.cover
+            && let Some(cover_url) = entry.cover_url.as_deref().filter(|url| !url.is_empty())
+        {
+            files.push(
+                self.download_url_to_file(
+                    cover_url,
+                    &entry_dir.join(cover_file_name(cover_url)),
+                    DownloadFileKind::Cover,
+                    None,
+                    options,
+                )
+                .await?,
+            );
+        }
+        if options.sidecars.subtitles {
             let mut seen_subtitles = HashSet::new();
             for (index, subtitle) in entry.subtitles.iter().enumerate() {
                 if !seen_subtitles.insert(subtitle_dedup_key(&subtitle.url)) {
@@ -602,7 +651,7 @@ impl BiliClient {
                 );
             }
         }
-        if options.include_danmaku {
+        if options.sidecars.danmaku {
             files.push(
                 self.download_url_to_file(
                     &entry.danmaku.xml_url,
@@ -635,6 +684,7 @@ impl BiliClient {
             DownloadFileKind::Video => "video",
             DownloadFileKind::Audio => "audio",
             DownloadFileKind::FlvSegment
+            | DownloadFileKind::Cover
             | DownloadFileKind::Subtitle
             | DownloadFileKind::Danmaku => "media",
         };
@@ -1813,6 +1863,23 @@ fn subtitle_file_name(index: usize, subtitle: &SubtitleTrack) -> String {
     format_file_component(prefix, &subtitle.language, &suffix)
 }
 
+fn cover_file_name(url: &str) -> String {
+    let extension = cover_extension(url);
+    let suffix = format!("-{}.{}", short_identity_hash(url), extension);
+    format_file_component("cover-", "image", &suffix)
+}
+
+fn cover_extension(url: &str) -> String {
+    let extension = url_path_extension(url).unwrap_or_else(|| "jpg".to_owned());
+    let sanitized = file_name_token(&extension);
+    let extension = if sanitized.is_empty() {
+        "jpg".to_owned()
+    } else {
+        sanitized
+    };
+    safe_file_name_with_budget(&extension, MAX_COVER_EXTENSION_BYTES)
+}
+
 fn url_path_extension(url: &str) -> Option<String> {
     url::Url::parse(url)
         .ok()
@@ -1841,11 +1908,11 @@ mod tests {
         DownloadArchive, DownloadArchiveEntryRecord, DownloadArchiveRecord, DownloadOptions,
         DownloadPreflight, DownloadReport, DownloadedFile, DuplicateDecision, EntryDownloadReport,
         MAX_FILE_COMPONENT_BYTES, MAX_FILE_NAME_BYTES, MAX_SUBTITLE_EXTENSION_BYTES, MuxOptions,
-        RetryPolicy, archive_sidecar_path, comparable_output_path, default_plan_output_dir,
-        download_entry_content_key, download_plan_content_key, entry_dir_name, media_file_name,
-        path_is_occupied, safe_file_name, safe_file_name_with_budget, select_media_stream,
-        subtitle_dedup_key, subtitle_extension, subtitle_file_name, temporary_download_path,
-        temporary_mux_path, temporary_replace_path,
+        RetryPolicy, SidecarOptions, archive_sidecar_path, comparable_output_path,
+        default_plan_output_dir, download_entry_content_key, download_plan_content_key,
+        entry_dir_name, media_file_name, path_is_occupied, safe_file_name,
+        safe_file_name_with_budget, select_media_stream, subtitle_dedup_key, subtitle_extension,
+        subtitle_file_name, temporary_download_path, temporary_mux_path, temporary_replace_path,
     };
     use crate::models::{
         DanmakuTrack, DownloadEntry, DownloadPlan, FlvSegment, MediaStream, StreamDiagnostics,
@@ -1917,6 +1984,7 @@ mod tests {
             .with_stream_selection(super::StreamSelection::video(80))
             .with_download_idle_timeout(None)
             .with_resume(false)
+            .with_cover(true)
             .with_subtitles(false)
             .with_danmaku(false)
             .with_mux(MuxOptions::ffmpeg("ffmpeg-custom"));
@@ -1928,8 +1996,9 @@ mod tests {
         assert_eq!(options.stream_selection.audio_quality, None);
         assert_eq!(options.download_idle_timeout, None);
         assert!(!options.resume);
-        assert!(!options.include_subtitles);
-        assert!(!options.include_danmaku);
+        assert!(options.sidecars.cover);
+        assert!(!options.sidecars.subtitles);
+        assert!(!options.sidecars.danmaku);
         let MuxOptions::Ffmpeg { binary } = options.mux else {
             return Err(anyhow::anyhow!("expected ffmpeg mux options"));
         };
@@ -2084,6 +2153,10 @@ mod tests {
             then.status(200).body("audio");
         });
         server.mock(|when, then| {
+            when.method(GET).path("/cover.jpg");
+            then.status(200).body("cover");
+        });
+        server.mock(|when, then| {
             when.method(GET).path("/subtitle.ass");
             then.status(200).body("[Script Info]");
         });
@@ -2101,6 +2174,10 @@ mod tests {
                 DownloadOptions {
                     output_dir: temp.path().to_path_buf(),
                     retry: RetryPolicy::single_attempt(),
+                    sidecars: SidecarOptions {
+                        cover: true,
+                        ..SidecarOptions::default()
+                    },
                     mux: MuxOptions::Disabled,
                     ..DownloadOptions::default()
                 },
@@ -2108,14 +2185,73 @@ mod tests {
             .await?;
 
         let entry = &report.entries[0];
-        assert_eq!(entry.files.len(), 4);
+        assert_eq!(entry.files.len(), 5);
         let video = entry
             .files
             .iter()
             .find(|file| file.kind == DownloadFileKind::Video)
             .ok_or_else(|| anyhow::anyhow!("missing video"))?;
         assert_eq!(tokio::fs::read_to_string(&video.path).await?, "video");
+        let cover = entry
+            .files
+            .iter()
+            .find(|file| file.kind == DownloadFileKind::Cover)
+            .ok_or_else(|| anyhow::anyhow!("missing cover"))?;
+        assert_eq!(tokio::fs::read_to_string(&cover.path).await?, "cover");
+        assert!(
+            cover
+                .path
+                .file_name()
+                .and_then(std::ffi::OsStr::to_str)
+                .is_some_and(|name| {
+                    name.starts_with("cover-image-h")
+                        && Path::new(name)
+                            .extension()
+                            .is_some_and(|extension| extension.eq_ignore_ascii_case("jpg"))
+                })
+        );
         assert!(entry.mux.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn can_skip_cover_sidecar_downloads() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/video.m4s");
+            then.status(200).body("video");
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/audio.m4s");
+            then.status(200).body("audio");
+        });
+        let cover_mock = server.mock(|when, then| {
+            when.method(GET).path("/cover.jpg");
+            then.status(200).body("cover");
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = test_plan(&server);
+
+        let report = client
+            .download_plan(
+                &plan,
+                DownloadOptions::new(temp.path())
+                    .with_retry_policy(RetryPolicy::single_attempt())
+                    .with_cover(false)
+                    .with_subtitles(false)
+                    .with_danmaku(false)
+                    .with_mux(MuxOptions::Disabled),
+            )
+            .await?;
+
+        assert_eq!(cover_mock.calls(), 0);
+        assert!(
+            report.entries[0]
+                .files
+                .iter()
+                .all(|file| file.kind != DownloadFileKind::Cover)
+        );
         Ok(())
     }
 
@@ -2191,8 +2327,11 @@ mod tests {
                         video_quality: Some(80),
                         audio_quality: Some(30280),
                     },
-                    include_subtitles: false,
-                    include_danmaku: false,
+                    sidecars: SidecarOptions {
+                        subtitles: false,
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
                     mux: MuxOptions::Disabled,
                     ..DownloadOptions::default()
                 },
@@ -2295,7 +2434,10 @@ mod tests {
                 DownloadOptions {
                     output_dir: temp.path().to_path_buf(),
                     retry: RetryPolicy::single_attempt(),
-                    include_danmaku: false,
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
                     mux: MuxOptions::Disabled,
                     ..DownloadOptions::default()
                 },
@@ -2342,7 +2484,10 @@ mod tests {
                 DownloadOptions {
                     output_dir: temp.path().to_path_buf(),
                     retry: RetryPolicy::single_attempt(),
-                    include_danmaku: false,
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
                     mux: MuxOptions::Disabled,
                     ..DownloadOptions::default()
                 },
@@ -2381,7 +2526,10 @@ mod tests {
                 DownloadOptions {
                     output_dir: temp.path().to_path_buf(),
                     retry: RetryPolicy::single_attempt(),
-                    include_danmaku: false,
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
                     mux: MuxOptions::Disabled,
                     ..DownloadOptions::default()
                 },
@@ -2426,7 +2574,10 @@ mod tests {
                 DownloadOptions {
                     output_dir: temp.path().to_path_buf(),
                     retry: RetryPolicy::single_attempt(),
-                    include_danmaku: false,
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
                     mux: MuxOptions::Disabled,
                     ..DownloadOptions::default()
                 },
@@ -2465,7 +2616,10 @@ mod tests {
                 DownloadOptions {
                     output_dir: temp.path().to_path_buf(),
                     retry: RetryPolicy::single_attempt(),
-                    include_danmaku: false,
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
                     mux: MuxOptions::Disabled,
                     ..DownloadOptions::default()
                 },
@@ -2506,7 +2660,10 @@ mod tests {
                 DownloadOptions {
                     output_dir: temp.path().to_path_buf(),
                     retry: RetryPolicy::single_attempt(),
-                    include_danmaku: false,
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
                     mux: MuxOptions::Disabled,
                     ..DownloadOptions::default()
                 },
@@ -2546,7 +2703,10 @@ mod tests {
                 DownloadOptions {
                     output_dir: temp.path().to_path_buf(),
                     retry: RetryPolicy::single_attempt(),
-                    include_danmaku: false,
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
                     mux: MuxOptions::Disabled,
                     ..DownloadOptions::default()
                 },
@@ -2588,7 +2748,10 @@ mod tests {
                 DownloadOptions {
                     output_dir: temp.path().to_path_buf(),
                     retry: RetryPolicy::single_attempt(),
-                    include_danmaku: false,
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
                     mux: MuxOptions::Disabled,
                     ..DownloadOptions::default()
                 },
@@ -2632,7 +2795,10 @@ mod tests {
                 DownloadOptions {
                     output_dir: temp.path().to_path_buf(),
                     retry: RetryPolicy::single_attempt(),
-                    include_danmaku: false,
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
                     mux: MuxOptions::Disabled,
                     ..DownloadOptions::default()
                 },
@@ -2673,7 +2839,10 @@ mod tests {
                 DownloadOptions {
                     output_dir: temp.path().to_path_buf(),
                     retry: RetryPolicy::single_attempt(),
-                    include_danmaku: false,
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
                     mux: MuxOptions::Disabled,
                     ..DownloadOptions::default()
                 },
@@ -2704,7 +2873,10 @@ mod tests {
         tokio::fs::write(&path, "existing").await?;
         let options = DownloadOptions {
             retry: RetryPolicy::single_attempt(),
-            include_danmaku: false,
+            sidecars: SidecarOptions {
+                danmaku: false,
+                ..SidecarOptions::default()
+            },
             mux: MuxOptions::Disabled,
             ..DownloadOptions::default()
         };
@@ -2757,7 +2929,10 @@ mod tests {
                     output_dir: temp.path().to_path_buf(),
                     retry: RetryPolicy::single_attempt(),
                     resume: false,
-                    include_danmaku: false,
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
                     mux: MuxOptions::Disabled,
                     ..DownloadOptions::default()
                 },
@@ -2799,7 +2974,10 @@ mod tests {
                     output_dir: temp.path().to_path_buf(),
                     retry: RetryPolicy::single_attempt(),
                     resume: false,
-                    include_danmaku: false,
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
                     mux: MuxOptions::Disabled,
                     ..DownloadOptions::default()
                 },
@@ -2836,7 +3014,10 @@ mod tests {
                 DownloadOptions {
                     output_dir: temp.path().to_path_buf(),
                     retry: RetryPolicy::single_attempt(),
-                    include_danmaku: false,
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
                     mux: MuxOptions::Disabled,
                     ..DownloadOptions::default()
                 },
@@ -2876,7 +3057,10 @@ mod tests {
                 DownloadOptions {
                     output_dir: temp.path().to_path_buf(),
                     retry: RetryPolicy::single_attempt(),
-                    include_danmaku: false,
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
                     mux: MuxOptions::Disabled,
                     ..DownloadOptions::default()
                 },
@@ -2924,7 +3108,10 @@ mod tests {
                 DownloadOptions {
                     output_dir: temp.path().to_path_buf(),
                     retry: RetryPolicy::single_attempt(),
-                    include_danmaku: false,
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
                     mux: MuxOptions::Disabled,
                     ..DownloadOptions::default()
                 },
@@ -2961,7 +3148,10 @@ mod tests {
                 DownloadOptions {
                     output_dir: temp.path().to_path_buf(),
                     retry: RetryPolicy::single_attempt(),
-                    include_danmaku: false,
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
                     mux: MuxOptions::Disabled,
                     ..DownloadOptions::default()
                 },
@@ -3003,7 +3193,10 @@ mod tests {
                 DownloadOptions {
                     output_dir: temp.path().to_path_buf(),
                     retry: RetryPolicy::single_attempt(),
-                    include_danmaku: false,
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
                     mux: MuxOptions::Disabled,
                     ..DownloadOptions::default()
                 },
@@ -3040,7 +3233,10 @@ mod tests {
                 DownloadOptions {
                     output_dir: temp.path().to_path_buf(),
                     retry: RetryPolicy::single_attempt(),
-                    include_danmaku: false,
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
                     mux: MuxOptions::Disabled,
                     ..DownloadOptions::default()
                 },
@@ -3067,7 +3263,10 @@ mod tests {
         let path = temp.path().join("video.m4s");
         let options = DownloadOptions {
             retry: RetryPolicy::single_attempt(),
-            include_danmaku: false,
+            sidecars: SidecarOptions {
+                danmaku: false,
+                ..SidecarOptions::default()
+            },
             mux: MuxOptions::Disabled,
             ..DownloadOptions::default()
         };
@@ -3122,7 +3321,10 @@ mod tests {
                 DownloadOptions {
                     output_dir: temp.path().to_path_buf(),
                     retry: RetryPolicy::single_attempt(),
-                    include_danmaku: false,
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
                     mux: MuxOptions::Disabled,
                     ..DownloadOptions::default()
                 },
@@ -3157,7 +3359,10 @@ mod tests {
                 DownloadOptions {
                     output_dir: temp.path().to_path_buf(),
                     retry: RetryPolicy::single_attempt(),
-                    include_danmaku: false,
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
                     mux: MuxOptions::Disabled,
                     ..DownloadOptions::default()
                 },
@@ -3194,7 +3399,10 @@ mod tests {
         let path = temp.path().join("video.m4s");
         let options = DownloadOptions {
             retry: RetryPolicy::single_attempt(),
-            include_danmaku: false,
+            sidecars: SidecarOptions {
+                danmaku: false,
+                ..SidecarOptions::default()
+            },
             mux: MuxOptions::Disabled,
             download_idle_timeout: Some(Duration::from_secs(1)),
             ..DownloadOptions::default()
@@ -3236,7 +3444,10 @@ mod tests {
         let path = temp.path().join("video.m4s");
         let options = DownloadOptions {
             retry: RetryPolicy::single_attempt(),
-            include_danmaku: false,
+            sidecars: SidecarOptions {
+                danmaku: false,
+                ..SidecarOptions::default()
+            },
             mux: MuxOptions::Disabled,
             download_idle_timeout: Some(Duration::from_secs(1)),
             ..DownloadOptions::default()
@@ -3289,7 +3500,10 @@ mod tests {
                 max_attempts: 2,
                 backoff: Duration::from_millis(1),
             },
-            include_danmaku: false,
+            sidecars: SidecarOptions {
+                danmaku: false,
+                ..SidecarOptions::default()
+            },
             mux: MuxOptions::Disabled,
             ..DownloadOptions::default()
         };
@@ -3338,7 +3552,10 @@ mod tests {
                 DownloadOptions {
                     output_dir,
                     retry: RetryPolicy::single_attempt(),
-                    include_danmaku: false,
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
                     mux: MuxOptions::Ffmpeg { binary: ffmpeg },
                     ..DownloadOptions::default()
                 },
@@ -3380,7 +3597,10 @@ mod tests {
                 DownloadOptions {
                     output_dir: temp.path().join("downloads"),
                     retry: RetryPolicy::single_attempt(),
-                    include_danmaku: false,
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
                     mux: MuxOptions::Ffmpeg { binary: ffmpeg },
                     ..DownloadOptions::default()
                 },
@@ -3420,7 +3640,10 @@ mod tests {
                 DownloadOptions {
                     output_dir: temp.path().join("downloads"),
                     retry: RetryPolicy::single_attempt(),
-                    include_danmaku: false,
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
                     mux: MuxOptions::Ffmpeg { binary: ffmpeg },
                     ..DownloadOptions::default()
                 },
@@ -3460,7 +3683,10 @@ mod tests {
                 DownloadOptions {
                     output_dir: temp.path().join("downloads"),
                     retry: RetryPolicy::single_attempt(),
-                    include_danmaku: false,
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
                     mux: MuxOptions::Ffmpeg { binary: ffmpeg },
                     ..DownloadOptions::default()
                 },
@@ -3501,7 +3727,10 @@ mod tests {
                 DownloadOptions {
                     output_dir: temp.path().join("downloads"),
                     retry: RetryPolicy::single_attempt(),
-                    include_danmaku: false,
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
                     mux: MuxOptions::Ffmpeg { binary: ffmpeg },
                     ..DownloadOptions::default()
                 },
@@ -3543,7 +3772,10 @@ mod tests {
                 DownloadOptions {
                     output_dir,
                     retry: RetryPolicy::single_attempt(),
-                    include_danmaku: false,
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
                     mux: MuxOptions::Ffmpeg { binary: ffmpeg },
                     ..DownloadOptions::default()
                 },
@@ -3590,7 +3822,10 @@ mod tests {
                 DownloadOptions {
                     output_dir: output_dir.clone(),
                     retry: RetryPolicy::single_attempt(),
-                    include_danmaku: false,
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
                     mux: MuxOptions::Ffmpeg { binary: ffmpeg },
                     ..DownloadOptions::default()
                 },
@@ -4603,6 +4838,7 @@ mod tests {
                 cid: 2,
                 epid: None,
                 title: "Main".to_owned(),
+                cover_url: Some(format!("{}/cover.jpg", server.base_url())),
                 source: StreamSource::NormalWeb,
                 streams: StreamSet {
                     videos: vec![MediaStream {

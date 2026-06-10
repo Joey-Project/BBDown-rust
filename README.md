@@ -11,9 +11,9 @@ This project uses the original [BBDown](https://github.com/nilaoda/BBDown) proje
 Bilibili behavior reference. Thanks to BBDown and its contributors for that reference.
 
 The current implementation establishes the crate/CLI/CI foundation, metadata resolver, stream
-planning, media downloads, sidecar downloads, retry/resume behavior, optional ffmpeg muxing, QR
-login, opt-in live test harnesses, configured restricted-area proxy ordering with diagnostics, and
-builder-style crate integration APIs. It also supports an explicit download archive for duplicate
+planning, media downloads, cover/subtitle/danmaku sidecar downloads, retry/resume behavior,
+optional ffmpeg muxing, QR login, opt-in live test harnesses, configured restricted-area proxy
+ordering with diagnostics, and builder-style crate integration APIs. It also supports an explicit download archive for duplicate
 preflight and CLI replace / keep-both / cancel decisions. Input parsing covers normal videos, PGC
 and intl episodes, PUGV/cheese courses, B23 short links, favorite lists, space videos, collections,
 and series. URL parsing includes canonical `bilibili.com/list/...` pages, path-based medialist
@@ -66,9 +66,10 @@ bbdown download av170001 --output-dir downloads --archive-file downloads/archive
 ```
 
 `download` resolves a plan, downloads the first complete DASH video/audio pair or FLV segments,
-writes subtitle and danmaku sidecars by default, resumes partial files with HTTP range requests,
-retries bounded transient failures, validates advertised media sizes when present, fails incomplete
-media shapes, and runs `ffmpeg` unless `--no-mux` is supplied.
+writes cover, subtitle, and danmaku sidecars by default, resumes partial files with HTTP range
+requests, retries bounded transient failures, validates advertised media sizes when present, fails
+incomplete media shapes, and runs `ffmpeg` unless `--no-mux` is supplied. Use `--no-cover`,
+`--no-subtitles`, or `--no-danmaku` to skip individual sidecar families.
 Pass `--archive-file <path>` to record completed downloads by content identity. Archive output,
 sidecar, and mux paths are stored as absolute paths at record time so the same archive can be reused
 from another working directory. Entry identity uses stable aid/cid media ids, so the same PGC
