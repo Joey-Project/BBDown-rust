@@ -21,7 +21,7 @@ superseded_by:
 ## Current State
 
 - `DownloadEntry` carries an optional `cover_url` from normal video, PGC/PUGV season, and batch
-  collection planning paths.
+  collection planning paths, normalizing protocol-relative URLs before download execution.
 - `DownloadOptions` includes `sidecars.cover`, keeps the crate default conservative, and exposes
   `with_cover(...)` for embedding callers that want cover sidecars.
 - Download execution writes cover files as `DownloadFileKind::Cover` using the same retry, resume,
@@ -32,10 +32,13 @@ superseded_by:
 
 ## Evidence
 
-- `cargo test -p bbdown-core --locked` passes: 144 tests.
+- `cargo test -p bbdown-core --locked` passes: 145 tests.
 - `cargo test -p bbdown-cli --test cli_e2e --locked` passes: 21 tests.
 - `just ci` passes, including formatter, clippy, workspace tests, CLI e2e, and crate publish dry-run.
 - `just live-e2e` passes: 1 ignored live manifest test executed.
+- Independent Codex review and offline frozen diff review findings were addressed: re-export
+  `SidecarOptions`, normalize protocol-relative cover URLs, and default missing `cover_url` during
+  plan deserialization.
 
 ## Next Steps
 
