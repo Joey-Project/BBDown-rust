@@ -1052,7 +1052,7 @@ impl BiliClient {
                 if media.attr.is_some_and(|attr| attr != 0) {
                     continue;
                 }
-                push_medialist_media_items(&mut items, media)?;
+                self.push_medialist_media_items(&mut items, media).await?;
                 if fetch_mode.is_satisfied_by(items.len()) {
                     selected_item_found = true;
                     break;
@@ -1291,6 +1291,60 @@ impl BiliClient {
             );
         }
         Ok(())
+    }
+
+    async fn push_medialist_media_items(
+        &self,
+        items: &mut Vec<VideoCollectionItem>,
+        media: MediaListMedia,
+    ) -> Result<()> {
+        let aid = media
+            .id
+            .ok_or(Error::MissingField("data.media_list[].id"))?;
+        if media.pages.is_empty() {
+            let metadata = self.fetch_video_by_aid(aid, TagPolicy::Skip).await?;
+            let page_count = u32::try_from(metadata.pages.len())
+                .ok()
+                .filter(|count| *count > 0)
+                .unwrap_or(1);
+            for page in metadata.pages {
+                push_unique_collection_item(
+                    items,
+                    VideoCollectionItem {
+                        index: 0,
+                        aid: page.aid,
+                        bvid: metadata.bvid.clone().or_else(|| media.bvid.clone()),
+                        cid: page.cid,
+                        title: if page_count == 1 {
+                            media
+                                .title
+                                .clone()
+                                .unwrap_or_else(|| metadata.title.clone())
+                        } else {
+                            format_collection_page_title(
+                                media.title.as_deref().unwrap_or(&metadata.title),
+                                page.index,
+                                &page.title,
+                            )
+                        },
+                        cover_url: metadata.cover_url.clone().or_else(|| media.cover.clone()),
+                        description: media
+                            .intro
+                            .clone()
+                            .unwrap_or_else(|| metadata.description.clone()),
+                        pub_time: media.pubtime.or(metadata.pub_time),
+                        owner: media
+                            .upper
+                            .clone()
+                            .and_then(FavoriteUpper::into_owner)
+                            .or(metadata.owner.clone()),
+                        duration_seconds: page.duration_seconds,
+                    },
+                );
+            }
+            return Ok(());
+        }
+        push_medialist_media_pages(items, media, aid)
     }
 
     async fn fetch_space_video_collection(
@@ -2785,13 +2839,11 @@ fn episode_display_title(title: &str, long_title: Option<&str>) -> String {
     }
 }
 
-fn push_medialist_media_items(
+fn push_medialist_media_pages(
     items: &mut Vec<VideoCollectionItem>,
     media: MediaListMedia,
+    aid: u64,
 ) -> Result<()> {
-    let aid = media
-        .id
-        .ok_or(Error::MissingField("data.media_list[].id"))?;
     let title = media.title.unwrap_or_else(|| aid.to_string());
     let page_count = media.page.unwrap_or_else(|| {
         u32::try_from(media.pages.len())
@@ -5118,6 +5170,74 @@ mod tests {
             ResolvedContent::Collection(collection) => {
                 assert_eq!(collection.collection.kind, VideoCollectionKind::Collection);
                 assert_eq!(collection.collection.items.len(), 1);
+                assert_eq!(collection.selected_items[0].title, "Visible video");
+            }
+            ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
+                return Err(anyhow::anyhow!("expected collection"));
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolves_medialist_item_without_pages_from_video_metadata() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/v1/medialist/info")
+                .query_param("type", "8")
+                .query_param("biz_id", "456");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "title": "Collection",
+                    "intro": "Collection intro"
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/v2/medialist/resource/list")
+                .query_param("biz_id", "456")
+                .query_param("oid", "");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "has_more": false,
+                    "media_list": [{
+                        "id": 170_001,
+                        "bvid": "BV1xx411c7mD",
+                        "title": "Visible video",
+                        "intro": "Visible intro",
+                        "attr": 0
+                    }]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("aid", "170001");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "aid": 170_001,
+                    "bvid": "BV1xx411c7mD",
+                    "title": "Visible video",
+                    "desc": "Video description",
+                    "owner": {"mid": 1, "name": "Uploader"},
+                    "pages": [{"page": 1, "cid": 9988, "part": "Visible video", "duration": 3}]
+                }
+            }));
+        });
+
+        let resolved = test_client(&server)
+            .resolve_input("collection456", None)
+            .await?;
+        match resolved {
+            ResolvedContent::Collection(collection) => {
+                assert_eq!(collection.collection.items.len(), 1);
+                assert_eq!(collection.selected_items[0].cid, 9988);
                 assert_eq!(collection.selected_items[0].title, "Visible video");
             }
             ResolvedContent::Video(_) | ResolvedContent::Season(_) => {

@@ -180,13 +180,14 @@ running, so sample behavior is driven by the manifest rather than shell state.
 ## Documentation
 
 - Crate API note: the publishable package is `bbdown-core`, imported as `bbdown_core`. This rewrite
-  is still `0.1`; embedding projects should prefer `Default`, `new`, and `with_*` constructors such
-  as `ClientConfig::default().with_*`, `EndpointConfig::default().with_*`,
-  `RestrictedAreaConfig::default().with_*`, `DownloadOptions::new(...).with_*`, and
-  `RetryPolicy::new(...)` over struct literals so added configuration fields are less disruptive.
-  Output model structs such as `DownloadEntry` are intended to be consumed as returned values or
-  through serde; their struct-literal construction is not treated as a stable compatibility surface
-  before the crate leaves `0.1`. For duplicate handling, embedding projects can inspect
+  is now on the `0.2` development line after the published `0.1.0` release because batch collection
+  metadata adds a new `ResolvedContent::Collection` API shape. Embedding projects should prefer
+  `Default`, `new`, and `with_*` constructors such as `ClientConfig::default().with_*`,
+  `EndpointConfig::default().with_*`, `RestrictedAreaConfig::default().with_*`,
+  `DownloadOptions::new(...).with_*`, and `RetryPolicy::new(...)` over struct literals so added
+  configuration fields are less disruptive. Output model structs such as `DownloadEntry` are
+  intended to be consumed as returned values or through serde; their struct-literal construction is
+  not treated as a stable compatibility surface. For duplicate handling, embedding projects can inspect
   `DownloadPreflight`, present existing `DownloadArchiveRecord` values to users, then pass an
   explicit `DuplicateDecision`. Batch metadata resolves through `ResolvedContent::Collection`, and
   download planning maps selected collection items back to normal video stream planning entries.

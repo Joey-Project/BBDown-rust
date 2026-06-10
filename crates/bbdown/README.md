@@ -11,7 +11,8 @@ collections, and series.
 
 Install with `cargo add bbdown-core`, then import with `bbdown_core`.
 
-The crate is published as a `0.1` library. Embedding projects should prefer constructor and
+The current crate version is `0.2.0`, a post-`0.1.0` development line that adds batch collection
+metadata through `ResolvedContent::Collection`. Embedding projects should prefer constructor and
 builder-style APIs such as `ClientConfig::default().with_*()`, `EndpointConfig::default().with_*()`,
 `RestrictedAreaConfig::default().with_*()`, `DownloadOptions::new(...).with_*()`,
 `RetryPolicy::new(...)`, and `StreamSelection::new(...)` instead of struct literals for

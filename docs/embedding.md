@@ -9,7 +9,8 @@ projects that need typed Bilibili metadata, download plans, media downloads, sub
 danmaku sidecars, QR login state, batch collection parsing, and restricted-area proxy diagnostics
 without shelling out to the CLI.
 
-The crate is still in the `0.1` compatibility phase. Prefer constructors and builder-style APIs for
+The current crate version is `0.2.0`, a post-`0.1.0` development line that adds batch collection
+metadata through `ResolvedContent::Collection`. Prefer constructors and builder-style APIs for
 configuration, and treat metadata and plan structs as read-only output surfaces. This keeps
 embedding code resilient when new fields are added while the crate matures.
 

@@ -8,8 +8,10 @@
 typed Bilibili metadata、下载计划、媒体下载、字幕旁路文件、弹幕旁路文件、二维码登录状态
 、批量集合解析和受限区域代理诊断，但不希望 shell out 到 CLI 的场景。
 
-crate 仍处于 `0.1` 兼容阶段。配置应优先使用构造器和 builder 风格 API，并把 metadata 和
-plan 结构体视为只读输出表面。这样在 crate 成熟过程中新增字段时，嵌入代码更不容易受影响。
+当前 crate 版本是 `0.2.0`，属于已发布 `0.1.0` 之后的开发线，并通过
+`ResolvedContent::Collection` 增加批量 collection metadata。配置应优先使用构造器和
+builder 风格 API，并把 metadata 和 plan 结构体视为只读输出表面。这样在 crate 成熟过程
+中新增字段时，嵌入代码更不容易受影响。
 
 ## 仅规划
 

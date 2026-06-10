@@ -33,8 +33,10 @@ superseded_by:
 - Favorite lists, space uploads, collections, and series resolve as `ResolvedContent::Collection`,
   carrying full collection metadata plus selected items.
 - Collection resolution deduplicates current-item cursor repeats. Favorite entries without
-  `ugc.first_cid` fall back to archive metadata, and owner-scoped space list URLs use newer space
-  collection/series APIs.
+  `ugc.first_cid` and medialist entries without embedded `pages` fall back to archive metadata;
+  owner-scoped space list URLs use newer space collection/series APIs.
+- The crate and CLI versions move to `0.2.0` because `ResolvedContent::Collection` is a breaking
+  output API addition after the published `0.1.0` crate.
 - Collection inputs select all items by default. `Selection::Page` selects one collection item and
   `Selection::Latest` selects the newest parsed item. Empty collections resolve as empty item lists
   for default/all selection.
@@ -80,6 +82,10 @@ superseded_by:
   use `/pugv/view/web/ep/list`, owner mid must be preserved for space series URLs, canonical
   `/list` and path-based medialist URLs were missing, and favorite items cannot require
   `ugc.first_cid`. These were fixed with targeted core regression tests.
+- The independent review rerun found two final issues: missing medialist `pages` silently dropped
+  entries, and the batch collection output API was breaking while package manifests still said
+  `0.1.0`. Medialist fallback now fetches archive metadata, and manifests/docs now identify this as
+  the `0.2.0` development line.
 
 ## Next Steps
 

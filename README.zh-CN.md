@@ -169,13 +169,14 @@ just ci
 
 ## 文档
 
-- Crate API 说明：可发布 package 是 `bbdown-core`，导入时使用 `bbdown_core`。此重写仍为
-  `0.1`；嵌入项目应优先使用 `Default`、`new` 和 `with_*` 构造器，例如
-  `ClientConfig::default().with_*`、`EndpointConfig::default().with_*`、
+- Crate API 说明：可发布 package 是 `bbdown-core`，导入时使用 `bbdown_core`。此重写处于
+  已发布 `0.1.0` 之后的 `0.2` 开发线，因为批量 collection metadata 增加了新的
+  `ResolvedContent::Collection` API 形态；嵌入项目应优先使用 `Default`、`new` 和
+  `with_*` 构造器，例如 `ClientConfig::default().with_*`、`EndpointConfig::default().with_*`、
   `RestrictedAreaConfig::default().with_*`、`DownloadOptions::new(...).with_*` 和
   `RetryPolicy::new(...)`，而不是结构体字面量，这样新增配置字段时破坏性更小。输出模型
-  结构体（例如 `DownloadEntry`）意图作为返回值消费或通过 serde 消费；在 crate 离开
-  `0.1` 之前，结构体字面量构造不被视为稳定兼容面。对于重复处理，嵌入项目可以检查
+  结构体（例如 `DownloadEntry`）意图作为返回值消费或通过 serde 消费；结构体字面量构造
+  不被视为稳定兼容面。对于重复处理，嵌入项目可以检查
   `DownloadPreflight`，把已有 `DownloadArchiveRecord` 展示给用户，然后传入显式
   `DuplicateDecision`。批量元数据通过 `ResolvedContent::Collection` 返回；下载规划会把
   选中的集合条目映射回普通视频的 stream planning 条目。

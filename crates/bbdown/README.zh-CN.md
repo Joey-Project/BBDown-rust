@@ -10,12 +10,13 @@ B23 短链接、收藏夹、空间投稿、合集和系列。
 
 使用 `cargo add bbdown-core` 安装，然后用 `bbdown_core` 导入。
 
-crate 已作为 `0.1` library 发布。嵌入项目应优先使用 constructor 和 builder 风格 API，例如
-`ClientConfig::default().with_*()`、`EndpointConfig::default().with_*()`、
-`RestrictedAreaConfig::default().with_*()`、`DownloadOptions::new(...).with_*()`、
-`RetryPolicy::new(...)` 和 `StreamSelection::new(...)`，而不是对随着 crate 成熟可能继续
-增长的配置值使用结构体字面量。Public plan output containers 是被消费的数据表面，之后可
-能继续新增字段。
+当前 crate 版本是 `0.2.0`，属于已发布 `0.1.0` 之后的开发线，并通过
+`ResolvedContent::Collection` 增加批量 collection metadata。嵌入项目应优先使用
+constructor 和 builder 风格 API，例如 `ClientConfig::default().with_*()`、
+`EndpointConfig::default().with_*()`、`RestrictedAreaConfig::default().with_*()`、
+`DownloadOptions::new(...).with_*()`、`RetryPolicy::new(...)` 和
+`StreamSelection::new(...)`，而不是对随着 crate 成熟可能继续增长的配置值使用结构体字面
+量。Public plan output containers 是被消费的数据表面，之后可能继续新增字段。
 
 ## 示例
 
