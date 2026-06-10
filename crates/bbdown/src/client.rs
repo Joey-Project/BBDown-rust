@@ -2809,7 +2809,8 @@ impl MediaListKind {
 
     const fn desc_value(self) -> &'static str {
         match self {
-            Self::Collection | Self::Series => "true",
+            Self::Collection => "false",
+            Self::Series => "true",
         }
     }
 
@@ -3872,7 +3873,7 @@ pub(crate) fn sign_ordered_params(params: &[(&str, String)], secret: &str) -> St
 #[cfg(test)]
 mod tests {
     use super::{
-        BiliClient, ClientConfig, EndpointConfig, PlayUrlRoot, RestrictedArea,
+        BiliClient, ClientConfig, EndpointConfig, MediaListKind, PlayUrlRoot, RestrictedArea,
         RestrictedAreaConfig, RestrictedAreaProxy, intl_ogv_playurl_params,
     };
     use crate::{
@@ -4013,6 +4014,12 @@ mod tests {
             "https://video.example/segment.flv"
         );
         Ok(())
+    }
+
+    #[test]
+    fn medialist_desc_matches_bbdown_parity() {
+        assert_eq!(MediaListKind::Collection.desc_value(), "false");
+        assert_eq!(MediaListKind::Series.desc_value(), "true");
     }
 
     #[test]
@@ -5231,7 +5238,7 @@ mod tests {
                 .query_param("biz_id", "456")
                 .query_param("oid", "")
                 .query_param("with_current", "true")
-                .query_param("desc", "true");
+                .query_param("desc", "false");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {
@@ -5251,7 +5258,7 @@ mod tests {
                 .query_param("biz_id", "456")
                 .query_param("oid", "170000")
                 .query_param("with_current", "false")
-                .query_param("desc", "true");
+                .query_param("desc", "false");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {
@@ -5311,7 +5318,7 @@ mod tests {
                 .query_param("biz_id", "456")
                 .query_param("oid", "")
                 .query_param("with_current", "true")
-                .query_param("desc", "true");
+                .query_param("desc", "false");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {
@@ -5380,7 +5387,7 @@ mod tests {
                 .query_param("biz_id", "456")
                 .query_param("oid", "")
                 .query_param("with_current", "true")
-                .query_param("desc", "true");
+                .query_param("desc", "false");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {
@@ -5401,7 +5408,7 @@ mod tests {
                 .query_param("biz_id", "456")
                 .query_param("oid", "170001")
                 .query_param("with_current", "false")
-                .query_param("desc", "true");
+                .query_param("desc", "false");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {

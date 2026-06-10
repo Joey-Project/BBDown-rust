@@ -66,7 +66,7 @@ Season、media 和 `cheese/ss...` 输入在非交互模式下需要 `--select`�
 `latest`、`all`、`episode:<epid>` 和 `page:<index>`。`current` 只对 `ep`、`cheese/ep`
 和 `bilibili.tv` 分集 URL 有意义，因为这些输入本身已经标识当前分集。收藏夹、空间投稿、
 合集和系列是批量输入；不传 `--select` 时会解析全部条目。使用 `--select page:<index>` 可
-选择一个集合条目，使用 `--select latest` 可选择最新解析到的条目。JSON metadata 会在
+选择一个集合条目，使用 `--select latest` 可选择上游列表顺序中的第一个解析条目。JSON metadata 会在
 `collection.collection.items` 保留完整解析到的集合条目列表，并在
 `collection.selected_items` 报告当前选中子集；空集合是有效的空列表。
 

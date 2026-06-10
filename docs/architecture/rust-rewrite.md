@@ -65,7 +65,7 @@ The library resolves media availability into `DownloadPlan`:
 
 `ss`, `md`, and `cheese/ss` require a `Selection` in non-interactive contexts. Batch collection
 inputs default to all parsed items; callers can pass `Selection::Page(...)` for one item or
-`Selection::Latest` for the newest parsed item. Empty batch collections resolve as empty selected
+`Selection::Latest` for the first parsed item in the upstream list order. Empty batch collections resolve as empty selected
 item lists for the default/all selection. `plan_download` may fetch only the selected batch items
 because `DownloadPlan` does not expose collection metadata. The CLI will later add interactive
 prompting, but the library keeps season-like contracts explicit so integrations cannot accidentally

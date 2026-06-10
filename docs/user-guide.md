@@ -70,7 +70,7 @@ selectors are `latest`, `all`, `episode:<epid>`, and `page:<index>`. `current` i
 for `ep`, `cheese/ep`, and `bilibili.tv` episode URLs, where the input already identifies the
 current episode. Favorite lists, space videos, collections, and series are batch inputs; without
 `--select`, they resolve all parsed items. Use `--select page:<index>` for one collection item or
-`--select latest` for the newest parsed item. JSON metadata keeps the full parsed collection item
+`--select latest` for the first parsed item in the upstream list order. JSON metadata keeps the full parsed collection item
 list under `collection.collection.items` and reports the active subset under
 `collection.selected_items`; empty
 collections are valid empty lists.

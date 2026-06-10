@@ -52,7 +52,7 @@ bbdown plan cheese/ss202 --select latest --json
 danmaku XML URL for each `cid`. PGC and intl planning may still require eligible account or region
 access. PGC playurl resolution can fall back to user-configured restricted-area proxies. It does
 not download files. Collection-like inputs default to all items; use `--select page:<index>` to plan
-one collection item or `--select latest` for the newest parsed item. `info --json` keeps full
+one collection item or `--select latest` for the first parsed item in the upstream list order. `info --json` keeps full
 parsed collection metadata under `collection.collection.items`; `plan` emits only selected entries.
 
 Download selected media files:

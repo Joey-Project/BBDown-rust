@@ -64,7 +64,7 @@ library 会把媒体可用性解析为 `DownloadPlan`：
 
 `ss`、`md` 和 `cheese/ss` 在非交互上下文中需要 `Selection`。批量集合输入默认选择全部解
 析条目；调用方可以传入 `Selection::Page(...)` 选择一个条目，或传入 `Selection::Latest`
-选择最新解析到的条目。空批量集合在默认/all selection 下会解析为空 selected item 列表。
+选择上游列表顺序中的第一个解析条目。空批量集合在默认/all selection 下会解析为空 selected item 列表。
 因为 `DownloadPlan` 不暴露 collection metadata，`plan_download` 可以只抓取选中的批量条
 目。CLI 未来会增加交互式提示，但 library 保持 season-like 契约显式，避免集成方意外下载
 整季。

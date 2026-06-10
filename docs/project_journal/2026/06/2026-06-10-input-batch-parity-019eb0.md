@@ -38,7 +38,7 @@ superseded_by:
 - The crate and CLI versions move to `0.2.0` because `ResolvedContent::Collection` is a breaking
   output API addition after the published `0.1.0` crate.
 - Collection inputs select all items by default. `Selection::Page` selects one collection item and
-  `Selection::Latest` selects the newest parsed item. Empty collections resolve as empty item lists
+  `Selection::Latest` selects the first parsed item in the upstream list order. Empty collections resolve as empty item lists
   for default/all selection.
 - Collection download planning maps selected items back to normal video entries, so stream planning,
   subtitle discovery, danmaku XML URLs, download execution, and archive duplicate handling continue
@@ -90,8 +90,9 @@ superseded_by:
   page requests now send `with_current=false` when advancing with `oid`, while retaining duplicate
   suppression as a defensive guard.
 - The final review pass corrected favorite-list scope semantics (`type=0` request plus video-entry
-  filtering), switched collection medialist paging to newest-first order, accepted medialist
-  `bv_id` payloads, and quoted query-string URL examples for shell-safe copy/paste.
+  filtering), restored BBDown-compatible collection medialist paging (`desc=false`) while series
+  keeps `desc=true`, accepted medialist `bv_id` payloads, and quoted query-string URL examples for
+  shell-safe copy/paste.
 - The frozen-range review then found that empty favorite lists can return `medias: null`; collection
   list payloads now deserialize null list fields as empty vectors, with a regression test covering
   empty favorites.

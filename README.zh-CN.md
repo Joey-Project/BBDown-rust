@@ -49,7 +49,7 @@ bbdown plan cheese/ss202 --select latest --json
 `plan` 会解析所选条目、可用 DASH 或 FLV 流 URL、字幕 URL，以及每个 `cid` 的弹幕 XML
 URL。PGC 和 intl 规划仍可能需要符合条件的账号或区域访问。PGC playurl 解析可以回退到
 用户配置的受限区域代理。它不会下载文件。集合类输入默认解析全部条目；使用
-`--select page:<index>` 可规划一个集合条目，使用 `--select latest` 可规划最新解析到的条目。
+`--select page:<index>` 可规划一个集合条目，使用 `--select latest` 可规划上游列表顺序中的第一个解析条目。
 `info --json` 会在 `collection.collection.items` 保留完整解析到的集合 metadata；`plan` 只
 输出选中条目。
 

@@ -48,7 +48,7 @@ episode. This is intentional so libraries cannot accidentally plan a full season
 `ResolvedContent::Collection`, which carries full collection metadata plus the selected items.
 Owner-scoped space list URLs keep the uploader mid so the resolver can use newer space collection
 and series APIs. Without a selector, collection-like inputs select all parsed items; pass
-`Selection::Page(index)` for one item or `Selection::Latest` for the newest parsed item. Empty
+`Selection::Page(index)` for one item or `Selection::Latest` for the first parsed item in the upstream list order. Empty
 collections are represented as empty item lists, not as missing-field errors.
 
 ```rust,no_run

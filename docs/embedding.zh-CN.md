@@ -47,7 +47,7 @@ Season 和 media 输入需要显式 `Selection`，除非输入本身已经标识
 `ResolvedContent::Collection`，其中包含完整 collection metadata 和选中的条目。
 owner-scoped 空间列表 URL 会保留 uploader mid，让解析器可以使用较新的空间合集和系列
 API。不带 selector 时，集合类输入会选择全部解析条目；传入 `Selection::Page(index)` 可
-选择一个条目，传入 `Selection::Latest` 可选择最新解析到的条目。空集合会表示为空 item
+选择一个条目，传入 `Selection::Latest` 可选择上游列表顺序中的第一个解析条目。空集合会表示为空 item
 列表，而不是 missing-field 错误。
 
 ```rust,no_run
