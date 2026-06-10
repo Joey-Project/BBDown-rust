@@ -5,7 +5,7 @@ status: completed
 created: 2026-06-10
 updated: 2026-06-10
 branch: wip/cover-download-support
-pr:
+pr: https://github.com/Joey-Project/BBDown-rust/pull/21
 supersedes: []
 superseded_by:
 ---
