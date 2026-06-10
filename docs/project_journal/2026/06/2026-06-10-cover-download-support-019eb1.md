@@ -16,6 +16,8 @@ superseded_by:
 
 - Adds cover sidecar download support to the post-`0.2.0` development line.
 - Keeps download planning side-effect free while carrying cover URLs into `DownloadEntry`.
+- Marks the new public cover-facing model/report surfaces as forward-compatible APIs and records
+  that the next crate release must be treated as breaking, currently expected as `0.3.0`.
 - Leaves ASS danmaku, UPOS/PCDN handling, and single-download mode for separate follow-up PRs.
 
 ## Current State
@@ -27,6 +29,8 @@ superseded_by:
   `include_subtitles`/`include_danmaku` fields remain available for existing embedders.
 - Download execution writes cover files as `DownloadFileKind::Cover` using the same retry, resume,
   timeout, media-header, and report paths as other sidecars.
+- `DownloadEntry` and `DownloadFileKind` are now `#[non_exhaustive]` so future planning/report fields
+  and file kinds can be added without encouraging downstream exhaustive construction or matching.
 - CLI `download` enables cover sidecars by default and supports `--no-cover` to skip them.
 - English and Simplified Chinese user-facing docs were updated for README, crate README, user guide,
   embedding guide, and architecture guide.
@@ -40,9 +44,13 @@ superseded_by:
 - Independent Codex review and offline frozen diff review findings were addressed: re-export
   `SidecarOptions`, normalize protocol-relative cover URLs, and default missing `cover_url` during
   plan deserialization. A follow-up independent review finding about `DownloadOptions` field
-  compatibility was addressed by preserving the legacy subtitle and danmaku fields.
+  compatibility was addressed by preserving the legacy subtitle and danmaku fields. A final
+  compatibility finding was addressed by marking the new public data/report surfaces
+  `#[non_exhaustive]` and recording that the next crate release should be a breaking release.
 
 ## Next Steps
 
 - Open the PR, then run the normal CI and triple-review merge gate before moving to ASS danmaku,
   UPOS/PCDN, and single-download mode slices.
+- Before the next crates.io publication, set the crate and CLI versions to the selected breaking
+  release version, expected to be `0.3.0` if no larger release target is chosen.

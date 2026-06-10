@@ -462,6 +462,7 @@ pub struct DownloadedFile {
     pub resumed_from: u64,
 }
 
+#[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DownloadFileKind {

@@ -121,6 +121,7 @@ pub struct DownloadPlan {
     pub entries: Vec<DownloadEntry>,
 }
 
+#[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DownloadEntry {
     pub index: u32,
