@@ -2062,6 +2062,14 @@ impl BiliClient {
     }
 }
 
+fn deserialize_default_vec<'de, D, T>(deserializer: D) -> std::result::Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Ok(Option::<Vec<T>>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 fn set_endpoint_path(url: &mut Url, path: &str) {
     let base_path = url.path().trim_end_matches('/');
     let suffix = path.trim_start_matches('/');
@@ -2537,7 +2545,7 @@ struct FavoriteFolder {
 #[derive(Debug, Deserialize)]
 struct FavoriteResourceListData {
     info: FavoriteInfo,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_default_vec")]
     medias: Vec<FavoriteMedia>,
 }
 
@@ -2600,7 +2608,7 @@ struct MediaListInfoData {
 #[derive(Debug, Deserialize)]
 struct MediaListResourcePageData {
     has_more: Option<bool>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_default_vec")]
     media_list: Vec<MediaListMedia>,
 }
 
@@ -4877,6 +4885,43 @@ mod tests {
                 assert_eq!(collection.collection.items.len(), 1);
                 assert_eq!(collection.selected_items[0].cid, 9988);
                 assert_eq!(collection.selected_items[0].title, "Saved video");
+            }
+            ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
+                return Err(anyhow::anyhow!("expected collection"));
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn favorite_collection_accepts_null_media_list_as_empty() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/v3/fav/resource/list")
+                .query_param("media_id", "456")
+                .query_param("pn", "1")
+                .query_param("ps", "20")
+                .query_param("type", "0");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "info": {
+                        "media_count": 0,
+                        "title": "Empty Favorite",
+                        "upper": {"mid": 1, "name": "Tester"}
+                    },
+                    "medias": null
+                }
+            }));
+        });
+
+        let resolved = test_client(&server).resolve_input("fav456", None).await?;
+        match resolved {
+            ResolvedContent::Collection(collection) => {
+                assert_eq!(collection.collection.title, "Empty Favorite");
+                assert!(collection.collection.items.is_empty());
+                assert!(collection.selected_items.is_empty());
             }
             ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
                 return Err(anyhow::anyhow!("expected collection"));

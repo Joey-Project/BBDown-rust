@@ -92,6 +92,9 @@ superseded_by:
 - The final review pass corrected favorite-list scope semantics (`type=0` request plus video-entry
   filtering), switched collection medialist paging to newest-first order, accepted medialist
   `bv_id` payloads, and quoted query-string URL examples for shell-safe copy/paste.
+- The frozen-range review then found that empty favorite lists can return `medias: null`; collection
+  list payloads now deserialize null list fields as empty vectors, with a regression test covering
+  empty favorites.
 
 ## Next Steps
 
