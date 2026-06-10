@@ -10,11 +10,11 @@
 本项目以原 [BBDown](https://github.com/nilaoda/BBDown) 项目的 Bilibili 实用行为为重要
 参考。感谢 BBDown 及其贡献者提供的参考。
 
-当前实现已经建立 crate / CLI / CI 基础、元数据解析器、流规划、媒体下载、旁路文件下载、
-重试和断点续传、可选 `ffmpeg` 封装、二维码登录、可选 live 测试框架、带诊断信息的受限
-区域代理排序，以及 builder 风格的 crate 集成 API。它还支持显式下载归档，用于重复下载预
-检查，以及 CLI 的 replace / keep-both / cancel 决策。输入解析覆盖普通视频、PGC 和 intl
-分集、PUGV/cheese 课程、B23 短链接、收藏夹、空间投稿、合集和系列。URL 解析包括
+当前实现已经建立 crate / CLI / CI 基础、元数据解析器、流规划、媒体下载、封面/字幕/弹幕
+旁路文件下载、重试和断点续传、可选 `ffmpeg` 封装、二维码登录、可选 live 测试框架、带诊
+断信息的受限区域代理排序，以及 builder 风格的 crate 集成 API。它还支持显式下载归档，用
+于重复下载预检查，以及 CLI 的 replace / keep-both / cancel 决策。输入解析覆盖普通视频、
+PGC 和 intl 分集、PUGV/cheese 课程、B23 短链接、收藏夹、空间投稿、合集和系列。URL 解析包括
 canonical `bilibili.com/list/...` 页面、path-based medialist 收藏夹 URL，以及带 uploader
 mid 的空间合集 / 系列 URL，以便使用较新的空间 API。
 
@@ -64,9 +64,9 @@ bbdown download av170001 --output-dir downloads --archive-file downloads/archive
 ```
 
 `download` 会解析下载计划，下载第一组完整的 DASH 视频/音频，或下载 FLV 分段；默认写入
-字幕和弹幕旁路文件；通过 HTTP range 请求续传部分文件；对有限的瞬时失败进行有界重试；
-在存在声明媒体大小时进行校验；拒绝不完整的媒体形态；除非传入 `--no-mux`，否则运行
-`ffmpeg`。
+封面、字幕和弹幕旁路文件；通过 HTTP range 请求续传部分文件；对有限的瞬时失败进行有界重
+试；在存在声明媒体大小时进行校验；拒绝不完整的媒体形态；除非传入 `--no-mux`，否则运行
+`ffmpeg`。使用 `--no-cover`、`--no-subtitles` 或 `--no-danmaku` 可以跳过对应旁路文件。
 传入 `--archive-file <path>` 后，CLI 会按内容身份记录已完成下载。归档输出、旁路文件和
 mux 路径会在记录时保存为绝对路径，因此同一份归档可以从另一个工作目录复用。条目身份使
 用稳定的 aid/cid 媒体 id，因此同一 PGC 分集即便之后通过 BV/av URL 规划，且其中一种形式

@@ -73,9 +73,9 @@ async fn main() -> bbdown_core::Result<()> {
 ```
 
 下载规划会把选中的集合条目映射回普通视频条目，因此下游下载执行、归档重复检查、stream
-selection、字幕和弹幕旁路文件仍使用与普通视频下载相同的 API。因为 `DownloadPlan` 不暴
-露 collection metadata，规划阶段可以只抓取选中的批量条目集合。PUGV/cheese 分集输入会
-解析为 season；当 API 报告还有更多 episode 页时会继续跟进分页，并通过
+selection、封面、字幕和弹幕旁路文件仍使用与普通视频下载相同的 API。因为 `DownloadPlan`
+不暴露 collection metadata，规划阶段可以只抓取选中的批量条目集合。PUGV/cheese 分集输入
+会解析为 season；当 API 报告还有更多 episode 页时会继续跟进分页，并通过
 `StreamSource::PugvWeb` 规划。
 
 ## 凭据
@@ -142,6 +142,7 @@ async fn main() -> bbdown_core::Result<()> {
         .with_stream_selection(StreamSelection::video(80))
         .with_retry_policy(RetryPolicy::new(3, Duration::from_millis(250)))
         .with_download_idle_timeout(Some(Duration::from_secs(30)))
+        .with_cover(true)
         .with_subtitles(true)
         .with_danmaku(true)
         .with_mux(MuxOptions::ffmpeg("ffmpeg"));

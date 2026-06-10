@@ -112,6 +112,8 @@ enum Command {
         #[arg(long)]
         no_resume: bool,
         #[arg(long)]
+        no_cover: bool,
+        #[arg(long)]
         no_subtitles: bool,
         #[arg(long)]
         no_danmaku: bool,
@@ -226,6 +228,7 @@ async fn main() -> anyhow::Result<()> {
             retry_backoff_ms,
             download_idle_timeout_seconds,
             no_resume,
+            no_cover,
             no_subtitles,
             no_danmaku,
             no_mux,
@@ -261,6 +264,7 @@ async fn main() -> anyhow::Result<()> {
                 .with_stream_selection(StreamSelection::new(video_quality, audio_quality))
                 .with_download_idle_timeout(download_idle_timeout)
                 .with_resume(!no_resume)
+                .with_cover(!no_cover)
                 .with_subtitles(!no_subtitles)
                 .with_danmaku(!no_danmaku)
                 .with_mux(mux);

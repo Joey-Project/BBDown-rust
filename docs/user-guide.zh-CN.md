@@ -97,6 +97,7 @@ JSON 输出包含：
 - `streams.videos`：DASH 视频轨道。
 - `streams.audios`：DASH 音频轨道，包括可用的 Dolby 或 FLAC 音频。
 - `streams.flv_segments`：playurl 响应使用 `durl` 时的 legacy FLV 分段。
+- `cover_url`：可选封面图片 URL，供下载封面旁路文件使用。
 - `subtitles`：发现的字幕轨道。
 - `danmaku.xml_url`：条目 `cid` 对应的 XML 弹幕端点。
 
@@ -125,7 +126,8 @@ bbdown download av170001 --output-dir downloads --archive-file downloads/archive
 请求的 id 必须存在于该条目的 plan 中；否则命令会报告可用 id，并在写入媒体前失败。当
 DASH 媒体不完整而 legacy FLV `durl` 分段可用时，会改为下载这些分段。显式质量选择要求
 DASH 媒体，因此会禁用该条目的 FLV 回退。如果两种形态都不完整，下载会在写入媒体前失败。
-字幕和弹幕旁路文件默认启用，可用 `--no-subtitles` 和 `--no-danmaku` 关闭。
+当计划中存在对应 URL 时，封面、字幕和弹幕旁路文件默认启用。分别使用 `--no-cover`、
+`--no-subtitles` 和 `--no-danmaku` 关闭。
 
 下载默认通过 HTTP range 请求续传部分文件，并在计划提供信息时校验 `Content-Range` 和声
 明媒体大小。使用 `--no-resume` 可强制重新写入；失败的新写入会保留已有目标。如果服务器

@@ -1595,6 +1595,7 @@ impl BiliClient {
                     cid: page.cid,
                     epid: None,
                     title: page.title,
+                    cover_url: video.cover_url.clone(),
                     source: StreamSource::NormalWeb,
                 })
                 .await?,
@@ -1621,6 +1622,7 @@ impl BiliClient {
                     cid: episode.cid,
                     epid: Some(episode.epid),
                     title: episode_display_title(&episode.title, episode.long_title.as_deref()),
+                    cover_url: season.season.cover_url.clone(),
                     source: source.clone(),
                 })
                 .await?,
@@ -1643,6 +1645,7 @@ impl BiliClient {
                     cid: item.cid,
                     epid: None,
                     title: item.title,
+                    cover_url: item.cover_url,
                     source: StreamSource::NormalWeb,
                 })
                 .await?,
@@ -1674,6 +1677,7 @@ impl BiliClient {
             cid: seed.cid,
             epid: seed.epid,
             title: seed.title,
+            cover_url: normalize_optional_media_url(seed.cover_url.as_deref()),
             source: resolved_streams.source,
             streams: resolved_streams.streams,
             diagnostics: resolved_streams.diagnostics,
@@ -2758,6 +2762,7 @@ struct PlanEntrySeed {
     cid: u64,
     epid: Option<u64>,
     title: String,
+    cover_url: Option<String>,
     source: StreamSource,
 }
 
@@ -3758,6 +3763,12 @@ fn normalize_media_url(url: &str) -> String {
     }
 }
 
+fn normalize_optional_media_url(url: Option<&str>) -> Option<String> {
+    url.map(str::trim)
+        .map(normalize_media_url)
+        .filter(|url| !url.is_empty())
+}
+
 fn first_non_empty<const N: usize>(values: [Option<String>; N]) -> Option<String> {
     values.into_iter().flatten().find(|value| !value.is_empty())
 }
@@ -4278,6 +4289,7 @@ mod tests {
                     "aid": 170_001,
                     "bvid": "BV1xx411c7mD",
                     "title": "Example video",
+                    "pic": "//cover.example/video.jpg",
                     "pages": [{"page": 1, "cid": 9988, "part": "P1"}]
                 }
             }));
@@ -4368,6 +4380,10 @@ mod tests {
         assert_eq!(
             entry.streams.videos[0].base_url,
             "https://video.example/80.m4s"
+        );
+        assert_eq!(
+            entry.cover_url.as_deref(),
+            Some("https://cover.example/video.jpg")
         );
         assert_eq!(
             entry.streams.videos[0].backup_urls[0],

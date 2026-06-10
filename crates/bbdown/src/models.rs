@@ -121,6 +121,7 @@ pub struct DownloadPlan {
     pub entries: Vec<DownloadEntry>,
 }
 
+#[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DownloadEntry {
     pub index: u32,
@@ -129,6 +130,8 @@ pub struct DownloadEntry {
     pub cid: u64,
     pub epid: Option<u64>,
     pub title: String,
+    #[serde(default)]
+    pub cover_url: Option<String>,
     pub source: StreamSource,
     pub streams: StreamSet,
     #[serde(default, skip_serializing_if = "StreamDiagnostics::is_empty")]
@@ -241,4 +244,38 @@ pub enum SubtitleFormat {
 pub struct DanmakuTrack {
     pub cid: u64,
     pub xml_url: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DownloadEntry, StreamSource};
+
+    #[test]
+    fn download_entry_defaults_missing_cover_url() -> anyhow::Result<()> {
+        let entry: DownloadEntry = serde_json::from_value(serde_json::json!({
+            "index": 1,
+            "aid": 170_001,
+            "bvid": "BV1xx411c7mD",
+            "cid": 2,
+            "epid": null,
+            "title": "Main",
+            "source": "normal_web",
+            "streams": {
+                "videos": [],
+                "audios": [],
+                "flv_segments": [],
+                "accept_quality": [],
+                "duration_seconds": null
+            },
+            "subtitles": [],
+            "danmaku": {
+                "cid": 2,
+                "xml_url": "https://comment.example/2.xml"
+            }
+        }))?;
+
+        assert_eq!(entry.cover_url, None);
+        assert_eq!(entry.source, StreamSource::NormalWeb);
+        Ok(())
+    }
 }

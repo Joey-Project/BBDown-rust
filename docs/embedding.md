@@ -74,10 +74,10 @@ async fn main() -> bbdown_core::Result<()> {
 ```
 
 Download planning maps selected collection items back to normal video entries, so downstream
-download execution, archive duplicate checks, stream selection, subtitles, and danmaku sidecars use
-the same APIs as normal video downloads. Planning may fetch only the selected batch item set because
-`DownloadPlan` does not expose collection metadata. PUGV/cheese episode inputs resolve as seasons,
-follow paginated episode lists when the API reports additional pages, and plan through
+download execution, archive duplicate checks, stream selection, cover, subtitles, and danmaku
+sidecars use the same APIs as normal video downloads. Planning may fetch only the selected batch item
+set because `DownloadPlan` does not expose collection metadata. PUGV/cheese episode inputs resolve
+as seasons, follow paginated episode lists when the API reports additional pages, and plan through
 `StreamSource::PugvWeb`.
 
 ## Credentials
@@ -147,6 +147,7 @@ async fn main() -> bbdown_core::Result<()> {
         .with_stream_selection(StreamSelection::video(80))
         .with_retry_policy(RetryPolicy::new(3, Duration::from_millis(250)))
         .with_download_idle_timeout(Some(Duration::from_secs(30)))
+        .with_cover(true)
         .with_subtitles(true)
         .with_danmaku(true)
         .with_mux(MuxOptions::ffmpeg("ffmpeg"));

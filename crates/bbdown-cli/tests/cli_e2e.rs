@@ -135,6 +135,7 @@ fn plan_json_resolves_mock_video_streams() -> anyhow::Result<()> {
                 "aid": 170_001,
                 "bvid": "BV1xx411c7mD",
                 "title": "Mock video",
+                "pic": format!("{}/cover.jpg", server.base_url()),
                 "pages": [{"page": 1, "cid": 2, "part": "Main"}]
             }
         }));
@@ -481,6 +482,7 @@ fn download_json_writes_mock_media_files() -> anyhow::Result<()> {
                 "aid": 170_001,
                 "bvid": "BV1xx411c7mD",
                 "title": "Mock video",
+                "pic": format!("{}/cover.jpg", server.base_url()),
                 "pages": [{"page": 1, "cid": 2, "part": "Main"}]
             }
         }));
@@ -563,6 +565,10 @@ fn download_json_writes_mock_media_files() -> anyhow::Result<()> {
         then.status(200).body("[Script Info]");
     });
     server.mock(|when, then| {
+        when.method(GET).path("/cover.jpg");
+        then.status(200).body("cover");
+    });
+    server.mock(|when, then| {
         when.method(GET).path("/2.xml");
         then.status(200).body("<i/>");
     });
@@ -589,7 +595,7 @@ fn download_json_writes_mock_media_files() -> anyhow::Result<()> {
     let json: Value = serde_json::from_slice(&output)?;
     assert_eq!(
         json["entries"][0]["files"].as_array().map(Vec::len),
-        Some(4)
+        Some(5)
     );
     assert_eq!(
         fs::read_to_string(downloaded_file_path(&json, "video")?)?,
@@ -604,9 +610,47 @@ fn download_json_writes_mock_media_files() -> anyhow::Result<()> {
         "[Script Info]"
     );
     assert_eq!(
+        fs::read_to_string(downloaded_file_path(&json, "cover")?)?,
+        "cover"
+    );
+    assert_eq!(
         fs::read_to_string(downloaded_file_path(&json, "danmaku")?)?,
         "<i/>"
     );
+    Ok(())
+}
+
+#[test]
+fn download_no_cover_skips_cover_sidecar() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    mock_minimal_download_with_cover(&server);
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("download")
+        .arg("av170001")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--no-cover")
+        .arg("--no-subtitles")
+        .arg("--no-danmaku")
+        .arg("--no-mux")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+
+    assert_eq!(
+        json["entries"][0]["files"].as_array().map(Vec::len),
+        Some(2)
+    );
+    assert!(downloaded_file_path(&json, "cover").is_err());
     Ok(())
 }
 
@@ -1405,6 +1449,71 @@ fn mock_minimal_download(server: &MockServer) {
     server.mock(|when, then| {
         when.method(GET).path("/audio.m4s");
         then.status(200).body("audio");
+    });
+}
+
+fn mock_minimal_download_with_cover(server: &MockServer) {
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/view")
+            .query_param("aid", "170001");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "aid": 170_001,
+                "bvid": "BV1xx411c7mD",
+                "title": "Mock video",
+                "pic": format!("{}/cover.jpg", server.base_url()),
+                "pages": [{"page": 1, "cid": 2, "part": "Main"}]
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/playurl")
+            .query_param("avid", "170001")
+            .query_param("cid", "2")
+            .query_param("try_look", "1");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "dash": {
+                    "duration": 3,
+                    "video": [{
+                        "id": 80,
+                        "baseUrl": format!("{}/video.m4s", server.base_url()),
+                        "base_url": format!("{}/video.m4s", server.base_url())
+                    }],
+                    "audio": [{
+                        "id": 30280,
+                        "baseUrl": format!("{}/audio.m4s", server.base_url()),
+                        "base_url": format!("{}/audio.m4s", server.base_url())
+                    }]
+                }
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/v2")
+            .query_param("aid", "170001")
+            .query_param("cid", "2");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {"subtitle": {"subtitles": []}}
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET).path("/video.m4s");
+        then.status(200).body("video");
+    });
+    server.mock(|when, then| {
+        when.method(GET).path("/audio.m4s");
+        then.status(200).body("audio");
+    });
+    server.mock(|when, then| {
+        when.method(GET).path("/cover.jpg");
+        then.status(200).body("cover");
     });
 }
 

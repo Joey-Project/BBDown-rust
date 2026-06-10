@@ -106,15 +106,15 @@ CLI 通过 `bbdown plan` 暴露这一层。该命令被有意设计为规划表�
 - 可选 DASH video/audio stream id 选择；
 - HTTP range resume 开关；
 - 媒体读取 idle timeout；
-- 是否包含字幕和弹幕旁路文件；
+- 是否包含封面、字幕和弹幕旁路文件；
 - 禁用 mux 或显式 `ffmpeg` 二进制路径。
 
 对每个条目，执行优先使用 plan 中完整的 DASH 视频/音频组合。默认是第一个视频流和第一个
 音频流；调用方可以设置 `StreamSelection::new(...)` 请求精确的 DASH video 或 audio stream
 id。如果请求的 id 不可用，executor 会报告可用 id，并在媒体写入前失败。如果 DASH 媒体不
 完整且 FLV `durl` 分段可用，则下载 FLV 分段；显式 stream selection 要求 DASH 媒体，因此
-会拒绝 FLV 回退。否则条目会在媒体写入前失败。字幕和弹幕文件保持为 sidecar。当启用 mux
-时，executor 使用显式 argv 调用 `ffmpeg`，并在 report 中返回命令和输出路径。
+会拒绝 FLV 回退。否则条目会在媒体写入前失败。封面、字幕和弹幕文件保持为 sidecar。当启
+用 mux 时，executor 使用显式 argv 调用 `ffmpeg`，并在 report 中返回命令和输出路径。
 
 媒体和 sidecar 下载使用不含账号 cookie 的媒体 headers，因为媒体 URL 来自 API payload，
 可能指向 CDN 或代理主机。DASH 和 FLV backup URL 是候选列表的一部分。媒体正文读取使用独
