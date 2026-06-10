@@ -16,7 +16,9 @@ login, opt-in live test harnesses, configured restricted-area proxy ordering wit
 builder-style crate integration APIs. It also supports an explicit download archive for duplicate
 preflight and CLI replace / keep-both / cancel decisions. Input parsing covers normal videos, PGC
 and intl episodes, PUGV/cheese courses, B23 short links, favorite lists, space videos, collections,
-and series.
+and series. URL parsing includes canonical `bilibili.com/list/...` pages, path-based medialist
+favorite URLs, and space collection/series URLs that carry the uploader mid needed by newer space
+APIs.
 
 ## Current CLI
 
@@ -31,6 +33,7 @@ bbdown info md22718131 --select latest --json
 bbdown info https://b23.tv/example --json
 bbdown info cheese/ep101 --json
 bbdown info fav456 --json
+bbdown info https://www.bilibili.com/list/ml1103407912 --json
 bbdown info https://space.bilibili.com/123/lists/456?type=series --json
 ```
 

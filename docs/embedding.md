@@ -42,9 +42,11 @@ episode. This is intentional so libraries cannot accidentally plan a full season
 ## Batch And Collection Inputs
 
 `BiliClient::resolve_input` accepts CLI-style raw inputs such as B23 short links, `fav...`,
-`mid...`, `collection...`, `series...`, space collection URLs, and space series URLs. Batch inputs
-resolve to `ResolvedContent::Collection`, which carries full collection metadata plus the selected
-items. Without a selector, collection-like inputs select all parsed items; pass
+`mid...`, `collection...`, `series...`, canonical favorite `/list/ml...` URLs, path-based
+`/medialist/.../ml...` URLs, space collection URLs, and space series URLs. Batch inputs resolve to
+`ResolvedContent::Collection`, which carries full collection metadata plus the selected items.
+Owner-scoped space list URLs keep the uploader mid so the resolver can use newer space collection
+and series APIs. Without a selector, collection-like inputs select all parsed items; pass
 `Selection::Page(index)` for one item or `Selection::Latest` for the newest parsed item. Empty
 collections are represented as empty item lists, not as missing-field errors.
 

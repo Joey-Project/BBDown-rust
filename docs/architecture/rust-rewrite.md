@@ -38,7 +38,9 @@ Inputs normalize into `Input`:
 - `Episode`, `Season`, and `Media` for Bilibili PGC URLs and ids.
 - `CheeseEpisode` and `CheeseSeason` for PUGV/cheese courses.
 - `IntlEpisode` for `bilibili.tv` episode URLs.
-- `SpaceVideos`, `FavoriteList`, `CollectionList`, and `SeriesList` for batch content.
+- `SpaceVideos`, `FavoriteList`, `CollectionList`, `SeriesList`, `SpaceCollectionList`, and
+  `SpaceSeriesList` for batch content. Owner-scoped space collection/series variants keep the
+  uploader mid from canonical URLs so newer space APIs can be called directly.
 - `ShortLink` for B23 links, resolved through HTTP redirect before normal input dispatch.
 
 The library resolves metadata into `ResolvedContent`:
@@ -46,8 +48,9 @@ The library resolves metadata into `ResolvedContent`:
 - `VideoMetadata` includes title, description, owner, tags, cover, pub time, and pages.
 - `SeasonResolution` includes season metadata plus the selected episode set.
 - `VideoCollectionResolution` includes collection metadata plus the selected item set for
-  favorites, space uploads, collections, and series. `resolve_input` keeps full parsed collection
-  metadata even when a selector narrows `selected_items`.
+  favorites, space uploads, collections, and series. Favorite parsing accepts shorthand ids,
+  path-based medialist pages, and canonical `/list/ml...` pages. `resolve_input` keeps full parsed
+  collection metadata even when a selector narrows `selected_items`.
 
 The library resolves media availability into `DownloadPlan`:
 
@@ -77,7 +80,8 @@ wrapper for CLI-style callers. Planning currently supports three official source
 - `NormalWeb` uses the normal web playurl endpoint for `aid`/`bvid` inputs.
 - `PgcWeb` uses the PGC web playurl endpoint for `ep`, `ss`, and `md` inputs.
 - `PugvWeb` uses the PUGV/cheese playurl endpoint for `cheese/ep` and selected `cheese/ss` inputs.
-  PUGV metadata follows `episode_page` pagination before applying season selection.
+  PUGV metadata follows `episode_page` pagination through the episode-list endpoint before applying
+  season selection.
 - `IntlWeb` uses the intl OGV playurl endpoint with BiliIntl mobile signing parameters for
   `bilibili.tv` episode inputs and includes the caller-provided access key when configured.
 

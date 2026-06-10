@@ -23,13 +23,18 @@ superseded_by:
 
 - `Input` accepts PUGV/cheese episode and season ids, B23 short links, space uploads, favorite
   lists, collections, and series in both raw id shorthand and common URL forms.
+- Canonical `/list/ml...`, path-based `/medialist/.../ml...`, and owner-scoped
+  `/list/<mid>?sid=...` / `/space.bilibili.com/<mid>/lists/...` URL forms are accepted.
 - `BiliClient::resolve_input` resolves B23 links through HTTP redirect before dispatching to the
   normal input parser.
 - PUGV/cheese inputs resolve as `SeasonResolution`; download planning uses `StreamSource::PugvWeb`
-  and the PUGV playurl endpoint. PUGV metadata follows `episode_page` pagination before season
-  selection.
+  and the PUGV playurl endpoint. PUGV metadata follows `episode_page` pagination through the PUGV
+  episode-list endpoint before season selection.
 - Favorite lists, space uploads, collections, and series resolve as `ResolvedContent::Collection`,
   carrying full collection metadata plus selected items.
+- Collection resolution deduplicates current-item cursor repeats. Favorite entries without
+  `ugc.first_cid` fall back to archive metadata, and owner-scoped space list URLs use newer space
+  collection/series APIs.
 - Collection inputs select all items by default. `Selection::Page` selects one collection item and
   `Selection::Latest` selects the newest parsed item. Empty collections resolve as empty item lists
   for default/all selection.
@@ -71,6 +76,10 @@ superseded_by:
 - A final frozen-range review found that default/current `cheese/ep` resolution could renumber a
   later-page PUGV episode as `P001`. PUGV metadata now preserves the API `episode.index` when
   present, with a regression test covering `cheese/ep102` planning from page 2.
+- A later GitHub Codex review rerun found current-item medialist duplicates, PUGV pagination should
+  use `/pugv/view/web/ep/list`, owner mid must be preserved for space series URLs, canonical
+  `/list` and path-based medialist URLs were missing, and favorite items cannot require
+  `ugc.first_cid`. These were fixed with targeted core regression tests.
 
 ## Next Steps
 

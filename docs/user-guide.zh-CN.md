@@ -54,6 +54,9 @@ bbdown info fav456 --json
 bbdown info mid123 --select page:1 --json
 bbdown info collection456 --json
 bbdown info series456 --select latest --json
+bbdown info https://www.bilibili.com/medialist/detail/ml1103407912 --json
+bbdown info https://www.bilibili.com/list/ml1103407912 --json
+bbdown info https://www.bilibili.com/list/1958703906?sid=547718 --json
 bbdown info https://space.bilibili.com/123/favlist?fid=456 --json
 bbdown info https://space.bilibili.com/123/lists/456?type=series --json
 ```
@@ -65,6 +68,11 @@ Season、media 和 `cheese/ss...` 输入在非交互模式下需要 `--select`�
 选择一个集合条目，使用 `--select latest` 可选择最新解析到的条目。JSON metadata 会在
 `collection.collection.items` 保留完整解析到的集合条目列表，并在
 `collection.selected_items` 报告当前选中子集；空集合是有效的空列表。
+
+收藏夹 URL 可来自 shorthand id、空间 favlist 页面、canonical `/list/ml...` 页面，以及
+`/medialist/.../ml...` 页面。空间合集和系列 URL 会保留
+`/space.bilibili.com/<mid>/...` 或 `/list/<mid>?sid=...` 中的 owner mid，让解析器可以使用
+新的 owner-scoped 空间 API。
 
 ## 下载计划
 

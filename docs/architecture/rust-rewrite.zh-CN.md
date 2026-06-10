@@ -37,7 +37,9 @@ API 的仓库内集成测试表面。
 - `Episode`、`Season` 和 `Media` 用于 Bilibili PGC URL 和 id。
 - `CheeseEpisode` 和 `CheeseSeason` 用于 PUGV/cheese 课程。
 - `IntlEpisode` 用于 `bilibili.tv` 分集 URL。
-- `SpaceVideos`、`FavoriteList`、`CollectionList` 和 `SeriesList` 用于批量内容。
+- `SpaceVideos`、`FavoriteList`、`CollectionList`、`SeriesList`、`SpaceCollectionList` 和
+  `SpaceSeriesList` 用于批量内容。owner-scoped 空间合集 / 系列 variant 会保留 canonical
+  URL 中的 uploader mid，以便直接调用较新的空间 API。
 - `ShortLink` 用于 B23 链接，会先通过 HTTP redirect 解析，再进入普通输入分发。
 
 library 会把元数据解析为 `ResolvedContent`：
@@ -45,7 +47,8 @@ library 会把元数据解析为 `ResolvedContent`：
 - `VideoMetadata` 包含标题、描述、owner、tag、封面、发布时间和页面。
 - `SeasonResolution` 包含 season metadata 和选中的分集集合。
 - `VideoCollectionResolution` 包含 collection metadata，以及收藏夹、空间投稿、合集和系
-  列中选中的条目集合。即使 selector 缩小了 `selected_items`，`resolve_input` 也会保留完
+  列中选中的条目集合。收藏夹解析支持 shorthand id、path-based medialist 页面和 canonical
+  `/list/ml...` 页面。即使 selector 缩小了 `selected_items`，`resolve_input` 也会保留完
   整解析到的 collection metadata。
 
 library 会把媒体可用性解析为 `DownloadPlan`：
@@ -74,7 +77,8 @@ wrapper。规划当前支持三种官方来源模式：
 - `NormalWeb` 用普通 web playurl 端点处理 `aid` / `bvid` 输入。
 - `PgcWeb` 用 PGC web playurl 端点处理 `ep`、`ss` 和 `md` 输入。
 - `PugvWeb` 用 PUGV/cheese playurl 端点处理 `cheese/ep` 和选中的 `cheese/ss` 输入。
-  PUGV metadata 会先跟进 `episode_page` 分页，再应用 season selection。
+  PUGV metadata 会通过 episode-list 端点跟进 `episode_page` 分页，再应用 season
+  selection。
 - `IntlWeb` 用 BiliIntl mobile signing 参数调用 intl OGV playurl 端点，并在调用方配置时包
   含 access key。
 

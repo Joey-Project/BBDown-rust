@@ -57,6 +57,9 @@ bbdown info fav456 --json
 bbdown info mid123 --select page:1 --json
 bbdown info collection456 --json
 bbdown info series456 --select latest --json
+bbdown info https://www.bilibili.com/medialist/detail/ml1103407912 --json
+bbdown info https://www.bilibili.com/list/ml1103407912 --json
+bbdown info https://www.bilibili.com/list/1958703906?sid=547718 --json
 bbdown info https://space.bilibili.com/123/favlist?fid=456 --json
 bbdown info https://space.bilibili.com/123/lists/456?type=series --json
 ```
@@ -70,6 +73,11 @@ current episode. Favorite lists, space videos, collections, and series are batch
 list under `collection.collection.items` and reports the active subset under
 `collection.selected_items`; empty
 collections are valid empty lists.
+
+Favorite list URLs are accepted from shorthand ids, space favlist pages, canonical
+`/list/ml...` pages, and `/medialist/.../ml...` pages. Space collection and series URLs retain the
+owner mid from `/space.bilibili.com/<mid>/...` or `/list/<mid>?sid=...` so the resolver can use the
+newer owner-scoped space APIs.
 
 ## Download Plans
 

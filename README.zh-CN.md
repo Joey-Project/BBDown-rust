@@ -14,7 +14,9 @@
 重试和断点续传、可选 `ffmpeg` 封装、二维码登录、可选 live 测试框架、带诊断信息的受限
 区域代理排序，以及 builder 风格的 crate 集成 API。它还支持显式下载归档，用于重复下载预
 检查，以及 CLI 的 replace / keep-both / cancel 决策。输入解析覆盖普通视频、PGC 和 intl
-分集、PUGV/cheese 课程、B23 短链接、收藏夹、空间投稿、合集和系列。
+分集、PUGV/cheese 课程、B23 短链接、收藏夹、空间投稿、合集和系列。URL 解析包括
+canonical `bilibili.com/list/...` 页面、path-based medialist 收藏夹 URL，以及带 uploader
+mid 的空间合集 / 系列 URL，以便使用较新的空间 API。
 
 ## 当前 CLI
 
@@ -29,6 +31,7 @@ bbdown info md22718131 --select latest --json
 bbdown info https://b23.tv/example --json
 bbdown info cheese/ep101 --json
 bbdown info fav456 --json
+bbdown info https://www.bilibili.com/list/ml1103407912 --json
 bbdown info https://space.bilibili.com/123/lists/456?type=series --json
 ```
 
