@@ -1901,7 +1901,7 @@ fn season_from_intl(result: IntlSeasonResult, current_epid: Option<u64>) -> Seas
 fn season_from_pugv(data: PugvSeasonData) -> SeasonMetadata {
     let owner = data.up_info.and_then(FavoriteUpper::into_owner);
     let mut episodes = Vec::new();
-    for (index, episode) in data.episodes.into_iter().enumerate() {
+    for (fallback_index, episode) in data.episodes.into_iter().enumerate() {
         let Some(epid) = episode.id else {
             continue;
         };
@@ -1911,7 +1911,10 @@ fn season_from_pugv(data: PugvSeasonData) -> SeasonMetadata {
         let Some(cid) = episode.cid else {
             continue;
         };
-        let Some(index) = u32::try_from(index + 1).ok() else {
+        let Some(index) = episode
+            .index
+            .or_else(|| u32::try_from(fallback_index + 1).ok())
+        else {
             continue;
         };
         episodes.push(EpisodeMetadata {
@@ -1920,9 +1923,7 @@ fn season_from_pugv(data: PugvSeasonData) -> SeasonMetadata {
             bvid: None,
             cid,
             epid,
-            title: episode
-                .index
-                .map_or_else(|| index.to_string(), |value| value.to_string()),
+            title: index.to_string(),
             long_title: episode.title,
             pub_time: episode.release_date,
         });
@@ -4070,6 +4071,65 @@ mod tests {
         assert_eq!(plan.entries[0].source, StreamSource::PugvWeb);
         assert_eq!(plan.entries[0].epid, Some(101));
         assert_eq!(plan.entries[0].streams.videos[0].id, 80);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cheese_episode_current_preserves_api_index_from_later_page() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/pugv/view/web/season")
+                .query_param("ep_id", "102");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "season_id": 202,
+                    "title": "Course",
+                    "episode_page": {"next": false, "num": 2, "size": 1, "total": 2},
+                    "episodes": [{
+                        "id": 102,
+                        "aid": 170_002,
+                        "cid": 9989,
+                        "index": 2,
+                        "title": "Second lesson"
+                    }]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/pugv/player/web/playurl")
+                .query_param("avid", "170002")
+                .query_param("cid", "9989")
+                .query_param("ep_id", "102");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "dash": {
+                        "duration": 12,
+                        "video": [{
+                            "id": 80,
+                            "baseUrl": "https://video.example/course.m4s",
+                            "base_url": "https://video.example/course.m4s"
+                        }],
+                        "audio": [{
+                            "id": 30280,
+                            "baseUrl": "https://audio.example/course.m4s",
+                            "base_url": "https://audio.example/course.m4s"
+                        }]
+                    }
+                }
+            }));
+        });
+        server_mock_player_v2(&server, 170_002, 9989);
+
+        let plan = test_client(&server)
+            .plan_download("cheese/ep102", None)
+            .await?;
+
+        assert_eq!(plan.entries[0].index, 2);
+        assert_eq!(plan.entries[0].epid, Some(102));
         Ok(())
     }
 

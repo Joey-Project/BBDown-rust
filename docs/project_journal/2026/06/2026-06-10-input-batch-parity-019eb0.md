@@ -5,7 +5,7 @@ status: completed
 created: 2026-06-10
 updated: 2026-06-10
 branch: wip/input-batch-parity
-pr:
+pr: 20
 supersedes: []
 superseded_by:
 ---
@@ -68,6 +68,9 @@ superseded_by:
   paths for collection metadata. The PUGV fetcher now keeps a stable page-size fallback, refetches
   non-current `cheese/ep` selections from the first season page, and the README/user guide paths now
   use `collection.collection.items` plus `collection.selected_items`.
+- A final frozen-range review found that default/current `cheese/ep` resolution could renumber a
+  later-page PUGV episode as `P001`. PUGV metadata now preserves the API `episode.index` when
+  present, with a regression test covering `cheese/ep102` planning from page 2.
 
 ## Next Steps
 
