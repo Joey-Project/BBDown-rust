@@ -29,6 +29,8 @@ superseded_by:
   `include_subtitles`/`include_danmaku` fields remain available for existing embedders.
 - Download execution writes cover files as `DownloadFileKind::Cover` using the same retry, resume,
   timeout, media-header, and report paths as other sidecars.
+- Cover downloads now share the non-empty body validation used by media downloads while remaining
+  excluded from mux input selection.
 - `DownloadEntry` and `DownloadFileKind` are now `#[non_exhaustive]` so future planning/report fields
   and file kinds can be added without encouraging downstream exhaustive construction or matching.
 - CLI `download` enables cover sidecars by default and supports `--no-cover` to skip them.
@@ -47,6 +49,8 @@ superseded_by:
   compatibility was addressed by preserving the legacy subtitle and danmaku fields. A final
   compatibility finding was addressed by marking the new public data/report surfaces
   `#[non_exhaustive]` and recording that the next crate release should be a breaking release.
+- A final independent reviewer finding about zero-byte cover sidecars was addressed by splitting
+  non-empty response validation from mux media classification and adding a focused regression test.
 
 ## Next Steps
 

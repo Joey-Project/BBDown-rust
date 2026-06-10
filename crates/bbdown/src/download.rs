@@ -873,7 +873,7 @@ impl BiliClient {
                 return Err(error);
             }
         };
-        if is_empty_unexpected_media_response(&kind, bytes_written) {
+        if is_unexpected_empty_response(&kind, bytes_written) {
             if !append {
                 let _ = fs::remove_file(&write_path).await;
             }
@@ -996,6 +996,13 @@ impl BiliClient {
 impl DownloadFileKind {
     fn is_media(&self) -> bool {
         matches!(self, Self::Video | Self::Audio | Self::FlvSegment)
+    }
+
+    fn expects_non_empty_response(&self) -> bool {
+        matches!(
+            self,
+            Self::Video | Self::Audio | Self::FlvSegment | Self::Cover
+        )
     }
 }
 
@@ -1277,8 +1284,8 @@ fn validation_size_for_full_retry(
     })
 }
 
-fn is_empty_unexpected_media_response(kind: &DownloadFileKind, bytes_written: u64) -> bool {
-    kind.is_media() && bytes_written == 0
+fn is_unexpected_empty_response(kind: &DownloadFileKind, bytes_written: u64) -> bool {
+    kind.expects_non_empty_response() && bytes_written == 0
 }
 
 fn validate_download_completion(
@@ -1915,7 +1922,7 @@ mod tests {
         DownloadArchive, DownloadArchiveEntryRecord, DownloadArchiveRecord, DownloadOptions,
         DownloadPreflight, DownloadReport, DownloadedFile, DuplicateDecision, EntryDownloadReport,
         MAX_FILE_COMPONENT_BYTES, MAX_FILE_NAME_BYTES, MAX_SUBTITLE_EXTENSION_BYTES, MuxOptions,
-        RetryPolicy, SidecarOptions, archive_sidecar_path, comparable_output_path,
+        RetryPolicy, SidecarOptions, archive_sidecar_path, comparable_output_path, cover_file_name,
         default_plan_output_dir, download_entry_content_key, download_plan_content_key,
         entry_dir_name, media_file_name, path_is_occupied, safe_file_name,
         safe_file_name_with_budget, select_media_stream, subtitle_dedup_key, subtitle_extension,
@@ -2261,6 +2268,59 @@ mod tests {
                 .iter()
                 .all(|file| file.kind != DownloadFileKind::Cover)
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rejects_empty_cover_sidecar_response() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/video.m4s");
+            then.status(200).body("video");
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/audio.m4s");
+            then.status(200).body("audio");
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/cover.jpg");
+            then.status(200).body("");
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = test_plan(&server);
+        let cover_url = plan.entries[0]
+            .cover_url
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("missing cover URL"))?;
+        let cover_path = temp
+            .path()
+            .join(safe_file_name(&plan.title))
+            .join(entry_dir_name(&plan.entries[0]))
+            .join(cover_file_name(cover_url));
+
+        let Err(error) = client
+            .download_plan(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().to_path_buf(),
+                    retry: RetryPolicy::single_attempt(),
+                    sidecars: SidecarOptions {
+                        cover: true,
+                        subtitles: false,
+                        danmaku: false,
+                    },
+                    mux: MuxOptions::Disabled,
+                    ..DownloadOptions::default()
+                },
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!("empty cover response should fail"));
+        };
+
+        assert!(error.to_string().contains("empty media response"));
+        assert!(!cover_path.exists());
         Ok(())
     }
 
