@@ -23,12 +23,42 @@ const MAX_SUBTITLE_EXTENSION_BYTES: usize = 16;
 const MAX_COVER_EXTENSION_BYTES: usize = 16;
 
 #[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum DownloadMode {
+    #[default]
+    All,
+    VideoOnly,
+    AudioOnly,
+    SubtitleOnly,
+    DanmakuOnly,
+    CoverOnly,
+}
+
+impl DownloadMode {
+    const fn allows_mux(self) -> bool {
+        matches!(self, Self::All)
+    }
+
+    const fn archive_key_token(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::VideoOnly => "video",
+            Self::AudioOnly => "audio",
+            Self::SubtitleOnly => "subtitle",
+            Self::DanmakuOnly => "danmaku",
+            Self::CoverOnly => "cover",
+        }
+    }
+}
+
+#[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct DownloadOptions {
     pub output_dir: PathBuf,
     pub retry: RetryPolicy,
     pub stream_selection: StreamSelection,
     pub resume: bool,
+    pub mode: DownloadMode,
     pub include_subtitles: bool,
     pub include_danmaku: bool,
     pub sidecars: SidecarOptions,
@@ -43,6 +73,7 @@ impl Default for DownloadOptions {
             retry: RetryPolicy::default(),
             stream_selection: StreamSelection::default(),
             resume: true,
+            mode: DownloadMode::All,
             include_subtitles: true,
             include_danmaku: true,
             sidecars: SidecarOptions::default(),
@@ -76,6 +107,12 @@ impl DownloadOptions {
     #[must_use]
     pub fn with_resume(mut self, resume: bool) -> Self {
         self.resume = resume;
+        self
+    }
+
+    #[must_use]
+    pub fn with_download_mode(mut self, mode: DownloadMode) -> Self {
+        self.mode = mode;
         self
     }
 
@@ -279,8 +316,14 @@ impl DownloadArchive {
         Ok(())
     }
 
-    pub fn record_download(&mut self, plan: &DownloadPlan, report: &DownloadReport) {
-        let record = DownloadArchiveRecord::from_report(plan, report, current_unix_seconds());
+    pub fn record_download(
+        &mut self,
+        plan: &DownloadPlan,
+        options: &DownloadOptions,
+        report: &DownloadReport,
+    ) {
+        let record =
+            DownloadArchiveRecord::from_report(plan, options, report, current_unix_seconds());
         let record_output_key = comparable_output_path_key(&record.output_dir);
         self.records.retain(|existing| {
             comparable_output_path_key(&existing.output_dir) != record_output_key
@@ -290,7 +333,25 @@ impl DownloadArchive {
 
     #[must_use]
     pub fn records_for_plan(&self, plan: &DownloadPlan) -> Vec<DownloadArchiveRecord> {
-        let plan_match = ArchivePlanMatch::new(plan);
+        let plan_matches = archive_plan_matches_for_all_modes(plan);
+        self.records
+            .iter()
+            .filter(|record| {
+                plan_matches
+                    .iter()
+                    .any(|plan_match| plan_match.matches_record(record))
+            })
+            .cloned()
+            .collect()
+    }
+
+    #[must_use]
+    pub fn records_for_plan_with_mode(
+        &self,
+        plan: &DownloadPlan,
+        mode: DownloadMode,
+    ) -> Vec<DownloadArchiveRecord> {
+        let plan_match = ArchivePlanMatch::new(plan, mode);
         self.records
             .iter()
             .filter(|record| plan_match.matches_record(record))
@@ -309,9 +370,14 @@ pub struct DownloadArchiveRecord {
 }
 
 impl DownloadArchiveRecord {
-    fn from_report(plan: &DownloadPlan, report: &DownloadReport, completed_at_unix: u64) -> Self {
+    fn from_report(
+        plan: &DownloadPlan,
+        options: &DownloadOptions,
+        report: &DownloadReport,
+        completed_at_unix: u64,
+    ) -> Self {
         Self {
-            content_key: download_plan_content_key(plan),
+            content_key: download_plan_content_key_for_mode(plan, options.mode),
             title: report.title.clone(),
             output_dir: archive_record_path(&report.output_dir),
             completed_at_unix,
@@ -320,7 +386,7 @@ impl DownloadArchiveRecord {
                 .iter()
                 .zip(&report.entries)
                 .map(|(plan_entry, report_entry)| DownloadArchiveEntryRecord {
-                    content_key: download_entry_content_key(plan_entry),
+                    content_key: download_entry_content_key_for_mode(plan_entry, options.mode),
                     index: report_entry.index,
                     aid: plan_entry.aid,
                     bvid: plan_entry.bvid.clone(),
@@ -381,7 +447,7 @@ impl DownloadPreflight {
                 path: planned_output_dir.clone(),
             });
         let archived_records = archive.map_or_else(Vec::new, |archive| {
-            archive_records_for_preflight(archive, plan, &planned_output_dir)
+            archive_records_for_preflight(archive, plan, options.mode, &planned_output_dir)
         });
         let reserved_output_dirs = archive.map_or_else(Vec::new, |archive| {
             archive
@@ -391,7 +457,7 @@ impl DownloadPreflight {
                 .collect()
         });
         Ok(Self {
-            content_key: download_plan_content_key(plan),
+            content_key: download_plan_content_key_for_mode(plan, options.mode),
             title: plan.title.clone(),
             planned_output_dir: planned_output_dir.clone(),
             archived_records,
@@ -497,7 +563,9 @@ impl BiliClient {
         selection: Option<Selection>,
         options: DownloadOptions,
     ) -> Result<DownloadReport> {
-        let plan = self.plan(input, selection).await?;
+        let plan = self
+            .plan_for_download(input, selection, options.mode)
+            .await?;
         self.download_plan(&plan, options).await
     }
 
@@ -506,7 +574,7 @@ impl BiliClient {
         plan: &DownloadPlan,
         options: DownloadOptions,
     ) -> Result<DownloadReport> {
-        validate_plan_stream_selection(plan, options.stream_selection)?;
+        validate_plan_stream_selection(plan, &options)?;
         let output_dir = default_plan_output_dir(plan, &options);
         self.download_plan_to_output_dir(plan, options, output_dir)
             .await
@@ -546,7 +614,7 @@ impl BiliClient {
             DuplicateDecision::Cancel => default_plan_output_dir(plan, &effective_options),
             DuplicateDecision::Replace => {
                 if path_is_occupied(&preflight.planned_output_dir)? {
-                    validate_plan_stream_selection(plan, effective_options.stream_selection)?;
+                    validate_plan_stream_selection(plan, &effective_options)?;
                     remove_output_root_if_exists(&preflight.planned_output_dir).await?;
                     effective_options.resume = false;
                 }
@@ -561,9 +629,9 @@ impl BiliClient {
             )));
         }
         let report = self
-            .download_plan_to_output_dir(plan, effective_options, output_dir)
+            .download_plan_to_output_dir(plan, effective_options.clone(), output_dir)
             .await?;
-        archive.record_download(plan, &report);
+        archive.record_download(plan, &effective_options, &report);
         Ok(report)
     }
 
@@ -573,7 +641,7 @@ impl BiliClient {
         options: DownloadOptions,
         output_dir: PathBuf,
     ) -> Result<DownloadReport> {
-        validate_plan_stream_selection(plan, options.stream_selection)?;
+        validate_plan_stream_selection(plan, &options)?;
         fs::create_dir_all(&output_dir).await?;
         let mut entries = Vec::new();
         for entry in &plan.entries {
@@ -595,70 +663,144 @@ impl BiliClient {
         let entry_dir = output_dir.join(entry_dir_name(entry));
         fs::create_dir_all(&entry_dir).await?;
         let mut files = Vec::new();
-        let has_dash_pair = !entry.streams.videos.is_empty() && !entry.streams.audios.is_empty();
-        let use_flv_fallback = !has_dash_pair && !entry.streams.flv_segments.is_empty();
-        if has_dash_pair {
-            let video = select_media_stream(
-                &entry.streams.videos,
-                options.stream_selection.video_quality,
-                "video",
-            )?;
-            let audio = select_media_stream(
-                &entry.streams.audios,
-                options.stream_selection.audio_quality,
-                "audio",
-            )?;
-            files.push(
-                self.download_media_stream(video, DownloadFileKind::Video, &entry_dir, options)
-                    .await?,
-            );
-            files.push(
-                self.download_media_stream(audio, DownloadFileKind::Audio, &entry_dir, options)
-                    .await?,
-            );
-        } else if use_flv_fallback {
-            if options.stream_selection.has_selection() {
-                return Err(Error::InvalidInput(
-                    "stream quality selection requires DASH media; selected entry only has FLV segments"
-                        .to_owned(),
-                ));
+        self.download_entry_media(entry, &entry_dir, options, &mut files)
+            .await?;
+        self.download_entry_sidecars(entry, &entry_dir, options, &mut files)
+            .await?;
+        let mux = self.mux_entry(entry, &entry_dir, &files, options).await?;
+        Ok(EntryDownloadReport {
+            index: entry.index,
+            title: entry.title.clone(),
+            directory: entry_dir,
+            files,
+            mux,
+        })
+    }
+
+    async fn download_entry_media(
+        &self,
+        entry: &DownloadEntry,
+        entry_dir: &Path,
+        options: &DownloadOptions,
+        files: &mut Vec<DownloadedFile>,
+    ) -> Result<()> {
+        match options.mode {
+            DownloadMode::All => {
+                let has_dash_pair =
+                    !entry.streams.videos.is_empty() && !entry.streams.audios.is_empty();
+                let use_flv_fallback = !has_dash_pair && !entry.streams.flv_segments.is_empty();
+                if has_dash_pair {
+                    let video = select_media_stream(
+                        &entry.streams.videos,
+                        options.stream_selection.video_quality,
+                        "video",
+                    )?;
+                    let audio = select_media_stream(
+                        &entry.streams.audios,
+                        options.stream_selection.audio_quality,
+                        "audio",
+                    )?;
+                    files.push(
+                        self.download_media_stream(
+                            video,
+                            DownloadFileKind::Video,
+                            entry_dir,
+                            options,
+                        )
+                        .await?,
+                    );
+                    files.push(
+                        self.download_media_stream(
+                            audio,
+                            DownloadFileKind::Audio,
+                            entry_dir,
+                            options,
+                        )
+                        .await?,
+                    );
+                } else if use_flv_fallback {
+                    if options.stream_selection.has_selection() {
+                        return Err(Error::InvalidInput(
+                            "stream quality selection requires DASH media; selected entry only has FLV segments"
+                                .to_owned(),
+                        ));
+                    }
+                    for segment in &entry.streams.flv_segments {
+                        files.push(
+                            self.download_flv_segment(segment, entry_dir, options)
+                                .await?,
+                        );
+                    }
+                } else {
+                    return Err(Error::MissingField("complete DASH media or FLV segments"));
+                }
             }
-            for segment in &entry.streams.flv_segments {
+            DownloadMode::VideoOnly => {
+                let video = select_media_stream(
+                    &entry.streams.videos,
+                    options.stream_selection.video_quality,
+                    "video",
+                )?;
                 files.push(
-                    self.download_flv_segment(segment, &entry_dir, options)
+                    self.download_media_stream(video, DownloadFileKind::Video, entry_dir, options)
                         .await?,
                 );
             }
-        } else {
-            return Err(Error::MissingField("complete DASH media or FLV segments"));
+            DownloadMode::AudioOnly => {
+                let audio = select_media_stream(
+                    &entry.streams.audios,
+                    options.stream_selection.audio_quality,
+                    "audio",
+                )?;
+                files.push(
+                    self.download_media_stream(audio, DownloadFileKind::Audio, entry_dir, options)
+                        .await?,
+                );
+            }
+            DownloadMode::SubtitleOnly | DownloadMode::DanmakuOnly | DownloadMode::CoverOnly => {}
         }
-        if options.sidecars.cover
-            && let Some(cover_url) = entry.cover_url.as_deref().filter(|url| !url.is_empty())
-        {
-            files.push(
-                self.download_url_to_file(
-                    cover_url,
-                    &entry_dir.join(cover_file_name(cover_url)),
-                    DownloadFileKind::Cover,
-                    None,
-                    options,
-                )
-                .await?,
-            );
+        Ok(())
+    }
+
+    async fn download_entry_sidecars(
+        &self,
+        entry: &DownloadEntry,
+        entry_dir: &Path,
+        options: &DownloadOptions,
+        files: &mut Vec<DownloadedFile>,
+    ) -> Result<()> {
+        if should_download_cover(options) {
+            if let Some(cover_url) = entry.cover_url.as_deref().filter(|url| !url.is_empty()) {
+                files.push(
+                    self.download_url_to_file(
+                        cover_url,
+                        &entry_dir.join(cover_file_name(cover_url)),
+                        DownloadFileKind::Cover,
+                        None,
+                        options,
+                    )
+                    .await?,
+                );
+            } else if matches!(options.mode, DownloadMode::CoverOnly) {
+                return Err(Error::MissingField("cover URL"));
+            }
         }
-        if options.include_subtitles && options.sidecars.subtitles {
+        if should_download_subtitles(options) {
             let mut seen_subtitles = HashSet::new();
             for (index, subtitle) in entry.subtitles.iter().enumerate() {
                 if !seen_subtitles.insert(subtitle_dedup_key(&subtitle.url)) {
                     continue;
                 }
                 files.push(
-                    self.download_subtitle(index, subtitle, &entry_dir, options)
+                    self.download_subtitle(index, subtitle, entry_dir, options)
                         .await?,
                 );
             }
+            if matches!(options.mode, DownloadMode::SubtitleOnly) && seen_subtitles.is_empty() {
+                return Err(Error::MissingField("subtitle tracks"));
+            }
         }
-        if options.include_danmaku && options.sidecars.danmaku {
+        if should_download_danmaku(options) {
             files.push(
                 self.download_url_to_file(
                     &entry.danmaku.xml_url,
@@ -670,14 +812,7 @@ impl BiliClient {
                 .await?,
             );
         }
-        let mux = self.mux_entry(entry, &entry_dir, &files, options).await?;
-        Ok(EntryDownloadReport {
-            index: entry.index,
-            title: entry.title.clone(),
-            directory: entry_dir,
-            files,
-            mux,
-        })
+        Ok(())
     }
 
     async fn download_media_stream(
@@ -912,6 +1047,9 @@ impl BiliClient {
         files: &[DownloadedFile],
         options: &DownloadOptions,
     ) -> Result<Option<MuxReport>> {
+        if !options.mode.allows_mux() {
+            return Ok(None);
+        }
         let MuxOptions::Ffmpeg { binary } = &options.mux else {
             return Ok(None);
         };
@@ -1400,6 +1538,39 @@ fn only_flv_segments(files: &[DownloadedFile]) -> bool {
             .all(|file| file.kind == DownloadFileKind::FlvSegment)
 }
 
+fn should_download_cover(options: &DownloadOptions) -> bool {
+    match options.mode {
+        DownloadMode::All => options.sidecars.cover,
+        DownloadMode::CoverOnly => true,
+        DownloadMode::VideoOnly
+        | DownloadMode::AudioOnly
+        | DownloadMode::SubtitleOnly
+        | DownloadMode::DanmakuOnly => false,
+    }
+}
+
+fn should_download_subtitles(options: &DownloadOptions) -> bool {
+    match options.mode {
+        DownloadMode::All => options.include_subtitles && options.sidecars.subtitles,
+        DownloadMode::SubtitleOnly => true,
+        DownloadMode::VideoOnly
+        | DownloadMode::AudioOnly
+        | DownloadMode::DanmakuOnly
+        | DownloadMode::CoverOnly => false,
+    }
+}
+
+fn should_download_danmaku(options: &DownloadOptions) -> bool {
+    match options.mode {
+        DownloadMode::All => options.include_danmaku && options.sidecars.danmaku,
+        DownloadMode::DanmakuOnly => true,
+        DownloadMode::VideoOnly
+        | DownloadMode::AudioOnly
+        | DownloadMode::SubtitleOnly
+        | DownloadMode::CoverOnly => false,
+    }
+}
+
 fn concat_file_list(paths: &[PathBuf], base: &Path) -> String {
     paths.iter().fold(String::new(), |mut output, path| {
         let list_path = path.strip_prefix(base).unwrap_or(path);
@@ -1453,7 +1624,7 @@ fn validate_archive_preflight(
     archive: &DownloadArchive,
     preflight: &DownloadPreflight,
 ) -> Result<()> {
-    if preflight.content_key != download_plan_content_key(plan) {
+    if preflight.content_key != download_plan_content_key_for_mode(plan, options.mode) {
         return Err(Error::InvalidInput(
             "download preflight does not match the download plan".to_owned(),
         ));
@@ -1467,7 +1638,7 @@ fn validate_archive_preflight(
         ));
     }
     let current_archived_records =
-        archive_records_for_preflight(archive, plan, &planned_output_dir);
+        archive_records_for_preflight(archive, plan, options.mode, &planned_output_dir);
     if preflight.archived_records != current_archived_records {
         return Err(Error::InvalidInput(
             "download preflight does not match the current download archive".to_owned(),
@@ -1494,9 +1665,10 @@ fn validate_archive_preflight(
 fn archive_records_for_preflight(
     archive: &DownloadArchive,
     plan: &DownloadPlan,
+    mode: DownloadMode,
     planned_output_dir: &Path,
 ) -> Vec<DownloadArchiveRecord> {
-    let plan_match = ArchivePlanMatch::new(plan);
+    let plan_match = ArchivePlanMatch::new(plan, mode);
     let output_key = comparable_output_path_key(planned_output_dir);
     archive
         .records
@@ -1512,17 +1684,33 @@ fn archive_records_for_preflight(
 struct ArchivePlanMatch {
     content_key: String,
     entry_keys: HashSet<String>,
+    accepts_legacy_keys: bool,
+}
+
+fn archive_plan_matches_for_all_modes(plan: &DownloadPlan) -> Vec<ArchivePlanMatch> {
+    [
+        DownloadMode::All,
+        DownloadMode::VideoOnly,
+        DownloadMode::AudioOnly,
+        DownloadMode::SubtitleOnly,
+        DownloadMode::DanmakuOnly,
+        DownloadMode::CoverOnly,
+    ]
+    .into_iter()
+    .map(|mode| ArchivePlanMatch::new(plan, mode))
+    .collect()
 }
 
 impl ArchivePlanMatch {
-    fn new(plan: &DownloadPlan) -> Self {
+    fn new(plan: &DownloadPlan, mode: DownloadMode) -> Self {
         Self {
-            content_key: download_plan_content_key(plan),
+            content_key: download_plan_content_key_for_mode(plan, mode),
             entry_keys: plan
                 .entries
                 .iter()
-                .map(download_entry_content_key)
+                .map(|entry| download_entry_content_key_for_mode(entry, mode))
                 .collect(),
+            accepts_legacy_keys: matches!(mode, DownloadMode::All),
         }
     }
 
@@ -1530,9 +1718,16 @@ impl ArchivePlanMatch {
         record.content_key == self.content_key
             || record.entries.iter().any(|entry| {
                 self.entry_keys.contains(&entry.content_key)
-                    || self.entry_keys.contains(&archive_entry_content_key(entry))
+                    || (self.accepts_legacy_keys
+                        && !archive_content_key_has_mode(&record.content_key)
+                        && !archive_content_key_has_mode(&entry.content_key)
+                        && self.entry_keys.contains(&archive_entry_content_key(entry)))
             })
     }
+}
+
+fn archive_content_key_has_mode(key: &str) -> bool {
+    key.starts_with("mode=")
 }
 
 fn archive_record_path(path: &Path) -> PathBuf {
@@ -1612,8 +1807,26 @@ fn download_plan_content_key(plan: &DownloadPlan) -> String {
     key
 }
 
+fn download_plan_content_key_for_mode(plan: &DownloadPlan, mode: DownloadMode) -> String {
+    let key = download_plan_content_key(plan);
+    if matches!(mode, DownloadMode::All) {
+        key
+    } else {
+        format!("mode={};{key}", mode.archive_key_token())
+    }
+}
+
 fn download_entry_content_key(entry: &DownloadEntry) -> String {
     format!("aid={};cid={}", entry.aid, entry.cid)
+}
+
+fn download_entry_content_key_for_mode(entry: &DownloadEntry, mode: DownloadMode) -> String {
+    let key = download_entry_content_key(entry);
+    if matches!(mode, DownloadMode::All) {
+        key
+    } else {
+        format!("mode={};{key}", mode.archive_key_token())
+    }
 }
 
 fn archive_entry_content_key(entry: &DownloadArchiveEntryRecord) -> String {
@@ -1746,32 +1959,66 @@ fn select_media_stream<'a>(
         .ok_or(Error::MissingField("selected media stream"))
 }
 
-fn validate_plan_stream_selection(plan: &DownloadPlan, selection: StreamSelection) -> Result<()> {
+fn validate_plan_stream_selection(plan: &DownloadPlan, options: &DownloadOptions) -> Result<()> {
+    let selection = options.stream_selection;
     if !selection.has_selection() {
         return Ok(());
     }
+    validate_stream_selection_mode(selection, options.mode)?;
     for entry in &plan.entries {
-        validate_entry_stream_selection(entry, selection)?;
+        validate_entry_stream_selection(entry, selection, options.mode)?;
     }
     Ok(())
+}
+
+fn validate_stream_selection_mode(selection: StreamSelection, mode: DownloadMode) -> Result<()> {
+    match mode {
+        DownloadMode::VideoOnly if selection.audio_quality.is_some() => Err(Error::InvalidInput(
+            "audio quality selection requires all or audio-only download mode".to_owned(),
+        )),
+        DownloadMode::AudioOnly if selection.video_quality.is_some() => Err(Error::InvalidInput(
+            "video quality selection requires all or video-only download mode".to_owned(),
+        )),
+        DownloadMode::All | DownloadMode::VideoOnly | DownloadMode::AudioOnly => Ok(()),
+        DownloadMode::SubtitleOnly | DownloadMode::DanmakuOnly | DownloadMode::CoverOnly => {
+            Err(Error::InvalidInput(
+                "stream quality selection requires a media download mode".to_owned(),
+            ))
+        }
+    }
 }
 
 fn validate_entry_stream_selection(
     entry: &DownloadEntry,
     selection: StreamSelection,
+    mode: DownloadMode,
 ) -> Result<()> {
-    let has_dash_pair = !entry.streams.videos.is_empty() && !entry.streams.audios.is_empty();
-    let use_flv_fallback = !has_dash_pair && !entry.streams.flv_segments.is_empty();
-    if has_dash_pair {
-        let _ = select_media_stream(&entry.streams.videos, selection.video_quality, "video")?;
-        let _ = select_media_stream(&entry.streams.audios, selection.audio_quality, "audio")?;
-    } else if use_flv_fallback {
-        return Err(Error::InvalidInput(
-            "stream quality selection requires DASH media; selected entry only has FLV segments"
-                .to_owned(),
-        ));
-    } else {
-        return Err(Error::MissingField("complete DASH media or FLV segments"));
+    match mode {
+        DownloadMode::All => {
+            let has_dash_pair =
+                !entry.streams.videos.is_empty() && !entry.streams.audios.is_empty();
+            let use_flv_fallback = !has_dash_pair && !entry.streams.flv_segments.is_empty();
+            if has_dash_pair {
+                let _ =
+                    select_media_stream(&entry.streams.videos, selection.video_quality, "video")?;
+                let _ =
+                    select_media_stream(&entry.streams.audios, selection.audio_quality, "audio")?;
+            } else if use_flv_fallback {
+                return Err(Error::InvalidInput(
+                    "stream quality selection requires DASH media; selected entry only has FLV segments"
+                        .to_owned(),
+                ));
+            } else {
+                return Err(Error::MissingField("complete DASH media or FLV segments"));
+            }
+        }
+        DownloadMode::VideoOnly => {
+            let _ = select_media_stream(&entry.streams.videos, selection.video_quality, "video")?;
+        }
+        DownloadMode::AudioOnly => {
+            let _ = select_media_stream(&entry.streams.audios, selection.audio_quality, "audio")?;
+        }
+        DownloadMode::SubtitleOnly | DownloadMode::DanmakuOnly | DownloadMode::CoverOnly => {}
     }
     Ok(())
 }
@@ -1919,14 +2166,15 @@ fn subtitle_dedup_key(url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        DownloadArchive, DownloadArchiveEntryRecord, DownloadArchiveRecord, DownloadOptions,
-        DownloadPreflight, DownloadReport, DownloadedFile, DuplicateDecision, EntryDownloadReport,
-        MAX_FILE_COMPONENT_BYTES, MAX_FILE_NAME_BYTES, MAX_SUBTITLE_EXTENSION_BYTES, MuxOptions,
-        RetryPolicy, SidecarOptions, archive_sidecar_path, comparable_output_path, cover_file_name,
-        default_plan_output_dir, download_entry_content_key, download_plan_content_key,
-        entry_dir_name, media_file_name, path_is_occupied, safe_file_name,
-        safe_file_name_with_budget, select_media_stream, subtitle_dedup_key, subtitle_extension,
-        subtitle_file_name, temporary_download_path, temporary_mux_path, temporary_replace_path,
+        DownloadArchive, DownloadArchiveEntryRecord, DownloadArchiveRecord, DownloadMode,
+        DownloadOptions, DownloadPreflight, DownloadReport, DownloadedFile, DuplicateDecision,
+        EntryDownloadReport, MAX_FILE_COMPONENT_BYTES, MAX_FILE_NAME_BYTES,
+        MAX_SUBTITLE_EXTENSION_BYTES, MuxOptions, RetryPolicy, SidecarOptions, StreamSelection,
+        archive_sidecar_path, comparable_output_path, cover_file_name, default_plan_output_dir,
+        download_entry_content_key, download_plan_content_key, entry_dir_name, media_file_name,
+        path_is_occupied, safe_file_name, safe_file_name_with_budget, select_media_stream,
+        subtitle_dedup_key, subtitle_extension, subtitle_file_name, temporary_download_path,
+        temporary_mux_path, temporary_replace_path,
     };
     use crate::models::{
         DanmakuTrack, DownloadEntry, DownloadPlan, FlvSegment, MediaStream, StreamDiagnostics,
@@ -2227,6 +2475,182 @@ mod tests {
                 })
         );
         assert!(entry.mux.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn download_video_only_skips_audio_sidecars_and_mux() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/video.m4s");
+            then.status(200).body("video");
+        });
+        let audio_mock = server.mock(|when, then| {
+            when.method(GET).path("/audio.m4s");
+            then.status(200).body("audio");
+        });
+        let cover_mock = server.mock(|when, then| {
+            when.method(GET).path("/cover.jpg");
+            then.status(200).body("cover");
+        });
+        let subtitle_mock = server.mock(|when, then| {
+            when.method(GET).path("/subtitle.ass");
+            then.status(200).body("[Script Info]");
+        });
+        let danmaku_mock = server.mock(|when, then| {
+            when.method(GET).path("/danmaku.xml");
+            then.status(200).body("<i/>");
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = test_plan(&server);
+
+        let report = client
+            .download_plan(
+                &plan,
+                DownloadOptions::new(temp.path())
+                    .with_retry_policy(RetryPolicy::single_attempt())
+                    .with_download_mode(DownloadMode::VideoOnly)
+                    .with_cover(true)
+                    .with_mux(MuxOptions::ffmpeg("ffmpeg-not-used")),
+            )
+            .await?;
+
+        let entry = &report.entries[0];
+        assert_eq!(entry.files.len(), 1);
+        assert_eq!(entry.files[0].kind, DownloadFileKind::Video);
+        assert_eq!(
+            tokio::fs::read_to_string(&entry.files[0].path).await?,
+            "video"
+        );
+        assert!(entry.mux.is_none());
+        assert_eq!(audio_mock.calls(), 0);
+        assert_eq!(cover_mock.calls(), 0);
+        assert_eq!(subtitle_mock.calls(), 0);
+        assert_eq!(danmaku_mock.calls(), 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn download_audio_only_skips_video_sidecars_and_mux() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let video_mock = server.mock(|when, then| {
+            when.method(GET).path("/video.m4s");
+            then.status(200).body("video");
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/audio.m4s");
+            then.status(200).body("audio");
+        });
+        let cover_mock = server.mock(|when, then| {
+            when.method(GET).path("/cover.jpg");
+            then.status(200).body("cover");
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = test_plan(&server);
+
+        let report = client
+            .download_plan(
+                &plan,
+                DownloadOptions::new(temp.path())
+                    .with_retry_policy(RetryPolicy::single_attempt())
+                    .with_download_mode(DownloadMode::AudioOnly)
+                    .with_mux(MuxOptions::ffmpeg("ffmpeg-not-used")),
+            )
+            .await?;
+
+        let entry = &report.entries[0];
+        assert_eq!(entry.files.len(), 1);
+        assert_eq!(entry.files[0].kind, DownloadFileKind::Audio);
+        assert_eq!(
+            tokio::fs::read_to_string(&entry.files[0].path).await?,
+            "audio"
+        );
+        assert!(entry.mux.is_none());
+        assert_eq!(video_mock.calls(), 0);
+        assert_eq!(cover_mock.calls(), 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn sidecar_only_modes_do_not_require_media_streams() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/cover.jpg");
+            then.status(200).body("cover");
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/subtitle.ass");
+            then.status(200).body("[Script Info]");
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/danmaku.xml");
+            then.status(200).body("<i/>");
+        });
+        let client = BiliClient::new(ClientConfig::default());
+
+        for (mode, kind, expected_body) in [
+            (DownloadMode::CoverOnly, DownloadFileKind::Cover, "cover"),
+            (
+                DownloadMode::SubtitleOnly,
+                DownloadFileKind::Subtitle,
+                "[Script Info]",
+            ),
+            (DownloadMode::DanmakuOnly, DownloadFileKind::Danmaku, "<i/>"),
+        ] {
+            let temp = tempfile::tempdir()?;
+            let mut plan = test_plan(&server);
+            plan.entries[0].streams.videos.clear();
+            plan.entries[0].streams.audios.clear();
+            let report = client
+                .download_plan(
+                    &plan,
+                    DownloadOptions::new(temp.path())
+                        .with_retry_policy(RetryPolicy::single_attempt())
+                        .with_download_mode(mode)
+                        .with_mux(MuxOptions::ffmpeg("ffmpeg-not-used")),
+                )
+                .await?;
+            let entry = &report.entries[0];
+
+            assert_eq!(entry.files.len(), 1);
+            assert_eq!(entry.files[0].kind, kind);
+            assert_eq!(
+                tokio::fs::read_to_string(&entry.files[0].path).await?,
+                expected_body
+            );
+            assert!(entry.mux.is_none());
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn sidecar_only_modes_reject_stream_quality_selection() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = test_plan(&server);
+
+        let Err(error) = client
+            .download_plan(
+                &plan,
+                DownloadOptions::new(temp.path())
+                    .with_stream_selection(StreamSelection::video(80))
+                    .with_download_mode(DownloadMode::CoverOnly),
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!(
+                "sidecar-only stream quality selection should fail"
+            ));
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("stream quality selection requires a media download mode")
+        );
         Ok(())
     }
 
@@ -4680,7 +5104,7 @@ mod tests {
         };
         let mut archive = DownloadArchive::default();
 
-        archive.record_download(&plan, &report);
+        archive.record_download(&plan, &DownloadOptions::default(), &report);
 
         let record = &archive.records[0];
         assert!(record.output_dir.is_absolute());
@@ -4720,6 +5144,48 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn download_archive_records_can_be_queried_by_download_mode() {
+        let server = MockServer::start();
+        let plan = test_plan(&server);
+        let report = DownloadReport {
+            title: plan.title.clone(),
+            output_dir: Path::new("downloads").join("Mock video"),
+            entries: vec![EntryDownloadReport {
+                index: 1,
+                title: "Main".to_owned(),
+                directory: Path::new("downloads").join("Mock video").join("entry"),
+                files: vec![DownloadedFile {
+                    kind: DownloadFileKind::Cover,
+                    path: Path::new("downloads")
+                        .join("Mock video")
+                        .join("entry")
+                        .join("cover.jpg"),
+                    bytes_written: 5,
+                    resumed_from: 0,
+                }],
+                mux: None,
+            }],
+        };
+        let options = DownloadOptions::default().with_download_mode(DownloadMode::CoverOnly);
+        let mut archive = DownloadArchive::default();
+
+        archive.record_download(&plan, &options, &report);
+
+        assert_eq!(archive.records_for_plan(&plan).len(), 1);
+        assert_eq!(
+            archive
+                .records_for_plan_with_mode(&plan, DownloadMode::CoverOnly)
+                .len(),
+            1
+        );
+        assert!(
+            archive
+                .records_for_plan_with_mode(&plan, DownloadMode::All)
+                .is_empty()
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn download_archive_record_resolves_symlink_parent_output_path() -> anyhow::Result<()> {
@@ -4740,7 +5206,7 @@ mod tests {
         };
         let mut archive = DownloadArchive::default();
 
-        archive.record_download(&plan, &report);
+        archive.record_download(&plan, &DownloadOptions::default(), &report);
 
         assert_eq!(
             archive.records[0].output_dir,
@@ -4780,7 +5246,7 @@ mod tests {
             }],
         };
         let mut archive = DownloadArchive::default();
-        archive.record_download(&plan, &report);
+        archive.record_download(&plan, &DownloadOptions::default(), &report);
         let archive_path = temp.path().join("archive.json");
 
         archive.save(&archive_path)?;

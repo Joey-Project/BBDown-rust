@@ -60,6 +60,7 @@ bbdown download av170001 --output-dir downloads
 bbdown download ss26801 --select latest --output-dir downloads
 bbdown download fav456 --select page:1 --output-dir downloads
 bbdown download av170001 --output-dir downloads --no-mux --json
+bbdown download av170001 --only cover --output-dir downloads --json
 bbdown download av170001 --output-dir downloads --archive-file downloads/archive.json --on-duplicate keep-both
 ```
 
@@ -67,6 +68,8 @@ bbdown download av170001 --output-dir downloads --archive-file downloads/archive
 封面、字幕和弹幕旁路文件；通过 HTTP range 请求续传部分文件；对有限的瞬时失败进行有界重
 试；在存在声明媒体大小时进行校验；拒绝不完整的媒体形态；除非传入 `--no-mux`，否则运行
 `ffmpeg`。使用 `--no-cover`、`--no-subtitles` 或 `--no-danmaku` 可以跳过对应旁路文件。
+使用 `--only video`、`--only audio`、`--only subtitle`、`--only danmaku` 或
+`--only cover` 可只写入一种输出；single-output 模式会跳过 mux。
 传入 `--archive-file <path>` 后，CLI 会按内容身份记录已完成下载。归档输出、旁路文件和
 mux 路径会在记录时保存为绝对路径，因此同一份归档可以从另一个工作目录复用。条目身份使
 用稳定的 aid/cid 媒体 id，因此同一 PGC 分集即便之后通过 BV/av URL 规划，且其中一种形式

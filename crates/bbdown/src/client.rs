@@ -1,3 +1,4 @@
+use crate::download::DownloadMode;
 use crate::models::{
     DanmakuTrack, DownloadEntry, DownloadPlan, EpisodeMetadata, FlvSegment, MediaStream, Owner,
     PageMetadata, ResolvedContent, SeasonMetadata, SeasonResolution, StreamDiagnostics,
@@ -446,41 +447,84 @@ impl BiliClient {
         self.plan(input, selection).await
     }
 
+    pub async fn plan_download_with_mode(
+        &self,
+        raw: &str,
+        selection: Option<Selection>,
+        mode: DownloadMode,
+    ) -> Result<DownloadPlan> {
+        let input = self.parse_input(raw).await?;
+        self.plan_with_download_mode(input, selection, mode).await
+    }
+
     pub async fn plan(&self, input: Input, selection: Option<Selection>) -> Result<DownloadPlan> {
+        self.plan_with_mode(input, selection, PlanningMode::Full)
+            .await
+    }
+
+    pub async fn plan_with_download_mode(
+        &self,
+        input: Input,
+        selection: Option<Selection>,
+        mode: DownloadMode,
+    ) -> Result<DownloadPlan> {
+        self.plan_with_mode(input, selection, PlanningMode::from_download_mode(mode))
+            .await
+    }
+
+    pub(crate) async fn plan_for_download(
+        &self,
+        input: Input,
+        selection: Option<Selection>,
+        mode: DownloadMode,
+    ) -> Result<DownloadPlan> {
+        self.plan_with_download_mode(input, selection, mode).await
+    }
+
+    async fn plan_with_mode(
+        &self,
+        input: Input,
+        selection: Option<Selection>,
+        planning_mode: PlanningMode,
+    ) -> Result<DownloadPlan> {
         match input {
             Input::Aid(aid) => {
                 let video = self.fetch_video_by_aid(aid, TagPolicy::Skip).await?;
-                self.plan_video(video, selection).await
+                self.plan_video(video, selection, planning_mode).await
             }
             Input::Bvid(bvid) => {
                 let video = self.fetch_video_by_bvid(&bvid, TagPolicy::Skip).await?;
-                self.plan_video(video, selection).await
+                self.plan_video(video, selection, planning_mode).await
             }
             Input::Episode(epid) => {
                 let season = self
                     .fetch_season_by_ep(epid, selection.or(Some(Selection::Current)))
                     .await?;
-                self.plan_season(season, StreamSource::PgcWeb).await
+                self.plan_season(season, StreamSource::PgcWeb, planning_mode)
+                    .await
             }
             Input::Season(season_id) => {
                 let selection = selection.ok_or(Error::SelectionRequired {
                     input_kind: "season",
                 })?;
                 let season = self.fetch_season_by_season_id(season_id, selection).await?;
-                self.plan_season(season, StreamSource::PgcWeb).await
+                self.plan_season(season, StreamSource::PgcWeb, planning_mode)
+                    .await
             }
             Input::Media(media_id) => {
                 let selection = selection.ok_or(Error::SelectionRequired {
                     input_kind: "media",
                 })?;
                 let season = self.fetch_season_by_media_id(media_id, selection).await?;
-                self.plan_season(season, StreamSource::PgcWeb).await
+                self.plan_season(season, StreamSource::PgcWeb, planning_mode)
+                    .await
             }
             Input::CheeseEpisode(epid) => {
                 let season = self
                     .fetch_pugv_season_by_ep(epid, selection.or(Some(Selection::Current)))
                     .await?;
-                self.plan_season(season, StreamSource::PugvWeb).await
+                self.plan_season(season, StreamSource::PugvWeb, planning_mode)
+                    .await
             }
             Input::CheeseSeason(season_id) => {
                 let selection = selection.ok_or(Error::SelectionRequired {
@@ -489,50 +533,28 @@ impl BiliClient {
                 let season = self
                     .fetch_pugv_season_by_season_id(season_id, selection)
                     .await?;
-                self.plan_season(season, StreamSource::PugvWeb).await
-            }
-            Input::SpaceVideos(mid) => {
-                let fetch_mode = Self::collection_fetch_mode(selection.as_ref())?;
-                let collection = self
-                    .fetch_space_video_collection(mid, selection, fetch_mode)
-                    .await?;
-                self.plan_collection(collection).await
-            }
-            Input::FavoriteList {
-                media_id,
-                owner_mid,
-            } => {
-                let fetch_mode = Self::collection_fetch_mode(selection.as_ref())?;
-                let collection = self
-                    .fetch_favorite_collection(media_id, owner_mid, selection, fetch_mode)
-                    .await?;
-                self.plan_collection(collection).await
-            }
-            Input::CollectionList(list_id) => {
-                self.plan_medialist(list_id, MediaListKind::Collection, selection)
+                self.plan_season(season, StreamSource::PugvWeb, planning_mode)
                     .await
             }
-            Input::SeriesList(list_id) => {
-                self.plan_medialist(list_id, MediaListKind::Series, selection)
-                    .await
-            }
-            Input::SpaceCollectionList { list_id, owner_mid } => {
-                self.plan_space_list(owner_mid, list_id, SpaceListKind::Collection, selection)
-                    .await
-            }
-            Input::SpaceSeriesList { list_id, owner_mid } => {
-                self.plan_space_list(owner_mid, list_id, SpaceListKind::Series, selection)
+            collection_input @ (Input::SpaceVideos(_)
+            | Input::FavoriteList { .. }
+            | Input::CollectionList(_)
+            | Input::SeriesList(_)
+            | Input::SpaceCollectionList { .. }
+            | Input::SpaceSeriesList { .. }) => {
+                self.plan_collection_input(collection_input, selection, planning_mode)
                     .await
             }
             Input::IntlEpisode(epid) => {
                 let season = self
                     .fetch_intl_season_by_ep(epid, selection.or(Some(Selection::Current)))
                     .await?;
-                self.plan_season(season, StreamSource::IntlWeb).await
+                self.plan_season(season, StreamSource::IntlWeb, planning_mode)
+                    .await
             }
             Input::ShortLink(raw) => {
                 let input = self.resolve_short_link_input(&raw).await?;
-                Box::pin(self.plan(input, selection)).await
+                Box::pin(self.plan_with_mode(input, selection, planning_mode)).await
             }
         }
     }
@@ -550,17 +572,74 @@ impl BiliClient {
             .map(ResolvedContent::Collection)
     }
 
+    async fn plan_collection_input(
+        &self,
+        input: Input,
+        selection: Option<Selection>,
+        planning_mode: PlanningMode,
+    ) -> Result<DownloadPlan> {
+        match input {
+            Input::SpaceVideos(mid) => {
+                let fetch_mode = Self::collection_fetch_mode(selection.as_ref())?;
+                let collection = self
+                    .fetch_space_video_collection(mid, selection, fetch_mode)
+                    .await?;
+                self.plan_collection(collection, planning_mode).await
+            }
+            Input::FavoriteList {
+                media_id,
+                owner_mid,
+            } => {
+                let fetch_mode = Self::collection_fetch_mode(selection.as_ref())?;
+                let collection = self
+                    .fetch_favorite_collection(media_id, owner_mid, selection, fetch_mode)
+                    .await?;
+                self.plan_collection(collection, planning_mode).await
+            }
+            Input::CollectionList(list_id) => {
+                self.plan_medialist(list_id, MediaListKind::Collection, selection, planning_mode)
+                    .await
+            }
+            Input::SeriesList(list_id) => {
+                self.plan_medialist(list_id, MediaListKind::Series, selection, planning_mode)
+                    .await
+            }
+            Input::SpaceCollectionList { list_id, owner_mid } => {
+                self.plan_space_list(
+                    owner_mid,
+                    list_id,
+                    SpaceListKind::Collection,
+                    selection,
+                    planning_mode,
+                )
+                .await
+            }
+            Input::SpaceSeriesList { list_id, owner_mid } => {
+                self.plan_space_list(
+                    owner_mid,
+                    list_id,
+                    SpaceListKind::Series,
+                    selection,
+                    planning_mode,
+                )
+                .await
+            }
+            _ => unreachable!("non-collection input routed to collection planner"),
+        }
+    }
+
     async fn plan_medialist(
         &self,
         list_id: u64,
         kind: MediaListKind,
         selection: Option<Selection>,
+        planning_mode: PlanningMode,
     ) -> Result<DownloadPlan> {
         let fetch_mode = Self::collection_fetch_mode(selection.as_ref())?;
         let collection = self
             .fetch_medialist_collection(list_id, kind, selection, fetch_mode)
             .await?;
-        self.plan_collection(collection).await
+        self.plan_collection(collection, planning_mode).await
     }
 
     async fn plan_space_list(
@@ -569,12 +648,13 @@ impl BiliClient {
         list_id: u64,
         kind: SpaceListKind,
         selection: Option<Selection>,
+        planning_mode: PlanningMode,
     ) -> Result<DownloadPlan> {
         let fetch_mode = Self::collection_fetch_mode(selection.as_ref())?;
         let collection = self
             .fetch_space_list_collection(owner_mid, list_id, kind, selection, fetch_mode)
             .await?;
-        self.plan_collection(collection).await
+        self.plan_collection(collection, planning_mode).await
     }
 
     async fn parse_input(&self, raw: &str) -> Result<Input> {
@@ -1583,6 +1663,7 @@ impl BiliClient {
         &self,
         video: VideoMetadata,
         selection: Option<Selection>,
+        planning_mode: PlanningMode,
     ) -> Result<DownloadPlan> {
         let pages = Self::select_video_pages(&video, selection.as_ref())?;
         let mut entries = Vec::new();
@@ -1597,6 +1678,7 @@ impl BiliClient {
                     title: page.title,
                     cover_url: video.cover_url.clone(),
                     source: StreamSource::NormalWeb,
+                    planning_mode,
                 })
                 .await?,
             );
@@ -1611,6 +1693,7 @@ impl BiliClient {
         &self,
         season: SeasonResolution,
         source: StreamSource,
+        planning_mode: PlanningMode,
     ) -> Result<DownloadPlan> {
         let mut entries = Vec::new();
         for episode in season.selected_episodes {
@@ -1624,6 +1707,7 @@ impl BiliClient {
                     title: episode_display_title(&episode.title, episode.long_title.as_deref()),
                     cover_url: season.season.cover_url.clone(),
                     source: source.clone(),
+                    planning_mode,
                 })
                 .await?,
             );
@@ -1634,7 +1718,11 @@ impl BiliClient {
         })
     }
 
-    async fn plan_collection(&self, collection: VideoCollectionResolution) -> Result<DownloadPlan> {
+    async fn plan_collection(
+        &self,
+        collection: VideoCollectionResolution,
+        planning_mode: PlanningMode,
+    ) -> Result<DownloadPlan> {
         let mut entries = Vec::new();
         for item in collection.selected_items {
             entries.push(
@@ -1647,6 +1735,7 @@ impl BiliClient {
                     title: item.title,
                     cover_url: item.cover_url,
                     source: StreamSource::NormalWeb,
+                    planning_mode,
                 })
                 .await?,
             );
@@ -1658,18 +1747,34 @@ impl BiliClient {
     }
 
     async fn plan_entry(&self, seed: PlanEntrySeed) -> Result<DownloadEntry> {
-        let resolved_streams = self
-            .fetch_stream_set(seed.source.clone(), seed.aid, seed.cid, seed.epid)
-            .await?;
-        let subtitles = self
-            .fetch_subtitles(
-                resolved_streams.source.clone(),
-                seed.aid,
-                seed.cid,
-                seed.epid,
+        let (source, streams, diagnostics) = if seed.planning_mode.requires_streams() {
+            let resolved_streams = self
+                .fetch_stream_set(seed.source.clone(), seed.aid, seed.cid, seed.epid)
+                .await?;
+            (
+                resolved_streams.source,
+                resolved_streams.streams,
+                resolved_streams.diagnostics,
             )
-            .await
-            .unwrap_or_default();
+        } else {
+            (
+                seed.source.clone(),
+                empty_stream_set(),
+                StreamDiagnostics::default(),
+            )
+        };
+        let subtitles = if seed.planning_mode.requires_subtitles() {
+            let result = self
+                .fetch_subtitles(source.clone(), seed.aid, seed.cid, seed.epid)
+                .await;
+            if matches!(seed.planning_mode, PlanningMode::SubtitlesOnly) {
+                result?
+            } else {
+                result.unwrap_or_default()
+            }
+        } else {
+            Vec::new()
+        };
         Ok(DownloadEntry {
             index: seed.index,
             aid: seed.aid,
@@ -1678,9 +1783,9 @@ impl BiliClient {
             epid: seed.epid,
             title: seed.title,
             cover_url: normalize_optional_media_url(seed.cover_url.as_deref()),
-            source: resolved_streams.source,
-            streams: resolved_streams.streams,
-            diagnostics: resolved_streams.diagnostics,
+            source,
+            streams,
+            diagnostics,
             subtitles,
             danmaku: DanmakuTrack {
                 cid: seed.cid,
@@ -2764,6 +2869,34 @@ struct PlanEntrySeed {
     title: String,
     cover_url: Option<String>,
     source: StreamSource,
+    planning_mode: PlanningMode,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PlanningMode {
+    Full,
+    StreamsOnly,
+    SubtitlesOnly,
+    MetadataOnly,
+}
+
+impl PlanningMode {
+    const fn from_download_mode(mode: DownloadMode) -> Self {
+        match mode {
+            DownloadMode::All => Self::Full,
+            DownloadMode::VideoOnly | DownloadMode::AudioOnly => Self::StreamsOnly,
+            DownloadMode::SubtitleOnly => Self::SubtitlesOnly,
+            DownloadMode::DanmakuOnly | DownloadMode::CoverOnly => Self::MetadataOnly,
+        }
+    }
+
+    const fn requires_streams(self) -> bool {
+        matches!(self, Self::Full | Self::StreamsOnly)
+    }
+
+    const fn requires_subtitles(self) -> bool {
+        matches!(self, Self::Full | Self::SubtitlesOnly)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -2771,6 +2904,17 @@ struct ResolvedStreamSet {
     source: StreamSource,
     streams: StreamSet,
     diagnostics: StreamDiagnostics,
+}
+
+fn empty_stream_set() -> StreamSet {
+    StreamSet {
+        videos: Vec::new(),
+        audios: Vec::new(),
+        flv_segments: Vec::new(),
+        accept_quality: Vec::new(),
+        qualities: Vec::new(),
+        duration_seconds: None,
+    }
 }
 
 impl ResolvedStreamSet {

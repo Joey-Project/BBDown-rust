@@ -4,9 +4,9 @@
 
 `bbdown-core` 是 BBDown Rust 背后的可复用 Rust library package。Rust 代码中以
 `bbdown_core` 导入。它把 Bilibili 和 Bilibili intl 输入解析为 typed metadata、下载计划、
-媒体下载、封面/字幕/弹幕旁路文件、二维码登录凭据、下载归档预检查数据、批量集合
-metadata，以及受限区域代理诊断。原始输入解析覆盖普通视频、PGC 和 intl 分集、PUGV/cheese 课程、
-B23 短链接、收藏夹、空间投稿、合集和系列。
+媒体下载、单独输出下载模式、封面/字幕/弹幕旁路文件、二维码登录凭据、下载归档预检查数
+据、批量集合 metadata，以及受限区域代理诊断。原始输入解析覆盖普通视频、PGC 和 intl 分
+集、PUGV/cheese 课程、B23 短链接、收藏夹、空间投稿、合集和系列。
 
 使用 `cargo add bbdown-core` 安装，然后用 `bbdown_core` 导入。
 
@@ -21,17 +21,25 @@ constructor 和 builder 风格 API，例如 `ClientConfig::default().with_*()`�
 ## 示例
 
 ```rust,no_run
-use bbdown_core::{BiliClient, ClientConfig, DownloadOptions, RetryPolicy, Selection, StreamSelection};
+use bbdown_core::{
+    BiliClient, ClientConfig, DownloadMode, DownloadOptions, RetryPolicy, Selection,
+    StreamSelection,
+};
 use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> bbdown_core::Result<()> {
     let client = BiliClient::new(ClientConfig::default());
     let plan = client
-        .plan_download("BV1qt4y1X7TW", Some(Selection::Current))
+        .plan_download_with_mode(
+            "BV1qt4y1X7TW",
+            Some(Selection::Current),
+            DownloadMode::VideoOnly,
+        )
         .await?;
     let options = DownloadOptions::new("downloads")
         .with_stream_selection(StreamSelection::video(80))
+        .with_download_mode(DownloadMode::VideoOnly)
         .with_retry_policy(RetryPolicy::new(3, Duration::from_millis(250)));
 
     println!("{} entries", plan.entries.len());

@@ -71,6 +71,11 @@ because `DownloadPlan` does not expose collection metadata. The CLI will later a
 prompting, but the library keeps season-like contracts explicit so integrations cannot accidentally
 download a full season.
 
+Mode-aware planning uses the same resolver dispatch but skips media stream resolution for
+sidecar-only modes. Callers that need a plan for archive preflight or UI decisions with a
+non-default `DownloadMode` use `plan_download_with_mode` or `plan_with_download_mode` so the plan
+shape matches the later download options.
+
 ## Stream Planning
 
 `BiliClient::plan` is the public crate API for building a typed download plan from a parsed
@@ -109,6 +114,7 @@ Execution behavior is controlled by `DownloadOptions`:
 - output directory;
 - bounded retry policy;
 - optional DASH video/audio stream id selection;
+- all-output or single-output download mode;
 - HTTP range resume on or off;
 - media read idle timeout;
 - cover, subtitle, and danmaku sidecar inclusion;
@@ -122,6 +128,14 @@ downloads the FLV segments instead; explicit stream selection requires DASH medi
 rejects FLV fallback. Otherwise the entry fails before media writes. Cover, subtitle, and danmaku
 files remain sidecars. When muxing is enabled, the executor invokes `ffmpeg` with explicit argv and
 returns the command plus output path in the report.
+
+`DownloadMode` keeps the default all-output path separate from single-output workflows. `VideoOnly`
+and `AudioOnly` download one matching DASH stream and skip sidecars and muxing. `SubtitleOnly`,
+`DanmakuOnly`, and `CoverOnly` skip media requirements, write only the requested sidecar family, and
+reject stream-quality selection because no media stream is selected.
+Archive content keys are also mode-aware for single-output downloads while preserving the legacy key
+for full downloads, so existing archives still match full downloads and single-output records do not
+claim that a complete entry is already downloaded.
 
 Media and sidecar downloads use media headers without account cookies, because media URLs come from
 API payloads and can target CDN or proxy hosts. DASH and FLV backup URLs are part of the candidate
@@ -156,7 +170,9 @@ round-trip preflight state before executing a `KeepBoth` decision without losing
 reservations, and execution validates that the preflight still matches the current archive before
 applying a decision. Entry-level archive identities use stable aid/cid content ids instead of display
 indexes, optional BVIDs, or optional episode ids, so reordered pages and episode-vs-BV URL forms can
-still be detected as duplicates.
+still be detected as duplicates. `DownloadArchive::records_for_plan` returns matching content
+records across all download modes, while `records_for_plan_with_mode` narrows the lookup to one
+`DownloadMode`.
 `Cancel` is a caller-level stop decision. The CLI exposes the same model with `--archive-file` and
 `--on-duplicate`, rejects an archive file path that overlaps the chosen output root by checking both
 lexical paths and canonical targets, and applies the same guard to archive save sidecar paths.

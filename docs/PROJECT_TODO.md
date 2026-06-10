@@ -22,7 +22,7 @@
 - [pending] Treat the current post-`0.2.0` development line as the next breaking crate release
   before publication because cover support adds public data model and report variants; use `0.3.0`
   unless the release plan chooses a larger version.
-- [pending] Add single-download modes for video-only, audio-only, subtitle-only, danmaku-only, and
+- [completed] Add single-download modes for video-only, audio-only, subtitle-only, danmaku-only, and
   cover-only workflows.
 - [pending] Add ASS-format danmaku sidecar generation.
 - [pending] Add UPOS host replacement controls and PCDN filtering/handling.

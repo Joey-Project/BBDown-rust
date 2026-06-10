@@ -3,11 +3,11 @@
 
 use anyhow::{Context, bail, ensure};
 use bbdown_core::{
-    BiliClient, ClientConfig, CredentialStore, Credentials, DownloadArchive, DownloadOptions,
-    DownloadPreflight, DownloadReport, DuplicateDecision, EndpointConfig, MediaStream, MuxOptions,
-    QrLoginKind, QrLoginState, QrLoginTicket, ResolvedContent, RestrictedArea,
-    RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection,
-    StreamQuality, StreamSelection, StreamSet,
+    BiliClient, ClientConfig, CredentialStore, Credentials, DownloadArchive, DownloadMode,
+    DownloadOptions, DownloadPreflight, DownloadReport, DuplicateDecision, EndpointConfig,
+    MediaStream, MuxOptions, QrLoginKind, QrLoginState, QrLoginTicket, ResolvedContent,
+    RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind,
+    RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::ffi::{OsStr, OsString};
@@ -111,6 +111,8 @@ enum Command {
         download_idle_timeout_seconds: u64,
         #[arg(long)]
         no_resume: bool,
+        #[arg(long, value_enum, value_name = "KIND")]
+        only: Option<DownloadOnlyArg>,
         #[arg(long)]
         no_cover: bool,
         #[arg(long)]
@@ -162,6 +164,131 @@ impl From<DuplicateDecisionArg> for DuplicateDecision {
             DuplicateDecisionArg::Cancel => Self::Cancel,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+enum DownloadOnlyArg {
+    Video,
+    Audio,
+    #[value(alias = "subtitles")]
+    Subtitle,
+    Danmaku,
+    Cover,
+}
+
+impl From<DownloadOnlyArg> for DownloadMode {
+    fn from(value: DownloadOnlyArg) -> Self {
+        match value {
+            DownloadOnlyArg::Video => Self::VideoOnly,
+            DownloadOnlyArg::Audio => Self::AudioOnly,
+            DownloadOnlyArg::Subtitle => Self::SubtitleOnly,
+            DownloadOnlyArg::Danmaku => Self::DanmakuOnly,
+            DownloadOnlyArg::Cover => Self::CoverOnly,
+        }
+    }
+}
+
+fn validate_single_download_args(
+    only: Option<DownloadOnlyArg>,
+    no_cover: bool,
+    no_subtitles: bool,
+    no_danmaku: bool,
+    video_quality: Option<u32>,
+    audio_quality: Option<u32>,
+) -> anyhow::Result<()> {
+    let Some(only) = only else {
+        return Ok(());
+    };
+    ensure!(
+        !(matches!(only, DownloadOnlyArg::Cover) && no_cover),
+        "--only cover conflicts with --no-cover"
+    );
+    ensure!(
+        !(matches!(only, DownloadOnlyArg::Subtitle) && no_subtitles),
+        "--only subtitle conflicts with --no-subtitles"
+    );
+    ensure!(
+        !(matches!(only, DownloadOnlyArg::Danmaku) && no_danmaku),
+        "--only danmaku conflicts with --no-danmaku"
+    );
+    ensure!(
+        !(matches!(only, DownloadOnlyArg::Video) && audio_quality.is_some()),
+        "--only video conflicts with --audio-quality"
+    );
+    ensure!(
+        !(matches!(only, DownloadOnlyArg::Audio) && video_quality.is_some()),
+        "--only audio conflicts with --video-quality"
+    );
+    ensure!(
+        matches!(only, DownloadOnlyArg::Video | DownloadOnlyArg::Audio)
+            || (video_quality.is_none() && audio_quality.is_none()),
+        "stream quality selection requires --only video, --only audio, or the default download mode"
+    );
+    Ok(())
+}
+
+struct DownloadOptionCliArgs {
+    output_dir: PathBuf,
+    retry_attempts: u32,
+    retry_backoff_ms: u64,
+    download_idle_timeout_seconds: u64,
+    only: Option<DownloadOnlyArg>,
+    execution: DownloadExecutionCliFlags,
+    sidecars: DownloadSidecarCliFlags,
+    video_quality: Option<u32>,
+    audio_quality: Option<u32>,
+    ffmpeg: PathBuf,
+}
+
+struct DownloadExecutionCliFlags {
+    no_resume: bool,
+    no_mux: bool,
+}
+
+struct DownloadSidecarCliFlags {
+    no_cover: bool,
+    no_subtitles: bool,
+    no_danmaku: bool,
+}
+
+fn download_options_from_cli(args: DownloadOptionCliArgs) -> anyhow::Result<DownloadOptions> {
+    ensure!(
+        args.retry_attempts > 0,
+        "--retry-attempts must be greater than 0"
+    );
+    validate_single_download_args(
+        args.only,
+        args.sidecars.no_cover,
+        args.sidecars.no_subtitles,
+        args.sidecars.no_danmaku,
+        args.video_quality,
+        args.audio_quality,
+    )?;
+    let download_idle_timeout = if args.download_idle_timeout_seconds == 0 {
+        None
+    } else {
+        Some(Duration::from_secs(args.download_idle_timeout_seconds))
+    };
+    let mode = args.only.map_or(DownloadMode::All, Into::into);
+    let mux = if args.execution.no_mux {
+        MuxOptions::Disabled
+    } else {
+        MuxOptions::ffmpeg(args.ffmpeg)
+    };
+    Ok(DownloadOptions::new(args.output_dir)
+        .with_retry_policy(RetryPolicy::new(
+            args.retry_attempts,
+            Duration::from_millis(args.retry_backoff_ms),
+        ))
+        .with_stream_selection(StreamSelection::new(args.video_quality, args.audio_quality))
+        .with_download_idle_timeout(download_idle_timeout)
+        .with_resume(!args.execution.no_resume)
+        .with_download_mode(mode)
+        .with_cover(!args.sidecars.no_cover)
+        .with_subtitles(!args.sidecars.no_subtitles)
+        .with_danmaku(!args.sidecars.no_danmaku)
+        .with_mux(mux))
 }
 
 #[derive(Debug, Args)]
@@ -228,6 +355,7 @@ async fn main() -> anyhow::Result<()> {
             retry_backoff_ms,
             download_idle_timeout_seconds,
             no_resume,
+            only,
             no_cover,
             no_subtitles,
             no_danmaku,
@@ -242,32 +370,22 @@ async fn main() -> anyhow::Result<()> {
                 archive_file.is_some() || on_duplicate.is_none(),
                 "--on-duplicate requires --archive-file"
             );
-            ensure!(
-                retry_attempts > 0,
-                "--retry-attempts must be greater than 0"
-            );
-            let download_idle_timeout = if download_idle_timeout_seconds == 0 {
-                None
-            } else {
-                Some(Duration::from_secs(download_idle_timeout_seconds))
-            };
-            let mux = if no_mux {
-                MuxOptions::Disabled
-            } else {
-                MuxOptions::ffmpeg(ffmpeg)
-            };
-            let options = DownloadOptions::new(output_dir)
-                .with_retry_policy(RetryPolicy::new(
-                    retry_attempts,
-                    Duration::from_millis(retry_backoff_ms),
-                ))
-                .with_stream_selection(StreamSelection::new(video_quality, audio_quality))
-                .with_download_idle_timeout(download_idle_timeout)
-                .with_resume(!no_resume)
-                .with_cover(!no_cover)
-                .with_subtitles(!no_subtitles)
-                .with_danmaku(!no_danmaku)
-                .with_mux(mux);
+            let options = download_options_from_cli(DownloadOptionCliArgs {
+                output_dir,
+                retry_attempts,
+                retry_backoff_ms,
+                download_idle_timeout_seconds,
+                only,
+                execution: DownloadExecutionCliFlags { no_resume, no_mux },
+                sidecars: DownloadSidecarCliFlags {
+                    no_cover,
+                    no_subtitles,
+                    no_danmaku,
+                },
+                video_quality,
+                audio_quality,
+                ffmpeg,
+            })?;
             let args = DownloadCommandArgs {
                 url,
                 select,
@@ -417,7 +535,9 @@ async fn handle_download(
         credentials,
     ));
     let report = if let Some(archive_file) = args.archive_file {
-        let plan = client.plan_download(&args.url, args.select).await?;
+        let plan = client
+            .plan_download_with_mode(&args.url, args.select, args.options.mode)
+            .await?;
         let mut archive = DownloadArchive::load(&archive_file)
             .with_context(|| format!("failed to load archive {}", archive_file.display()))?;
         let preflight = DownloadPreflight::inspect(&plan, &args.options, Some(&archive))?;
