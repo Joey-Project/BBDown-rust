@@ -1138,8 +1138,9 @@ impl BiliClient {
         selection: Option<Selection>,
         fetch_mode: CollectionFetchMode,
     ) -> Result<VideoCollectionResolution> {
+        let newest_first = matches!(selection, Some(Selection::Latest));
         let collection = self
-            .fetch_space_list_collection_all(owner_mid, list_id, kind, fetch_mode)
+            .fetch_space_list_collection_all(owner_mid, list_id, kind, fetch_mode, newest_first)
             .await?;
         Self::resolve_collection_selection(collection, selection.as_ref())
     }
@@ -1150,11 +1151,19 @@ impl BiliClient {
         list_id: u64,
         kind: SpaceListKind,
         fetch_mode: CollectionFetchMode,
+        newest_first: bool,
     ) -> Result<VideoCollectionMetadata> {
         let page_size = 30_u32;
         let mut page_number = 1_u32;
         let first = self
-            .fetch_space_archive_page(owner_mid, list_id, kind, page_number, page_size)
+            .fetch_space_archive_page(
+                owner_mid,
+                list_id,
+                kind,
+                page_number,
+                page_size,
+                newest_first,
+            )
             .await?;
         let meta = match kind {
             SpaceListKind::Collection => first.meta,
@@ -1179,10 +1188,17 @@ impl BiliClient {
                 break;
             }
             page_number += 1;
-            archives = self
-                .fetch_space_archive_page(owner_mid, list_id, kind, page_number, page_size)
-                .await?
-                .archives;
+            let next_data = self
+                .fetch_space_archive_page(
+                    owner_mid,
+                    list_id,
+                    kind,
+                    page_number,
+                    page_size,
+                    newest_first,
+                )
+                .await?;
+            archives = next_data.archives;
         }
         renumber_collection_items(&mut items);
         let title = meta
@@ -1214,6 +1230,7 @@ impl BiliClient {
         kind: SpaceListKind,
         page_number: u32,
         page_size: u32,
+        newest_first: bool,
     ) -> Result<SpaceArchiveListData> {
         let path = match kind {
             SpaceListKind::Collection => "/x/polymer/web-space/seasons_archives_list",
@@ -1225,7 +1242,7 @@ impl BiliClient {
                 url.query_pairs_mut()
                     .append_pair("mid", &owner_mid.to_string())
                     .append_pair("season_id", &list_id.to_string())
-                    .append_pair("sort_reverse", "false")
+                    .append_pair("sort_reverse", if newest_first { "true" } else { "false" })
                     .append_pair("page_num", &page_number.to_string())
                     .append_pair("page_size", &page_size.to_string());
             }
@@ -1382,17 +1399,21 @@ impl BiliClient {
                     .aid
                     .ok_or(Error::MissingField("data.list.vlist[].aid"))?;
                 let metadata = self.fetch_video_by_aid(aid, TagPolicy::Skip).await?;
+                let page_count = u32::try_from(metadata.pages.len())
+                    .ok()
+                    .filter(|count| *count > 0)
+                    .unwrap_or(1);
                 for page in metadata.pages {
                     items.push(VideoCollectionItem {
                         index: 0,
                         aid: page.aid,
                         bvid: metadata.bvid.clone().or_else(|| video.bvid.clone()),
                         cid: page.cid,
-                        title: format_collection_page_title(
-                            &metadata.title,
-                            page.index,
-                            &page.title,
-                        ),
+                        title: if page_count == 1 {
+                            metadata.title.clone()
+                        } else {
+                            format_collection_page_title(&metadata.title, page.index, &page.title)
+                        },
                         cover_url: metadata.cover_url.clone().or_else(|| video.pic.clone()),
                         description: metadata.description.clone(),
                         pub_time: metadata.pub_time.or(video.created),
@@ -2189,10 +2210,7 @@ fn season_from_pugv(data: PugvSeasonData) -> SeasonMetadata {
         let Some(cid) = episode.cid else {
             continue;
         };
-        let Some(index) = episode
-            .index
-            .or_else(|| u32::try_from(fallback_index + 1).ok())
-        else {
+        let Some(index) = u32::try_from(fallback_index + 1).ok() else {
             continue;
         };
         episodes.push(EpisodeMetadata {
@@ -2525,8 +2543,6 @@ struct PugvEpisode {
     id: Option<u64>,
     aid: Option<u64>,
     cid: Option<u64>,
-    #[serde(rename = "index")]
-    index: Option<u32>,
     title: Option<String>,
     release_date: Option<i64>,
 }
@@ -4461,7 +4477,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cheese_episode_current_preserves_api_index_from_later_page() -> anyhow::Result<()> {
+    async fn cheese_episode_current_uses_global_index_from_loaded_order() -> anyhow::Result<()> {
         let server = MockServer::start();
         server.mock(|when, then| {
             when.method(GET)
@@ -4477,7 +4493,8 @@ mod tests {
                         "id": 102,
                         "aid": 170_002,
                         "cid": 9989,
-                        "index": 2,
+                        "index": 1,
+                        "page": 2,
                         "title": "Second lesson"
                     }]
                 }
@@ -4518,7 +4535,8 @@ mod tests {
                         "id": 102,
                         "aid": 170_002,
                         "cid": 9989,
-                        "index": 2,
+                        "index": 1,
+                        "page": 2,
                         "title": "Second lesson"
                     }]
                 }
@@ -4602,7 +4620,8 @@ mod tests {
                         "id": 102,
                         "aid": 170_002,
                         "cid": 9989,
-                        "index": 2,
+                        "index": 1,
+                        "page": 2,
                         "title": "Second lesson",
                         "release_date": 1_700_000_001
                     }]
@@ -4617,6 +4636,7 @@ mod tests {
             ResolvedContent::Season(season) => {
                 assert_eq!(season.season.episodes.len(), 2);
                 assert_eq!(season.selected_episodes[0].epid, 102);
+                assert_eq!(season.selected_episodes[0].index, 2);
                 assert_eq!(
                     season.selected_episodes[0].long_title.as_deref(),
                     Some("Second lesson")
@@ -4653,7 +4673,8 @@ mod tests {
                                 "id": episode_id,
                                 "aid": 170_000 + episode_id,
                                 "cid": 9_000 + episode_id,
-                                "index": page_number,
+                                "index": 1,
+                                "page": page_number,
                                 "title": title
                             }]
                         }
@@ -4688,6 +4709,7 @@ mod tests {
             ResolvedContent::Season(season) => {
                 assert_eq!(season.season.episodes.len(), 3);
                 assert_eq!(season.selected_episodes[0].epid, 103);
+                assert_eq!(season.selected_episodes[0].index, 3);
             }
             ResolvedContent::Video(_) | ResolvedContent::Collection(_) => {
                 return Err(anyhow::anyhow!("expected season"));
@@ -4714,7 +4736,8 @@ mod tests {
                         "id": 102,
                         "aid": 170_002,
                         "cid": 9989,
-                        "index": 2,
+                        "index": 1,
+                        "page": 2,
                         "title": "Second lesson"
                     }]
                 }
@@ -4755,7 +4778,8 @@ mod tests {
                         "id": 102,
                         "aid": 170_002,
                         "cid": 9989,
-                        "index": 2,
+                        "index": 1,
+                        "page": 2,
                         "title": "Second lesson"
                     }]
                 }
@@ -5124,6 +5148,78 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn space_collection_latest_requests_newest_first() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/polymer/web-space/seasons_archives_list")
+                .query_param("mid", "123")
+                .query_param("season_id", "456")
+                .query_param("sort_reverse", "true")
+                .query_param("page_num", "1")
+                .query_param("page_size", "30");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "archives": [{
+                        "aid": 170_001,
+                        "bvid": "BV1xx411c7mD",
+                        "title": "Newest collection video",
+                        "pic": "https://example.invalid/collection.jpg",
+                        "pubdate": 1_700_000_001,
+                        "duration": 3
+                    }],
+                    "meta": {
+                        "name": "Uploader collection",
+                        "description": "Collection intro",
+                        "cover": "https://example.invalid/collection-cover.jpg",
+                        "mid": 123,
+                        "total": 1
+                    },
+                    "page": {"total": 1}
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("aid", "170001");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "aid": 170_001,
+                    "bvid": "BV1xx411c7mD",
+                    "title": "Newest collection video",
+                    "desc": "Collection video description",
+                    "owner": {"mid": 123, "name": "Uploader"},
+                    "pages": [{"page": 1, "cid": 9988, "part": "Main", "duration": 3}]
+                }
+            }));
+        });
+
+        let resolved = test_client(&server)
+            .resolve_input(
+                "https://space.bilibili.com/123/lists/456?type=collection",
+                Some(Selection::Latest),
+            )
+            .await?;
+
+        match resolved {
+            ResolvedContent::Collection(collection) => {
+                assert_eq!(collection.collection.kind, VideoCollectionKind::Collection);
+                assert_eq!(
+                    collection.selected_items[0].title,
+                    "Newest collection video"
+                );
+            }
+            ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
+                return Err(anyhow::anyhow!("expected collection"));
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn resolves_space_videos_from_wbi_response_shape() -> anyhow::Result<()> {
         let server = MockServer::start();
         server.mock(|when, then| {
@@ -5176,7 +5272,7 @@ mod tests {
                     "title": "Space video",
                     "desc": "Space description",
                     "owner": {"mid": 123, "name": "Uploader"},
-                    "pages": [{"page": 1, "cid": 9988, "part": "Space video", "duration": 3}]
+                    "pages": [{"page": 1, "cid": 9988, "part": "Main", "duration": 3}]
                 }
             }));
         });

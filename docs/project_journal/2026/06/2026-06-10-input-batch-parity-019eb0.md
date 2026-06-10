@@ -96,6 +96,11 @@ superseded_by:
 - The frozen-range review then found that empty favorite lists can return `medias: null`; collection
   list payloads now deserialize null list fields as empty vectors, with a regression test covering
   empty favorites.
+- The final pre-merge review cycle found duplicate PUGV episode indexes on real paginated `ep/list`
+  payloads, inverted `latest` ordering for owner-scoped space collections, and single-page space
+  upload title suffixes. PUGV now derives global episode indexes from loaded order, space collection
+  `latest` requests newest-first archives, and space uploads reuse the single-page title behavior
+  used by the other collection paths.
 
 ## Next Steps
 
