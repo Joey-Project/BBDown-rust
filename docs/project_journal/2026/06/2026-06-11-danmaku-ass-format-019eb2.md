@@ -5,7 +5,7 @@ status: completed
 created: 2026-06-11
 updated: 2026-06-11
 branch: wip/danmaku-ass-format
-pr:
+pr: https://github.com/Joey-Project/BBDown-rust/pull/23
 supersedes: []
 superseded_by:
 ---
