@@ -24,8 +24,8 @@ consumed data surfaces and may gain fields.
 
 ```rust,no_run
 use bbdown_core::{
-    BiliClient, ClientConfig, DownloadMode, DownloadOptions, MediaHostOptions, RetryPolicy, Selection,
-    StreamSelection,
+    BiliClient, ClientConfig, DownloadMode, DownloadOptions, DownloadPathTemplates,
+    MediaHostOptions, RetryPolicy, Selection, StreamSelection,
 };
 use std::time::Duration;
 
@@ -42,6 +42,11 @@ async fn main() -> bbdown_core::Result<()> {
     let options = DownloadOptions::new("downloads")
         .with_stream_selection(StreamSelection::video(80))
         .with_download_mode(DownloadMode::VideoOnly)
+        .with_path_templates(
+            DownloadPathTemplates::new()
+                .with_output_dir("{title}-{entry_count:02}")
+                .with_entry_dir("{index:03}-{entry_title}-{content_id}"),
+        )
         .with_media_hosts(
             MediaHostOptions::new().with_upos_host("upos-sz-mirrorcoso1.bilivideo.com"),
         )
@@ -61,6 +66,10 @@ video pipeline.
 The library default preserves planned media URLs. Set `MediaHostOptions` explicitly when an
 embedding application wants a custom UPOS host, force-replace behavior, or CLI-compatible PCDN
 fallback handling.
+Set `DownloadPathTemplates` when an embedding application needs BBDown-style or application-specific
+output names. Templates render sanitized filename components for the output root, entry directory,
+and muxed file stem while media and sidecar filenames remain stable for resume and archive records.
+Entry templates must render unique directory names across the selected entries.
 
 See the repository embedding guide for restricted-area proxy, endpoint override, credential,
 download archive, and download execution examples:

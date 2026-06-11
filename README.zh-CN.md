@@ -63,6 +63,7 @@ bbdown download fav456 --select page:1 --output-dir downloads
 bbdown download av170001 --output-dir downloads --no-mux --json
 bbdown download av170001 --only cover --output-dir downloads --json
 bbdown download av170001 --output-dir downloads --archive-file downloads/archive.json --on-duplicate keep-both
+bbdown download av170001 --output-template "{title}-{entry_count:02}" --entry-template "{index:02}-{entry_title}" --no-mux
 bbdown download av170001 --upos-host upos-sz-mirrorcoso1.bilivideo.com --no-mux
 ```
 
@@ -74,6 +75,9 @@ bbdown download av170001 --upos-host upos-sz-mirrorcoso1.bilivideo.com --no-mux
 `--danmaku-format xml,ass` 可同时保留 XML 和 ASS 旁路文件。
 使用 `--only video`、`--only audio`、`--only subtitle`、`--only danmaku` 或
 `--only cover` 可只写入一种输出；single-output 模式会跳过 mux。
+使用 `--output-template`、`--entry-template` 和 `--mux-template` 可定制输出根目录、条目
+目录和 mux 文件名 stem。模板输出会按文件名组件清洗；媒体、封面、字幕和弹幕旁路文件名
+仍保持稳定，以保证续传和重复轨道处理安全。条目模板必须在选中条目之间渲染出唯一目录名。
 CLI 默认会避开疑似 PCDN 媒体 URL，同时保留本地和私网 host。传入 `--allow-pcdn` 可保留
 原始 PCDN 候选；传入 `--upos-host <HOST>` 可把 DASH/FLV 媒体候选改写到指定 UPOS host；
 传入 `--force-replace-host` 可把媒体候选改写到内置 BBDown fallback host。封面、字幕和弹

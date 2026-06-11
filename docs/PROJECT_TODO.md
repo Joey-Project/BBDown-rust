@@ -26,6 +26,7 @@
   cover-only workflows.
 - [completed] Add ASS-format danmaku sidecar generation.
 - [completed] Add UPOS host replacement controls and PCDN filtering/handling.
-- [pending] Continue BBDown parity work after the current slices: richer filename templates,
-  additional app/TV playurl modes, richer selection syntax, API/server integration surfaces,
-  aria2 or multi-thread download integration, MP4Box muxing, and subtitle-to-SRT conversion.
+- [completed] Add richer output, entry, and mux filename templates for CLI and API downloads.
+- [pending] Continue BBDown parity work after the current slices: additional app/TV playurl modes,
+  richer selection syntax, API/server integration surfaces, aria2 or multi-thread download
+  integration, MP4Box muxing, and subtitle-to-SRT conversion.

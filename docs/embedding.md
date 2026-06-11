@@ -140,8 +140,8 @@ spawn `ffmpeg` unless they opt in.
 
 ```rust,no_run
 use bbdown_core::{
-    BiliClient, ClientConfig, DanmakuFormat, DownloadMode, DownloadOptions, MuxOptions,
-    RetryPolicy, StreamSelection,
+    BiliClient, ClientConfig, DanmakuFormat, DownloadMode, DownloadOptions, DownloadPathTemplates,
+    MuxOptions, RetryPolicy, StreamSelection,
 };
 use std::time::Duration;
 
@@ -157,6 +157,12 @@ async fn main() -> bbdown_core::Result<()> {
         .with_subtitles(true)
         .with_danmaku(true)
         .with_danmaku_format(DanmakuFormat::Ass)
+        .with_path_templates(
+            DownloadPathTemplates::new()
+                .with_output_dir("{title}-{entry_count:02}")
+                .with_entry_dir("{index:03}-{entry_title}-{content_id}")
+                .with_mux_file_stem("{index:03}-{entry_title}"),
+        )
         .with_mux(MuxOptions::ffmpeg("ffmpeg"));
 
     let report = client
@@ -179,6 +185,15 @@ non-default mode.
 Danmaku sidecars default to `DanmakuFormat::Xml`; use `DanmakuFormat::Ass` for ASS-only output, or
 `DownloadOptions::with_danmaku_formats([DanmakuFormat::Xml, DanmakuFormat::Ass])` when the
 embedding UI needs to keep both XML and ASS sidecars.
+`DownloadPathTemplates` customizes the output root, entry directory, and muxed file stem while
+keeping the media and sidecar filenames stable. Template strings render one path component and are
+sanitized after expansion. Output templates can use `{title}` and `{entry_count}`; entry and mux
+templates can use `{title}`, `{entry_title}` or `{page_title}`, `{index}` or `{page}`, `{aid}`,
+`{bvid}`, `{cid}`, `{epid}`, and `{content_id}`. Numeric placeholders accept zero padding such as
+`{index:03}`. Entry templates must render a unique directory name for every selected entry; include
+`{index}` or `{content_id}` when titles may repeat. If an embedding application shows archive
+preflight results before downloading, build the preflight with the same `DownloadOptions` and
+templates that will later be passed to execution.
 
 The crate default preserves media URLs exactly as planned. Embedding applications that need
 BBDown-like PCDN avoidance or a custom UPOS host can set `MediaHostOptions` on `DownloadOptions`.

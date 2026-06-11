@@ -107,6 +107,7 @@ CLI 通过 `bbdown plan` 暴露这一层。该命令被有意设计为规划表�
 执行行为由 `DownloadOptions` 控制：
 
 - 输出目录；
+- 输出根目录、条目目录和 mux 文件名 stem 的路径模板；
 - 有界重试策略；
 - 可选 DASH video/audio stream id 选择；
 - all-output 或 single-output 下载模式；
@@ -127,6 +128,13 @@ id。如果请求的 id 不可用，executor 会报告可用 id，并在媒体�
 Plan 条目保留 canonical 弹幕 XML 端点；只有当执行层选择的 `DanmakuFormats` 集合包含
 `DanmakuFormat::Ass` 时，executor 才会把 XML 转为 ASS。ASS 生成支持常见滚动、顶部、底
 部和反向滚动弹幕，并会跳过高级定位弹幕，避免写出误导性的坐标。
+
+输出命名由 `DownloadPathTemplates` 驱动。输出根目录模板从 plan context 渲染；条目目录
+和 mux 文件名 stem 模板从 entry context 渲染。渲染结果会作为单个文件名组件清洗，因此模
+板不能注入嵌套路径。媒体、封面、字幕和弹幕旁路文件名会继续由 metadata 生成并保持稳定，
+以支持续传行为、重复轨道命名和归档路径记录。重复 preflight 会比较后续执行使用的同一份
+`DownloadOptions` 渲染出的计划输出目录。executor 会拒绝让同一计划中多个条目渲染到同一
+目录的 entry 模板，因为共享条目目录会让续传和 sidecar 输出变得歧义。
 
 `DownloadMode` 将默认 all-output 路径和单独输出 workflow 分开。`VideoOnly` 和 `AudioOnly`
 只下载一个匹配的 DASH stream，并跳过 sidecar 和 mux。`SubtitleOnly`、`DanmakuOnly` 和
