@@ -55,7 +55,7 @@ bbdown info https://b23.tv/example --json
 bbdown info cheese/ep101 --json
 bbdown info cheese/ss202 --select latest --json
 bbdown info fav456 --json
-bbdown info mid123 --select page:1 --json
+bbdown info mid123 --select 1,3-5 --json
 bbdown info collection456 --json
 bbdown info series456 --select latest --json
 bbdown info https://www.bilibili.com/medialist/detail/ml1103407912 --json
@@ -66,13 +66,19 @@ bbdown info 'https://space.bilibili.com/123/lists/456?type=series' --json
 ```
 
 Season, media, and `cheese/ss...` inputs require `--select` in non-interactive mode. Supported
-selectors are `latest`, `all`, `episode:<epid>`, and `page:<index>`. `current` is only meaningful
-for `ep`, `cheese/ep`, and `bilibili.tv` episode URLs, where the input already identifies the
-current episode. Favorite lists, space videos, collections, and series are batch inputs; without
-`--select`, they resolve all parsed items. Use `--select page:<index>` for one collection item or
-`--select latest` for the first parsed item in the upstream list order. JSON metadata keeps the full parsed collection item
-list under `collection.collection.items` and reports the active subset under
-`collection.selected_items`; empty
+selectors are `latest`, `all`, `episode:<epid>`, numeric index selectors, and `page:<index>`.
+`current` is only meaningful for `ep`, `cheese/ep`, and `bilibili.tv` episode URLs, where the input
+already identifies the current episode.
+
+Numeric index selectors apply to video pages, PGC/PUGV episode indexes, and batch collection item
+indexes. Use `--select 2`, `--select page:2`, `--select 1,3-5`, or `--select page:2-4,7`. Lists and
+ranges preserve the requested order and deduplicate repeated indexes. `episode:<epid>` still selects
+an exact PGC episode id rather than an episode index.
+
+Favorite lists, space videos, collections, and series are batch inputs; without `--select`, they
+resolve all parsed items. Use `--select latest` for the first parsed item in the upstream list
+order. JSON metadata keeps the full parsed collection item list under
+`collection.collection.items` and reports the active subset under `collection.selected_items`; empty
 collections are valid empty lists.
 
 Favorite list URLs are accepted from shorthand ids, space favlist pages, canonical
@@ -90,7 +96,7 @@ bbdown plan ep267851 --json
 bbdown plan ss26801 --select latest --json
 bbdown plan https://www.bilibili.tv/en/play/34613/341736 --json
 bbdown plan cheese/ep101 --json
-bbdown plan fav456 --select page:1 --json
+bbdown plan fav456 --select 1,3-5 --json
 bbdown plan 'https://space.bilibili.com/123/channel/collectiondetail?sid=456' --select all --json
 ```
 
@@ -124,7 +130,7 @@ Use `download` to resolve a plan and write files:
 ```bash
 bbdown download av170001 --output-dir downloads
 bbdown download ss26801 --select latest --output-dir downloads
-bbdown download fav456 --select page:1 --output-dir downloads
+bbdown download fav456 --select 1,3-5 --output-dir downloads
 bbdown download av170001 --output-dir downloads --no-mux --json
 bbdown download av170001 --video-quality 64 --audio-quality 30216 --output-dir downloads
 bbdown download av170001 --only subtitle --output-dir downloads --json

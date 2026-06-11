@@ -27,6 +27,8 @@
 - [completed] Add ASS-format danmaku sidecar generation.
 - [completed] Add UPOS host replacement controls and PCDN filtering/handling.
 - [completed] Add richer output, entry, and mux filename templates for CLI and API downloads.
+- [completed] Add richer selection syntax for numeric lists and ranges across video pages, season
+  episode indexes, and batch collection items.
 - [pending] Continue BBDown parity work after the current slices: additional app/TV playurl modes,
-  richer selection syntax, API/server integration surfaces, aria2 or multi-thread download
-  integration, MP4Box muxing, and subtitle-to-SRT conversion.
+  API/server integration surfaces, aria2 or multi-thread download integration, MP4Box muxing, and
+  subtitle-to-SRT conversion.

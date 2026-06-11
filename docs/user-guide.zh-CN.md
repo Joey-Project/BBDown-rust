@@ -52,7 +52,7 @@ bbdown info https://b23.tv/example --json
 bbdown info cheese/ep101 --json
 bbdown info cheese/ss202 --select latest --json
 bbdown info fav456 --json
-bbdown info mid123 --select page:1 --json
+bbdown info mid123 --select 1,3-5 --json
 bbdown info collection456 --json
 bbdown info series456 --select latest --json
 bbdown info https://www.bilibili.com/medialist/detail/ml1103407912 --json
@@ -63,12 +63,18 @@ bbdown info 'https://space.bilibili.com/123/lists/456?type=series' --json
 ```
 
 Season、media 和 `cheese/ss...` 输入在非交互模式下需要 `--select`。支持的 selector 是
-`latest`、`all`、`episode:<epid>` 和 `page:<index>`。`current` 只对 `ep`、`cheese/ep`
-和 `bilibili.tv` 分集 URL 有意义，因为这些输入本身已经标识当前分集。收藏夹、空间投稿、
-合集和系列是批量输入；不传 `--select` 时会解析全部条目。使用 `--select page:<index>` 可
-选择一个集合条目，使用 `--select latest` 可选择上游列表顺序中的第一个解析条目。JSON metadata 会在
-`collection.collection.items` 保留完整解析到的集合条目列表，并在
-`collection.selected_items` 报告当前选中子集；空集合是有效的空列表。
+`latest`、`all`、`episode:<epid>`、数字 index selector 和 `page:<index>`。`current` 只对
+`ep`、`cheese/ep` 和 `bilibili.tv` 分集 URL 有意义，因为这些输入本身已经标识当前分集。
+
+数字 index selector 适用于普通视频分 P、PGC/PUGV 分集序号，以及批量集合条目序号。可以
+使用 `--select 2`、`--select page:2`、`--select 1,3-5` 或
+`--select page:2-4,7`。列表和范围会保留请求顺序，并对重复 index 去重。
+`episode:<epid>` 仍然表示精确 PGC episode id，而不是分集序号。
+
+收藏夹、空间投稿、合集和系列是批量输入；不传 `--select` 时会解析全部条目。使用
+`--select latest` 可选择上游列表顺序中的第一个解析条目。JSON metadata 会在
+`collection.collection.items` 保留完整解析到的集合条目列表，并在 `collection.selected_items`
+报告当前选中子集；空集合是有效的空列表。
 
 收藏夹 URL 可来自 shorthand id、空间 favlist 页面、canonical `/list/ml...` 页面，以及
 `/medialist/.../ml...` 页面。空间合集和系列 URL 会保留
@@ -85,7 +91,7 @@ bbdown plan ep267851 --json
 bbdown plan ss26801 --select latest --json
 bbdown plan https://www.bilibili.tv/en/play/34613/341736 --json
 bbdown plan cheese/ep101 --json
-bbdown plan fav456 --select page:1 --json
+bbdown plan fav456 --select 1,3-5 --json
 bbdown plan 'https://space.bilibili.com/123/channel/collectiondetail?sid=456' --select all --json
 ```
 
@@ -115,7 +121,7 @@ payload 时，CLI 会把它报告为访问限制。配置后，PGC playurl 解�
 ```bash
 bbdown download av170001 --output-dir downloads
 bbdown download ss26801 --select latest --output-dir downloads
-bbdown download fav456 --select page:1 --output-dir downloads
+bbdown download fav456 --select 1,3-5 --output-dir downloads
 bbdown download av170001 --output-dir downloads --no-mux --json
 bbdown download av170001 --video-quality 64 --audio-quality 30216 --output-dir downloads
 bbdown download av170001 --only subtitle --output-dir downloads --json

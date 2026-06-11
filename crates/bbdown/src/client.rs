@@ -6,10 +6,11 @@ use crate::models::{
     SubtitleFormat, SubtitleTrack, Tag, VideoCollectionItem, VideoCollectionKind,
     VideoCollectionMetadata, VideoCollectionResolution, VideoMetadata,
 };
-use crate::{Credentials, Error, Input, Result, Selection};
+use crate::{Credentials, Error, IndexSelection, Input, Result, Selection};
 use md5::{Digest, Md5};
 use reqwest::header::{COOKIE, HeaderMap, HeaderValue, REFERER, USER_AGENT};
 use serde::Deserialize;
+use std::collections::HashSet;
 use std::fmt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use url::Url;
@@ -1637,6 +1638,12 @@ impl BiliClient {
                 .cloned()
                 .into_iter()
                 .collect(),
+            Some(Selection::Indices(indices)) => select_items_by_index(
+                &season.episodes,
+                indices,
+                |episode| episode.index,
+                "selected episode",
+            )?,
             Some(Selection::Current) | None => {
                 let epid = current_epid.ok_or(Error::SelectionRequired { input_kind })?;
                 season
@@ -1812,6 +1819,9 @@ impl BiliClient {
                 .cloned()
                 .into_iter()
                 .collect(),
+            Some(Selection::Indices(indices)) => {
+                select_items_by_index(&video.pages, indices, |page| page.index, "selected page")?
+            }
             Some(Selection::Current) | None => video.pages.first().cloned().into_iter().collect(),
             Some(Selection::Episode(_)) => {
                 return Err(Error::InvalidInput(
@@ -1838,6 +1848,12 @@ impl BiliClient {
                 .cloned()
                 .into_iter()
                 .collect(),
+            Some(Selection::Indices(indices)) => select_items_by_index(
+                &collection.items,
+                indices,
+                |item| item.index,
+                "selected collection item",
+            )?,
             Some(Selection::Episode(_)) => {
                 return Err(Error::InvalidInput(
                     "episode selection is only valid for PGC inputs".to_owned(),
@@ -1872,6 +1888,7 @@ impl BiliClient {
             )),
             Some(Selection::Latest) => Ok(CollectionFetchMode::Latest),
             Some(Selection::Page(page)) => Ok(CollectionFetchMode::Page(*page)),
+            Some(Selection::Indices(indices)) => Ok(CollectionFetchMode::Page(indices.max_index())),
             Some(Selection::All) | None => Ok(CollectionFetchMode::All),
         }
     }
@@ -2914,6 +2931,63 @@ fn empty_stream_set() -> StreamSet {
         accept_quality: Vec::new(),
         qualities: Vec::new(),
         duration_seconds: None,
+    }
+}
+
+fn select_items_by_index<T: Clone>(
+    items: &[T],
+    selection: &IndexSelection,
+    index_of: impl Fn(&T) -> u32,
+    missing_field: &'static str,
+) -> Result<Vec<T>> {
+    let indexed_items = items
+        .iter()
+        .map(|item| (index_of(item), item))
+        .collect::<Vec<_>>();
+    let available_indices = indexed_items
+        .iter()
+        .map(|(index, _)| *index)
+        .collect::<HashSet<_>>();
+    for selector in selection.selectors() {
+        validate_index_selector_matches(*selector, &available_indices, missing_field)?;
+    }
+
+    let mut selected = Vec::new();
+    let mut seen = HashSet::new();
+    for selector in selection.selectors() {
+        for (index, item) in &indexed_items {
+            if selector.contains(*index) && seen.insert(*index) {
+                selected.push((*item).clone());
+            }
+        }
+    }
+    Ok(selected)
+}
+
+fn validate_index_selector_matches(
+    selector: crate::IndexSelector,
+    available_indices: &HashSet<u32>,
+    missing_field: &'static str,
+) -> Result<()> {
+    match selector {
+        crate::IndexSelector::Index(index) => {
+            if available_indices.contains(&index) {
+                Ok(())
+            } else {
+                Err(Error::MissingField(missing_field))
+            }
+        }
+        crate::IndexSelector::Range { start, end } => {
+            let requested_count = u64::from(end) - u64::from(start) + 1;
+            if requested_count > available_indices.len() as u64 {
+                return Err(Error::MissingField(missing_field));
+            }
+            if (start..=end).all(|index| available_indices.contains(&index)) {
+                Ok(())
+            } else {
+                Err(Error::MissingField(missing_field))
+            }
+        }
     }
 }
 
@@ -4048,8 +4122,9 @@ mod tests {
         RestrictedAreaConfig, RestrictedAreaProxy, intl_ogv_playurl_params,
     };
     use crate::{
-        Credentials, Error, Input, ResolvedContent, Selection, StreamSource, SubtitleFormat,
-        VideoCollectionItem, VideoCollectionKind, VideoCollectionMetadata,
+        Credentials, EpisodeMetadata, Error, IndexSelection, IndexSelector, Input, PageMetadata,
+        ResolvedContent, SeasonMetadata, Selection, StreamSource, SubtitleFormat,
+        VideoCollectionItem, VideoCollectionKind, VideoCollectionMetadata, VideoMetadata,
     };
     use httpmock::MockServer;
     use httpmock::prelude::*;
@@ -5727,6 +5802,144 @@ mod tests {
     }
 
     #[test]
+    fn video_index_selection_preserves_selector_order_and_deduplicates() -> anyhow::Result<()> {
+        let video = VideoMetadata {
+            aid: 170_001,
+            bvid: Some("BV1xx411c7mD".to_owned()),
+            title: "Multi page".to_owned(),
+            description: String::new(),
+            cover_url: None,
+            pub_time: None,
+            owner: None,
+            tags: Vec::new(),
+            pages: (1..=4).map(page_metadata).collect(),
+        };
+        let selection = IndexSelection::new([
+            IndexSelector::range(3, 4),
+            IndexSelector::index(1),
+            IndexSelector::range(2, 3),
+        ])?;
+
+        let pages = BiliClient::select_video_pages(&video, Some(&Selection::Indices(selection)))?;
+
+        assert_eq!(
+            pages.iter().map(|page| page.index).collect::<Vec<_>>(),
+            [3, 4, 1, 2]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn video_index_selection_rejects_partial_hits() -> anyhow::Result<()> {
+        let video = VideoMetadata {
+            aid: 170_001,
+            bvid: Some("BV1xx411c7mD".to_owned()),
+            title: "Multi page".to_owned(),
+            description: String::new(),
+            cover_url: None,
+            pub_time: None,
+            owner: None,
+            tags: Vec::new(),
+            pages: (1..=3).map(page_metadata).collect(),
+        };
+        let selection = IndexSelection::new([IndexSelector::index(1), IndexSelector::index(999)])?;
+
+        let Err(error) =
+            BiliClient::select_video_pages(&video, Some(&Selection::Indices(selection)))
+        else {
+            return Err(anyhow::anyhow!("partial index hits should fail"));
+        };
+
+        assert!(matches!(error, Error::MissingField("selected page")));
+        Ok(())
+    }
+
+    #[test]
+    fn season_index_selection_selects_episode_indices() -> anyhow::Result<()> {
+        let season = SeasonMetadata {
+            season_id: Some(123),
+            media_id: Some(456),
+            title: "A Season".to_owned(),
+            description: String::new(),
+            cover_url: None,
+            main_episode_count: 4,
+            areas: Vec::new(),
+            tags: Vec::new(),
+            episodes: (1..=4).map(episode_metadata).collect(),
+        };
+        let selection = IndexSelection::new([
+            IndexSelector::index(2),
+            IndexSelector::range(4, 4),
+            IndexSelector::index(2),
+        ])?;
+
+        let resolved = BiliClient::resolve_season_selection(
+            season,
+            Some(&Selection::Indices(selection)),
+            None,
+            "season",
+        )?;
+
+        assert_eq!(
+            resolved
+                .selected_episodes
+                .iter()
+                .map(|episode| episode.index)
+                .collect::<Vec<_>>(),
+            [2, 4]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn collection_index_selection_selects_list_and_ranges() -> anyhow::Result<()> {
+        let collection = VideoCollectionMetadata {
+            id: Some(456),
+            kind: VideoCollectionKind::Favorite,
+            title: "Favorite".to_owned(),
+            description: String::new(),
+            cover_url: None,
+            pub_time: None,
+            owner: None,
+            items: vec![
+                collection_item(1, "Newest video"),
+                collection_item(2, "Middle video"),
+                collection_item(3, "Older video"),
+            ],
+        };
+        let selection = IndexSelection::new([
+            IndexSelector::range(2, 3),
+            IndexSelector::index(1),
+            IndexSelector::index(2),
+        ])?;
+
+        let resolved = BiliClient::resolve_collection_selection(
+            collection,
+            Some(&Selection::Indices(selection)),
+        )?;
+
+        assert_eq!(
+            resolved
+                .selected_items
+                .iter()
+                .map(|item| item.title.as_str())
+                .collect::<Vec<_>>(),
+            ["Middle video", "Older video", "Newest video"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn collection_index_fetch_mode_stops_after_max_requested_index() -> anyhow::Result<()> {
+        let selection = IndexSelection::new([IndexSelector::index(1), IndexSelector::range(3, 4)])?;
+        let fetch_mode = BiliClient::collection_fetch_mode(Some(&Selection::Indices(selection)))?;
+
+        assert!(!fetch_mode.is_satisfied_by(3));
+        assert!(fetch_mode.is_satisfied_by(4));
+        Ok(())
+    }
+
+    #[test]
     fn collection_all_selection_allows_empty_items() -> anyhow::Result<()> {
         let collection = VideoCollectionMetadata {
             id: Some(456),
@@ -7114,6 +7327,30 @@ mod tests {
             pub_time: None,
             owner: None,
             duration_seconds: None,
+        }
+    }
+
+    fn page_metadata(index: u32) -> PageMetadata {
+        PageMetadata {
+            index,
+            aid: 170_001,
+            cid: 9_000 + u64::from(index),
+            epid: None,
+            title: format!("P{index}"),
+            duration_seconds: None,
+        }
+    }
+
+    fn episode_metadata(index: u32) -> EpisodeMetadata {
+        EpisodeMetadata {
+            index,
+            aid: 170_000 + u64::from(index),
+            bvid: Some(format!("BV1episode{index}")),
+            cid: 9_000 + u64::from(index),
+            epid: 1_000 + u64::from(index),
+            title: index.to_string(),
+            long_title: Some(format!("Episode {index}")),
+            pub_time: None,
         }
     }
 }

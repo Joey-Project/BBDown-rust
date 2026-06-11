@@ -49,17 +49,24 @@ Season 和 media 输入需要显式 `Selection`，除非输入本身已经标识
 `ResolvedContent::Collection`，其中包含完整 collection metadata 和选中的条目。
 owner-scoped 空间列表 URL 会保留 uploader mid，让解析器可以使用较新的空间合集和系列
 API。不带 selector 时，集合类输入会选择全部解析条目；传入 `Selection::Page(index)` 可
-选择一个条目，传入 `Selection::Latest` 可选择上游列表顺序中的第一个解析条目。空集合会表示为空 item
-列表，而不是 missing-field 错误。
+选择一个条目，传入 `Selection::Indices(...)` 可选择 index 列表和范围，传入
+`Selection::Latest` 可选择上游列表顺序中的第一个解析条目。空集合会表示为空 item 列表，
+而不是 missing-field 错误。
 
 ```rust,no_run
-use bbdown_core::{BiliClient, ClientConfig, ResolvedContent, Selection};
+use bbdown_core::{
+    BiliClient, ClientConfig, IndexSelection, IndexSelector, ResolvedContent, Selection,
+};
 
 #[tokio::main]
 async fn main() -> bbdown_core::Result<()> {
     let client = BiliClient::new(ClientConfig::default());
+    let selection = Selection::Indices(IndexSelection::new([
+        IndexSelector::index(1),
+        IndexSelector::range(3, 5),
+    ])?);
     let resolved = client
-        .resolve_input("fav456", Some(Selection::Page(1)))
+        .resolve_input("fav456", Some(selection))
         .await?;
 
     if let ResolvedContent::Collection(collection) = resolved {
@@ -73,6 +80,10 @@ async fn main() -> bbdown_core::Result<()> {
     Ok(())
 }
 ```
+
+同一个 index selection 类型也适用于普通视频分 P 和 season 分集序号。CLI parser 接受等价
+字符串，例如 `1`、`page:1`、`1,3-5` 和 `page:2-4,7`。`Selection::Episode(epid)` 仍表示
+精确 PGC episode id。
 
 下载规划会把选中的集合条目映射回普通视频条目，因此下游下载执行、归档重复检查、stream
 selection、封面、字幕和弹幕旁路文件仍使用与普通视频下载相同的 API。因为 `DownloadPlan`

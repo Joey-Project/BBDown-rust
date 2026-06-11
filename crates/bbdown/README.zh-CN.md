@@ -60,7 +60,9 @@ async fn main() -> bbdown_core::Result<()> {
 `fav456`、`mid123`、`collection456` 和 `series456` 等批量输入会通过
 `ResolvedContent::Collection` 返回；`resolve_input` 会保留完整解析到的 collection
 metadata，`selected_items` 则携带当前选中子集。选中的条目随后通过普通视频 pipeline 规
-划和下载。
+划和下载。嵌入应用可以用 `Selection::Page(index)` 选择单个条目，或用
+`Selection::Indices(...)` 配合 `IndexSelection` / `IndexSelector` 表示类似 `1,3-5` 的列
+表和范围选择。
 
 library 默认保留 plan 中的媒体 URL。嵌入应用需要自定义 UPOS host、强制替换，或
 CLI-compatible PCDN fallback 处理时，应显式设置 `MediaHostOptions`。

@@ -34,4 +34,4 @@ pub use models::{
     SubtitleFormat, SubtitleTrack, Tag, VideoCollectionItem, VideoCollectionKind,
     VideoCollectionMetadata, VideoCollectionResolution, VideoMetadata,
 };
-pub use selection::Selection;
+pub use selection::{IndexSelection, IndexSelector, Selection};
