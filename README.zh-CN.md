@@ -68,8 +68,8 @@ bbdown download av170001 --output-dir downloads --archive-file downloads/archive
 封面、字幕和弹幕旁路文件；通过 HTTP range 请求续传部分文件；对有限的瞬时失败进行有界重
 试；在存在声明媒体大小时进行校验；拒绝不完整的媒体形态；除非传入 `--no-mux`，否则运行
 `ffmpeg`。使用 `--no-cover`、`--no-subtitles` 或 `--no-danmaku` 可以跳过对应旁路文件。
-弹幕输出默认是 XML；传入 `--danmaku-format ass` 或 `--danmaku-format both` 可生成 ASS
-旁路文件。
+弹幕输出默认是 XML；传入 `--danmaku-format ass` 会只生成 ASS，传入
+`--danmaku-format xml,ass` 可同时保留 XML 和 ASS 旁路文件。
 使用 `--only video`、`--only audio`、`--only subtitle`、`--only danmaku` 或
 `--only cover` 可只写入一种输出；single-output 模式会跳过 mux。
 传入 `--archive-file <path>` 后，CLI 会按内容身份记录已完成下载。归档输出、旁路文件和

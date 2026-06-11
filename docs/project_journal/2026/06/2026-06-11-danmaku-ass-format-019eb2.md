@@ -22,25 +22,28 @@ superseded_by:
 
 ## Current State
 
-- `bbdown-core` exposes `DanmakuFormat::{Xml, Ass, Both}` and
-  `DownloadOptions::with_danmaku_format(...)`.
-- CLI `download` exposes `--danmaku-format xml|ass|both`; `xml` remains the default.
+- `bbdown-core` exposes `DanmakuFormat::{Xml, Ass}`, `DanmakuFormats`,
+  `DownloadOptions::with_danmaku_format(...)`, and
+  `DownloadOptions::with_danmaku_formats(...)`.
+- CLI `download` exposes repeatable/comma-delimited `--danmaku-format <FORMAT>`; `xml` remains the
+  default.
 - XML output continues to report `DownloadFileKind::Danmaku` and write `danmaku.xml`.
 - ASS output reports `DownloadFileKind::DanmakuAss` and writes `danmaku.ass`.
 - ASS generation supports common scrolling, reverse-scrolling, top, and bottom comments. Advanced
   positioned danmaku comments are skipped instead of emitting unreliable coordinates.
-- `--only danmaku --danmaku-format ass` writes only `danmaku.ass`; `both` writes both XML and ASS.
-- Download archive matching distinguishes ASS/Both danmaku outputs from XML-only danmaku outputs
-  while preserving legacy XML keys.
+- `--only danmaku --danmaku-format ass` writes only `danmaku.ass`; `--danmaku-format xml,ass`
+  writes both XML and ASS.
+- Download archive matching distinguishes ASS-only and multi-format danmaku outputs from XML-only
+  danmaku outputs while preserving legacy XML keys.
 
 ## Evidence
 
 - Core unit tests cover XML-to-ASS conversion, XML entity decoding, ASS escaping, color conversion,
   common modes, and advanced-comment skipping.
-- Core download tests cover ASS-only danmaku sidecar generation without media streams and `both`
-  format reporting.
+- Core download tests cover ASS-only danmaku sidecar generation without media streams and
+  multi-format reporting.
 - Core archive tests cover that ASS-only danmaku records do not satisfy XML-only danmaku preflights.
-- CLI e2e tests cover `--only danmaku --danmaku-format ass` and `both` JSON/report behavior.
+- CLI e2e tests cover `--only danmaku --danmaku-format ass` and `xml,ass` JSON/report behavior.
 - English and Simplified Chinese README, user guide, embedding guide, and architecture docs describe
   the new controls.
 - Full local and PR validation evidence is recorded in the PR before merge.

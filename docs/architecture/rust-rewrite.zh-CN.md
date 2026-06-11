@@ -113,6 +113,7 @@ CLI 通过 `bbdown plan` 暴露这一层。该命令被有意设计为规划表�
 - HTTP range resume 开关；
 - 媒体读取 idle timeout；
 - 是否包含封面、字幕和弹幕旁路文件；
+- 弹幕旁路格式集合（`xml`、`ass` 或 `xml,ass`）；
 - 禁用 mux 或显式 `ffmpeg` 二进制路径。
 
 对每个条目，执行优先使用 plan 中完整的 DASH 视频/音频组合。默认是第一个视频流和第一个
@@ -122,9 +123,9 @@ id。如果请求的 id 不可用，executor 会报告可用 id，并在媒体�
 会拒绝 FLV 回退。否则条目会在媒体写入前失败。封面、字幕和弹幕文件保持为 sidecar。当启
 用 mux 时，executor 使用显式 argv 调用 `ffmpeg`，并在 report 中返回命令和输出路径。
 
-Plan 条目保留 canonical 弹幕 XML 端点；只有当执行层选择 `DanmakuFormat::Ass` 或
-`DanmakuFormat::Both` 时，executor 才会把 XML 转为 ASS。ASS 生成支持常见滚动、顶部、
-底部和反向滚动弹幕，并会跳过高级定位弹幕，避免写出误导性的坐标。
+Plan 条目保留 canonical 弹幕 XML 端点；只有当执行层选择的 `DanmakuFormats` 集合包含
+`DanmakuFormat::Ass` 时，executor 才会把 XML 转为 ASS。ASS 生成支持常见滚动、顶部、底
+部和反向滚动弹幕，并会跳过高级定位弹幕，避免写出误导性的坐标。
 
 `DownloadMode` 将默认 all-output 路径和单独输出 workflow 分开。`VideoOnly` 和 `AudioOnly`
 只下载一个匹配的 DASH stream，并跳过 sidecar 和 mux。`SubtitleOnly`、`DanmakuOnly` 和

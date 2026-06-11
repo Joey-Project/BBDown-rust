@@ -140,8 +140,8 @@ spawn `ffmpeg` unless they opt in.
 
 ```rust,no_run
 use bbdown_core::{
-    BiliClient, ClientConfig, DanmakuFormat, DownloadMode, DownloadOptions, MuxOptions, RetryPolicy,
-    StreamSelection,
+    BiliClient, ClientConfig, DanmakuFormat, DownloadMode, DownloadOptions, MuxOptions,
+    RetryPolicy, StreamSelection,
 };
 use std::time::Duration;
 
@@ -176,8 +176,9 @@ embedding caller wants one output kind. Sidecar-only modes do not require media 
 spawn muxing; video-only and audio-only modes select only the matching DASH stream. Use the
 mode-aware planning APIs before `DownloadPreflight::inspect` when the later download options use a
 non-default mode.
-Danmaku sidecars default to `DanmakuFormat::Xml`; use `DanmakuFormat::Ass` or
-`DanmakuFormat::Both` when the embedding UI needs ASS subtitles for player overlays.
+Danmaku sidecars default to `DanmakuFormat::Xml`; use `DanmakuFormat::Ass` for ASS-only output, or
+`DownloadOptions::with_danmaku_formats([DanmakuFormat::Xml, DanmakuFormat::Ass])` when the
+embedding UI needs to keep both XML and ASS sidecars.
 
 ## Download Archive And Duplicate Decisions
 
@@ -188,8 +189,8 @@ application serializes a preflight between display and execution, store the full
 `KeepBoth` keeps avoiding archive-only output directories that were reserved during inspection. The
 executor validates that the preflight still matches the current archive before applying the decision,
 so callers should reinspect when another process may have updated the archive.
-Archive matching is output-aware for single-output modes and danmaku formats, so ASS-only or `both`
-danmaku downloads do not satisfy XML-only danmaku preflights.
+Archive matching is output-aware for single-output modes and danmaku formats, so ASS-only or
+multi-format danmaku downloads do not satisfy XML-only danmaku preflights.
 
 ```rust,no_run
 use bbdown_core::{

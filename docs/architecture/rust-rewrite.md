@@ -118,7 +118,7 @@ Execution behavior is controlled by `DownloadOptions`:
 - HTTP range resume on or off;
 - media read idle timeout;
 - cover, subtitle, and danmaku sidecar inclusion;
-- danmaku sidecar format (`xml`, `ass`, or `both`);
+- danmaku sidecar format set (`xml`, `ass`, or `xml,ass`);
 - disabled muxing or explicit `ffmpeg` binary path.
 
 For each entry, execution prefers a complete DASH video/audio pair from the plan. By default this is
@@ -130,9 +130,9 @@ rejects FLV fallback. Otherwise the entry fails before media writes. Cover, subt
 files remain sidecars. When muxing is enabled, the executor invokes `ffmpeg` with explicit argv and
 returns the command plus output path in the report.
 Plan entries keep the canonical danmaku XML endpoint; the executor converts that XML to ASS only
-when `DanmakuFormat::Ass` or `DanmakuFormat::Both` is selected. ASS generation supports common
-scrolling, top, bottom, and reverse-scrolling comments and skips advanced positioned comments rather
-than writing misleading coordinates.
+when the selected `DanmakuFormats` set contains `DanmakuFormat::Ass`. ASS generation supports
+common scrolling, top, bottom, and reverse-scrolling comments and skips advanced positioned comments
+rather than writing misleading coordinates.
 
 `DownloadMode` keeps the default all-output path separate from single-output workflows. `VideoOnly`
 and `AudioOnly` download one matching DASH stream and skip sidecars and muxing. `SubtitleOnly`,

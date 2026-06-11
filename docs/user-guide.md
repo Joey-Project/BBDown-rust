@@ -140,8 +140,8 @@ those segments instead. Explicit quality selection requires DASH media and there
 fallback for that entry. If neither shape is complete, the download fails before writing media.
 Cover, subtitle, and danmaku sidecars are enabled by default when the plan has those URLs. Disable
 them individually with `--no-cover`, `--no-subtitles`, and `--no-danmaku`.
-Danmaku sidecars default to XML. Use `--danmaku-format ass` to generate `danmaku.ass`, or
-`--danmaku-format both` to keep both `danmaku.xml` and `danmaku.ass`.
+Danmaku sidecars default to XML. Use `--danmaku-format ass` to generate only `danmaku.ass`, or
+`--danmaku-format xml,ass` to keep both `danmaku.xml` and `danmaku.ass`.
 
 Use `--only video`, `--only audio`, `--only subtitle`, `--only danmaku`, or `--only cover` to write
 one output kind for each planned entry. `video` and `audio` modes select DASH streams and accept the
@@ -149,7 +149,7 @@ matching quality flag; `subtitle`, `danmaku`, and `cover` modes do not require m
 reject media quality flags. Single-output modes skip muxing even when `--no-mux` is omitted.
 When `--archive-file` is used, single-output records are tracked separately from full downloads, so
 a cover-only or audio-only run does not mark the complete media download as already done.
-ASS and `both` danmaku-format outputs are also tracked separately from XML-only danmaku output.
+ASS-only and multi-format danmaku outputs are also tracked separately from XML-only danmaku output.
 
 Downloads resume partial files by default with HTTP range requests and validate `Content-Range`
 plus advertised media sizes when the plan provides them. Use `--no-resume` to force a fresh write;

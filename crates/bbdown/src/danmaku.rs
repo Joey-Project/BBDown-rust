@@ -1,6 +1,7 @@
 use std::fmt::Write as _;
 use std::time::Duration;
 
+const DANMAKU_FORMAT_ORDER: [DanmakuFormat; 2] = [DanmakuFormat::Xml, DanmakuFormat::Ass];
 const PLAY_RES_X: u32 = 1920;
 const PLAY_RES_Y: u32 = 1080;
 const DEFAULT_FONT_SIZE: f64 = 42.0;
@@ -10,6 +11,98 @@ const TOP_MARGIN: f64 = 40.0;
 const LINE_HEIGHT: f64 = 52.0;
 const SCROLL_LANES: usize = 15;
 const FIXED_LANES: usize = 8;
+
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum DanmakuFormat {
+    #[default]
+    Xml,
+    Ass,
+}
+
+impl DanmakuFormat {
+    pub(crate) const fn archive_key_token(self) -> &'static str {
+        match self {
+            Self::Xml => "xml",
+            Self::Ass => "ass",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DanmakuFormats {
+    formats: Vec<DanmakuFormat>,
+}
+
+impl Default for DanmakuFormats {
+    fn default() -> Self {
+        Self {
+            formats: vec![DanmakuFormat::Xml],
+        }
+    }
+}
+
+impl DanmakuFormats {
+    #[must_use]
+    pub fn new(formats: impl IntoIterator<Item = DanmakuFormat>) -> Self {
+        let requested = formats.into_iter().collect::<Vec<_>>();
+        let mut normalized = DANMAKU_FORMAT_ORDER
+            .into_iter()
+            .filter(|format| requested.contains(format))
+            .collect::<Vec<_>>();
+        if normalized.is_empty() {
+            normalized.push(DanmakuFormat::Xml);
+        }
+        Self {
+            formats: normalized,
+        }
+    }
+
+    #[must_use]
+    pub fn as_slice(&self) -> &[DanmakuFormat] {
+        &self.formats
+    }
+
+    #[must_use]
+    pub fn contains(&self, format: DanmakuFormat) -> bool {
+        self.formats.contains(&format)
+    }
+
+    pub(crate) fn archive_key_token(&self) -> String {
+        self.formats
+            .iter()
+            .map(|format| format.archive_key_token())
+            .collect::<Vec<_>>()
+            .join("+")
+    }
+
+    pub(crate) fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+
+    pub(crate) fn non_default_combinations() -> Vec<Self> {
+        let mut combinations = vec![Self {
+            formats: Vec::new(),
+        }];
+        for format in DANMAKU_FORMAT_ORDER {
+            let additions = combinations
+                .iter()
+                .map(|combination| {
+                    let mut formats = combination.formats.clone();
+                    formats.push(format);
+                    Self { formats }
+                })
+                .collect::<Vec<_>>();
+            combinations.extend(additions);
+        }
+        combinations
+            .into_iter()
+            .filter(|combination| {
+                !combination.formats.is_empty() && *combination != Self::default()
+            })
+            .collect()
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 struct DanmakuComment {

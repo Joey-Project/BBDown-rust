@@ -765,7 +765,7 @@ fn download_only_danmaku_can_write_xml_and_ass_formats() -> anyhow::Result<()> {
         .arg("--only")
         .arg("danmaku")
         .arg("--danmaku-format")
-        .arg("both")
+        .arg("xml,ass")
         .arg("--no-mux")
         .arg("--json");
     let output = command.assert().success().get_output().stdout.clone();

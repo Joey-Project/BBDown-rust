@@ -119,8 +119,14 @@ enum Command {
         no_subtitles: bool,
         #[arg(long)]
         no_danmaku: bool,
-        #[arg(long, value_enum, default_value_t = DanmakuFormatArg::Xml)]
-        danmaku_format: DanmakuFormatArg,
+        #[arg(
+            long = "danmaku-format",
+            value_enum,
+            value_delimiter = ',',
+            default_value = "xml",
+            value_name = "FORMAT"
+        )]
+        danmaku_formats: Vec<DanmakuFormatArg>,
         #[arg(long)]
         no_mux: bool,
         #[arg(long, value_name = "ID")]
@@ -179,13 +185,11 @@ enum DownloadOnlyArg {
     Cover,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 #[value(rename_all = "kebab-case")]
 enum DanmakuFormatArg {
-    #[default]
     Xml,
     Ass,
-    Both,
 }
 
 impl From<DanmakuFormatArg> for DanmakuFormat {
@@ -193,7 +197,6 @@ impl From<DanmakuFormatArg> for DanmakuFormat {
         match value {
             DanmakuFormatArg::Xml => Self::Xml,
             DanmakuFormatArg::Ass => Self::Ass,
-            DanmakuFormatArg::Both => Self::Both,
         }
     }
 }
@@ -257,7 +260,7 @@ struct DownloadOptionCliArgs {
     only: Option<DownloadOnlyArg>,
     execution: DownloadExecutionCliFlags,
     sidecars: DownloadSidecarCliFlags,
-    danmaku_format: DanmakuFormatArg,
+    danmaku_formats: Vec<DanmakuFormatArg>,
     video_quality: Option<u32>,
     audio_quality: Option<u32>,
     ffmpeg: PathBuf,
@@ -310,7 +313,7 @@ fn download_options_from_cli(args: DownloadOptionCliArgs) -> anyhow::Result<Down
         .with_cover(!args.sidecars.no_cover)
         .with_subtitles(!args.sidecars.no_subtitles)
         .with_danmaku(!args.sidecars.no_danmaku)
-        .with_danmaku_format(args.danmaku_format.into())
+        .with_danmaku_formats(args.danmaku_formats.into_iter().map(Into::into))
         .with_mux(mux))
 }
 
@@ -382,7 +385,7 @@ async fn main() -> anyhow::Result<()> {
             no_cover,
             no_subtitles,
             no_danmaku,
-            danmaku_format,
+            danmaku_formats,
             no_mux,
             video_quality,
             audio_quality,
@@ -406,7 +409,7 @@ async fn main() -> anyhow::Result<()> {
                     no_subtitles,
                     no_danmaku,
                 },
-                danmaku_format,
+                danmaku_formats,
                 video_quality,
                 audio_quality,
                 ffmpeg,

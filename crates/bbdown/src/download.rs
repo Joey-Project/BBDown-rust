@@ -1,6 +1,7 @@
 use crate::{
     BiliClient, DownloadEntry, DownloadPlan, Error, FlvSegment, Input, MediaStream, Result,
-    Selection, SubtitleFormat, SubtitleTrack, danmaku,
+    Selection, SubtitleFormat, SubtitleTrack,
+    danmaku::{self, DanmakuFormat, DanmakuFormats},
 };
 use futures_util::StreamExt;
 use md5::{Digest, Md5};
@@ -34,33 +35,6 @@ pub enum DownloadMode {
     CoverOnly,
 }
 
-#[non_exhaustive]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum DanmakuFormat {
-    #[default]
-    Xml,
-    Ass,
-    Both,
-}
-
-impl DanmakuFormat {
-    const fn writes_xml(self) -> bool {
-        matches!(self, Self::Xml | Self::Both)
-    }
-
-    const fn writes_ass(self) -> bool {
-        matches!(self, Self::Ass | Self::Both)
-    }
-
-    const fn archive_key_token(self) -> &'static str {
-        match self {
-            Self::Xml => "xml",
-            Self::Ass => "ass",
-            Self::Both => "both",
-        }
-    }
-}
-
 impl DownloadMode {
     const fn allows_mux(self) -> bool {
         matches!(self, Self::All)
@@ -88,7 +62,7 @@ pub struct DownloadOptions {
     pub mode: DownloadMode,
     pub include_subtitles: bool,
     pub include_danmaku: bool,
-    pub danmaku_format: DanmakuFormat,
+    pub danmaku_formats: DanmakuFormats,
     pub sidecars: SidecarOptions,
     pub mux: MuxOptions,
     pub download_idle_timeout: Option<Duration>,
@@ -104,7 +78,7 @@ impl Default for DownloadOptions {
             mode: DownloadMode::All,
             include_subtitles: true,
             include_danmaku: true,
-            danmaku_format: DanmakuFormat::default(),
+            danmaku_formats: DanmakuFormats::default(),
             sidecars: SidecarOptions::default(),
             mux: MuxOptions::Disabled,
             download_idle_timeout: Some(Duration::from_secs(30)),
@@ -167,7 +141,16 @@ impl DownloadOptions {
 
     #[must_use]
     pub fn with_danmaku_format(mut self, danmaku_format: DanmakuFormat) -> Self {
-        self.danmaku_format = danmaku_format;
+        self.danmaku_formats = DanmakuFormats::new([danmaku_format]);
+        self
+    }
+
+    #[must_use]
+    pub fn with_danmaku_formats(
+        mut self,
+        danmaku_formats: impl IntoIterator<Item = DanmakuFormat>,
+    ) -> Self {
+        self.danmaku_formats = DanmakuFormats::new(danmaku_formats);
         self
     }
 
@@ -851,7 +834,9 @@ impl BiliClient {
         files: &mut Vec<DownloadedFile>,
     ) -> Result<()> {
         let xml_path = entry_dir.join("danmaku.xml");
-        let source_file = if options.danmaku_format.writes_xml() {
+        let writes_xml = options.danmaku_formats.contains(DanmakuFormat::Xml);
+        let writes_ass = options.danmaku_formats.contains(DanmakuFormat::Ass);
+        let source_file = if writes_xml {
             let file = self
                 .download_url_to_file(
                     &entry.danmaku.xml_url,
@@ -875,7 +860,7 @@ impl BiliClient {
             )
             .await?
         };
-        if options.danmaku_format.writes_ass() {
+        if writes_ass {
             let xml = fs::read(&source_file.path).await?;
             let xml = String::from_utf8_lossy(&xml);
             let ass = danmaku::xml_to_ass(&xml);
@@ -888,7 +873,7 @@ impl BiliClient {
                 .await?,
             );
         }
-        if !options.danmaku_format.writes_xml() {
+        if !writes_xml {
             let _ = remove_file_if_exists(&source_file.path).await;
         }
         Ok(())
@@ -1967,11 +1952,10 @@ fn apply_archive_key_prefix(key: String, prefix: Option<&str>) -> String {
 }
 
 fn archive_key_prefix_for_options(options: &DownloadOptions) -> Option<String> {
-    if should_download_danmaku(options) && !matches!(options.danmaku_format, DanmakuFormat::Xml) {
-        return Some(format!(
-            "mode={};danmaku={}",
-            options.mode.archive_key_token(),
-            options.danmaku_format.archive_key_token()
+    if should_download_danmaku(options) && !options.danmaku_formats.is_default() {
+        return Some(archive_key_prefix_for_danmaku_formats(
+            options.mode,
+            &options.danmaku_formats,
         ));
     }
     archive_key_prefix_for_mode(options.mode)
@@ -1980,18 +1964,24 @@ fn archive_key_prefix_for_options(options: &DownloadOptions) -> Option<String> {
 fn archive_key_prefixes_for_mode(mode: DownloadMode) -> Vec<Option<String>> {
     let mut prefixes = vec![archive_key_prefix_for_mode(mode)];
     if matches!(mode, DownloadMode::All | DownloadMode::DanmakuOnly) {
-        prefixes.push(Some(format!(
-            "mode={};danmaku={}",
-            mode.archive_key_token(),
-            DanmakuFormat::Ass.archive_key_token()
-        )));
-        prefixes.push(Some(format!(
-            "mode={};danmaku={}",
-            mode.archive_key_token(),
-            DanmakuFormat::Both.archive_key_token()
-        )));
+        prefixes.extend(
+            DanmakuFormats::non_default_combinations()
+                .into_iter()
+                .map(|formats| Some(archive_key_prefix_for_danmaku_formats(mode, &formats))),
+        );
     }
     prefixes
+}
+
+fn archive_key_prefix_for_danmaku_formats(
+    mode: DownloadMode,
+    danmaku_formats: &DanmakuFormats,
+) -> String {
+    format!(
+        "mode={};danmaku={}",
+        mode.archive_key_token(),
+        danmaku_formats.archive_key_token()
+    )
 }
 
 fn archive_key_prefix_for_mode(mode: DownloadMode) -> Option<String> {
@@ -2339,9 +2329,9 @@ fn subtitle_dedup_key(url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        DanmakuFormat, DownloadArchive, DownloadArchiveEntryRecord, DownloadArchiveRecord,
-        DownloadMode, DownloadOptions, DownloadPreflight, DownloadReport, DownloadedFile,
-        DuplicateDecision, EntryDownloadReport, MAX_FILE_COMPONENT_BYTES, MAX_FILE_NAME_BYTES,
+        DownloadArchive, DownloadArchiveEntryRecord, DownloadArchiveRecord, DownloadMode,
+        DownloadOptions, DownloadPreflight, DownloadReport, DownloadedFile, DuplicateDecision,
+        EntryDownloadReport, MAX_FILE_COMPONENT_BYTES, MAX_FILE_NAME_BYTES,
         MAX_SUBTITLE_EXTENSION_BYTES, MuxOptions, RetryPolicy, SidecarOptions, StreamSelection,
         archive_sidecar_path, comparable_output_path, cover_file_name, default_plan_output_dir,
         download_entry_content_key, download_plan_content_key, entry_dir_name, media_file_name,
@@ -2353,7 +2343,9 @@ mod tests {
         DanmakuTrack, DownloadEntry, DownloadPlan, FlvSegment, MediaStream, StreamDiagnostics,
         StreamQuality, StreamSet, StreamSource, SubtitleFormat, SubtitleTrack,
     };
-    use crate::{BiliClient, ClientConfig, Credentials, DownloadFileKind};
+    use crate::{
+        BiliClient, ClientConfig, Credentials, DanmakuFormat, DanmakuFormats, DownloadFileKind,
+    };
     use httpmock::MockServer;
     use httpmock::prelude::*;
     use std::io::{Read, Write};
@@ -2422,7 +2414,7 @@ mod tests {
             .with_cover(true)
             .with_subtitles(false)
             .with_danmaku(false)
-            .with_danmaku_format(DanmakuFormat::Ass)
+            .with_danmaku_formats([DanmakuFormat::Xml, DanmakuFormat::Ass])
             .with_mux(MuxOptions::ffmpeg("ffmpeg-custom"));
 
         assert_eq!(options.output_dir.as_path(), Path::new("downloads"));
@@ -2434,7 +2426,10 @@ mod tests {
         assert!(!options.resume);
         assert!(!options.include_subtitles);
         assert!(!options.include_danmaku);
-        assert_eq!(options.danmaku_format, DanmakuFormat::Ass);
+        assert_eq!(
+            options.danmaku_formats,
+            DanmakuFormats::new([DanmakuFormat::Xml, DanmakuFormat::Ass])
+        );
         assert!(options.sidecars.cover);
         assert!(!options.sidecars.subtitles);
         assert!(!options.sidecars.danmaku);
@@ -2847,7 +2842,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn download_danmaku_both_writes_xml_and_ass_sidecars() -> anyhow::Result<()> {
+    async fn download_danmaku_multiple_formats_writes_xml_and_ass_sidecars() -> anyhow::Result<()> {
         let server = MockServer::start();
         server.mock(|when, then| {
             when.method(GET).path("/danmaku.xml");
@@ -2866,7 +2861,7 @@ mod tests {
                 DownloadOptions::new(temp.path())
                     .with_retry_policy(RetryPolicy::single_attempt())
                     .with_download_mode(DownloadMode::DanmakuOnly)
-                    .with_danmaku_format(DanmakuFormat::Both),
+                    .with_danmaku_formats([DanmakuFormat::Xml, DanmakuFormat::Ass]),
             )
             .await?;
 
