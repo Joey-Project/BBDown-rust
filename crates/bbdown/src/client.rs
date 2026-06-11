@@ -343,14 +343,8 @@ impl BiliClient {
         selection: Option<Selection>,
     ) -> Result<ResolvedContent> {
         match input {
-            Input::Aid(aid) => self
-                .fetch_video_by_aid(aid, TagPolicy::Fetch)
-                .await
-                .map(ResolvedContent::Video),
-            Input::Bvid(bvid) => self
-                .fetch_video_by_bvid(&bvid, TagPolicy::Fetch)
-                .await
-                .map(ResolvedContent::Video),
+            Input::Aid(aid) => self.resolve_video_by_aid(aid, selection.as_ref()).await,
+            Input::Bvid(bvid) => self.resolve_video_by_bvid(&bvid, selection.as_ref()).await,
             Input::Episode(epid) => self
                 .fetch_season_by_ep(epid, selection.or(Some(Selection::Current)))
                 .await
@@ -558,6 +552,28 @@ impl BiliClient {
                 Box::pin(self.plan_with_mode(input, selection, planning_mode)).await
             }
         }
+    }
+
+    async fn resolve_video_by_aid(
+        &self,
+        aid: u64,
+        selection: Option<&Selection>,
+    ) -> Result<ResolvedContent> {
+        let video = self.fetch_video_by_aid(aid, TagPolicy::Fetch).await?;
+        Ok(ResolvedContent::Video(Self::select_video_metadata(
+            video, selection,
+        )?))
+    }
+
+    async fn resolve_video_by_bvid(
+        &self,
+        bvid: &str,
+        selection: Option<&Selection>,
+    ) -> Result<ResolvedContent> {
+        let video = self.fetch_video_by_bvid(bvid, TagPolicy::Fetch).await?;
+        Ok(ResolvedContent::Video(Self::select_video_metadata(
+            video, selection,
+        )?))
     }
 
     async fn resolve_space_list(
@@ -1833,6 +1849,16 @@ impl BiliClient {
             return Err(Error::MissingField("selected page"));
         }
         Ok(pages)
+    }
+
+    fn select_video_metadata(
+        mut video: VideoMetadata,
+        selection: Option<&Selection>,
+    ) -> Result<VideoMetadata> {
+        if selection.is_some() {
+            video.pages = Self::select_video_pages(&video, selection)?;
+        }
+        Ok(video)
     }
 
     fn resolve_collection_selection(
@@ -4173,6 +4199,101 @@ mod tests {
                 return Err(anyhow::anyhow!("expected video"));
             }
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn video_info_applies_page_selection() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("aid", "170001");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "aid": 170_001,
+                    "bvid": "BV1xx411c7mD",
+                    "title": "Example video",
+                    "pages": [
+                        {"page": 1, "cid": 9981, "part": "P1"},
+                        {"page": 2, "cid": 9982, "part": "P2"},
+                        {"page": 3, "cid": 9983, "part": "P3"}
+                    ]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/tag/archive/tags")
+                .query_param("aid", "170001");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": []
+            }));
+        });
+
+        let client = test_client(&server);
+        let resolved = client
+            .resolve_input("av170001", Some("3,1".parse()?))
+            .await?;
+
+        match resolved {
+            ResolvedContent::Video(video) => {
+                assert_eq!(
+                    video
+                        .pages
+                        .iter()
+                        .map(|page| page.index)
+                        .collect::<Vec<_>>(),
+                    [3, 1]
+                );
+            }
+            ResolvedContent::Season(_) | ResolvedContent::Collection(_) => {
+                return Err(anyhow::anyhow!("expected video"));
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn video_info_rejects_missing_page_selection() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("aid", "170001");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "aid": 170_001,
+                    "title": "Example video",
+                    "pages": [
+                        {"page": 1, "cid": 9981, "part": "P1"},
+                        {"page": 2, "cid": 9982, "part": "P2"}
+                    ]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/tag/archive/tags")
+                .query_param("aid", "170001");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": []
+            }));
+        });
+
+        let client = test_client(&server);
+        let Err(error) = client
+            .resolve_input("av170001", Some("1,999".parse()?))
+            .await
+        else {
+            return Err(anyhow::anyhow!("missing selected page should fail"));
+        };
+
+        assert!(matches!(error, Error::MissingField("selected page")));
         Ok(())
     }
 

@@ -94,6 +94,59 @@ fn info_json_resolves_mock_video() -> anyhow::Result<()> {
 }
 
 #[test]
+fn info_json_applies_video_index_range_selection() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/view")
+            .query_param("aid", "170001");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "aid": 170_001,
+                "bvid": "BV1xx411c7mD",
+                "title": "Mock multi page video",
+                "pages": [
+                    {"page": 1, "cid": 11, "part": "P1"},
+                    {"page": 2, "cid": 22, "part": "P2"},
+                    {"page": 3, "cid": 33, "part": "P3"}
+                ]
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/tag/archive/tags")
+            .query_param("aid", "170001");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": []
+        }));
+    });
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("info")
+        .arg("av170001")
+        .arg("--select")
+        .arg("2-3,1")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    assert_eq!(json["video"]["pages"].as_array().map(Vec::len), Some(3));
+    assert_eq!(json["video"]["pages"][0]["title"], "P2");
+    assert_eq!(json["video"]["pages"][1]["title"], "P3");
+    assert_eq!(json["video"]["pages"][2]["title"], "P1");
+    Ok(())
+}
+
+#[test]
 fn info_json_resolves_mock_favorite_collection() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;
