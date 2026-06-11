@@ -114,6 +114,7 @@ CLI 通过 `bbdown plan` 暴露这一层。该命令被有意设计为规划表�
 - 媒体读取 idle timeout；
 - 是否包含封面、字幕和弹幕旁路文件；
 - 弹幕旁路格式集合（`xml`、`ass` 或 `xml,ass`）；
+- media host 替换和 PCDN 处理策略；
 - 禁用 mux 或显式 `ffmpeg` 二进制路径。
 
 对每个条目，执行优先使用 plan 中完整的 DASH 视频/音频组合。默认是第一个视频流和第一个
@@ -136,12 +137,16 @@ single-output 下载的 archive content key 也会包含 mode，而完整下载�
 
 媒体和 sidecar 下载使用不含账号 cookie 的媒体 headers，因为媒体 URL 来自 API payload，
 可能指向 CDN 或代理主机。DASH 和 FLV backup URL 是候选列表的一部分。媒体正文读取使用独
-立 idle timeout，而不是 metadata request timeout。只有当 `Content-Range` 从本地文件长度
-开始，并在 advertised range total 结束，或 expected media size 证明最终长度正确时，resume
-才会 append；匹配的 416 响应会被视为已经完成。当没有 expected size 时，会拒绝 wildcard
-`Content-Range` total。当 stream 或 FLV segment 声明 size 时，executor 会拒绝最终文件长
-度不匹配，并把失败写入回滚到尝试前长度。没有写入任何字节却完成的媒体响应会被拒绝。条
-目目录包含内容身份，因此同标题视频不会共享 resume target；字幕 sidecar 名称包含 track
+立 idle timeout，而不是 metadata request timeout。`DownloadPlan` 保留上游媒体 URL；
+`MediaHostOptions` 只在 executor 构建具体 DASH/FLV 候选列表时应用。配置了 `upos_host`
+会改写全部媒体候选，`force_replace_host` 会改写到内置 BBDown fallback host；CLI 默认只
+会在未设置 `--allow-pcdn` 时改写 PCDN-like 的非本地候选。Sidecar URL 不会被改写。只有
+当 `Content-Range` 从本地文件长度开始，并在 advertised range total 结束，或 expected
+media size 证明最终长度正确时，resume 才会 append；匹配的 416 响应会被视为已经完成。
+当没有 expected size 时，会拒绝 wildcard `Content-Range` total。当 stream 或 FLV segment
+声明 size 时，executor 会拒绝最终文件长度不匹配，并把失败写入回滚到尝试前长度。没有写
+入任何字节却完成的媒体响应会被拒绝。条目目录包含内容身份，因此同标题视频不会共享
+resume target；字幕 sidecar 名称包含 track
 身份；文件名组件按 UTF-8 字节长度限制。如果服务器忽略 `Range` 并对 partial file 返回
 `200 OK`，executor 会把完整重试写入临时文件，并只在可用校验通过后替换旧 partial。没有
 advertised size、`Content-Length` 或 `Content-Range` 时，完整重试会被拒绝并保留旧文件。

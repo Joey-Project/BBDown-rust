@@ -120,6 +120,7 @@ bbdown download av170001 --output-dir downloads --no-mux --json
 bbdown download av170001 --video-quality 64 --audio-quality 30216 --output-dir downloads
 bbdown download av170001 --only subtitle --output-dir downloads --json
 bbdown download av170001 --output-dir downloads --archive-file downloads/archive.json --on-duplicate keep-both
+bbdown download av170001 --upos-host upos-sz-mirrorcoso1.bilivideo.com --no-mux
 ```
 
 默认情况下，命令会为每个条目下载第一组完整 DASH 视频/音频。先使用 `bbdown plan` 查看可
@@ -139,6 +140,14 @@ DASH 媒体，因此会禁用该条目的 FLV 回退。如果两种形态都不�
 使用 `--archive-file` 时，single-output 记录会和完整下载分开跟踪，因此 cover-only 或
 audio-only 运行不会把完整媒体下载标记成已完成。
 ASS-only 和 multi-format 弹幕输出也会与 XML-only 弹幕输出分开记录。
+
+CLI 只对 DASH 和 FLV 媒体候选应用 media-host 策略；封面、字幕和弹幕旁路 URL 保持不变。
+默认情况下，CLI 会把带显式端口的非本地媒体 URL、host 名包含 `pcdn` / `mcdn` 的 URL，或
+Akamai host 视为类似 PCDN 的候选，并把这些候选改写到内置 BBDown fallback host。localhost
+和私网 host 会被保留，因此 mock server 和私有代理不会被误改写。使用 `--allow-pcdn` 可保
+留原始 PCDN-like 媒体候选；使用 `--upos-host <HOST>` 可把全部 DASH/FLV 媒体候选改写到
+指定 host 或 host:port；使用 `--force-replace-host` 可把全部 DASH/FLV 媒体候选改写到
+fallback host，即使它们并不像 PCDN。存在 `--upos-host` 时，它优先于 PCDN 设置。
 
 下载默认通过 HTTP range 请求续传部分文件，并在计划提供信息时校验 `Content-Range` 和声
 明媒体大小。使用 `--no-resume` 可强制重新写入；失败的新写入会保留已有目标。如果服务器

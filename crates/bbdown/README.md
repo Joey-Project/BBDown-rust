@@ -6,8 +6,9 @@
 `bbdown_core`. It resolves Bilibili and Bilibili intl inputs into typed metadata, download plans,
 media downloads, single-output download modes, cover/subtitle/XML-or-ASS danmaku sidecars, QR login
 credentials, download archive preflight data, batch collection metadata, and restricted-area proxy
-diagnostics. Raw input parsing covers normal videos, PGC and intl episodes, PUGV/cheese courses,
-B23 short links, favorite lists, space videos, collections, and series.
+diagnostics. Download execution can also apply explicit UPOS host replacement or BBDown-like PCDN
+avoidance through `MediaHostOptions`. Raw input parsing covers normal videos, PGC and intl episodes,
+PUGV/cheese courses, B23 short links, favorite lists, space videos, collections, and series.
 
 Install with `cargo add bbdown-core`, then import with `bbdown_core`.
 
@@ -23,7 +24,7 @@ consumed data surfaces and may gain fields.
 
 ```rust,no_run
 use bbdown_core::{
-    BiliClient, ClientConfig, DownloadMode, DownloadOptions, RetryPolicy, Selection,
+    BiliClient, ClientConfig, DownloadMode, DownloadOptions, MediaHostOptions, RetryPolicy, Selection,
     StreamSelection,
 };
 use std::time::Duration;
@@ -41,6 +42,9 @@ async fn main() -> bbdown_core::Result<()> {
     let options = DownloadOptions::new("downloads")
         .with_stream_selection(StreamSelection::video(80))
         .with_download_mode(DownloadMode::VideoOnly)
+        .with_media_hosts(
+            MediaHostOptions::new().with_upos_host("upos-sz-mirrorcoso1.bilivideo.com"),
+        )
         .with_retry_policy(RetryPolicy::new(3, Duration::from_millis(250)));
 
     println!("{} entries", plan.entries.len());
@@ -53,6 +57,10 @@ Batch inputs such as `fav456`, `mid123`, `collection456`, and `series456` resolv
 `ResolvedContent::Collection`; `resolve_input` keeps full parsed collection metadata while
 `selected_items` carries the active subset. Selected items then plan and download through the normal
 video pipeline.
+
+The library default preserves planned media URLs. Set `MediaHostOptions` explicitly when an
+embedding application wants a custom UPOS host, force-replace behavior, or CLI-compatible PCDN
+fallback handling.
 
 See the repository embedding guide for restricted-area proxy, endpoint override, credential,
 download archive, and download execution examples:

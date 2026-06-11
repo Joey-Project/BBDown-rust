@@ -22,6 +22,7 @@ const MAX_FILE_NAME_BYTES: usize = 80;
 const MAX_FILE_COMPONENT_BYTES: usize = 240;
 const MAX_SUBTITLE_EXTENSION_BYTES: usize = 16;
 const MAX_COVER_EXTENSION_BYTES: usize = 16;
+const DEFAULT_UPOS_REPLACEMENT_HOST: &str = "upos-sz-mirrorcoso1.bilivideo.com";
 
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -64,6 +65,7 @@ pub struct DownloadOptions {
     pub include_danmaku: bool,
     pub danmaku_formats: DanmakuFormats,
     pub sidecars: SidecarOptions,
+    pub media_hosts: MediaHostOptions,
     pub mux: MuxOptions,
     pub download_idle_timeout: Option<Duration>,
 }
@@ -80,6 +82,7 @@ impl Default for DownloadOptions {
             include_danmaku: true,
             danmaku_formats: DanmakuFormats::default(),
             sidecars: SidecarOptions::default(),
+            media_hosts: MediaHostOptions::default(),
             mux: MuxOptions::Disabled,
             download_idle_timeout: Some(Duration::from_secs(30)),
         }
@@ -155,6 +158,12 @@ impl DownloadOptions {
     }
 
     #[must_use]
+    pub fn with_media_hosts(mut self, media_hosts: MediaHostOptions) -> Self {
+        self.media_hosts = media_hosts;
+        self
+    }
+
+    #[must_use]
     pub fn with_mux(mut self, mux: MuxOptions) -> Self {
         self.mux = mux;
         self
@@ -193,6 +202,58 @@ impl SidecarOptions {
             subtitles,
             danmaku,
         }
+    }
+}
+
+#[non_exhaustive]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MediaHostOptions {
+    pub upos_host: Option<String>,
+    pub force_replace_host: bool,
+    pub allow_pcdn: bool,
+}
+
+impl Default for MediaHostOptions {
+    fn default() -> Self {
+        Self {
+            upos_host: None,
+            force_replace_host: false,
+            allow_pcdn: true,
+        }
+    }
+}
+
+impl MediaHostOptions {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    #[must_use]
+    pub fn bbdown_cli_default() -> Self {
+        Self {
+            allow_pcdn: false,
+            ..Self::default()
+        }
+    }
+
+    #[must_use]
+    pub fn with_upos_host(mut self, upos_host: impl Into<String>) -> Self {
+        let upos_host = upos_host.into();
+        self.upos_host = (!upos_host.trim().is_empty()).then_some(upos_host);
+        self
+    }
+
+    #[must_use]
+    pub fn with_force_replace_host(mut self, force_replace_host: bool) -> Self {
+        self.force_replace_host = force_replace_host;
+        self
+    }
+
+    #[must_use]
+    pub fn with_allow_pcdn(mut self, allow_pcdn: bool) -> Self {
+        self.allow_pcdn = allow_pcdn;
+        self
     }
 }
 
@@ -897,7 +958,7 @@ impl BiliClient {
         };
         let path = entry_dir.join(media_file_name(label, stream));
         self.download_candidate_urls_to_file(
-            &candidate_urls(&stream.base_url, &stream.backup_urls),
+            &candidate_urls(&stream.base_url, &stream.backup_urls, &options.media_hosts),
             &path,
             kind,
             stream.size,
@@ -914,7 +975,7 @@ impl BiliClient {
     ) -> Result<DownloadedFile> {
         let path = entry_dir.join(format!("segment-{:03}.flv", segment.order));
         self.download_candidate_urls_to_file(
-            &candidate_urls(&segment.url, &segment.backup_urls),
+            &candidate_urls(&segment.url, &segment.backup_urls, &options.media_hosts),
             &path,
             DownloadFileKind::FlvSegment,
             segment.size,
@@ -1392,11 +1453,152 @@ async fn write_generated_text_file(
     })
 }
 
-fn candidate_urls(primary: &str, backups: &[String]) -> Vec<String> {
+fn candidate_urls(
+    primary: &str,
+    backups: &[String],
+    media_hosts: &MediaHostOptions,
+) -> Vec<String> {
     let mut urls = Vec::with_capacity(backups.len() + 1);
-    urls.push(primary.to_owned());
-    urls.extend(backups.iter().filter(|url| !url.is_empty()).cloned());
+    push_candidate_url(&mut urls, primary, media_hosts);
+    for url in backups.iter().filter(|url| !url.is_empty()) {
+        push_candidate_url(&mut urls, url, media_hosts);
+    }
     urls
+}
+
+fn push_candidate_url(urls: &mut Vec<String>, url: &str, media_hosts: &MediaHostOptions) {
+    let candidate = rewrite_media_url_host(url, media_hosts).unwrap_or_else(|| url.to_owned());
+    if !urls.iter().any(|existing| existing == &candidate) {
+        urls.push(candidate);
+    }
+}
+
+fn rewrite_media_url_host(url: &str, media_hosts: &MediaHostOptions) -> Option<String> {
+    let replacement = media_replacement_host(url, media_hosts)?;
+    replace_url_host(url, replacement)
+}
+
+fn media_replacement_host<'a>(url: &str, media_hosts: &'a MediaHostOptions) -> Option<&'a str> {
+    let configured = media_hosts
+        .upos_host
+        .as_deref()
+        .filter(|host| !host.trim().is_empty());
+    if let Some(host) = configured {
+        return Some(host);
+    }
+    if media_hosts.force_replace_host
+        || (!media_hosts.allow_pcdn && media_url_needs_host_fallback(url))
+    {
+        return Some(DEFAULT_UPOS_REPLACEMENT_HOST);
+    }
+    None
+}
+
+fn media_url_needs_host_fallback(url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false;
+    };
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    if is_local_or_private_host(host) {
+        return false;
+    }
+    let host = host.to_ascii_lowercase();
+    parsed.port().is_some()
+        || host.contains("pcdn")
+        || host.contains("mcdn")
+        || host.ends_with("akamaized.net")
+}
+
+fn is_local_or_private_host(host: &str) -> bool {
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(ip)) => {
+            ip.is_loopback() || ip.is_private() || ip.is_link_local() || ip.is_unspecified()
+        }
+        Ok(std::net::IpAddr::V6(ip)) => {
+            ip.is_loopback()
+                || ip.is_unspecified()
+                || ip.is_unique_local()
+                || ip.is_unicast_link_local()
+        }
+        Err(_) => false,
+    }
+}
+
+fn replace_url_host(url: &str, replacement_host: &str) -> Option<String> {
+    let mut parsed = url::Url::parse(url).ok()?;
+    let (host, port) = parse_replacement_host(replacement_host)?;
+    parsed.set_host(Some(&host)).ok()?;
+    parsed.set_port(port).ok()?;
+    Some(parsed.to_string())
+}
+
+fn parse_replacement_host(replacement_host: &str) -> Option<(String, Option<u16>)> {
+    let replacement_host = replacement_host.trim().trim_end_matches('/');
+    if replacement_host.is_empty() {
+        return None;
+    }
+    let authority = if let Some((_, rest)) = replacement_host.split_once("://") {
+        rest.split(['/', '?', '#']).next().unwrap_or_default()
+    } else {
+        replacement_host
+    };
+    parse_replacement_authority(authority)
+}
+
+fn parse_replacement_authority(authority: &str) -> Option<(String, Option<u16>)> {
+    if authority.is_empty() || authority.contains('@') {
+        return None;
+    }
+    let explicit_port = explicit_authority_port(authority)?.into_option();
+    let parsed = url::Url::parse(&format!("https://{authority}")).ok()?;
+    let host = match parsed.host()? {
+        url::Host::Domain(host) => host.to_owned(),
+        url::Host::Ipv4(host) => host.to_string(),
+        url::Host::Ipv6(host) => format!("[{host}]"),
+    };
+    Some((host, explicit_port))
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ExplicitPort {
+    Absent,
+    Present(u16),
+}
+
+impl ExplicitPort {
+    fn into_option(self) -> Option<u16> {
+        match self {
+            Self::Absent => None,
+            Self::Present(port) => Some(port),
+        }
+    }
+}
+
+fn explicit_authority_port(authority: &str) -> Option<ExplicitPort> {
+    if let Some(rest) = authority.strip_prefix('[') {
+        let (_, suffix) = rest.split_once(']')?;
+        return parse_optional_port_suffix(suffix);
+    }
+    if let Some((host, port)) = authority.rsplit_once(':') {
+        if host.is_empty() {
+            return None;
+        }
+        return Some(ExplicitPort::Present(port.parse().ok()?));
+    }
+    Some(ExplicitPort::Absent)
+}
+
+fn parse_optional_port_suffix(suffix: &str) -> Option<ExplicitPort> {
+    if suffix.is_empty() {
+        return Some(ExplicitPort::Absent);
+    }
+    let port = suffix.strip_prefix(':')?;
+    Some(ExplicitPort::Present(port.parse().ok()?))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2329,11 +2531,12 @@ fn subtitle_dedup_key(url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        DownloadArchive, DownloadArchiveEntryRecord, DownloadArchiveRecord, DownloadMode,
-        DownloadOptions, DownloadPreflight, DownloadReport, DownloadedFile, DuplicateDecision,
-        EntryDownloadReport, MAX_FILE_COMPONENT_BYTES, MAX_FILE_NAME_BYTES,
-        MAX_SUBTITLE_EXTENSION_BYTES, MuxOptions, RetryPolicy, SidecarOptions, StreamSelection,
-        archive_sidecar_path, comparable_output_path, cover_file_name, default_plan_output_dir,
+        DEFAULT_UPOS_REPLACEMENT_HOST, DownloadArchive, DownloadArchiveEntryRecord,
+        DownloadArchiveRecord, DownloadMode, DownloadOptions, DownloadPreflight, DownloadReport,
+        DownloadedFile, DuplicateDecision, EntryDownloadReport, MAX_FILE_COMPONENT_BYTES,
+        MAX_FILE_NAME_BYTES, MAX_SUBTITLE_EXTENSION_BYTES, MediaHostOptions, MuxOptions,
+        RetryPolicy, SidecarOptions, StreamSelection, archive_sidecar_path, candidate_urls,
+        comparable_output_path, cover_file_name, default_plan_output_dir,
         download_entry_content_key, download_plan_content_key, entry_dir_name, media_file_name,
         path_is_occupied, safe_file_name, safe_file_name_with_budget, select_media_stream,
         subtitle_dedup_key, subtitle_extension, subtitle_file_name, temporary_download_path,
@@ -2415,6 +2618,12 @@ mod tests {
             .with_subtitles(false)
             .with_danmaku(false)
             .with_danmaku_formats([DanmakuFormat::Xml, DanmakuFormat::Ass])
+            .with_media_hosts(
+                MediaHostOptions::new()
+                    .with_upos_host("upos.example")
+                    .with_force_replace_host(true)
+                    .with_allow_pcdn(false),
+            )
             .with_mux(MuxOptions::ffmpeg("ffmpeg-custom"));
 
         assert_eq!(options.output_dir.as_path(), Path::new("downloads"));
@@ -2430,6 +2639,14 @@ mod tests {
             options.danmaku_formats,
             DanmakuFormats::new([DanmakuFormat::Xml, DanmakuFormat::Ass])
         );
+        assert_eq!(
+            options.media_hosts,
+            MediaHostOptions {
+                upos_host: Some("upos.example".to_owned()),
+                force_replace_host: true,
+                allow_pcdn: false,
+            }
+        );
         assert!(options.sidecars.cover);
         assert!(!options.sidecars.subtitles);
         assert!(!options.sidecars.danmaku);
@@ -2442,6 +2659,101 @@ mod tests {
         assert_eq!(audio_selection.video_quality, None);
         assert_eq!(audio_selection.audio_quality, Some(30216));
         Ok(())
+    }
+
+    #[test]
+    fn candidate_urls_preserve_media_hosts_by_default() {
+        let options = MediaHostOptions::default();
+        let urls = candidate_urls(
+            "https://video.example:448/video.m4s?token=1",
+            &["https://backup.example/video.m4s".to_owned()],
+            &options,
+        );
+
+        assert_eq!(
+            urls,
+            vec![
+                "https://video.example:448/video.m4s?token=1",
+                "https://backup.example/video.m4s"
+            ]
+        );
+    }
+
+    #[test]
+    fn candidate_urls_rewrite_remote_pcdn_hosts_for_cli_default() {
+        let options = MediaHostOptions::bbdown_cli_default();
+        let urls = candidate_urls("https://pcdn.example:448/video.m4s?token=1", &[], &options);
+
+        assert_eq!(
+            urls,
+            vec![format!(
+                "https://{DEFAULT_UPOS_REPLACEMENT_HOST}/video.m4s?token=1"
+            )]
+        );
+    }
+
+    #[test]
+    fn candidate_urls_do_not_rewrite_local_ports_for_cli_default() {
+        let options = MediaHostOptions::bbdown_cli_default();
+        let urls = candidate_urls("http://127.0.0.1:3100/video.m4s", &[], &options);
+
+        assert_eq!(urls, vec!["http://127.0.0.1:3100/video.m4s"]);
+    }
+
+    #[test]
+    fn candidate_urls_rewrite_custom_upos_hosts_and_dedupe() {
+        let options = MediaHostOptions::new().with_upos_host("upos.example:8443");
+        let urls = candidate_urls(
+            "https://primary.example/video.m4s?token=1",
+            &[
+                "https://backup.example/video.m4s?token=1".to_owned(),
+                "https://backup.example/audio.m4s".to_owned(),
+            ],
+            &options,
+        );
+
+        assert_eq!(
+            urls,
+            vec![
+                "https://upos.example:8443/video.m4s?token=1",
+                "https://upos.example:8443/audio.m4s"
+            ]
+        );
+    }
+
+    #[test]
+    fn candidate_urls_preserve_explicit_replacement_default_port() {
+        let options = MediaHostOptions::new().with_upos_host("upos.example:443");
+        let urls = candidate_urls("http://primary.example/video.m4s", &[], &options);
+
+        assert_eq!(urls, vec!["http://upos.example:443/video.m4s"]);
+    }
+
+    #[test]
+    fn candidate_urls_preserve_explicit_replacement_default_port_from_url_like_input() {
+        let options = MediaHostOptions::new().with_upos_host("https://upos.example:443");
+        let urls = candidate_urls("http://primary.example/video.m4s", &[], &options);
+
+        assert_eq!(urls, vec!["http://upos.example:443/video.m4s"]);
+    }
+
+    #[test]
+    fn candidate_urls_rewrite_custom_ipv6_upos_host() {
+        let options = MediaHostOptions::new().with_upos_host("[::1]:8080");
+        let urls = candidate_urls("http://primary.example/video.m4s?token=1", &[], &options);
+
+        assert_eq!(urls, vec!["http://[::1]:8080/video.m4s?token=1"]);
+    }
+
+    #[test]
+    fn candidate_urls_force_replace_ordinary_hosts() {
+        let options = MediaHostOptions::new().with_force_replace_host(true);
+        let urls = candidate_urls("https://cdn.example/video.m4s", &[], &options);
+
+        assert_eq!(
+            urls,
+            vec![format!("https://{DEFAULT_UPOS_REPLACEMENT_HOST}/video.m4s")]
+        );
     }
 
     #[test]
@@ -3296,6 +3608,37 @@ mod tests {
         assert_eq!(
             tokio::fs::read_to_string(&report.entries[0].files[0].path).await?,
             "backup"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn download_media_rewrites_custom_upos_host() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/video.m4s");
+            then.status(200).body("rewritten-video");
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = single_video_plan("http://pcdn.example:12000/video.m4s".to_owned());
+
+        let report = client
+            .download_plan(
+                &plan,
+                DownloadOptions::new(temp.path())
+                    .with_retry_policy(RetryPolicy::single_attempt())
+                    .with_download_mode(DownloadMode::VideoOnly)
+                    .with_media_hosts(
+                        MediaHostOptions::new().with_upos_host(server_authority(&server)?),
+                    )
+                    .with_mux(MuxOptions::Disabled),
+            )
+            .await?;
+
+        assert_eq!(
+            tokio::fs::read_to_string(&report.entries[0].files[0].path).await?,
+            "rewritten-video"
         );
         Ok(())
     }
@@ -5759,6 +6102,16 @@ mod tests {
         url.set_query(None);
         url.set_fragment(None);
         url.to_string()
+    }
+
+    fn server_authority(server: &MockServer) -> anyhow::Result<String> {
+        let parsed = url::Url::parse(&server.base_url())?;
+        let host = parsed
+            .host_str()
+            .ok_or_else(|| anyhow::anyhow!("mock server base URL has no host"))?;
+        Ok(parsed
+            .port()
+            .map_or_else(|| host.to_owned(), |port| format!("{host}:{port}")))
     }
 
     fn test_entry_dir(base: &Path, plan: &DownloadPlan) -> std::path::PathBuf {

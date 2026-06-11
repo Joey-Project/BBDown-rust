@@ -180,6 +180,20 @@ Danmaku sidecars default to `DanmakuFormat::Xml`; use `DanmakuFormat::Ass` for A
 `DownloadOptions::with_danmaku_formats([DanmakuFormat::Xml, DanmakuFormat::Ass])` when the
 embedding UI needs to keep both XML and ASS sidecars.
 
+The crate default preserves media URLs exactly as planned. Embedding applications that need
+BBDown-like PCDN avoidance or a custom UPOS host can set `MediaHostOptions` on `DownloadOptions`.
+The policy applies only to DASH and FLV media candidates; cover, subtitle, and danmaku sidecar URLs
+are not rewritten.
+
+```rust,no_run
+use bbdown_core::{DownloadOptions, MediaHostOptions};
+
+let options = DownloadOptions::new("downloads").with_media_hosts(
+    MediaHostOptions::bbdown_cli_default()
+        .with_upos_host("upos-sz-mirrorcoso1.bilivideo.com"),
+);
+```
+
 ## Download Archive And Duplicate Decisions
 
 Embedding applications should keep duplicate handling explicit. Inspect a plan with
