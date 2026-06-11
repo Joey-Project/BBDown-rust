@@ -4,6 +4,7 @@
 mod bv;
 mod client;
 mod credentials;
+mod danmaku;
 mod download;
 mod error;
 mod input;
@@ -17,10 +18,10 @@ pub use client::{
 };
 pub use credentials::{CredentialSource, CredentialStore, Credentials};
 pub use download::{
-    DownloadArchive, DownloadArchiveEntryRecord, DownloadArchiveRecord, DownloadFileKind,
-    DownloadMode, DownloadOptions, DownloadOutputConflict, DownloadPreflight, DownloadReport,
-    DownloadedFile, DuplicateDecision, EntryDownloadReport, MuxOptions, MuxReport, RetryPolicy,
-    SidecarOptions, StreamSelection,
+    DanmakuFormat, DownloadArchive, DownloadArchiveEntryRecord, DownloadArchiveRecord,
+    DownloadFileKind, DownloadMode, DownloadOptions, DownloadOutputConflict, DownloadPreflight,
+    DownloadReport, DownloadedFile, DuplicateDecision, EntryDownloadReport, MuxOptions, MuxReport,
+    RetryPolicy, SidecarOptions, StreamSelection,
 };
 pub use error::{Error, Result};
 pub use input::Input;

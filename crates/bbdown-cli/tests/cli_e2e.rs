@@ -703,6 +703,87 @@ fn download_only_modes_write_selected_file_kind() -> anyhow::Result<()> {
 }
 
 #[test]
+fn download_only_danmaku_can_write_ass_format() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    mock_minimal_download_with_sidecars(&server);
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--comment-base")
+        .arg(server.base_url())
+        .arg("download")
+        .arg("av170001")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--only")
+        .arg("danmaku")
+        .arg("--danmaku-format")
+        .arg("ass")
+        .arg("--no-mux")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+
+    assert_eq!(
+        json["entries"][0]["files"].as_array().map(Vec::len),
+        Some(1)
+    );
+    let ass_path = downloaded_file_path(&json, "danmaku_ass")?;
+    assert!(ass_path.ends_with("danmaku.ass"));
+    assert!(fs::read_to_string(ass_path)?.contains("[Script Info]"));
+    assert!(downloaded_file_path(&json, "danmaku").is_err());
+    Ok(())
+}
+
+#[test]
+fn download_only_danmaku_can_write_xml_and_ass_formats() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    mock_minimal_download_with_sidecars(&server);
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--comment-base")
+        .arg(server.base_url())
+        .arg("download")
+        .arg("av170001")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--only")
+        .arg("danmaku")
+        .arg("--danmaku-format")
+        .arg("both")
+        .arg("--no-mux")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+
+    assert_eq!(
+        json["entries"][0]["files"].as_array().map(Vec::len),
+        Some(2)
+    );
+    assert_eq!(
+        fs::read_to_string(downloaded_file_path(&json, "danmaku")?)?,
+        "<i/>"
+    );
+    assert!(fs::read_to_string(downloaded_file_path(&json, "danmaku_ass")?)?.contains("[Events]"));
+    Ok(())
+}
+
+#[test]
 fn download_only_rejects_conflicting_disable_flag() -> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;
     let credential_file = temp.path().join("credentials.json");

@@ -70,7 +70,8 @@ bbdown download av170001 --output-dir downloads --archive-file downloads/archive
 writes cover, subtitle, and danmaku sidecars by default, resumes partial files with HTTP range
 requests, retries bounded transient failures, validates advertised media sizes when present, fails
 incomplete media shapes, and runs `ffmpeg` unless `--no-mux` is supplied. Use `--no-cover`,
-`--no-subtitles`, or `--no-danmaku` to skip individual sidecar families.
+`--no-subtitles`, or `--no-danmaku` to skip individual sidecar families. Danmaku output defaults to
+XML; pass `--danmaku-format ass` or `--danmaku-format both` to generate ASS sidecars.
 Use `--only video`, `--only audio`, `--only subtitle`, `--only danmaku`, or `--only cover` for a
 single output kind; single-output modes skip muxing.
 Pass `--archive-file <path>` to record completed downloads by content identity. Archive output,

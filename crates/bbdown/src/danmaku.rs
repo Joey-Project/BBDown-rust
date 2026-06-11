@@ -1,0 +1,360 @@
+use std::fmt::Write as _;
+use std::time::Duration;
+
+const PLAY_RES_X: u32 = 1920;
+const PLAY_RES_Y: u32 = 1080;
+const DEFAULT_FONT_SIZE: f64 = 42.0;
+const SCROLL_DURATION_SECONDS: f64 = 8.0;
+const FIXED_DURATION_SECONDS: f64 = 4.0;
+const TOP_MARGIN: f64 = 40.0;
+const LINE_HEIGHT: f64 = 52.0;
+const SCROLL_LANES: usize = 15;
+const FIXED_LANES: usize = 8;
+
+#[derive(Clone, Debug, PartialEq)]
+struct DanmakuComment {
+    start_seconds: f64,
+    mode: u8,
+    font_size: f64,
+    color: u32,
+    text: String,
+}
+
+pub(crate) fn xml_to_ass(xml: &str) -> String {
+    let comments = parse_comments(xml);
+    render_ass(&comments)
+}
+
+fn parse_comments(xml: &str) -> Vec<DanmakuComment> {
+    let mut comments = Vec::new();
+    let mut offset = 0;
+    while let Some(tag_start_relative) = xml[offset..].find("<d") {
+        let tag_start = offset + tag_start_relative;
+        let name_tail = tag_start + 2;
+        let Some(next) = xml[name_tail..].chars().next() else {
+            break;
+        };
+        if !(next.is_ascii_whitespace() || matches!(next, '>' | '/')) {
+            offset = name_tail;
+            continue;
+        }
+        let Some(tag_end_relative) = xml[tag_start..].find('>') else {
+            break;
+        };
+        let tag_end = tag_start + tag_end_relative;
+        let content_start = tag_end + 1;
+        let Some(close_relative) = xml[content_start..].find("</d>") else {
+            break;
+        };
+        let content_end = content_start + close_relative;
+        offset = content_end + "</d>".len();
+
+        let Some(parameters) = attribute_value(&xml[tag_start..tag_end], "p") else {
+            continue;
+        };
+        if let Some(comment) = parse_comment(&parameters, &xml[content_start..content_end]) {
+            comments.push(comment);
+        }
+    }
+    comments
+}
+
+fn parse_comment(parameters: &str, raw_text: &str) -> Option<DanmakuComment> {
+    let mut parts = parameters.split(',');
+    let start_seconds = parts.next()?.parse::<f64>().ok()?;
+    if !start_seconds.is_finite() {
+        return None;
+    }
+    let mode = parts.next()?.parse::<u8>().ok()?;
+    let raw_font_size = parts
+        .next()
+        .and_then(|value| value.parse::<f64>().ok())
+        .unwrap_or(DEFAULT_FONT_SIZE);
+    let font_size = if raw_font_size.is_finite() {
+        raw_font_size.clamp(12.0, 96.0)
+    } else {
+        DEFAULT_FONT_SIZE
+    };
+    let color = parts
+        .next()
+        .and_then(|value| value.parse::<u32>().ok())
+        .unwrap_or(0xFF_FF_FF)
+        & 0xFF_FF_FF;
+    let text = xml_unescape(raw_text);
+    if text.is_empty() {
+        return None;
+    }
+    Some(DanmakuComment {
+        start_seconds: start_seconds.max(0.0),
+        mode,
+        font_size,
+        color,
+        text,
+    })
+}
+
+fn attribute_value(tag: &str, name: &str) -> Option<String> {
+    let bytes = tag.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        while index < bytes.len() && !is_attribute_name_char(bytes[index]) {
+            index += 1;
+        }
+        let name_start = index;
+        while index < bytes.len() && is_attribute_name_char(bytes[index]) {
+            index += 1;
+        }
+        if name_start == index {
+            continue;
+        }
+        let attr_name = &tag[name_start..index];
+        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+            index += 1;
+        }
+        if bytes.get(index) != Some(&b'=') {
+            continue;
+        }
+        index += 1;
+        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+            index += 1;
+        }
+        let quote = bytes.get(index).copied()?;
+        if !matches!(quote, b'\'' | b'"') {
+            continue;
+        }
+        index += 1;
+        let value_start = index;
+        while index < bytes.len() && bytes[index] != quote {
+            index += 1;
+        }
+        if index >= bytes.len() {
+            return None;
+        }
+        if attr_name == name {
+            return Some(xml_unescape(&tag[value_start..index]));
+        }
+        index += 1;
+    }
+    None
+}
+
+const fn is_attribute_name_char(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b':')
+}
+
+fn render_ass(comments: &[DanmakuComment]) -> String {
+    let mut output = String::new();
+    output.push_str("[Script Info]\n");
+    output.push_str("ScriptType: v4.00+\n");
+    output.push_str("WrapStyle: 2\n");
+    output.push_str("ScaledBorderAndShadow: yes\n");
+    let _ = writeln!(output, "PlayResX: {PLAY_RES_X}");
+    let _ = writeln!(output, "PlayResY: {PLAY_RES_Y}");
+    output.push('\n');
+    output.push_str("[V4+ Styles]\n");
+    output.push_str("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n");
+    output.push_str("Style: Danmaku,Arial,42,&H00FFFFFF,&H000000FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2,0,7,20,20,20,1\n");
+    output.push('\n');
+    output.push_str("[Events]\n");
+    output.push_str(
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n",
+    );
+    for (index, comment) in comments.iter().enumerate() {
+        if let Some(line) = render_dialogue(comment, index) {
+            output.push_str(&line);
+        }
+    }
+    output
+}
+
+fn render_dialogue(comment: &DanmakuComment, index: usize) -> Option<String> {
+    if matches!(comment.mode, 7 | 8) {
+        return None;
+    }
+    let text = ass_escape(&comment.text);
+    if text.is_empty() {
+        return None;
+    }
+    let duration = if matches!(comment.mode, 4 | 5) {
+        FIXED_DURATION_SECONDS
+    } else {
+        SCROLL_DURATION_SECONDS
+    };
+    let start = ass_timestamp(comment.start_seconds);
+    let end = ass_timestamp(comment.start_seconds + duration);
+    let font_size = comment.font_size.round();
+    let color = ass_color(comment.color);
+    let override_block = match comment.mode {
+        4 => {
+            let y = bottom_lane_y(index);
+            format!(
+                "{{\\an2\\pos({},{y:.0})\\fs{font_size:.0}\\c{color}}}",
+                PLAY_RES_X / 2
+            )
+        }
+        5 => {
+            let y = top_lane_y(index, FIXED_LANES);
+            format!(
+                "{{\\an8\\pos({},{y:.0})\\fs{font_size:.0}\\c{color}}}",
+                PLAY_RES_X / 2
+            )
+        }
+        6 => {
+            let y = top_lane_y(index, SCROLL_LANES);
+            let width = estimated_text_width(&comment.text, font_size);
+            format!(
+                "{{\\move({:.0},{y:.0},{:.0},{y:.0})\\fs{font_size:.0}\\c{color}}}",
+                -width,
+                f64::from(PLAY_RES_X) + width
+            )
+        }
+        _ => {
+            let y = top_lane_y(index, SCROLL_LANES);
+            let width = estimated_text_width(&comment.text, font_size);
+            format!(
+                "{{\\move({:.0},{y:.0},{:.0},{y:.0})\\fs{font_size:.0}\\c{color}}}",
+                f64::from(PLAY_RES_X) + width,
+                -width
+            )
+        }
+    };
+    Some(format!(
+        "Dialogue: 0,{start},{end},Danmaku,,0,0,0,,{override_block}{text}\n"
+    ))
+}
+
+fn top_lane_y(index: usize, lane_count: usize) -> f64 {
+    TOP_MARGIN + (lane_index(index, lane_count) * LINE_HEIGHT)
+}
+
+fn bottom_lane_y(index: usize) -> f64 {
+    f64::from(PLAY_RES_Y) - TOP_MARGIN - (lane_index(index, FIXED_LANES) * LINE_HEIGHT)
+}
+
+fn lane_index(index: usize, lane_count: usize) -> f64 {
+    u32::try_from(index % lane_count).map_or(0.0, f64::from)
+}
+
+fn estimated_text_width(text: &str, font_size: f64) -> f64 {
+    let chars = u32::try_from(text.chars().count().max(1)).map_or(f64::from(u32::MAX), f64::from);
+    (chars * font_size * 0.72).max(font_size * 2.0)
+}
+
+fn ass_timestamp(seconds: f64) -> String {
+    let safe_seconds = if seconds.is_finite() {
+        seconds.clamp(0.0, 3_599_999.0)
+    } else {
+        0.0
+    };
+    let centiseconds = Duration::from_secs_f64(safe_seconds + 0.005).as_millis() / 10;
+    let total_seconds = centiseconds / 100;
+    let centisecond = centiseconds % 100;
+    let second = total_seconds % 60;
+    let minute = (total_seconds / 60) % 60;
+    let hour = total_seconds / 3600;
+    format!("{hour}:{minute:02}:{second:02}.{centisecond:02}")
+}
+
+fn ass_color(color: u32) -> String {
+    let red = (color >> 16) & 0xFF;
+    let green = (color >> 8) & 0xFF;
+    let blue = color & 0xFF;
+    format!("&H{blue:02X}{green:02X}{red:02X}&")
+}
+
+fn ass_escape(text: &str) -> String {
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    let mut output = String::with_capacity(normalized.len());
+    for character in normalized.chars() {
+        match character {
+            '\n' => output.push_str("\\N"),
+            '\\' => output.push_str("\\\\"),
+            '{' => output.push_str("\\{"),
+            '}' => output.push_str("\\}"),
+            character if character.is_control() => {}
+            character => output.push(character),
+        }
+    }
+    output
+}
+
+fn xml_unescape(text: &str) -> String {
+    let mut output = String::with_capacity(text.len());
+    let mut index = 0;
+    while let Some(ampersand_relative) = text[index..].find('&') {
+        let ampersand = index + ampersand_relative;
+        output.push_str(&text[index..ampersand]);
+        let entity_start = ampersand + 1;
+        let Some(semicolon_relative) = text[entity_start..].find(';') else {
+            output.push_str(&text[ampersand..]);
+            return output;
+        };
+        let semicolon = entity_start + semicolon_relative;
+        let entity = &text[entity_start..semicolon];
+        if let Some(decoded) = decode_xml_entity(entity) {
+            output.push(decoded);
+            index = semicolon + 1;
+        } else {
+            output.push('&');
+            index = entity_start;
+        }
+    }
+    output.push_str(&text[index..]);
+    output
+}
+
+fn decode_xml_entity(entity: &str) -> Option<char> {
+    match entity {
+        "amp" => Some('&'),
+        "lt" => Some('<'),
+        "gt" => Some('>'),
+        "quot" => Some('"'),
+        "apos" => Some('\''),
+        entity if entity.starts_with("#x") || entity.starts_with("#X") => {
+            u32::from_str_radix(&entity[2..], 16)
+                .ok()
+                .and_then(char::from_u32)
+        }
+        entity if entity.starts_with('#') => {
+            entity[1..].parse::<u32>().ok().and_then(char::from_u32)
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::xml_to_ass;
+
+    #[test]
+    fn converts_common_xml_comments_to_ass_dialogues() {
+        let ass = xml_to_ass(
+            r#"<i>
+                <d p="1.25,1,25,16711680,0,0,0,0">hello &amp; {world}</d>
+                <d p="2,5,30,255,0,0,0,0">top</d>
+                <d p="3,4,18,65280,0,0,0,0">bottom</d>
+                <d p="4,7,25,16777215,0,0,0,0">special</d>
+            </i>"#,
+        );
+
+        assert!(ass.contains("[Script Info]"));
+        assert!(ass.contains("PlayResX: 1920"));
+        assert_eq!(ass.matches("Dialogue:").count(), 3);
+        assert!(ass.contains("0:00:01.25"));
+        assert!(ass.contains("\\move"));
+        assert!(ass.contains("\\an8"));
+        assert!(ass.contains("\\an2"));
+        assert!(ass.contains("&H0000FF&"));
+        assert!(ass.contains(r"hello & \{world\}"));
+        assert!(!ass.contains("special"));
+    }
+
+    #[test]
+    fn decodes_numeric_entities_and_single_quoted_attributes() {
+        let ass = xml_to_ass(r"<i><d p='0,6,25,0,0,0,0,0'>&#x5f39;&#24149;&#10;left</d></i>");
+
+        assert_eq!(ass.matches("Dialogue:").count(), 1);
+        assert!(ass.contains("弹幕\\Nleft"));
+        assert!(ass.contains("&H000000&"));
+    }
+}

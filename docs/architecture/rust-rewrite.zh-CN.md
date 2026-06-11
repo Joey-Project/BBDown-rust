@@ -122,6 +122,10 @@ id。如果请求的 id 不可用，executor 会报告可用 id，并在媒体�
 会拒绝 FLV 回退。否则条目会在媒体写入前失败。封面、字幕和弹幕文件保持为 sidecar。当启
 用 mux 时，executor 使用显式 argv 调用 `ffmpeg`，并在 report 中返回命令和输出路径。
 
+Plan 条目保留 canonical 弹幕 XML 端点；只有当执行层选择 `DanmakuFormat::Ass` 或
+`DanmakuFormat::Both` 时，executor 才会把 XML 转为 ASS。ASS 生成支持常见滚动、顶部、
+底部和反向滚动弹幕，并会跳过高级定位弹幕，避免写出误导性的坐标。
+
 `DownloadMode` 将默认 all-output 路径和单独输出 workflow 分开。`VideoOnly` 和 `AudioOnly`
 只下载一个匹配的 DASH stream，并跳过 sidecar 和 mux。`SubtitleOnly`、`DanmakuOnly` 和
 `CoverOnly` 会跳过媒体要求，只写入请求的 sidecar family，并拒绝 stream quality 选择，因

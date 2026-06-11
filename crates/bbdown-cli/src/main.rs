@@ -3,11 +3,11 @@
 
 use anyhow::{Context, bail, ensure};
 use bbdown_core::{
-    BiliClient, ClientConfig, CredentialStore, Credentials, DownloadArchive, DownloadMode,
-    DownloadOptions, DownloadPreflight, DownloadReport, DuplicateDecision, EndpointConfig,
-    MediaStream, MuxOptions, QrLoginKind, QrLoginState, QrLoginTicket, ResolvedContent,
-    RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind,
-    RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet,
+    BiliClient, ClientConfig, CredentialStore, Credentials, DanmakuFormat, DownloadArchive,
+    DownloadMode, DownloadOptions, DownloadPreflight, DownloadReport, DuplicateDecision,
+    EndpointConfig, MediaStream, MuxOptions, QrLoginKind, QrLoginState, QrLoginTicket,
+    ResolvedContent, RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy,
+    RestrictedAreaProxyKind, RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::ffi::{OsStr, OsString};
@@ -119,6 +119,8 @@ enum Command {
         no_subtitles: bool,
         #[arg(long)]
         no_danmaku: bool,
+        #[arg(long, value_enum, default_value_t = DanmakuFormatArg::Xml)]
+        danmaku_format: DanmakuFormatArg,
         #[arg(long)]
         no_mux: bool,
         #[arg(long, value_name = "ID")]
@@ -175,6 +177,25 @@ enum DownloadOnlyArg {
     Subtitle,
     Danmaku,
     Cover,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+enum DanmakuFormatArg {
+    #[default]
+    Xml,
+    Ass,
+    Both,
+}
+
+impl From<DanmakuFormatArg> for DanmakuFormat {
+    fn from(value: DanmakuFormatArg) -> Self {
+        match value {
+            DanmakuFormatArg::Xml => Self::Xml,
+            DanmakuFormatArg::Ass => Self::Ass,
+            DanmakuFormatArg::Both => Self::Both,
+        }
+    }
 }
 
 impl From<DownloadOnlyArg> for DownloadMode {
@@ -236,6 +257,7 @@ struct DownloadOptionCliArgs {
     only: Option<DownloadOnlyArg>,
     execution: DownloadExecutionCliFlags,
     sidecars: DownloadSidecarCliFlags,
+    danmaku_format: DanmakuFormatArg,
     video_quality: Option<u32>,
     audio_quality: Option<u32>,
     ffmpeg: PathBuf,
@@ -288,6 +310,7 @@ fn download_options_from_cli(args: DownloadOptionCliArgs) -> anyhow::Result<Down
         .with_cover(!args.sidecars.no_cover)
         .with_subtitles(!args.sidecars.no_subtitles)
         .with_danmaku(!args.sidecars.no_danmaku)
+        .with_danmaku_format(args.danmaku_format.into())
         .with_mux(mux))
 }
 
@@ -359,6 +382,7 @@ async fn main() -> anyhow::Result<()> {
             no_cover,
             no_subtitles,
             no_danmaku,
+            danmaku_format,
             no_mux,
             video_quality,
             audio_quality,
@@ -382,6 +406,7 @@ async fn main() -> anyhow::Result<()> {
                     no_subtitles,
                     no_danmaku,
                 },
+                danmaku_format,
                 video_quality,
                 audio_quality,
                 ffmpeg,
