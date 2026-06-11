@@ -1542,14 +1542,59 @@ fn parse_replacement_host(replacement_host: &str) -> Option<(String, Option<u16>
     if replacement_host.is_empty() {
         return None;
     }
-    let parse_input = if replacement_host.contains("://") {
-        replacement_host.to_owned()
+    let authority = if let Some((_, rest)) = replacement_host.split_once("://") {
+        rest.split(['/', '?', '#']).next().unwrap_or_default()
     } else {
-        format!("https://{replacement_host}")
+        replacement_host
     };
-    let parsed = url::Url::parse(&parse_input).ok()?;
+    parse_replacement_authority(authority)
+}
+
+fn parse_replacement_authority(authority: &str) -> Option<(String, Option<u16>)> {
+    if authority.is_empty() || authority.contains('@') {
+        return None;
+    }
+    let explicit_port = explicit_authority_port(authority)?.into_option();
+    let parsed = url::Url::parse(&format!("https://{authority}")).ok()?;
     let host = parsed.host_str()?.to_owned();
-    Some((host, parsed.port()))
+    Some((host, explicit_port))
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ExplicitPort {
+    Absent,
+    Present(u16),
+}
+
+impl ExplicitPort {
+    fn into_option(self) -> Option<u16> {
+        match self {
+            Self::Absent => None,
+            Self::Present(port) => Some(port),
+        }
+    }
+}
+
+fn explicit_authority_port(authority: &str) -> Option<ExplicitPort> {
+    if let Some(rest) = authority.strip_prefix('[') {
+        let (_, suffix) = rest.split_once(']')?;
+        return parse_optional_port_suffix(suffix);
+    }
+    if let Some((host, port)) = authority.rsplit_once(':') {
+        if host.is_empty() {
+            return None;
+        }
+        return Some(ExplicitPort::Present(port.parse().ok()?));
+    }
+    Some(ExplicitPort::Absent)
+}
+
+fn parse_optional_port_suffix(suffix: &str) -> Option<ExplicitPort> {
+    if suffix.is_empty() {
+        return Some(ExplicitPort::Absent);
+    }
+    let port = suffix.strip_prefix(':')?;
+    Some(ExplicitPort::Present(port.parse().ok()?))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2670,6 +2715,22 @@ mod tests {
                 "https://upos.example:8443/audio.m4s"
             ]
         );
+    }
+
+    #[test]
+    fn candidate_urls_preserve_explicit_replacement_default_port() {
+        let options = MediaHostOptions::new().with_upos_host("upos.example:443");
+        let urls = candidate_urls("http://primary.example/video.m4s", &[], &options);
+
+        assert_eq!(urls, vec!["http://upos.example:443/video.m4s"]);
+    }
+
+    #[test]
+    fn candidate_urls_preserve_explicit_replacement_default_port_from_url_like_input() {
+        let options = MediaHostOptions::new().with_upos_host("https://upos.example:443");
+        let urls = candidate_urls("http://primary.example/video.m4s", &[], &options);
+
+        assert_eq!(urls, vec!["http://upos.example:443/video.m4s"]);
     }
 
     #[test]

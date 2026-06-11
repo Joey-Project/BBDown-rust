@@ -348,11 +348,15 @@ fn media_host_options_from_cli(
 fn validate_media_host_spec(host: &str) -> anyhow::Result<()> {
     let host = host.trim().trim_end_matches('/');
     ensure!(!host.is_empty(), "--upos-host must not be empty");
-    let parse_input = if host.contains("://") {
-        host.to_owned()
-    } else {
-        format!("https://{host}")
-    };
+    ensure!(
+        !starts_with_url_scheme(host),
+        "--upos-host expects only a host or host:port, not a URL"
+    );
+    ensure!(
+        !host.contains('@'),
+        "--upos-host must not include username or password data"
+    );
+    let parse_input = format!("https://{host}");
     let parsed = url::Url::parse(&parse_input)
         .with_context(|| format!("invalid --upos-host value `{host}`"))?;
     ensure!(
@@ -1524,7 +1528,7 @@ mod tests {
         Cli, archive_sidecar_path, endpoints_from_cli, ensure_archive_file_is_not_output_root,
         next_poll_sleep, remaining_until, restricted_area_from_cli_with_args,
         restricted_area_from_cli_with_env_values, save_qr_credentials,
-        should_prompt_duplicate_decision,
+        should_prompt_duplicate_decision, validate_media_host_spec,
     };
     use bbdown_core::{
         CredentialStore, Credentials, DownloadOutputConflict, DownloadPreflight, DuplicateDecision,
@@ -1568,6 +1572,29 @@ mod tests {
             Some(Duration::from_secs(119))
         );
         assert_eq!(remaining_until(now, now), None);
+    }
+
+    #[test]
+    fn validate_media_host_spec_accepts_host_or_host_port_only() {
+        assert!(validate_media_host_spec("upos.example").is_ok());
+        assert!(validate_media_host_spec("upos.example:8443").is_ok());
+        assert!(validate_media_host_spec("[::1]:8080").is_ok());
+
+        for invalid in [
+            "",
+            "https://upos.example",
+            "http://127.0.0.1:8080",
+            "ftp://upos.example",
+            "user@upos.example",
+            "upos.example/path",
+            "upos.example?query=1",
+            "upos.example#fragment",
+        ] {
+            assert!(
+                validate_media_host_spec(invalid).is_err(),
+                "{invalid} should be rejected"
+            );
+        }
     }
 
     #[test]
