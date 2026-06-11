@@ -175,6 +175,19 @@ options 使用非默认 mode 时，应先用 mode-aware planning API 再调用
 `DanmakuFormat::Ass`；需要同时保留 XML 和 ASS 时，使用
 `DownloadOptions::with_danmaku_formats([DanmakuFormat::Xml, DanmakuFormat::Ass])`。
 
+crate 默认会原样保留 plan 中的媒体 URL。嵌入应用如果需要 BBDown-like 的 PCDN 规避，或
+需要指定自定义 UPOS host，可以在 `DownloadOptions` 上设置 `MediaHostOptions`。该策略只
+应用于 DASH 和 FLV 媒体候选；封面、字幕和弹幕旁路 URL 不会被改写。
+
+```rust,no_run
+use bbdown_core::{DownloadOptions, MediaHostOptions};
+
+let options = DownloadOptions::new("downloads").with_media_hosts(
+    MediaHostOptions::bbdown_cli_default()
+        .with_upos_host("upos-sz-mirrorcoso1.bilivideo.com"),
+);
+```
+
 ## 下载归档和重复决策
 
 嵌入应用应保持重复处理显式。用 `DownloadPreflight` 检查计划，把已有归档记录或输出冲突

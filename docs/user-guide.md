@@ -129,6 +129,7 @@ bbdown download av170001 --output-dir downloads --no-mux --json
 bbdown download av170001 --video-quality 64 --audio-quality 30216 --output-dir downloads
 bbdown download av170001 --only subtitle --output-dir downloads --json
 bbdown download av170001 --output-dir downloads --archive-file downloads/archive.json --on-duplicate keep-both
+bbdown download av170001 --upos-host upos-sz-mirrorcoso1.bilivideo.com --no-mux
 ```
 
 The command downloads the first complete DASH video/audio pair for each entry by default. Use
@@ -150,6 +151,16 @@ reject media quality flags. Single-output modes skip muxing even when `--no-mux`
 When `--archive-file` is used, single-output records are tracked separately from full downloads, so
 a cover-only or audio-only run does not mark the complete media download as already done.
 ASS-only and multi-format danmaku outputs are also tracked separately from XML-only danmaku output.
+
+The CLI applies media-host policy only to DASH and FLV media candidates. It leaves cover, subtitle,
+and danmaku sidecar URLs unchanged. By default, the CLI treats non-local media URLs with explicit
+ports, `pcdn`/`mcdn` host names, or Akamai hosts as PCDN-like candidates and rewrites those
+candidates to the built-in BBDown fallback host. Localhost and private-network hosts are preserved
+so mock servers and private proxies keep working. Use `--allow-pcdn` to keep original PCDN-like
+media candidates, `--upos-host <HOST>` to rewrite all DASH/FLV media candidates to a specific host
+or host:port, and `--force-replace-host` to rewrite all DASH/FLV media candidates to the fallback
+host even when they are not PCDN-like. When `--upos-host` is present, it takes precedence over the
+PCDN setting.
 
 Downloads resume partial files by default with HTTP range requests and validate `Content-Range`
 plus advertised media sizes when the plan provides them. Use `--no-resume` to force a fresh write;

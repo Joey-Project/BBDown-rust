@@ -5,8 +5,9 @@
 `bbdown-core` 是 BBDown Rust 背后的可复用 Rust library package。Rust 代码中以
 `bbdown_core` 导入。它把 Bilibili 和 Bilibili intl 输入解析为 typed metadata、下载计划、
 媒体下载、单独输出下载模式、封面/字幕/XML 或 ASS 弹幕旁路文件、二维码登录凭据、下载归档预检查数
-据、批量集合 metadata，以及受限区域代理诊断。原始输入解析覆盖普通视频、PGC 和 intl 分
-集、PUGV/cheese 课程、B23 短链接、收藏夹、空间投稿、合集和系列。
+据、批量集合 metadata，以及受限区域代理诊断。下载执行也可以通过 `MediaHostOptions` 应
+用显式 UPOS host 替换或 BBDown-like PCDN 规避。原始输入解析覆盖普通视频、PGC 和 intl
+分集、PUGV/cheese 课程、B23 短链接、收藏夹、空间投稿、合集和系列。
 
 使用 `cargo add bbdown-core` 安装，然后用 `bbdown_core` 导入。
 
@@ -22,7 +23,7 @@ constructor 和 builder 风格 API，例如 `ClientConfig::default().with_*()`�
 
 ```rust,no_run
 use bbdown_core::{
-    BiliClient, ClientConfig, DownloadMode, DownloadOptions, RetryPolicy, Selection,
+    BiliClient, ClientConfig, DownloadMode, DownloadOptions, MediaHostOptions, RetryPolicy, Selection,
     StreamSelection,
 };
 use std::time::Duration;
@@ -40,6 +41,9 @@ async fn main() -> bbdown_core::Result<()> {
     let options = DownloadOptions::new("downloads")
         .with_stream_selection(StreamSelection::video(80))
         .with_download_mode(DownloadMode::VideoOnly)
+        .with_media_hosts(
+            MediaHostOptions::new().with_upos_host("upos-sz-mirrorcoso1.bilivideo.com"),
+        )
         .with_retry_policy(RetryPolicy::new(3, Duration::from_millis(250)));
 
     println!("{} entries", plan.entries.len());
@@ -52,6 +56,9 @@ async fn main() -> bbdown_core::Result<()> {
 `ResolvedContent::Collection` 返回；`resolve_input` 会保留完整解析到的 collection
 metadata，`selected_items` 则携带当前选中子集。选中的条目随后通过普通视频 pipeline 规
 划和下载。
+
+library 默认保留 plan 中的媒体 URL。嵌入应用需要自定义 UPOS host、强制替换，或
+CLI-compatible PCDN fallback 处理时，应显式设置 `MediaHostOptions`。
 
 受限区域代理、端点覆盖、凭据、下载归档和下载执行示例见仓库嵌入指南：
 [英文](https://github.com/Joey-Project/BBDown-rust/blob/master/docs/embedding.md) /

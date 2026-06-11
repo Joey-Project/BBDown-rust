@@ -119,6 +119,7 @@ Execution behavior is controlled by `DownloadOptions`:
 - media read idle timeout;
 - cover, subtitle, and danmaku sidecar inclusion;
 - danmaku sidecar format set (`xml`, `ass`, or `xml,ass`);
+- media host replacement and PCDN handling policy;
 - disabled muxing or explicit `ffmpeg` binary path.
 
 For each entry, execution prefers a complete DASH video/audio pair from the plan. By default this is
@@ -144,13 +145,17 @@ claim that a complete entry is already downloaded.
 
 Media and sidecar downloads use media headers without account cookies, because media URLs come from
 API payloads and can target CDN or proxy hosts. DASH and FLV backup URLs are part of the candidate
-list. Media body reads use a separate idle timeout instead of the metadata request timeout. Resume
-appends only when `Content-Range` starts at the local file length and completes at the advertised
-range total or an expected media size proves the final length; matching 416 responses are treated as
-already complete. Wildcard `Content-Range` totals are rejected when no expected size is available.
-When a stream or FLV segment declares a size, the executor rejects mismatched final file lengths and
-rolls back failed writes to the pre-attempt length. Media responses that complete without writing
-bytes are rejected. Entry directories include content identity so same-title videos do not share
+list. `DownloadPlan` preserves upstream media URLs; `MediaHostOptions` is applied only when the
+executor builds the concrete DASH/FLV candidate list. A configured `upos_host` rewrites all media
+candidates, `force_replace_host` rewrites to the built-in BBDown fallback host, and the CLI default
+rewrites only PCDN-like non-local candidates unless `--allow-pcdn` is set. Sidecar URLs are not
+rewritten. Media body reads use a separate idle timeout instead of the metadata request timeout.
+Resume appends only when `Content-Range` starts at the local file length and completes at the
+advertised range total or an expected media size proves the final length; matching 416 responses are
+treated as already complete. Wildcard `Content-Range` totals are rejected when no expected size is
+available. When a stream or FLV segment declares a size, the executor rejects mismatched final file
+lengths and rolls back failed writes to the pre-attempt length. Media responses that complete without
+writing bytes are rejected. Entry directories include content identity so same-title videos do not share
 resume targets, subtitle sidecar names include track identity, and filename components are bounded
 by UTF-8 byte length. If a server ignores `Range` and returns `200 OK` for a partial file, the
 executor writes the full retry to a temporary file and only replaces the old partial after available

@@ -13,12 +13,12 @@ Bilibili behavior reference. Thanks to BBDown and its contributors for that refe
 The current implementation establishes the crate/CLI/CI foundation, metadata resolver, stream
 planning, media downloads, cover/subtitle/danmaku sidecar downloads, retry/resume behavior,
 optional ffmpeg muxing, QR login, opt-in live test harnesses, configured restricted-area proxy
-ordering with diagnostics, and builder-style crate integration APIs. It also supports an explicit download archive for duplicate
-preflight and CLI replace / keep-both / cancel decisions. Input parsing covers normal videos, PGC
-and intl episodes, PUGV/cheese courses, B23 short links, favorite lists, space videos, collections,
-and series. URL parsing includes canonical `bilibili.com/list/...` pages, path-based medialist
-favorite URLs, and space collection/series URLs that carry the uploader mid needed by newer space
-APIs.
+ordering with diagnostics, UPOS/PCDN media host controls, and builder-style crate integration APIs.
+It also supports an explicit download archive for duplicate preflight and CLI replace / keep-both /
+cancel decisions. Input parsing covers normal videos, PGC and intl episodes, PUGV/cheese courses,
+B23 short links, favorite lists, space videos, collections, and series. URL parsing includes
+canonical `bilibili.com/list/...` pages, path-based medialist favorite URLs, and space
+collection/series URLs that carry the uploader mid needed by newer space APIs.
 
 ## Current CLI
 
@@ -64,6 +64,7 @@ bbdown download fav456 --select page:1 --output-dir downloads
 bbdown download av170001 --output-dir downloads --no-mux --json
 bbdown download av170001 --only cover --output-dir downloads --json
 bbdown download av170001 --output-dir downloads --archive-file downloads/archive.json --on-duplicate keep-both
+bbdown download av170001 --upos-host upos-sz-mirrorcoso1.bilivideo.com --no-mux
 ```
 
 `download` resolves a plan, downloads the first complete DASH video/audio pair or FLV segments,
@@ -75,6 +76,10 @@ XML; pass `--danmaku-format ass` for ASS-only output or `--danmaku-format xml,as
 XML and ASS sidecars.
 Use `--only video`, `--only audio`, `--only subtitle`, `--only danmaku`, or `--only cover` for a
 single output kind; single-output modes skip muxing.
+The CLI avoids suspected PCDN media URLs by default while leaving local and private hosts alone.
+Pass `--allow-pcdn` to keep original PCDN candidates, `--upos-host <HOST>` to rewrite DASH/FLV
+media candidates to a specific UPOS host, or `--force-replace-host` to rewrite media candidates to
+the built-in BBDown fallback host. Cover, subtitle, and danmaku sidecar URLs are not rewritten.
 Pass `--archive-file <path>` to record completed downloads by content identity. Archive output,
 sidecar, and mux paths are stored as absolute paths at record time so the same archive can be reused
 from another working directory. Entry identity uses stable aid/cid media ids, so the same PGC

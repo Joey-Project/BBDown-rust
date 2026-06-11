@@ -5,8 +5,8 @@ use anyhow::{Context, bail, ensure};
 use bbdown_core::{
     BiliClient, ClientConfig, CredentialStore, Credentials, DanmakuFormat, DownloadArchive,
     DownloadMode, DownloadOptions, DownloadPreflight, DownloadReport, DuplicateDecision,
-    EndpointConfig, MediaStream, MuxOptions, QrLoginKind, QrLoginState, QrLoginTicket,
-    ResolvedContent, RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy,
+    EndpointConfig, MediaHostOptions, MediaStream, MuxOptions, QrLoginKind, QrLoginState,
+    QrLoginTicket, ResolvedContent, RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy,
     RestrictedAreaProxyKind, RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -139,6 +139,12 @@ enum Command {
         archive_file: Option<PathBuf>,
         #[arg(long, value_enum)]
         on_duplicate: Option<DuplicateDecisionArg>,
+        #[arg(long, value_name = "HOST")]
+        upos_host: Option<String>,
+        #[arg(long)]
+        force_replace_host: bool,
+        #[arg(long)]
+        allow_pcdn: bool,
     },
     Auth {
         #[command(subcommand)]
@@ -260,6 +266,7 @@ struct DownloadOptionCliArgs {
     only: Option<DownloadOnlyArg>,
     execution: DownloadExecutionCliFlags,
     sidecars: DownloadSidecarCliFlags,
+    media_hosts: DownloadMediaHostCliFlags,
     danmaku_formats: Vec<DanmakuFormatArg>,
     video_quality: Option<u32>,
     audio_quality: Option<u32>,
@@ -275,6 +282,12 @@ struct DownloadSidecarCliFlags {
     no_cover: bool,
     no_subtitles: bool,
     no_danmaku: bool,
+}
+
+struct DownloadMediaHostCliFlags {
+    upos_host: Option<String>,
+    force_replace_host: bool,
+    allow_pcdn: bool,
 }
 
 fn download_options_from_cli(args: DownloadOptionCliArgs) -> anyhow::Result<DownloadOptions> {
@@ -301,6 +314,7 @@ fn download_options_from_cli(args: DownloadOptionCliArgs) -> anyhow::Result<Down
     } else {
         MuxOptions::ffmpeg(args.ffmpeg)
     };
+    let media_hosts = media_host_options_from_cli(args.media_hosts)?;
     Ok(DownloadOptions::new(args.output_dir)
         .with_retry_policy(RetryPolicy::new(
             args.retry_attempts,
@@ -314,7 +328,42 @@ fn download_options_from_cli(args: DownloadOptionCliArgs) -> anyhow::Result<Down
         .with_subtitles(!args.sidecars.no_subtitles)
         .with_danmaku(!args.sidecars.no_danmaku)
         .with_danmaku_formats(args.danmaku_formats.into_iter().map(Into::into))
+        .with_media_hosts(media_hosts)
         .with_mux(mux))
+}
+
+fn media_host_options_from_cli(
+    flags: DownloadMediaHostCliFlags,
+) -> anyhow::Result<MediaHostOptions> {
+    let options = MediaHostOptions::bbdown_cli_default()
+        .with_force_replace_host(flags.force_replace_host)
+        .with_allow_pcdn(flags.allow_pcdn);
+    let Some(upos_host) = flags.upos_host else {
+        return Ok(options);
+    };
+    validate_media_host_spec(&upos_host)?;
+    Ok(options.with_upos_host(upos_host))
+}
+
+fn validate_media_host_spec(host: &str) -> anyhow::Result<()> {
+    let host = host.trim().trim_end_matches('/');
+    ensure!(!host.is_empty(), "--upos-host must not be empty");
+    let parse_input = if host.contains("://") {
+        host.to_owned()
+    } else {
+        format!("https://{host}")
+    };
+    let parsed = url::Url::parse(&parse_input)
+        .with_context(|| format!("invalid --upos-host value `{host}`"))?;
+    ensure!(
+        parsed.host_str().is_some(),
+        "--upos-host must include a host name or IP address"
+    );
+    ensure!(
+        parsed.path() == "/" && parsed.query().is_none() && parsed.fragment().is_none(),
+        "--upos-host expects only a host or host:port, not a path, query, or fragment"
+    );
+    Ok(())
 }
 
 #[derive(Debug, Args)]
@@ -392,6 +441,9 @@ async fn main() -> anyhow::Result<()> {
             ffmpeg,
             archive_file,
             on_duplicate,
+            upos_host,
+            force_replace_host,
+            allow_pcdn,
         } => {
             ensure!(
                 archive_file.is_some() || on_duplicate.is_none(),
@@ -408,6 +460,11 @@ async fn main() -> anyhow::Result<()> {
                     no_cover,
                     no_subtitles,
                     no_danmaku,
+                },
+                media_hosts: DownloadMediaHostCliFlags {
+                    upos_host,
+                    force_replace_host,
+                    allow_pcdn,
                 },
                 danmaku_formats,
                 video_quality,
