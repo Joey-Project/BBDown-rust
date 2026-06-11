@@ -69,6 +69,11 @@ library 会把媒体可用性解析为 `DownloadPlan`：
 目。CLI 未来会增加交互式提示，但 library 保持 season-like 契约显式，避免集成方意外下载
 整季。
 
+Mode-aware planning 使用同一套 resolver 分发，但 sidecar-only mode 会跳过媒体 stream 解
+析。当调用方需要为 archive preflight 或 UI 决策生成非默认 `DownloadMode` 的 plan 时，使
+用 `plan_download_with_mode` 或 `plan_with_download_mode`，保证 plan 形状和后续 download
+options 一致。
+
 ## 流规划
 
 `BiliClient::plan` 是从已解析 `Input` 构建 typed download plan 的 public crate API，不执行
@@ -104,6 +109,7 @@ CLI 通过 `bbdown plan` 暴露这一层。该命令被有意设计为规划表�
 - 输出目录；
 - 有界重试策略；
 - 可选 DASH video/audio stream id 选择；
+- all-output 或 single-output 下载模式；
 - HTTP range resume 开关；
 - 媒体读取 idle timeout；
 - 是否包含封面、字幕和弹幕旁路文件；
@@ -115,6 +121,13 @@ id。如果请求的 id 不可用，executor 会报告可用 id，并在媒体�
 完整且 FLV `durl` 分段可用，则下载 FLV 分段；显式 stream selection 要求 DASH 媒体，因此
 会拒绝 FLV 回退。否则条目会在媒体写入前失败。封面、字幕和弹幕文件保持为 sidecar。当启
 用 mux 时，executor 使用显式 argv 调用 `ffmpeg`，并在 report 中返回命令和输出路径。
+
+`DownloadMode` 将默认 all-output 路径和单独输出 workflow 分开。`VideoOnly` 和 `AudioOnly`
+只下载一个匹配的 DASH stream，并跳过 sidecar 和 mux。`SubtitleOnly`、`DanmakuOnly` 和
+`CoverOnly` 会跳过媒体要求，只写入请求的 sidecar family，并拒绝 stream quality 选择，因
+为这些模式不选择媒体 stream。
+single-output 下载的 archive content key 也会包含 mode，而完整下载继续保留 legacy key；
+因此现有归档仍能匹配完整下载，single-output 记录不会宣称完整条目已经下载完成。
 
 媒体和 sidecar 下载使用不含账号 cookie 的媒体 headers，因为媒体 URL 来自 API payload，
 可能指向 CDN 或代理主机。DASH 和 FLV backup URL 是候选列表的一部分。媒体正文读取使用独
@@ -142,7 +155,9 @@ path hash，因此 CDN host 或 query 变化不会拆分 resume target。
 输出路径，因此嵌入应用可以在执行 `KeepBoth` 决策前 round-trip preflight state，而不会丢
 失 archive-only 输出保留；执行会在应用决策前校验 preflight 仍匹配当前归档。entry-level
 archive identity 使用稳定 aid/cid content id，而不是展示 index、可选 BVID 或可选 epid，因
-此重新排序的页面和 episode-vs-BV URL 形态仍能检测为重复。
+此重新排序的页面和 episode-vs-BV URL 形态仍能检测为重复。`DownloadArchive::records_for_plan`
+会返回同一内容在所有 download mode 下的归档记录，而 `records_for_plan_with_mode` 会把查
+询收窄到一个 `DownloadMode`。
 `Cancel` 是调用方层面的停止决策。CLI 通过 `--archive-file` 和 `--on-duplicate` 暴露同一
 模型，拒绝与所选输出根目录重叠的 archive file path（同时检查 lexical path 和 canonical
 target），并对 archive save sidecar path 应用相同保护。JSON/非 TTY 模式要求显式决策，不

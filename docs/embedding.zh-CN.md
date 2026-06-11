@@ -16,7 +16,9 @@ builder 风格 API，并把 metadata 和 plan 结构体视为只读输出表面�
 ## 仅规划
 
 对原始 CLI 风格输入使用 `BiliClient::plan_download`，也可以自行解析 `Input` 后调用
-`BiliClient::plan`。
+`BiliClient::plan`。当 UI 或 archive preflight 绑定到单独下载模式时，使用
+`BiliClient::plan_download_with_mode` 或 `BiliClient::plan_with_download_mode`，这样
+sidecar-only 模式不会要求解析媒体 stream。
 
 ```rust,no_run
 use bbdown_core::{BiliClient, ClientConfig, Selection};
@@ -132,7 +134,10 @@ origin，诊断消息会脱敏常见密钥模式。
 下载是显式动作。library 默认禁用 mux，因此嵌入应用不会在未选择的情况下启动 `ffmpeg`。
 
 ```rust,no_run
-use bbdown_core::{BiliClient, ClientConfig, DownloadOptions, MuxOptions, RetryPolicy, StreamSelection};
+use bbdown_core::{
+    BiliClient, ClientConfig, DownloadMode, DownloadOptions, MuxOptions, RetryPolicy,
+    StreamSelection,
+};
 use std::time::Duration;
 
 #[tokio::main]
@@ -140,6 +145,7 @@ async fn main() -> bbdown_core::Result<()> {
     let client = BiliClient::new(ClientConfig::default());
     let options = DownloadOptions::new("downloads")
         .with_stream_selection(StreamSelection::video(80))
+        .with_download_mode(DownloadMode::All)
         .with_retry_policy(RetryPolicy::new(3, Duration::from_millis(250)))
         .with_download_idle_timeout(Some(Duration::from_secs(30)))
         .with_cover(true)
@@ -159,6 +165,11 @@ async fn main() -> bbdown_core::Result<()> {
 当 UI 需要展示质量选择时，先使用 `bbdown plan` 或 `BiliClient::plan_download`。
 `StreamSelection::video`、`StreamSelection::audio` 和 `StreamSelection::new` 会从 plan 中
 选择精确的 DASH stream id。
+嵌入调用方需要单独输出某一种文件时，使用 `DownloadMode::VideoOnly`、`AudioOnly`、
+`SubtitleOnly`、`DanmakuOnly` 或 `CoverOnly`。sidecar-only 模式不要求媒体 stream，且不
+会启动 mux；video-only 和 audio-only 模式只选择对应 DASH stream。当后续 download
+options 使用非默认 mode 时，应先用 mode-aware planning API 再调用
+`DownloadPreflight::inspect`。
 
 ## 下载归档和重复决策
 
@@ -223,6 +234,8 @@ async fn main() -> bbdown_core::Result<()> {
 绝对旁路文件路径、绝对 mux 输出路径和完成时间戳；不包含媒体 URL 或凭据。条目身份使用
 aid/cid 媒体 id，而不是可选 BVID 或分集 id，因此通过分集 URL 规划的 PGC 分集可以匹配之
 后同一媒体的 BV/av 计划，即便其中一个计划缺少 BVID。
+需要按 mode 精确查询归档时使用 `DownloadArchive::records_for_plan_with_mode`；当 UI 希
+望展示同一内容在所有 download mode 下的归档记录时使用 `records_for_plan`。
 `DownloadPreflight::inspect` 也会把相同计划输出路径的归档记录视为重复，即便内容身份不同
 且旧输出目录已经不在磁盘上。把归档存放在所选输出根目录和任何归档保存旁路路径之外的
 JSON 文件路径；`DownloadArchive::save` 会拒绝目录目标。如果归档路径是符号链接，

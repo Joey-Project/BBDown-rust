@@ -4,10 +4,10 @@
 
 `bbdown-core` is the reusable Rust library package behind BBDown Rust. Rust code imports it as
 `bbdown_core`. It resolves Bilibili and Bilibili intl inputs into typed metadata, download plans,
-media downloads, cover/subtitle/danmaku sidecars, QR login credentials, download archive preflight
-data, batch collection metadata, and restricted-area proxy diagnostics. Raw input parsing covers normal
-videos, PGC and intl episodes, PUGV/cheese courses, B23 short links, favorite lists, space videos,
-collections, and series.
+media downloads, single-output download modes, cover/subtitle/danmaku sidecars, QR login
+credentials, download archive preflight data, batch collection metadata, and restricted-area proxy
+diagnostics. Raw input parsing covers normal videos, PGC and intl episodes, PUGV/cheese courses,
+B23 short links, favorite lists, space videos, collections, and series.
 
 Install with `cargo add bbdown-core`, then import with `bbdown_core`.
 
@@ -22,17 +22,25 @@ consumed data surfaces and may gain fields.
 ## Example
 
 ```rust,no_run
-use bbdown_core::{BiliClient, ClientConfig, DownloadOptions, RetryPolicy, Selection, StreamSelection};
+use bbdown_core::{
+    BiliClient, ClientConfig, DownloadMode, DownloadOptions, RetryPolicy, Selection,
+    StreamSelection,
+};
 use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> bbdown_core::Result<()> {
     let client = BiliClient::new(ClientConfig::default());
     let plan = client
-        .plan_download("BV1qt4y1X7TW", Some(Selection::Current))
+        .plan_download_with_mode(
+            "BV1qt4y1X7TW",
+            Some(Selection::Current),
+            DownloadMode::VideoOnly,
+        )
         .await?;
     let options = DownloadOptions::new("downloads")
         .with_stream_selection(StreamSelection::video(80))
+        .with_download_mode(DownloadMode::VideoOnly)
         .with_retry_policy(RetryPolicy::new(3, Duration::from_millis(250)));
 
     println!("{} entries", plan.entries.len());

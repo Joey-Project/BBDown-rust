@@ -118,6 +118,7 @@ bbdown download ss26801 --select latest --output-dir downloads
 bbdown download fav456 --select page:1 --output-dir downloads
 bbdown download av170001 --output-dir downloads --no-mux --json
 bbdown download av170001 --video-quality 64 --audio-quality 30216 --output-dir downloads
+bbdown download av170001 --only subtitle --output-dir downloads --json
 bbdown download av170001 --output-dir downloads --archive-file downloads/archive.json --on-duplicate keep-both
 ```
 
@@ -128,6 +129,13 @@ DASH 媒体不完整而 legacy FLV `durl` 分段可用时，会改为下载这�
 DASH 媒体，因此会禁用该条目的 FLV 回退。如果两种形态都不完整，下载会在写入媒体前失败。
 当计划中存在对应 URL 时，封面、字幕和弹幕旁路文件默认启用。分别使用 `--no-cover`、
 `--no-subtitles` 和 `--no-danmaku` 关闭。
+
+使用 `--only video`、`--only audio`、`--only subtitle`、`--only danmaku` 或
+`--only cover` 可让每个计划条目只写入一种输出。`video` 和 `audio` 模式选择 DASH stream，
+并接受对应质量参数；`subtitle`、`danmaku` 和 `cover` 模式不要求媒体 stream，并会拒绝媒
+体质量参数。single-output 模式即使没有传入 `--no-mux` 也会跳过 mux。
+使用 `--archive-file` 时，single-output 记录会和完整下载分开跟踪，因此 cover-only 或
+audio-only 运行不会把完整媒体下载标记成已完成。
 
 下载默认通过 HTTP range 请求续传部分文件，并在计划提供信息时校验 `Content-Range` 和声
 明媒体大小。使用 `--no-resume` 可强制重新写入；失败的新写入会保留已有目标。如果服务器

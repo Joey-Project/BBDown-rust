@@ -655,6 +655,218 @@ fn download_no_cover_skips_cover_sidecar() -> anyhow::Result<()> {
 }
 
 #[test]
+fn download_only_modes_write_selected_file_kind() -> anyhow::Result<()> {
+    for (only, kind, expected_body) in [
+        ("video", "video", "video"),
+        ("audio", "audio", "audio"),
+        ("cover", "cover", "cover"),
+        ("subtitle", "subtitle", "[Script Info]"),
+        ("danmaku", "danmaku", "<i/>"),
+    ] {
+        let server = MockServer::start();
+        let temp = tempfile::tempdir()?;
+        let credential_file = temp.path().join("credentials.json");
+        let output_dir = temp.path().join("downloads");
+        mock_minimal_download_with_sidecars(&server);
+
+        let mut command = bbdown_command()?;
+        command
+            .arg("--credential-file")
+            .arg(&credential_file)
+            .arg("--api-base")
+            .arg(server.base_url())
+            .arg("--comment-base")
+            .arg(server.base_url())
+            .arg("download")
+            .arg("av170001")
+            .arg("--output-dir")
+            .arg(&output_dir)
+            .arg("--only")
+            .arg(only)
+            .arg("--no-mux")
+            .arg("--json");
+        let output = command.assert().success().get_output().stdout.clone();
+        let json: Value = serde_json::from_slice(&output)?;
+
+        assert_eq!(
+            json["entries"][0]["files"].as_array().map(Vec::len),
+            Some(1),
+            "--only {only} should write one file"
+        );
+        assert_eq!(
+            fs::read_to_string(downloaded_file_path(&json, kind)?)?,
+            expected_body,
+            "--only {only} should write {kind}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn download_only_rejects_conflicting_disable_flag() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("download")
+        .arg("av170001")
+        .arg("--only")
+        .arg("cover")
+        .arg("--no-cover");
+
+    command.assert().failure().stderr(predicates::str::contains(
+        "--only cover conflicts with --no-cover",
+    ));
+    Ok(())
+}
+
+#[test]
+fn download_only_archive_does_not_duplicate_full_download() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let archive_file = temp.path().join("archive.json");
+    let sidecar_output_dir = temp.path().join("sidecar-downloads");
+    let full_output_dir = temp.path().join("full-downloads");
+    mock_minimal_download_with_sidecars(&server);
+
+    let mut sidecar_command = bbdown_command()?;
+    sidecar_command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--comment-base")
+        .arg(server.base_url())
+        .arg("download")
+        .arg("av170001")
+        .arg("--output-dir")
+        .arg(&sidecar_output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("cover")
+        .arg("--json")
+        .assert()
+        .success();
+
+    let mut full_command = bbdown_command()?;
+    full_command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--comment-base")
+        .arg(server.base_url())
+        .arg("download")
+        .arg("av170001")
+        .arg("--output-dir")
+        .arg(&full_output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--no-mux")
+        .arg("--no-subtitles")
+        .arg("--no-danmaku")
+        .arg("--json");
+    let output = full_command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+
+    assert_eq!(
+        json["entries"][0]["files"].as_array().map(Vec::len),
+        Some(3)
+    );
+    assert_eq!(
+        fs::read_to_string(downloaded_file_path(&json, "video")?)?,
+        "video"
+    );
+    assert_eq!(
+        fs::read_to_string(downloaded_file_path(&json, "audio")?)?,
+        "audio"
+    );
+    assert_eq!(
+        fs::read_to_string(downloaded_file_path(&json, "cover")?)?,
+        "cover"
+    );
+    Ok(())
+}
+
+#[test]
+fn download_only_cover_skips_playurl_resolution() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    mock_minimal_cover_metadata(&server);
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("download")
+        .arg("av170001")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--only")
+        .arg("cover")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+
+    assert_eq!(
+        json["entries"][0]["files"].as_array().map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(
+        fs::read_to_string(downloaded_file_path(&json, "cover")?)?,
+        "cover"
+    );
+    Ok(())
+}
+
+#[test]
+fn download_only_cover_with_archive_skips_playurl_resolution() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let archive_file = temp.path().join("archive.json");
+    let output_dir = temp.path().join("downloads");
+    mock_minimal_cover_metadata(&server);
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("download")
+        .arg("av170001")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("cover")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+
+    assert_eq!(
+        json["entries"][0]["files"].as_array().map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(
+        fs::read_to_string(downloaded_file_path(&json, "cover")?)?,
+        "cover"
+    );
+    Ok(())
+}
+
+#[test]
 fn download_archive_cancel_reports_preflight_json() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;
@@ -1510,6 +1722,109 @@ fn mock_minimal_download_with_cover(server: &MockServer) {
     server.mock(|when, then| {
         when.method(GET).path("/audio.m4s");
         then.status(200).body("audio");
+    });
+    server.mock(|when, then| {
+        when.method(GET).path("/cover.jpg");
+        then.status(200).body("cover");
+    });
+}
+
+fn mock_minimal_download_with_sidecars(server: &MockServer) {
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/view")
+            .query_param("aid", "170001");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "aid": 170_001,
+                "bvid": "BV1xx411c7mD",
+                "title": "Mock video",
+                "pic": format!("{}/cover.jpg", server.base_url()),
+                "pages": [{"page": 1, "cid": 2, "part": "Main"}]
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/playurl")
+            .query_param("avid", "170001")
+            .query_param("cid", "2")
+            .query_param("try_look", "1");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "dash": {
+                    "duration": 3,
+                    "video": [{
+                        "id": 80,
+                        "baseUrl": format!("{}/video.m4s", server.base_url()),
+                        "base_url": format!("{}/video.m4s", server.base_url())
+                    }],
+                    "audio": [{
+                        "id": 30280,
+                        "baseUrl": format!("{}/audio.m4s", server.base_url()),
+                        "base_url": format!("{}/audio.m4s", server.base_url())
+                    }]
+                }
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/v2")
+            .query_param("aid", "170001")
+            .query_param("cid", "2");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "subtitle": {
+                    "subtitles": [{
+                        "lan": "en",
+                        "lan_doc": "English",
+                        "subtitle_url": format!("{}/subtitle.ass", server.base_url())
+                    }]
+                }
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET).path("/video.m4s");
+        then.status(200).body("video");
+    });
+    server.mock(|when, then| {
+        when.method(GET).path("/audio.m4s");
+        then.status(200).body("audio");
+    });
+    server.mock(|when, then| {
+        when.method(GET).path("/cover.jpg");
+        then.status(200).body("cover");
+    });
+    server.mock(|when, then| {
+        when.method(GET).path("/subtitle.ass");
+        then.status(200).body("[Script Info]");
+    });
+    server.mock(|when, then| {
+        when.method(GET).path("/2.xml");
+        then.status(200).body("<i/>");
+    });
+}
+
+fn mock_minimal_cover_metadata(server: &MockServer) {
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/view")
+            .query_param("aid", "170001");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "aid": 170_001,
+                "bvid": "BV1xx411c7mD",
+                "title": "Mock video",
+                "pic": format!("{}/cover.jpg", server.base_url()),
+                "pages": [{"page": 1, "cid": 2, "part": "Main"}]
+            }
+        }));
     });
     server.mock(|when, then| {
         when.method(GET).path("/cover.jpg");

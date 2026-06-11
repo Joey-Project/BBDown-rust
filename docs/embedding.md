@@ -17,7 +17,9 @@ embedding code resilient when new fields are added while the crate matures.
 ## Planning Only
 
 Use `BiliClient::plan_download` for raw CLI-style inputs, or parse an `Input` yourself and call
-`BiliClient::plan`.
+`BiliClient::plan`. When a UI or archive preflight is tied to a single-output mode, use
+`BiliClient::plan_download_with_mode` or `BiliClient::plan_with_download_mode` so sidecar-only modes
+do not require media stream resolution.
 
 ```rust,no_run
 use bbdown_core::{BiliClient, ClientConfig, Selection};
@@ -137,7 +139,10 @@ Downloads are explicit. The library default keeps muxing disabled so embedding a
 spawn `ffmpeg` unless they opt in.
 
 ```rust,no_run
-use bbdown_core::{BiliClient, ClientConfig, DownloadOptions, MuxOptions, RetryPolicy, StreamSelection};
+use bbdown_core::{
+    BiliClient, ClientConfig, DownloadMode, DownloadOptions, MuxOptions, RetryPolicy,
+    StreamSelection,
+};
 use std::time::Duration;
 
 #[tokio::main]
@@ -145,6 +150,7 @@ async fn main() -> bbdown_core::Result<()> {
     let client = BiliClient::new(ClientConfig::default());
     let options = DownloadOptions::new("downloads")
         .with_stream_selection(StreamSelection::video(80))
+        .with_download_mode(DownloadMode::All)
         .with_retry_policy(RetryPolicy::new(3, Duration::from_millis(250)))
         .with_download_idle_timeout(Some(Duration::from_secs(30)))
         .with_cover(true)
@@ -164,6 +170,11 @@ async fn main() -> bbdown_core::Result<()> {
 Use `bbdown plan` or `BiliClient::plan_download` first when a UI needs to present quality choices.
 `StreamSelection::video`, `StreamSelection::audio`, and `StreamSelection::new` select exact DASH
 stream ids from the plan.
+Use `DownloadMode::VideoOnly`, `AudioOnly`, `SubtitleOnly`, `DanmakuOnly`, or `CoverOnly` when an
+embedding caller wants one output kind. Sidecar-only modes do not require media streams and never
+spawn muxing; video-only and audio-only modes select only the matching DASH stream. Use the
+mode-aware planning APIs before `DownloadPreflight::inspect` when the later download options use a
+non-default mode.
 
 ## Download Archive And Duplicate Decisions
 
@@ -233,6 +244,9 @@ paths, entry ids, absolute sidecar paths, absolute mux output paths, and complet
 do not contain media URLs or credentials. Entry identities use aid/cid media ids instead of optional
 BVID or episode ids, so a PGC episode planned through an episode URL can match a later BV/av plan for
 the same media even when one plan lacks a BVID.
+Use `DownloadArchive::records_for_plan_with_mode` for mode-specific archive lookups, or
+`records_for_plan` when a UI wants to show every archive record for the same content across all
+download modes.
 `DownloadPreflight::inspect` also treats archive records with the same planned output path as
 duplicates, even when the content identity differs and the old output directory is no longer on
 disk. Store the archive at a JSON file path outside the chosen output root and any archive save

@@ -62,6 +62,7 @@ bbdown download av170001 --output-dir downloads
 bbdown download ss26801 --select latest --output-dir downloads
 bbdown download fav456 --select page:1 --output-dir downloads
 bbdown download av170001 --output-dir downloads --no-mux --json
+bbdown download av170001 --only cover --output-dir downloads --json
 bbdown download av170001 --output-dir downloads --archive-file downloads/archive.json --on-duplicate keep-both
 ```
 
@@ -70,6 +71,8 @@ writes cover, subtitle, and danmaku sidecars by default, resumes partial files w
 requests, retries bounded transient failures, validates advertised media sizes when present, fails
 incomplete media shapes, and runs `ffmpeg` unless `--no-mux` is supplied. Use `--no-cover`,
 `--no-subtitles`, or `--no-danmaku` to skip individual sidecar families.
+Use `--only video`, `--only audio`, `--only subtitle`, `--only danmaku`, or `--only cover` for a
+single output kind; single-output modes skip muxing.
 Pass `--archive-file <path>` to record completed downloads by content identity. Archive output,
 sidecar, and mux paths are stored as absolute paths at record time so the same archive can be reused
 from another working directory. Entry identity uses stable aid/cid media ids, so the same PGC
