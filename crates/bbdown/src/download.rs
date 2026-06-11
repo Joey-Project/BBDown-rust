@@ -1556,7 +1556,11 @@ fn parse_replacement_authority(authority: &str) -> Option<(String, Option<u16>)>
     }
     let explicit_port = explicit_authority_port(authority)?.into_option();
     let parsed = url::Url::parse(&format!("https://{authority}")).ok()?;
-    let host = parsed.host_str()?.to_owned();
+    let host = match parsed.host()? {
+        url::Host::Domain(host) => host.to_owned(),
+        url::Host::Ipv4(host) => host.to_string(),
+        url::Host::Ipv6(host) => format!("[{host}]"),
+    };
     Some((host, explicit_port))
 }
 
@@ -2731,6 +2735,14 @@ mod tests {
         let urls = candidate_urls("http://primary.example/video.m4s", &[], &options);
 
         assert_eq!(urls, vec!["http://upos.example:443/video.m4s"]);
+    }
+
+    #[test]
+    fn candidate_urls_rewrite_custom_ipv6_upos_host() {
+        let options = MediaHostOptions::new().with_upos_host("[::1]:8080");
+        let urls = candidate_urls("http://primary.example/video.m4s?token=1", &[], &options);
+
+        assert_eq!(urls, vec!["http://[::1]:8080/video.m4s?token=1"]);
     }
 
     #[test]
