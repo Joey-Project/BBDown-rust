@@ -5,7 +5,7 @@ status: completed
 created: 2026-06-11
 updated: 2026-06-11
 branch: wip/upos-pcdn-controls
-pr:
+pr: https://github.com/Joey-Project/BBDown-rust/pull/24
 supersedes: []
 superseded_by:
 ---
