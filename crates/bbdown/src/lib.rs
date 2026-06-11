@@ -4,6 +4,7 @@
 mod bv;
 mod client;
 mod credentials;
+mod danmaku;
 mod download;
 mod error;
 mod input;
@@ -16,6 +17,7 @@ pub use client::{
     RestrictedAreaProxy, RestrictedAreaProxyKind,
 };
 pub use credentials::{CredentialSource, CredentialStore, Credentials};
+pub use danmaku::{DanmakuFormat, DanmakuFormats};
 pub use download::{
     DownloadArchive, DownloadArchiveEntryRecord, DownloadArchiveRecord, DownloadFileKind,
     DownloadMode, DownloadOptions, DownloadOutputConflict, DownloadPreflight, DownloadReport,

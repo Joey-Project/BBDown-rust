@@ -1,6 +1,7 @@
 use crate::{
     BiliClient, DownloadEntry, DownloadPlan, Error, FlvSegment, Input, MediaStream, Result,
     Selection, SubtitleFormat, SubtitleTrack,
+    danmaku::{self, DanmakuFormat, DanmakuFormats},
 };
 use futures_util::StreamExt;
 use md5::{Digest, Md5};
@@ -61,6 +62,7 @@ pub struct DownloadOptions {
     pub mode: DownloadMode,
     pub include_subtitles: bool,
     pub include_danmaku: bool,
+    pub danmaku_formats: DanmakuFormats,
     pub sidecars: SidecarOptions,
     pub mux: MuxOptions,
     pub download_idle_timeout: Option<Duration>,
@@ -76,6 +78,7 @@ impl Default for DownloadOptions {
             mode: DownloadMode::All,
             include_subtitles: true,
             include_danmaku: true,
+            danmaku_formats: DanmakuFormats::default(),
             sidecars: SidecarOptions::default(),
             mux: MuxOptions::Disabled,
             download_idle_timeout: Some(Duration::from_secs(30)),
@@ -133,6 +136,21 @@ impl DownloadOptions {
     pub fn with_danmaku(mut self, include_danmaku: bool) -> Self {
         self.include_danmaku = include_danmaku;
         self.sidecars.danmaku = include_danmaku;
+        self
+    }
+
+    #[must_use]
+    pub fn with_danmaku_format(mut self, danmaku_format: DanmakuFormat) -> Self {
+        self.danmaku_formats = DanmakuFormats::new([danmaku_format]);
+        self
+    }
+
+    #[must_use]
+    pub fn with_danmaku_formats(
+        mut self,
+        danmaku_formats: impl IntoIterator<Item = DanmakuFormat>,
+    ) -> Self {
+        self.danmaku_formats = DanmakuFormats::new(danmaku_formats);
         self
     }
 
@@ -377,7 +395,7 @@ impl DownloadArchiveRecord {
         completed_at_unix: u64,
     ) -> Self {
         Self {
-            content_key: download_plan_content_key_for_mode(plan, options.mode),
+            content_key: download_plan_content_key_for_options(plan, options),
             title: report.title.clone(),
             output_dir: archive_record_path(&report.output_dir),
             completed_at_unix,
@@ -386,7 +404,7 @@ impl DownloadArchiveRecord {
                 .iter()
                 .zip(&report.entries)
                 .map(|(plan_entry, report_entry)| DownloadArchiveEntryRecord {
-                    content_key: download_entry_content_key_for_mode(plan_entry, options.mode),
+                    content_key: download_entry_content_key_for_options(plan_entry, options),
                     index: report_entry.index,
                     aid: plan_entry.aid,
                     bvid: plan_entry.bvid.clone(),
@@ -447,7 +465,7 @@ impl DownloadPreflight {
                 path: planned_output_dir.clone(),
             });
         let archived_records = archive.map_or_else(Vec::new, |archive| {
-            archive_records_for_preflight(archive, plan, options.mode, &planned_output_dir)
+            archive_records_for_preflight(archive, plan, options, &planned_output_dir)
         });
         let reserved_output_dirs = archive.map_or_else(Vec::new, |archive| {
             archive
@@ -457,7 +475,7 @@ impl DownloadPreflight {
                 .collect()
         });
         Ok(Self {
-            content_key: download_plan_content_key_for_mode(plan, options.mode),
+            content_key: download_plan_content_key_for_options(plan, options),
             title: plan.title.clone(),
             planned_output_dir: planned_output_dir.clone(),
             archived_records,
@@ -538,6 +556,7 @@ pub enum DownloadFileKind {
     Cover,
     Subtitle,
     Danmaku,
+    DanmakuAss,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -801,16 +820,61 @@ impl BiliClient {
             }
         }
         if should_download_danmaku(options) {
-            files.push(
-                self.download_url_to_file(
+            self.download_danmaku(entry, entry_dir, options, files)
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn download_danmaku(
+        &self,
+        entry: &DownloadEntry,
+        entry_dir: &Path,
+        options: &DownloadOptions,
+        files: &mut Vec<DownloadedFile>,
+    ) -> Result<()> {
+        let xml_path = entry_dir.join("danmaku.xml");
+        let writes_xml = options.danmaku_formats.contains(DanmakuFormat::Xml);
+        let writes_ass = options.danmaku_formats.contains(DanmakuFormat::Ass);
+        let source_file = if writes_xml {
+            let file = self
+                .download_url_to_file(
                     &entry.danmaku.xml_url,
-                    &entry_dir.join("danmaku.xml"),
+                    &xml_path,
                     DownloadFileKind::Danmaku,
                     None,
                     options,
                 )
+                .await?;
+            files.push(file.clone());
+            file
+        } else {
+            let source_path = temporary_path_with_suffix(&xml_path, ".bbdown-source");
+            remove_file_if_exists(&source_path).await?;
+            self.download_url_to_file(
+                &entry.danmaku.xml_url,
+                &source_path,
+                DownloadFileKind::Danmaku,
+                None,
+                options,
+            )
+            .await?
+        };
+        if writes_ass {
+            let xml = fs::read(&source_file.path).await?;
+            let xml = String::from_utf8_lossy(&xml);
+            let ass = danmaku::xml_to_ass(&xml);
+            files.push(
+                write_generated_text_file(
+                    &entry_dir.join("danmaku.ass"),
+                    &ass,
+                    DownloadFileKind::DanmakuAss,
+                )
                 .await?,
             );
+        }
+        if !writes_xml {
+            let _ = remove_file_if_exists(&source_file.path).await;
         }
         Ok(())
     }
@@ -828,7 +892,8 @@ impl BiliClient {
             DownloadFileKind::FlvSegment
             | DownloadFileKind::Cover
             | DownloadFileKind::Subtitle
-            | DownloadFileKind::Danmaku => "media",
+            | DownloadFileKind::Danmaku
+            | DownloadFileKind::DanmakuAss => "media",
         };
         let path = entry_dir.join(media_file_name(label, stream));
         self.download_candidate_urls_to_file(
@@ -1307,6 +1372,26 @@ async fn replace_file(source: &Path, target: &Path) -> Result<()> {
     }
 }
 
+async fn write_generated_text_file(
+    path: &Path,
+    contents: &str,
+    kind: DownloadFileKind,
+) -> Result<DownloadedFile> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).await?;
+    }
+    let write_path = temporary_replace_path(path);
+    remove_file_if_exists(&write_path).await?;
+    fs::write(&write_path, contents).await?;
+    replace_file(&write_path, path).await?;
+    Ok(DownloadedFile {
+        kind,
+        path: path.to_path_buf(),
+        bytes_written: u64::try_from(contents.len()).unwrap_or(u64::MAX),
+        resumed_from: 0,
+    })
+}
+
 fn candidate_urls(primary: &str, backups: &[String]) -> Vec<String> {
     let mut urls = Vec::with_capacity(backups.len() + 1);
     urls.push(primary.to_owned());
@@ -1624,7 +1709,7 @@ fn validate_archive_preflight(
     archive: &DownloadArchive,
     preflight: &DownloadPreflight,
 ) -> Result<()> {
-    if preflight.content_key != download_plan_content_key_for_mode(plan, options.mode) {
+    if preflight.content_key != download_plan_content_key_for_options(plan, options) {
         return Err(Error::InvalidInput(
             "download preflight does not match the download plan".to_owned(),
         ));
@@ -1638,7 +1723,7 @@ fn validate_archive_preflight(
         ));
     }
     let current_archived_records =
-        archive_records_for_preflight(archive, plan, options.mode, &planned_output_dir);
+        archive_records_for_preflight(archive, plan, options, &planned_output_dir);
     if preflight.archived_records != current_archived_records {
         return Err(Error::InvalidInput(
             "download preflight does not match the current download archive".to_owned(),
@@ -1665,10 +1750,10 @@ fn validate_archive_preflight(
 fn archive_records_for_preflight(
     archive: &DownloadArchive,
     plan: &DownloadPlan,
-    mode: DownloadMode,
+    options: &DownloadOptions,
     planned_output_dir: &Path,
 ) -> Vec<DownloadArchiveRecord> {
-    let plan_match = ArchivePlanMatch::new(plan, mode);
+    let plan_match = ArchivePlanMatch::from_options(plan, options);
     let output_key = comparable_output_path_key(planned_output_dir);
     archive
         .records
@@ -1682,8 +1767,8 @@ fn archive_records_for_preflight(
 }
 
 struct ArchivePlanMatch {
-    content_key: String,
-    entry_keys: HashSet<String>,
+    content: HashSet<String>,
+    entries: HashSet<String>,
     accepts_legacy_keys: bool,
 }
 
@@ -1703,25 +1788,51 @@ fn archive_plan_matches_for_all_modes(plan: &DownloadPlan) -> Vec<ArchivePlanMat
 
 impl ArchivePlanMatch {
     fn new(plan: &DownloadPlan, mode: DownloadMode) -> Self {
+        let prefixes = archive_key_prefixes_for_mode(mode);
         Self {
-            content_key: download_plan_content_key_for_mode(plan, mode),
-            entry_keys: plan
+            content: prefixes
+                .iter()
+                .map(|prefix| download_plan_content_key_with_prefix(plan, prefix.as_deref()))
+                .collect(),
+            entries: plan
                 .entries
                 .iter()
-                .map(|entry| download_entry_content_key_for_mode(entry, mode))
+                .flat_map(|entry| {
+                    prefixes.iter().map(|prefix| {
+                        download_entry_content_key_with_prefix(entry, prefix.as_deref())
+                    })
+                })
                 .collect(),
             accepts_legacy_keys: matches!(mode, DownloadMode::All),
         }
     }
 
+    fn from_options(plan: &DownloadPlan, options: &DownloadOptions) -> Self {
+        let prefix = archive_key_prefix_for_options(options);
+        Self {
+            content: [download_plan_content_key_with_prefix(
+                plan,
+                prefix.as_deref(),
+            )]
+            .into_iter()
+            .collect(),
+            entries: plan
+                .entries
+                .iter()
+                .map(|entry| download_entry_content_key_with_prefix(entry, prefix.as_deref()))
+                .collect(),
+            accepts_legacy_keys: prefix.is_none() && matches!(options.mode, DownloadMode::All),
+        }
+    }
+
     fn matches_record(&self, record: &DownloadArchiveRecord) -> bool {
-        record.content_key == self.content_key
+        self.content.contains(&record.content_key)
             || record.entries.iter().any(|entry| {
-                self.entry_keys.contains(&entry.content_key)
+                self.entries.contains(&entry.content_key)
                     || (self.accepts_legacy_keys
                         && !archive_content_key_has_mode(&record.content_key)
                         && !archive_content_key_has_mode(&entry.content_key)
-                        && self.entry_keys.contains(&archive_entry_content_key(entry)))
+                        && self.entries.contains(&archive_entry_content_key(entry)))
             })
     }
 }
@@ -1807,25 +1918,77 @@ fn download_plan_content_key(plan: &DownloadPlan) -> String {
     key
 }
 
-fn download_plan_content_key_for_mode(plan: &DownloadPlan, mode: DownloadMode) -> String {
-    let key = download_plan_content_key(plan);
-    if matches!(mode, DownloadMode::All) {
-        key
-    } else {
-        format!("mode={};{key}", mode.archive_key_token())
-    }
+fn download_plan_content_key_for_options(plan: &DownloadPlan, options: &DownloadOptions) -> String {
+    download_plan_content_key_with_prefix(plan, archive_key_prefix_for_options(options).as_deref())
+}
+
+fn download_plan_content_key_with_prefix(plan: &DownloadPlan, prefix: Option<&str>) -> String {
+    apply_archive_key_prefix(download_plan_content_key(plan), prefix)
 }
 
 fn download_entry_content_key(entry: &DownloadEntry) -> String {
     format!("aid={};cid={}", entry.aid, entry.cid)
 }
 
-fn download_entry_content_key_for_mode(entry: &DownloadEntry, mode: DownloadMode) -> String {
-    let key = download_entry_content_key(entry);
+fn download_entry_content_key_for_options(
+    entry: &DownloadEntry,
+    options: &DownloadOptions,
+) -> String {
+    download_entry_content_key_with_prefix(
+        entry,
+        archive_key_prefix_for_options(options).as_deref(),
+    )
+}
+
+fn download_entry_content_key_with_prefix(entry: &DownloadEntry, prefix: Option<&str>) -> String {
+    apply_archive_key_prefix(download_entry_content_key(entry), prefix)
+}
+
+fn apply_archive_key_prefix(key: String, prefix: Option<&str>) -> String {
+    match prefix {
+        Some(prefix) => format!("{prefix};{key}"),
+        None => key,
+    }
+}
+
+fn archive_key_prefix_for_options(options: &DownloadOptions) -> Option<String> {
+    if should_download_danmaku(options) && !options.danmaku_formats.is_default() {
+        return Some(archive_key_prefix_for_danmaku_formats(
+            options.mode,
+            &options.danmaku_formats,
+        ));
+    }
+    archive_key_prefix_for_mode(options.mode)
+}
+
+fn archive_key_prefixes_for_mode(mode: DownloadMode) -> Vec<Option<String>> {
+    let mut prefixes = vec![archive_key_prefix_for_mode(mode)];
+    if matches!(mode, DownloadMode::All | DownloadMode::DanmakuOnly) {
+        prefixes.extend(
+            DanmakuFormats::non_default_combinations()
+                .into_iter()
+                .map(|formats| Some(archive_key_prefix_for_danmaku_formats(mode, &formats))),
+        );
+    }
+    prefixes
+}
+
+fn archive_key_prefix_for_danmaku_formats(
+    mode: DownloadMode,
+    danmaku_formats: &DanmakuFormats,
+) -> String {
+    format!(
+        "mode={};danmaku={}",
+        mode.archive_key_token(),
+        danmaku_formats.archive_key_token()
+    )
+}
+
+fn archive_key_prefix_for_mode(mode: DownloadMode) -> Option<String> {
     if matches!(mode, DownloadMode::All) {
-        key
+        None
     } else {
-        format!("mode={};{key}", mode.archive_key_token())
+        Some(format!("mode={}", mode.archive_key_token()))
     }
 }
 
@@ -2180,7 +2343,9 @@ mod tests {
         DanmakuTrack, DownloadEntry, DownloadPlan, FlvSegment, MediaStream, StreamDiagnostics,
         StreamQuality, StreamSet, StreamSource, SubtitleFormat, SubtitleTrack,
     };
-    use crate::{BiliClient, ClientConfig, Credentials, DownloadFileKind};
+    use crate::{
+        BiliClient, ClientConfig, Credentials, DanmakuFormat, DanmakuFormats, DownloadFileKind,
+    };
     use httpmock::MockServer;
     use httpmock::prelude::*;
     use std::io::{Read, Write};
@@ -2249,6 +2414,7 @@ mod tests {
             .with_cover(true)
             .with_subtitles(false)
             .with_danmaku(false)
+            .with_danmaku_formats([DanmakuFormat::Xml, DanmakuFormat::Ass])
             .with_mux(MuxOptions::ffmpeg("ffmpeg-custom"));
 
         assert_eq!(options.output_dir.as_path(), Path::new("downloads"));
@@ -2260,6 +2426,10 @@ mod tests {
         assert!(!options.resume);
         assert!(!options.include_subtitles);
         assert!(!options.include_danmaku);
+        assert_eq!(
+            options.danmaku_formats,
+            DanmakuFormats::new([DanmakuFormat::Xml, DanmakuFormat::Ass])
+        );
         assert!(options.sidecars.cover);
         assert!(!options.sidecars.subtitles);
         assert!(!options.sidecars.danmaku);
@@ -2622,6 +2792,100 @@ mod tests {
             );
             assert!(entry.mux.is_none());
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn download_danmaku_only_can_generate_ass_sidecar() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/danmaku.xml");
+            then.status(200)
+                .body(r#"<i><d p="1.25,1,25,16711680,0,0,0,0">hello &amp; world</d></i>"#);
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let mut plan = test_plan(&server);
+        plan.entries[0].streams.videos.clear();
+        plan.entries[0].streams.audios.clear();
+
+        let report = client
+            .download_plan(
+                &plan,
+                DownloadOptions::new(temp.path())
+                    .with_retry_policy(RetryPolicy::single_attempt())
+                    .with_download_mode(DownloadMode::DanmakuOnly)
+                    .with_danmaku_format(DanmakuFormat::Ass),
+            )
+            .await?;
+
+        let entry = &report.entries[0];
+        assert_eq!(entry.files.len(), 1);
+        assert_eq!(entry.files[0].kind, DownloadFileKind::DanmakuAss);
+        assert_eq!(
+            entry.files[0]
+                .path
+                .file_name()
+                .and_then(std::ffi::OsStr::to_str),
+            Some("danmaku.ass")
+        );
+        let ass = tokio::fs::read_to_string(&entry.files[0].path).await?;
+        assert!(ass.contains("[Script Info]"));
+        assert!(ass.contains("Dialogue:"));
+        assert!(ass.contains("hello & world"));
+        assert!(
+            !test_entry_dir(temp.path(), &plan)
+                .join("danmaku.xml")
+                .exists()
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn download_danmaku_multiple_formats_writes_xml_and_ass_sidecars() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/danmaku.xml");
+            then.status(200)
+                .body(r#"<i><d p="0,5,25,255,0,0,0,0">top</d></i>"#);
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let mut plan = test_plan(&server);
+        plan.entries[0].streams.videos.clear();
+        plan.entries[0].streams.audios.clear();
+
+        let report = client
+            .download_plan(
+                &plan,
+                DownloadOptions::new(temp.path())
+                    .with_retry_policy(RetryPolicy::single_attempt())
+                    .with_download_mode(DownloadMode::DanmakuOnly)
+                    .with_danmaku_formats([DanmakuFormat::Xml, DanmakuFormat::Ass]),
+            )
+            .await?;
+
+        let entry = &report.entries[0];
+        assert_eq!(entry.files.len(), 2);
+        let xml = entry
+            .files
+            .iter()
+            .find(|file| file.kind == DownloadFileKind::Danmaku)
+            .ok_or_else(|| anyhow::anyhow!("missing XML danmaku"))?;
+        let ass = entry
+            .files
+            .iter()
+            .find(|file| file.kind == DownloadFileKind::DanmakuAss)
+            .ok_or_else(|| anyhow::anyhow!("missing ASS danmaku"))?;
+        assert_eq!(
+            tokio::fs::read_to_string(&xml.path).await?,
+            r#"<i><d p="0,5,25,255,0,0,0,0">top</d></i>"#
+        );
+        assert!(
+            tokio::fs::read_to_string(&ass.path)
+                .await?
+                .contains("\\an8")
+        );
         Ok(())
     }
 
@@ -5184,6 +5448,61 @@ mod tests {
                 .records_for_plan_with_mode(&plan, DownloadMode::All)
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn download_archive_distinguishes_danmaku_format_outputs() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let plan = test_plan(&server);
+        let report = DownloadReport {
+            title: plan.title.clone(),
+            output_dir: Path::new("downloads").join("Mock video"),
+            entries: vec![EntryDownloadReport {
+                index: 1,
+                title: "Main".to_owned(),
+                directory: Path::new("downloads").join("Mock video").join("entry"),
+                files: vec![DownloadedFile {
+                    kind: DownloadFileKind::DanmakuAss,
+                    path: Path::new("downloads")
+                        .join("Mock video")
+                        .join("entry")
+                        .join("danmaku.ass"),
+                    bytes_written: 5,
+                    resumed_from: 0,
+                }],
+                mux: None,
+            }],
+        };
+        let ass_options = DownloadOptions::default()
+            .with_download_mode(DownloadMode::DanmakuOnly)
+            .with_danmaku_format(DanmakuFormat::Ass);
+        let mut archive = DownloadArchive::default();
+
+        archive.record_download(&plan, &ass_options, &report);
+
+        assert!(archive.records[0].content_key.contains("danmaku=ass"));
+        assert_eq!(
+            archive
+                .records_for_plan_with_mode(&plan, DownloadMode::DanmakuOnly)
+                .len(),
+            1
+        );
+        let temp = tempfile::tempdir()?;
+        let xml_preflight = DownloadPreflight::inspect(
+            &plan,
+            &DownloadOptions::new(temp.path()).with_download_mode(DownloadMode::DanmakuOnly),
+            Some(&archive),
+        )?;
+        assert!(xml_preflight.archived_records.is_empty());
+        let ass_preflight = DownloadPreflight::inspect(
+            &plan,
+            &DownloadOptions::new(temp.path())
+                .with_download_mode(DownloadMode::DanmakuOnly)
+                .with_danmaku_format(DanmakuFormat::Ass),
+            Some(&archive),
+        )?;
+        assert_eq!(ass_preflight.archived_records.len(), 1);
+        Ok(())
     }
 
     #[cfg(unix)]

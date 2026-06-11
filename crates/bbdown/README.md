@@ -4,7 +4,7 @@
 
 `bbdown-core` is the reusable Rust library package behind BBDown Rust. Rust code imports it as
 `bbdown_core`. It resolves Bilibili and Bilibili intl inputs into typed metadata, download plans,
-media downloads, single-output download modes, cover/subtitle/danmaku sidecars, QR login
+media downloads, single-output download modes, cover/subtitle/XML-or-ASS danmaku sidecars, QR login
 credentials, download archive preflight data, batch collection metadata, and restricted-area proxy
 diagnostics. Raw input parsing covers normal videos, PGC and intl episodes, PUGV/cheese courses,
 B23 short links, favorite lists, space videos, collections, and series.

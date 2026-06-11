@@ -135,7 +135,7 @@ origin，诊断消息会脱敏常见密钥模式。
 
 ```rust,no_run
 use bbdown_core::{
-    BiliClient, ClientConfig, DownloadMode, DownloadOptions, MuxOptions, RetryPolicy,
+    BiliClient, ClientConfig, DanmakuFormat, DownloadMode, DownloadOptions, MuxOptions, RetryPolicy,
     StreamSelection,
 };
 use std::time::Duration;
@@ -151,6 +151,7 @@ async fn main() -> bbdown_core::Result<()> {
         .with_cover(true)
         .with_subtitles(true)
         .with_danmaku(true)
+        .with_danmaku_format(DanmakuFormat::Ass)
         .with_mux(MuxOptions::ffmpeg("ffmpeg"));
 
     let report = client
@@ -170,6 +171,9 @@ async fn main() -> bbdown_core::Result<()> {
 会启动 mux；video-only 和 audio-only 模式只选择对应 DASH stream。当后续 download
 options 使用非默认 mode 时，应先用 mode-aware planning API 再调用
 `DownloadPreflight::inspect`。
+弹幕旁路文件默认使用 `DanmakuFormat::Xml`；当嵌入 UI 需要 ASS-only 输出时，使用
+`DanmakuFormat::Ass`；需要同时保留 XML 和 ASS 时，使用
+`DownloadOptions::with_danmaku_formats([DanmakuFormat::Xml, DanmakuFormat::Ass])`。
 
 ## 下载归档和重复决策
 
@@ -178,6 +182,8 @@ options 使用非默认 mode 时，应先用 mode-aware planning API 再调用
 不会提示用户。如果应用在展示和执行之间序列化 preflight，请存储完整 preflight 对象，这样
 `KeepBoth` 仍会避开检查时保留的 archive-only 输出目录。executor 会在应用决策前校验
 preflight 仍匹配当前归档，因此当另一个进程可能更新归档时，调用方应重新检查。
+Archive 匹配会区分 single-output mode 和弹幕格式，因此 ASS-only 或 multi-format 弹幕下载
+不会满足 XML-only 弹幕 preflight。
 
 ```rust,no_run
 use bbdown_core::{

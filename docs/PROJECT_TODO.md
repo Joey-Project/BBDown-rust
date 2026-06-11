@@ -24,7 +24,7 @@
   unless the release plan chooses a larger version.
 - [completed] Add single-download modes for video-only, audio-only, subtitle-only, danmaku-only, and
   cover-only workflows.
-- [pending] Add ASS-format danmaku sidecar generation.
+- [completed] Add ASS-format danmaku sidecar generation.
 - [pending] Add UPOS host replacement controls and PCDN filtering/handling.
 - [pending] Continue BBDown parity work after the current slices: richer filename templates,
   additional app/TV playurl modes, richer selection syntax, API/server integration surfaces,
