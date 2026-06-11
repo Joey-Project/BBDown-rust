@@ -129,6 +129,7 @@ bbdown download av170001 --output-dir downloads --no-mux --json
 bbdown download av170001 --video-quality 64 --audio-quality 30216 --output-dir downloads
 bbdown download av170001 --only subtitle --output-dir downloads --json
 bbdown download av170001 --output-dir downloads --archive-file downloads/archive.json --on-duplicate keep-both
+bbdown download av170001 --output-template "{title}-{entry_count:02}" --entry-template "{index:02}-{entry_title}" --mux-template "{index:02}-{entry_title}"
 bbdown download av170001 --upos-host upos-sz-mirrorcoso1.bilivideo.com --no-mux
 ```
 
@@ -151,6 +152,17 @@ reject media quality flags. Single-output modes skip muxing even when `--no-mux`
 When `--archive-file` is used, single-output records are tracked separately from full downloads, so
 a cover-only or audio-only run does not mark the complete media download as already done.
 ASS-only and multi-format danmaku outputs are also tracked separately from XML-only danmaku output.
+
+Use `--output-template`, `--entry-template`, and `--mux-template` to customize the output root
+directory name, per-entry directory name, and muxed file stem. Templates render one filesystem
+component and are sanitized after placeholder expansion; they are not subdirectory paths. Output
+templates can use `{title}` and `{entry_count}`. Entry and mux templates can use `{title}`,
+`{entry_title}` or `{page_title}`, `{index}` or `{page}`, `{aid}`, `{bvid}`, `{cid}`, `{epid}`, and
+`{content_id}`. Numeric placeholders accept zero padding such as `{index:03}` or
+`{entry_count:02}`. Use `{{` and `}}` for literal braces. Media, cover, subtitle, and danmaku
+sidecar filenames remain stable so resume targets, duplicate subtitle tracks, and archive records
+stay predictable. Entry templates must render a unique directory name for every selected entry; use
+`{index}` or `{content_id}` when page titles may repeat.
 
 The CLI applies media-host policy only to DASH and FLV media candidates. It leaves cover, subtitle,
 and danmaku sidecar URLs unchanged. By default, the CLI treats non-local media URLs with explicit

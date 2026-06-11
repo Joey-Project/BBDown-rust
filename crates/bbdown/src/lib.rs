@@ -20,9 +20,9 @@ pub use credentials::{CredentialSource, CredentialStore, Credentials};
 pub use danmaku::{DanmakuFormat, DanmakuFormats};
 pub use download::{
     DownloadArchive, DownloadArchiveEntryRecord, DownloadArchiveRecord, DownloadFileKind,
-    DownloadMode, DownloadOptions, DownloadOutputConflict, DownloadPreflight, DownloadReport,
-    DownloadedFile, DuplicateDecision, EntryDownloadReport, MediaHostOptions, MuxOptions,
-    MuxReport, RetryPolicy, SidecarOptions, StreamSelection,
+    DownloadMode, DownloadOptions, DownloadOutputConflict, DownloadPathTemplates,
+    DownloadPreflight, DownloadReport, DownloadedFile, DuplicateDecision, EntryDownloadReport,
+    MediaHostOptions, MuxOptions, MuxReport, RetryPolicy, SidecarOptions, StreamSelection,
 };
 pub use error::{Error, Result};
 pub use input::Input;

@@ -135,8 +135,8 @@ origin，诊断消息会脱敏常见密钥模式。
 
 ```rust,no_run
 use bbdown_core::{
-    BiliClient, ClientConfig, DanmakuFormat, DownloadMode, DownloadOptions, MuxOptions, RetryPolicy,
-    StreamSelection,
+    BiliClient, ClientConfig, DanmakuFormat, DownloadMode, DownloadOptions, DownloadPathTemplates,
+    MuxOptions, RetryPolicy, StreamSelection,
 };
 use std::time::Duration;
 
@@ -152,6 +152,12 @@ async fn main() -> bbdown_core::Result<()> {
         .with_subtitles(true)
         .with_danmaku(true)
         .with_danmaku_format(DanmakuFormat::Ass)
+        .with_path_templates(
+            DownloadPathTemplates::new()
+                .with_output_dir("{title}-{entry_count:02}")
+                .with_entry_dir("{index:03}-{entry_title}-{content_id}")
+                .with_mux_file_stem("{index:03}-{entry_title}"),
+        )
         .with_mux(MuxOptions::ffmpeg("ffmpeg"));
 
     let report = client
@@ -174,6 +180,14 @@ options 使用非默认 mode 时，应先用 mode-aware planning API 再调用
 弹幕旁路文件默认使用 `DanmakuFormat::Xml`；当嵌入 UI 需要 ASS-only 输出时，使用
 `DanmakuFormat::Ass`；需要同时保留 XML 和 ASS 时，使用
 `DownloadOptions::with_danmaku_formats([DanmakuFormat::Xml, DanmakuFormat::Ass])`。
+`DownloadPathTemplates` 可定制输出根目录、条目目录和 mux 后文件名 stem，同时保持媒体和
+sidecar 文件名稳定。模板字符串会渲染为一个路径组件，并在展开后清洗。输出模板可使用
+`{title}` 和 `{entry_count}`；条目和 mux 模板可使用 `{title}`、`{entry_title}` 或
+`{page_title}`、`{index}` 或 `{page}`、`{aid}`、`{bvid}`、`{cid}`、`{epid}` 和
+`{content_id}`。数字 placeholder 支持 `{index:03}` 这样的补零格式。条目模板必须为每个选
+中的条目渲染出唯一目录名；标题可能重复时请加入 `{index}` 或 `{content_id}`。如果嵌入应
+用会先展示 archive preflight 结果再下载，请用后续执行时相同的 `DownloadOptions` 和模板
+构建 preflight。
 
 crate 默认会原样保留 plan 中的媒体 URL。嵌入应用如果需要 BBDown-like 的 PCDN 规避，或
 需要指定自定义 UPOS host，可以在 `DownloadOptions` 上设置 `MediaHostOptions`。该策略只

@@ -112,6 +112,7 @@ returns a typed `DownloadReport` instead of scraping CLI output.
 Execution behavior is controlled by `DownloadOptions`:
 
 - output directory;
+- path templates for the output root, entry directory, and mux file stem;
 - bounded retry policy;
 - optional DASH video/audio stream id selection;
 - all-output or single-output download mode;
@@ -134,6 +135,15 @@ Plan entries keep the canonical danmaku XML endpoint; the executor converts that
 when the selected `DanmakuFormats` set contains `DanmakuFormat::Ass`. ASS generation supports
 common scrolling, top, bottom, and reverse-scrolling comments and skips advanced positioned comments
 rather than writing misleading coordinates.
+
+Output naming is driven by `DownloadPathTemplates`. The output-root template is rendered from plan
+context, while entry-directory and mux-file-stem templates are rendered from entry context. Rendered
+values are sanitized as single filename components, so templates cannot inject nested paths. Media,
+cover, subtitle, and danmaku sidecar filenames intentionally remain metadata-derived and stable for
+resume behavior, duplicate track names, and archive path records. Duplicate preflight compares the
+rendered planned output directory for the exact `DownloadOptions` that will be used during
+execution. The executor rejects entry templates that render the same directory for multiple entries
+in one plan, because shared entry directories would make resume and sidecar outputs ambiguous.
 
 `DownloadMode` keeps the default all-output path separate from single-output workflows. `VideoOnly`
 and `AudioOnly` download one matching DASH stream and skip sidecars and muxing. `SubtitleOnly`,

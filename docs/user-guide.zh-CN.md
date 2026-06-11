@@ -120,6 +120,7 @@ bbdown download av170001 --output-dir downloads --no-mux --json
 bbdown download av170001 --video-quality 64 --audio-quality 30216 --output-dir downloads
 bbdown download av170001 --only subtitle --output-dir downloads --json
 bbdown download av170001 --output-dir downloads --archive-file downloads/archive.json --on-duplicate keep-both
+bbdown download av170001 --output-template "{title}-{entry_count:02}" --entry-template "{index:02}-{entry_title}" --mux-template "{index:02}-{entry_title}"
 bbdown download av170001 --upos-host upos-sz-mirrorcoso1.bilivideo.com --no-mux
 ```
 
@@ -140,6 +141,16 @@ DASH 媒体，因此会禁用该条目的 FLV 回退。如果两种形态都不�
 使用 `--archive-file` 时，single-output 记录会和完整下载分开跟踪，因此 cover-only 或
 audio-only 运行不会把完整媒体下载标记成已完成。
 ASS-only 和 multi-format 弹幕输出也会与 XML-only 弹幕输出分开记录。
+
+使用 `--output-template`、`--entry-template` 和 `--mux-template` 可定制输出根目录名、每个
+条目的目录名，以及 mux 后文件名 stem。模板会渲染为单个文件系统组件，并在 placeholder
+展开后清洗；它们不是子目录路径。输出模板可使用 `{title}` 和 `{entry_count}`。条目和 mux
+模板可使用 `{title}`、`{entry_title}` 或 `{page_title}`、`{index}` 或 `{page}`、`{aid}`、
+`{bvid}`、`{cid}`、`{epid}` 和 `{content_id}`。数字 placeholder 支持 `{index:03}` 或
+`{entry_count:02}` 这样的补零格式。使用 `{{` 和 `}}` 表示字面大括号。媒体、封面、字幕和
+弹幕旁路文件名保持稳定，因此续传目标、重复字幕轨道和归档记录都更可预测。条目模板必须
+为每个选中的条目渲染出唯一目录名；如果分 P 标题可能重复，请加入 `{index}` 或
+`{content_id}`。
 
 CLI 只对 DASH 和 FLV 媒体候选应用 media-host 策略；封面、字幕和弹幕旁路 URL 保持不变。
 默认情况下，CLI 会把带显式端口的非本地媒体 URL、host 名包含 `pcdn` / `mcdn` 的 URL，或

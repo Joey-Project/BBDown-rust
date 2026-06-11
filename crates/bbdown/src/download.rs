@@ -23,6 +23,9 @@ const MAX_FILE_COMPONENT_BYTES: usize = 240;
 const MAX_SUBTITLE_EXTENSION_BYTES: usize = 16;
 const MAX_COVER_EXTENSION_BYTES: usize = 16;
 const DEFAULT_UPOS_REPLACEMENT_HOST: &str = "upos-sz-mirrorcoso1.bilivideo.com";
+const DEFAULT_OUTPUT_DIR_TEMPLATE: &str = "{title}";
+const DEFAULT_ENTRY_DIR_TEMPLATE: &str = "P{index:03}-{content_id}-{entry_title}";
+const DEFAULT_MUX_FILE_STEM_TEMPLATE: &str = "{entry_title}";
 
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -59,6 +62,7 @@ pub struct DownloadOptions {
     pub output_dir: PathBuf,
     pub retry: RetryPolicy,
     pub stream_selection: StreamSelection,
+    pub path_templates: DownloadPathTemplates,
     pub resume: bool,
     pub mode: DownloadMode,
     pub include_subtitles: bool,
@@ -76,6 +80,7 @@ impl Default for DownloadOptions {
             output_dir: PathBuf::from("."),
             retry: RetryPolicy::default(),
             stream_selection: StreamSelection::default(),
+            path_templates: DownloadPathTemplates::default(),
             resume: true,
             mode: DownloadMode::All,
             include_subtitles: true,
@@ -107,6 +112,30 @@ impl DownloadOptions {
     #[must_use]
     pub fn with_stream_selection(mut self, stream_selection: StreamSelection) -> Self {
         self.stream_selection = stream_selection;
+        self
+    }
+
+    #[must_use]
+    pub fn with_path_templates(mut self, path_templates: DownloadPathTemplates) -> Self {
+        self.path_templates = path_templates;
+        self
+    }
+
+    #[must_use]
+    pub fn with_output_template(mut self, output_template: impl Into<String>) -> Self {
+        self.path_templates.output_dir = output_template.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_entry_template(mut self, entry_template: impl Into<String>) -> Self {
+        self.path_templates.entry_dir = entry_template.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_mux_template(mut self, mux_template: impl Into<String>) -> Self {
+        self.path_templates.mux_file_stem = mux_template.into();
         self
     }
 
@@ -172,6 +201,49 @@ impl DownloadOptions {
     #[must_use]
     pub fn with_download_idle_timeout(mut self, download_idle_timeout: Option<Duration>) -> Self {
         self.download_idle_timeout = download_idle_timeout;
+        self
+    }
+}
+
+#[non_exhaustive]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DownloadPathTemplates {
+    pub output_dir: String,
+    pub entry_dir: String,
+    pub mux_file_stem: String,
+}
+
+impl Default for DownloadPathTemplates {
+    fn default() -> Self {
+        Self {
+            output_dir: DEFAULT_OUTPUT_DIR_TEMPLATE.to_owned(),
+            entry_dir: DEFAULT_ENTRY_DIR_TEMPLATE.to_owned(),
+            mux_file_stem: DEFAULT_MUX_FILE_STEM_TEMPLATE.to_owned(),
+        }
+    }
+}
+
+impl DownloadPathTemplates {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    #[must_use]
+    pub fn with_output_dir(mut self, output_dir: impl Into<String>) -> Self {
+        self.output_dir = output_dir.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_entry_dir(mut self, entry_dir: impl Into<String>) -> Self {
+        self.entry_dir = entry_dir.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_mux_file_stem(mut self, mux_file_stem: impl Into<String>) -> Self {
+        self.mux_file_stem = mux_file_stem.into();
         self
     }
 }
@@ -520,7 +592,8 @@ impl DownloadPreflight {
         options: &DownloadOptions,
         archive: Option<&DownloadArchive>,
     ) -> Result<Self> {
-        let planned_output_dir = default_plan_output_dir(plan, options);
+        validate_download_path_templates(plan, options)?;
+        let planned_output_dir = default_plan_output_dir(plan, options)?;
         let output_conflict =
             path_is_occupied(&planned_output_dir)?.then_some(DownloadOutputConflict {
                 path: planned_output_dir.clone(),
@@ -654,8 +727,8 @@ impl BiliClient {
         plan: &DownloadPlan,
         options: DownloadOptions,
     ) -> Result<DownloadReport> {
-        validate_plan_stream_selection(plan, &options)?;
-        let output_dir = default_plan_output_dir(plan, &options);
+        validate_download_plan_options(plan, &options)?;
+        let output_dir = default_plan_output_dir(plan, &options)?;
         self.download_plan_to_output_dir(plan, options, output_dir)
             .await
     }
@@ -682,6 +755,7 @@ impl BiliClient {
         preflight: &DownloadPreflight,
         decision: DuplicateDecision,
     ) -> Result<DownloadReport> {
+        validate_download_path_templates(plan, &options)?;
         validate_archive_preflight(plan, &options, archive, preflight)?;
         let mut effective_options = options;
         let output_dir = match decision {
@@ -691,7 +765,7 @@ impl BiliClient {
                         .to_owned(),
                 ));
             }
-            DuplicateDecision::Cancel => default_plan_output_dir(plan, &effective_options),
+            DuplicateDecision::Cancel => default_plan_output_dir(plan, &effective_options)?,
             DuplicateDecision::Replace => {
                 if path_is_occupied(&preflight.planned_output_dir)? {
                     validate_plan_stream_selection(plan, &effective_options)?;
@@ -721,11 +795,14 @@ impl BiliClient {
         options: DownloadOptions,
         output_dir: PathBuf,
     ) -> Result<DownloadReport> {
-        validate_plan_stream_selection(plan, &options)?;
+        validate_download_plan_options(plan, &options)?;
         fs::create_dir_all(&output_dir).await?;
         let mut entries = Vec::new();
         for entry in &plan.entries {
-            entries.push(self.download_entry(entry, &output_dir, &options).await?);
+            entries.push(
+                self.download_entry(plan, entry, &output_dir, &options)
+                    .await?,
+            );
         }
         Ok(DownloadReport {
             title: plan.title.clone(),
@@ -736,18 +813,21 @@ impl BiliClient {
 
     async fn download_entry(
         &self,
+        plan: &DownloadPlan,
         entry: &DownloadEntry,
         output_dir: &Path,
         options: &DownloadOptions,
     ) -> Result<EntryDownloadReport> {
-        let entry_dir = output_dir.join(entry_dir_name(entry));
+        let entry_dir = output_dir.join(entry_dir_name(&plan.title, entry, options)?);
         fs::create_dir_all(&entry_dir).await?;
         let mut files = Vec::new();
         self.download_entry_media(entry, &entry_dir, options, &mut files)
             .await?;
         self.download_entry_sidecars(entry, &entry_dir, options, &mut files)
             .await?;
-        let mux = self.mux_entry(entry, &entry_dir, &files, options).await?;
+        let mux = self
+            .mux_entry(&plan.title, entry, &entry_dir, &files, options)
+            .await?;
         Ok(EntryDownloadReport {
             index: entry.index,
             title: entry.title.clone(),
@@ -1168,6 +1248,7 @@ impl BiliClient {
 
     async fn mux_entry(
         &self,
+        plan_title: &str,
         entry: &DownloadEntry,
         entry_dir: &Path,
         files: &[DownloadedFile],
@@ -1187,7 +1268,10 @@ impl BiliClient {
         if media_files.is_empty() {
             return Ok(None);
         }
-        let output_path = entry_dir.join(format!("{}.mp4", safe_file_name(&entry.title)));
+        let output_path = entry_dir.join(format!(
+            "{}.mp4",
+            mux_file_stem(plan_title, entry, options)?
+        ));
         let mux_output_path = temporary_mux_path(&output_path);
         remove_file_if_exists(&mux_output_path).await?;
         let mut args = Vec::new();
@@ -1867,8 +1951,14 @@ fn concat_file_list(paths: &[PathBuf], base: &Path) -> String {
     })
 }
 
-fn default_plan_output_dir(plan: &DownloadPlan, options: &DownloadOptions) -> PathBuf {
-    options.output_dir.join(safe_file_name(&plan.title))
+fn default_plan_output_dir(plan: &DownloadPlan, options: &DownloadOptions) -> Result<PathBuf> {
+    Ok(options
+        .output_dir
+        .join(render_template_component_with_budget(
+            &options.path_templates.output_dir,
+            &TemplateContext::plan(plan),
+            MAX_FILE_NAME_BYTES,
+        )?))
 }
 
 fn next_available_output_dir_avoiding(base: &Path, reserved: &[PathBuf]) -> Result<PathBuf> {
@@ -1916,7 +2006,7 @@ fn validate_archive_preflight(
             "download preflight does not match the download plan".to_owned(),
         ));
     }
-    let planned_output_dir = default_plan_output_dir(plan, options);
+    let planned_output_dir = default_plan_output_dir(plan, options)?;
     if comparable_output_path_key(&preflight.planned_output_dir)
         != comparable_output_path_key(&planned_output_dir)
     {
@@ -2104,10 +2194,14 @@ fn lexical_clean_path(path: &Path) -> PathBuf {
 
 fn path_component_key(component: std::path::Component<'_>) -> String {
     let value = component.as_os_str().to_string_lossy();
+    file_component_collision_key(&value)
+}
+
+fn file_component_collision_key(value: &str) -> String {
     if cfg!(windows) || cfg!(target_os = "macos") {
         value.to_lowercase()
     } else {
-        value.into_owned()
+        value.to_owned()
     }
 }
 
@@ -2198,9 +2292,223 @@ fn archive_entry_content_key(entry: &DownloadArchiveEntryRecord) -> String {
     format!("aid={};cid={}", entry.aid, entry.cid)
 }
 
-fn entry_dir_name(entry: &DownloadEntry) -> String {
-    let prefix = format!("P{:03}-{}-", entry.index, entry_content_identity(entry));
-    format_file_component(&prefix, &entry.title, "")
+fn entry_dir_name(
+    plan_title: &str,
+    entry: &DownloadEntry,
+    options: &DownloadOptions,
+) -> Result<String> {
+    if options.path_templates.entry_dir == DEFAULT_ENTRY_DIR_TEMPLATE {
+        let prefix = format!("P{:03}-{}-", entry.index, entry_content_identity(entry));
+        return Ok(format_file_component(&prefix, &entry.title, ""));
+    }
+    render_template_component_with_budget(
+        &options.path_templates.entry_dir,
+        &TemplateContext::entry(plan_title, entry),
+        MAX_FILE_COMPONENT_BYTES,
+    )
+}
+
+fn mux_file_stem(
+    plan_title: &str,
+    entry: &DownloadEntry,
+    options: &DownloadOptions,
+) -> Result<String> {
+    render_template_component_with_budget(
+        &options.path_templates.mux_file_stem,
+        &TemplateContext::entry(plan_title, entry),
+        MAX_FILE_NAME_BYTES,
+    )
+}
+
+struct TemplateContext<'a> {
+    plan_title: &'a str,
+    entry_count: Option<usize>,
+    entry: Option<&'a DownloadEntry>,
+}
+
+impl<'a> TemplateContext<'a> {
+    fn plan(plan: &'a DownloadPlan) -> Self {
+        Self {
+            plan_title: &plan.title,
+            entry_count: Some(plan.entries.len()),
+            entry: None,
+        }
+    }
+
+    fn entry(plan_title: &'a str, entry: &'a DownloadEntry) -> Self {
+        Self {
+            plan_title,
+            entry_count: None,
+            entry: Some(entry),
+        }
+    }
+}
+
+#[cfg(test)]
+fn render_template_component(template: &str, context: &TemplateContext<'_>) -> Result<String> {
+    render_template_component_with_budget(template, context, MAX_FILE_COMPONENT_BYTES)
+}
+
+fn render_template_component_with_budget(
+    template: &str,
+    context: &TemplateContext<'_>,
+    max_bytes: usize,
+) -> Result<String> {
+    if template.trim().is_empty() {
+        return Err(Error::InvalidInput(
+            "download path template must not be empty".to_owned(),
+        ));
+    }
+    let mut output = String::new();
+    let mut chars = template.char_indices().peekable();
+    while let Some((index, character)) = chars.next() {
+        match character {
+            '{' if chars.peek().is_some_and(|(_, next)| *next == '{') => {
+                let _ = chars.next();
+                output.push('{');
+            }
+            '{' => {
+                let placeholder_start = index + character.len_utf8();
+                let mut placeholder_end = None;
+                for (next_index, next_character) in chars.by_ref() {
+                    if next_character == '}' {
+                        placeholder_end = Some(next_index);
+                        break;
+                    }
+                }
+                let Some(placeholder_end) = placeholder_end else {
+                    return Err(Error::InvalidInput(format!(
+                        "download path template has an unclosed placeholder: {template}"
+                    )));
+                };
+                let placeholder = &template[placeholder_start..placeholder_end];
+                output.push_str(&render_template_placeholder(placeholder, context)?);
+            }
+            '}' if chars.peek().is_some_and(|(_, next)| *next == '}') => {
+                let _ = chars.next();
+                output.push('}');
+            }
+            '}' => {
+                return Err(Error::InvalidInput(format!(
+                    "download path template has an unmatched closing brace: {template}"
+                )));
+            }
+            _ => output.push(character),
+        }
+    }
+    Ok(safe_file_name_with_budget(&output, max_bytes))
+}
+
+fn render_template_placeholder(placeholder: &str, context: &TemplateContext<'_>) -> Result<String> {
+    if placeholder.is_empty() {
+        return Err(Error::InvalidInput(
+            "download path template contains an empty placeholder".to_owned(),
+        ));
+    }
+    let (name, format) = placeholder
+        .split_once(':')
+        .map_or((placeholder, None), |(name, format)| (name, Some(format)));
+    if name.is_empty() {
+        return Err(Error::InvalidInput(
+            "download path template contains an empty placeholder".to_owned(),
+        ));
+    }
+    match name {
+        "title" => {
+            validate_no_placeholder_format(name, format)?;
+            Ok(context.plan_title.to_owned())
+        }
+        "entry_count" => context
+            .entry_count
+            .map(|value| format_template_number(value as u64, format))
+            .transpose()?
+            .ok_or_else(|| {
+                Error::InvalidInput(
+                    "download path template placeholder {entry_count} is only available for output templates"
+                        .to_owned(),
+                )
+            }),
+        "entry_title" | "page_title" => entry_template_value(context, name, |entry| {
+            validate_no_placeholder_format(name, format)?;
+            Ok(entry.title.clone())
+        }),
+        "index" | "page" => entry_template_value(context, name, |entry| {
+            format_template_number(u64::from(entry.index), format)
+        }),
+        "aid" => entry_template_value(context, name, |entry| {
+            format_template_number(entry.aid, format)
+        }),
+        "bvid" => entry_template_value(context, name, |entry| {
+            validate_no_placeholder_format(name, format)?;
+            Ok(entry.bvid.clone().unwrap_or_default())
+        }),
+        "cid" => entry_template_value(context, name, |entry| {
+            format_template_number(entry.cid, format)
+        }),
+        "epid" => entry_template_value(context, name, |entry| {
+            entry.epid.map_or_else(
+                || {
+                    validate_no_placeholder_format(name, format)?;
+                    Ok(String::new())
+                },
+                |epid| format_template_number(epid, format),
+            )
+        }),
+        "content_id" => entry_template_value(context, name, |entry| {
+            validate_no_placeholder_format(name, format)?;
+            Ok(entry_content_identity(entry))
+        }),
+        _ => Err(Error::InvalidInput(format!(
+            "unknown download path template placeholder {{{name}}}"
+        ))),
+    }
+}
+
+fn entry_template_value(
+    context: &TemplateContext<'_>,
+    name: &str,
+    render: impl FnOnce(&DownloadEntry) -> Result<String>,
+) -> Result<String> {
+    let entry = context.entry.ok_or_else(|| {
+        Error::InvalidInput(format!(
+            "download path template placeholder {{{name}}} is only available for entry templates"
+        ))
+    })?;
+    render(entry)
+}
+
+fn format_template_number(value: u64, format: Option<&str>) -> Result<String> {
+    match format {
+        None | Some("") => Ok(value.to_string()),
+        Some(format) => {
+            let width = format.strip_prefix('0').ok_or_else(|| {
+                Error::InvalidInput(format!("unsupported template number format :{format}"))
+            })?;
+            if width.is_empty() || !width.chars().all(|character| character.is_ascii_digit()) {
+                return Err(Error::InvalidInput(format!(
+                    "unsupported template number format :{format}"
+                )));
+            }
+            let width: usize = width.parse().map_err(|_| {
+                Error::InvalidInput(format!("unsupported template number format :{format}"))
+            })?;
+            if width > MAX_FILE_COMPONENT_BYTES {
+                return Err(Error::InvalidInput(format!(
+                    "template number format width must be at most {MAX_FILE_COMPONENT_BYTES}: :{format}"
+                )));
+            }
+            Ok(format!("{value:0width$}"))
+        }
+    }
+}
+
+fn validate_no_placeholder_format(name: &str, format: Option<&str>) -> Result<()> {
+    if let Some(format) = format.filter(|format| !format.is_empty()) {
+        return Err(Error::InvalidInput(format!(
+            "placeholder {{{name}}} does not support format :{format}"
+        )));
+    }
+    Ok(())
 }
 
 fn format_file_component(prefix: &str, variable: &str, suffix: &str) -> String {
@@ -2324,6 +2632,11 @@ fn select_media_stream<'a>(
         .ok_or(Error::MissingField("selected media stream"))
 }
 
+fn validate_download_plan_options(plan: &DownloadPlan, options: &DownloadOptions) -> Result<()> {
+    validate_plan_stream_selection(plan, options)?;
+    validate_download_path_templates(plan, options)
+}
+
 fn validate_plan_stream_selection(plan: &DownloadPlan, options: &DownloadOptions) -> Result<()> {
     let selection = options.stream_selection;
     if !selection.has_selection() {
@@ -2332,6 +2645,23 @@ fn validate_plan_stream_selection(plan: &DownloadPlan, options: &DownloadOptions
     validate_stream_selection_mode(selection, options.mode)?;
     for entry in &plan.entries {
         validate_entry_stream_selection(entry, selection, options.mode)?;
+    }
+    Ok(())
+}
+
+fn validate_download_path_templates(plan: &DownloadPlan, options: &DownloadOptions) -> Result<()> {
+    let _ = default_plan_output_dir(plan, options)?;
+    let mut rendered_entry_dirs = HashSet::new();
+    for entry in &plan.entries {
+        let entry_dir = entry_dir_name(&plan.title, entry, options)?;
+        if !rendered_entry_dirs.insert(file_component_collision_key(&entry_dir)) {
+            return Err(Error::InvalidInput(format!(
+                "download entry template renders duplicate directory name: {entry_dir}"
+            )));
+        }
+        if options.mode.allows_mux() && matches!(options.mux, MuxOptions::Ffmpeg { .. }) {
+            let _ = mux_file_stem(&plan.title, entry, options)?;
+        }
     }
     Ok(())
 }
@@ -2532,15 +2862,16 @@ fn subtitle_dedup_key(url: &str) -> String {
 mod tests {
     use super::{
         DEFAULT_UPOS_REPLACEMENT_HOST, DownloadArchive, DownloadArchiveEntryRecord,
-        DownloadArchiveRecord, DownloadMode, DownloadOptions, DownloadPreflight, DownloadReport,
-        DownloadedFile, DuplicateDecision, EntryDownloadReport, MAX_FILE_COMPONENT_BYTES,
-        MAX_FILE_NAME_BYTES, MAX_SUBTITLE_EXTENSION_BYTES, MediaHostOptions, MuxOptions,
-        RetryPolicy, SidecarOptions, StreamSelection, archive_sidecar_path, candidate_urls,
-        comparable_output_path, cover_file_name, default_plan_output_dir,
-        download_entry_content_key, download_plan_content_key, entry_dir_name, media_file_name,
-        path_is_occupied, safe_file_name, safe_file_name_with_budget, select_media_stream,
-        subtitle_dedup_key, subtitle_extension, subtitle_file_name, temporary_download_path,
-        temporary_mux_path, temporary_replace_path,
+        DownloadArchiveRecord, DownloadMode, DownloadOptions, DownloadPathTemplates,
+        DownloadPreflight, DownloadReport, DownloadedFile, DuplicateDecision, EntryDownloadReport,
+        MAX_FILE_COMPONENT_BYTES, MAX_FILE_NAME_BYTES, MAX_SUBTITLE_EXTENSION_BYTES,
+        MediaHostOptions, MuxOptions, RetryPolicy, SidecarOptions, StreamSelection,
+        TemplateContext, archive_sidecar_path, candidate_urls, comparable_output_path,
+        cover_file_name, default_plan_output_dir, download_entry_content_key,
+        download_plan_content_key, entry_dir_name, media_file_name, mux_file_stem,
+        path_is_occupied, render_template_component, safe_file_name, safe_file_name_with_budget,
+        select_media_stream, subtitle_dedup_key, subtitle_extension, subtitle_file_name,
+        temporary_download_path, temporary_mux_path, temporary_replace_path,
     };
     use crate::models::{
         DanmakuTrack, DownloadEntry, DownloadPlan, FlvSegment, MediaStream, StreamDiagnostics,
@@ -2774,16 +3105,20 @@ mod tests {
     }
 
     #[test]
-    fn entry_dir_name_limits_final_component_bytes() {
+    fn entry_dir_name_limits_final_component_bytes() -> anyhow::Result<()> {
         let server = MockServer::start();
         let mut plan = test_plan(&server);
         plan.entries[0].title = "界".repeat(200);
 
-        assert!(entry_dir_name(&plan.entries[0]).len() <= MAX_FILE_COMPONENT_BYTES);
+        assert!(
+            entry_dir_name(&plan.title, &plan.entries[0], &DownloadOptions::default())?.len()
+                <= MAX_FILE_COMPONENT_BYTES
+        );
+        Ok(())
     }
 
     #[test]
-    fn entry_dir_name_distinguishes_content_identity() {
+    fn entry_dir_name_distinguishes_content_identity() -> anyhow::Result<()> {
         let server = MockServer::start();
         let first = test_plan(&server);
         let mut second = test_plan(&server);
@@ -2792,9 +3127,187 @@ mod tests {
         second.entries[0].cid = 3;
 
         assert_ne!(
-            entry_dir_name(&first.entries[0]),
-            entry_dir_name(&second.entries[0])
+            entry_dir_name(&first.title, &first.entries[0], &DownloadOptions::default())?,
+            entry_dir_name(
+                &second.title,
+                &second.entries[0],
+                &DownloadOptions::default()
+            )?
         );
+        Ok(())
+    }
+
+    #[test]
+    fn default_path_templates_preserve_existing_names() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let plan = test_plan(&server);
+        let options = DownloadOptions::new("downloads");
+
+        assert_eq!(
+            default_plan_output_dir(&plan, &options)?,
+            Path::new("downloads").join("Mock video")
+        );
+        assert_eq!(
+            entry_dir_name(&plan.title, &plan.entries[0], &options)?,
+            "P001-BV1xx411c7mD-cid2-Main"
+        );
+        assert_eq!(
+            mux_file_stem(&plan.title, &plan.entries[0], &options)?,
+            "Main"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn default_path_templates_preserve_existing_truncation_budgets() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let mut plan = test_plan(&server);
+        plan.title = "A".repeat(MAX_FILE_NAME_BYTES + 10);
+        plan.entries[0].title = "B".repeat(MAX_FILE_NAME_BYTES + 10);
+        let options = DownloadOptions::new("downloads");
+
+        let output_file_name = default_plan_output_dir(&plan, &options)?
+            .file_name()
+            .and_then(std::ffi::OsStr::to_str)
+            .ok_or_else(|| anyhow::anyhow!("missing output file name"))?
+            .to_owned();
+        let mux_file_name = mux_file_stem(&plan.title, &plan.entries[0], &options)?;
+
+        assert_eq!(output_file_name.len(), MAX_FILE_NAME_BYTES);
+        assert_eq!(mux_file_name.len(), MAX_FILE_NAME_BYTES);
+        assert!(
+            entry_dir_name(&plan.title, &plan.entries[0], &options)?.len()
+                <= MAX_FILE_COMPONENT_BYTES
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn default_entry_template_preserves_existing_title_sanitization() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let mut plan = test_plan(&server);
+        let options = DownloadOptions::new("downloads");
+
+        plan.entries[0].title = " .Part 1".to_owned();
+        assert_eq!(
+            entry_dir_name(&plan.title, &plan.entries[0], &options)?,
+            "P001-BV1xx411c7mD-cid2-Part 1"
+        );
+
+        plan.entries[0].title = ".".to_owned();
+        assert_eq!(
+            entry_dir_name(&plan.title, &plan.entries[0], &options)?,
+            "P001-BV1xx411c7mD-cid2-untitled"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn path_templates_render_known_placeholders() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let plan = test_plan(&server);
+        let options = DownloadOptions::new("downloads").with_path_templates(
+            DownloadPathTemplates::new()
+                .with_output_dir("{title}-{entry_count:02}")
+                .with_entry_dir("{index:02}-{entry_title}-{aid}-{cid}-{content_id}")
+                .with_mux_file_stem("{index:03}-{entry_title}-{bvid}"),
+        );
+
+        assert_eq!(
+            default_plan_output_dir(&plan, &options)?,
+            Path::new("downloads").join("Mock video-01")
+        );
+        assert_eq!(
+            entry_dir_name(&plan.title, &plan.entries[0], &options)?,
+            "01-Main-170001-2-BV1xx411c7mD-cid2"
+        );
+        assert_eq!(
+            mux_file_stem(&plan.title, &plan.entries[0], &options)?,
+            "001-Main-BV1xx411c7mD"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn path_templates_reject_unknown_placeholders() {
+        let server = MockServer::start();
+        let plan = test_plan(&server);
+        let error = render_template_component(
+            "{unknown}",
+            &TemplateContext::entry(&plan.title, &plan.entries[0]),
+        )
+        .err();
+
+        assert!(
+            matches!(error, Some(crate::Error::InvalidInput(message)) if message.contains("unknown download path template placeholder"))
+        );
+    }
+
+    #[test]
+    fn path_templates_reject_excessive_number_width() {
+        let server = MockServer::start();
+        let plan = test_plan(&server);
+        let error = render_template_component(
+            "{index:0241}",
+            &TemplateContext::entry(&plan.title, &plan.entries[0]),
+        )
+        .err();
+
+        assert!(
+            matches!(error, Some(crate::Error::InvalidInput(message)) if message.contains("template number format width must be at most"))
+        );
+    }
+
+    #[test]
+    fn path_templates_reject_string_placeholder_formats() {
+        let server = MockServer::start();
+        let plan = test_plan(&server);
+
+        let title_error =
+            render_template_component("{title:03}", &TemplateContext::plan(&plan)).err();
+        let entry_title_error = render_template_component(
+            "{entry_title:03}",
+            &TemplateContext::entry(&plan.title, &plan.entries[0]),
+        )
+        .err();
+
+        assert!(
+            matches!(title_error, Some(crate::Error::InvalidInput(message)) if message.contains("does not support format"))
+        );
+        assert!(
+            matches!(entry_title_error, Some(crate::Error::InvalidInput(message)) if message.contains("does not support format"))
+        );
+    }
+
+    #[test]
+    fn path_templates_reject_duplicate_entry_directories() {
+        let server = MockServer::start();
+        let mut plan = test_plan(&server);
+        let mut second = plan.entries[0].clone();
+        second.index = 2;
+        second.aid = 170_002;
+        second.cid = 3;
+        plan.entries.push(second);
+        let options = DownloadOptions::new("downloads").with_entry_template("{entry_title}");
+        let error = DownloadPreflight::inspect(&plan, &options, None).err();
+
+        assert!(
+            matches!(error, Some(crate::Error::InvalidInput(message)) if message.contains("duplicate directory name"))
+        );
+    }
+
+    #[test]
+    fn path_templates_escape_literal_braces_and_sanitize_paths() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let mut plan = test_plan(&server);
+        plan.entries[0].title = "A/B:C".to_owned();
+        let component = render_template_component(
+            "{{{entry_title}}}",
+            &TemplateContext::entry(&plan.title, &plan.entries[0]),
+        )?;
+
+        assert_eq!(component, "{A-B-C}");
+        Ok(())
     }
 
     #[test]
@@ -3146,7 +3659,7 @@ mod tests {
         assert!(ass.contains("Dialogue:"));
         assert!(ass.contains("hello & world"));
         assert!(
-            !test_entry_dir(temp.path(), &plan)
+            !test_entry_dir(temp.path(), &plan)?
                 .join("danmaku.xml")
                 .exists()
         );
@@ -3296,7 +3809,11 @@ mod tests {
         let cover_path = temp
             .path()
             .join(safe_file_name(&plan.title))
-            .join(entry_dir_name(&plan.entries[0]))
+            .join(entry_dir_name(
+                &plan.title,
+                &plan.entries[0],
+                &DownloadOptions::default(),
+            )?)
             .join(cover_file_name(cover_url));
 
         let Err(error) = client
@@ -3489,7 +4006,7 @@ mod tests {
         plan.entries[0].streams.videos[0].size = Some(6);
         plan.entries[0].subtitles.clear();
         plan.entries[0].danmaku.xml_url = format!("{}/danmaku.xml", server.base_url());
-        let output_dir = test_entry_dir(temp.path(), &plan);
+        let output_dir = test_entry_dir(temp.path(), &plan)?;
         tokio::fs::create_dir_all(&output_dir).await?;
         tokio::fs::write(
             output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0])),
@@ -3660,7 +4177,7 @@ mod tests {
         let client = BiliClient::new(ClientConfig::default());
         let mut plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
         plan.entries[0].streams.videos[0].size = Some(3);
-        let output_dir = test_entry_dir(temp.path(), &plan);
+        let output_dir = test_entry_dir(temp.path(), &plan)?;
         tokio::fs::create_dir_all(&output_dir).await?;
         tokio::fs::write(
             output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0])),
@@ -3705,7 +4222,7 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let client = BiliClient::new(ClientConfig::default());
         let plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
-        let output_dir = test_entry_dir(temp.path(), &plan);
+        let output_dir = test_entry_dir(temp.path(), &plan)?;
         tokio::fs::create_dir_all(&output_dir).await?;
         let path = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
         tokio::fs::write(&path, "old").await?;
@@ -3749,7 +4266,7 @@ mod tests {
         let client = BiliClient::new(ClientConfig::default());
         let mut plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
         plan.entries[0].streams.videos[0].size = Some(6);
-        let output_dir = test_entry_dir(temp.path(), &plan);
+        let output_dir = test_entry_dir(temp.path(), &plan)?;
         tokio::fs::create_dir_all(&output_dir).await?;
         let path = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
         tokio::fs::write(&path, "old").await?;
@@ -3792,7 +4309,7 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let client = BiliClient::new(ClientConfig::default());
         let plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
-        let output_dir = test_entry_dir(temp.path(), &plan);
+        let output_dir = test_entry_dir(temp.path(), &plan)?;
         tokio::fs::create_dir_all(&output_dir).await?;
         let path = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
         tokio::fs::write(&path, "old").await?;
@@ -3837,7 +4354,7 @@ mod tests {
         let client = BiliClient::new(ClientConfig::default());
         let mut plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
         plan.entries[0].streams.videos[0].size = Some(6);
-        let output_dir = test_entry_dir(temp.path(), &plan);
+        let output_dir = test_entry_dir(temp.path(), &plan)?;
         tokio::fs::create_dir_all(&output_dir).await?;
         let path = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
         tokio::fs::write(&path, "old").await?;
@@ -3884,7 +4401,7 @@ mod tests {
         let client = BiliClient::new(ClientConfig::default());
         let mut plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
         plan.entries[0].streams.videos[0].size = Some(6);
-        let output_dir = test_entry_dir(temp.path(), &plan);
+        let output_dir = test_entry_dir(temp.path(), &plan)?;
         tokio::fs::create_dir_all(&output_dir).await?;
         let path = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
         tokio::fs::write(&path, "old").await?;
@@ -3928,7 +4445,7 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let client = BiliClient::new(ClientConfig::default());
         let plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
-        let output_dir = test_entry_dir(temp.path(), &plan);
+        let output_dir = test_entry_dir(temp.path(), &plan)?;
         tokio::fs::create_dir_all(&output_dir).await?;
         let path = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
         tokio::fs::write(&path, "old").await?;
@@ -4017,7 +4534,7 @@ mod tests {
         let client = BiliClient::new(ClientConfig::default());
         let mut plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
         plan.entries[0].streams.videos[0].size = Some(6);
-        let output_dir = test_entry_dir(temp.path(), &plan);
+        let output_dir = test_entry_dir(temp.path(), &plan)?;
         tokio::fs::create_dir_all(&output_dir).await?;
         let path = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
         tokio::fs::write(&path, "old").await?;
@@ -4062,7 +4579,7 @@ mod tests {
         let client = BiliClient::new(ClientConfig::default());
         let mut plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
         plan.entries[0].streams.videos[0].size = Some(3);
-        let output_dir = test_entry_dir(temp.path(), &plan);
+        let output_dir = test_entry_dir(temp.path(), &plan)?;
         tokio::fs::create_dir_all(&output_dir).await?;
         let path = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
         tokio::fs::write(&path, "old").await?;
@@ -4103,7 +4620,7 @@ mod tests {
         let client = BiliClient::new(ClientConfig::default());
         let mut plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
         plan.entries[0].streams.videos[0].size = Some(6);
-        let output_dir = test_entry_dir(temp.path(), &plan);
+        let output_dir = test_entry_dir(temp.path(), &plan)?;
         tokio::fs::create_dir_all(&output_dir).await?;
         let path = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
         tokio::fs::write(&path, "old").await?;
@@ -4146,7 +4663,7 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let client = BiliClient::new(ClientConfig::default());
         let plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
-        let output_dir = test_entry_dir(temp.path(), &plan);
+        let output_dir = test_entry_dir(temp.path(), &plan)?;
         tokio::fs::create_dir_all(&output_dir).await?;
         let path = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
         tokio::fs::write(&path, "old").await?;
@@ -4197,7 +4714,7 @@ mod tests {
         let client = BiliClient::new(ClientConfig::default());
         let mut plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
         plan.entries[0].streams.videos[0].size = Some(6);
-        let output_dir = test_entry_dir(temp.path(), &plan);
+        let output_dir = test_entry_dir(temp.path(), &plan)?;
         tokio::fs::create_dir_all(&output_dir).await?;
         let path = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
         tokio::fs::write(&path, "old").await?;
@@ -4237,7 +4754,7 @@ mod tests {
         let client = BiliClient::new(ClientConfig::default());
         let mut plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
         plan.entries[0].streams.videos[0].size = Some(6);
-        let output_dir = test_entry_dir(temp.path(), &plan);
+        let output_dir = test_entry_dir(temp.path(), &plan)?;
         tokio::fs::create_dir_all(&output_dir).await?;
         let path = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
         tokio::fs::write(&path, "old").await?;
@@ -4284,7 +4801,11 @@ mod tests {
         let path = temp
             .path()
             .join(safe_file_name(&plan.title))
-            .join(entry_dir_name(&plan.entries[0]))
+            .join(entry_dir_name(
+                &plan.title,
+                &plan.entries[0],
+                &DownloadOptions::default(),
+            )?)
             .join(media_file_name("video", &plan.entries[0].streams.videos[0]));
 
         let Err(error) = client
@@ -4324,7 +4845,11 @@ mod tests {
         let path = temp
             .path()
             .join(safe_file_name(&plan.title))
-            .join(entry_dir_name(&plan.entries[0]))
+            .join(entry_dir_name(
+                &plan.title,
+                &plan.entries[0],
+                &DownloadOptions::default(),
+            )?)
             .join(media_file_name("video", &plan.entries[0].streams.videos[0]));
 
         let Err(error) = client
@@ -4642,7 +5167,7 @@ mod tests {
         let client = BiliClient::new(ClientConfig::default());
         let plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
         let output_dir = temp.path().join("downloads");
-        let entry_dir = test_entry_dir(&output_dir, &plan);
+        let entry_dir = test_entry_dir(&output_dir, &plan)?;
         tokio::fs::create_dir_all(&entry_dir).await?;
         tokio::fs::write(entry_dir.join("Main.mp4"), "stale").await?;
 
@@ -4773,7 +5298,7 @@ mod tests {
         let ffmpeg = write_fake_ffmpeg(temp.path(), "exit 0")?;
         let client = BiliClient::new(ClientConfig::default());
         let plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
-        let entry_dir = test_entry_dir(&temp.path().join("downloads"), &plan);
+        let entry_dir = test_entry_dir(&temp.path().join("downloads"), &plan)?;
         tokio::fs::create_dir_all(&entry_dir).await?;
         tokio::fs::write(entry_dir.join("Main.mp4"), "stale").await?;
 
@@ -4861,7 +5386,7 @@ mod tests {
         let output_dir = temp.path().join("downloads");
         let client = BiliClient::new(ClientConfig::default());
         let plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
-        let entry_dir = test_entry_dir(&output_dir, &plan);
+        let entry_dir = test_entry_dir(&output_dir, &plan)?;
         tokio::fs::create_dir_all(&entry_dir).await?;
         let output_path = entry_dir.join("Main.mp4");
         tokio::fs::write(&output_path, "existing").await?;
@@ -4934,7 +5459,11 @@ mod tests {
 
         let concat_path = output_dir
             .join(safe_file_name(&plan.title))
-            .join(entry_dir_name(&plan.entries[0]))
+            .join(entry_dir_name(
+                &plan.title,
+                &plan.entries[0],
+                &DownloadOptions::default(),
+            )?)
             .join("ffmpeg-concat.txt");
         assert_eq!(
             tokio::fs::read_to_string(concat_path).await?,
@@ -4949,7 +5478,7 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let plan = test_plan(&server);
         let options = DownloadOptions::new(temp.path().join("downloads"));
-        let planned_output_dir = default_plan_output_dir(&plan, &options);
+        let planned_output_dir = default_plan_output_dir(&plan, &options)?;
         std::fs::create_dir_all(&planned_output_dir)?;
         let record = DownloadArchiveRecord {
             content_key: download_plan_content_key(&plan),
@@ -4982,7 +5511,7 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let plan = test_plan(&server);
         let options = DownloadOptions::new(temp.path().join("downloads"));
-        let planned_output_dir = default_plan_output_dir(&plan, &options);
+        let planned_output_dir = default_plan_output_dir(&plan, &options)?;
         let output_parent = planned_output_dir
             .parent()
             .ok_or_else(|| anyhow::anyhow!("missing planned output parent"))?;
@@ -5146,7 +5675,7 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let plan = test_plan(&server);
         let options = DownloadOptions::new(temp.path().join("downloads"));
-        let planned_output_dir = default_plan_output_dir(&plan, &options);
+        let planned_output_dir = default_plan_output_dir(&plan, &options)?;
         let archive = DownloadArchive::new(vec![DownloadArchiveRecord {
             content_key: "plan|different-content".to_owned(),
             title: "Different content".to_owned(),
@@ -5171,7 +5700,7 @@ mod tests {
         let output_base = temp.path().join("downloads");
         let plan = test_plan(&server);
         let options = DownloadOptions::new(output_base.clone());
-        let planned_output_dir = default_plan_output_dir(&plan, &options);
+        let planned_output_dir = default_plan_output_dir(&plan, &options)?;
         std::fs::create_dir_all(&planned_output_dir)?;
         let reserved_output_dir = output_base.join("Mock video (2)");
         let archive = DownloadArchive::new(vec![DownloadArchiveRecord {
@@ -5205,7 +5734,7 @@ mod tests {
         let options = DownloadOptions::new(output_base.clone())
             .with_retry_policy(RetryPolicy::single_attempt())
             .with_mux(MuxOptions::Disabled);
-        let planned_output_dir = default_plan_output_dir(&plan, &options);
+        let planned_output_dir = default_plan_output_dir(&plan, &options)?;
         std::fs::create_dir_all(&planned_output_dir)?;
         let stale_preflight =
             DownloadPreflight::inspect(&plan, &options, Some(&DownloadArchive::default()))?;
@@ -5250,7 +5779,7 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let plan = test_plan(&server);
         let options = DownloadOptions::new(temp.path().join("downloads"));
-        let planned_output_dir = default_plan_output_dir(&plan, &options);
+        let planned_output_dir = default_plan_output_dir(&plan, &options)?;
         let output_subdir = planned_output_dir.join("subdir");
         std_fs::create_dir_all(&output_subdir)?;
         let external_parent = temp.path().join("external");
@@ -5303,11 +5832,11 @@ mod tests {
         let options = DownloadOptions::new(output_base.clone())
             .with_retry_policy(RetryPolicy::single_attempt())
             .with_mux(MuxOptions::Disabled);
-        std::fs::create_dir_all(default_plan_output_dir(&plan, &options))?;
+        std::fs::create_dir_all(default_plan_output_dir(&plan, &options)?)?;
         let mut archive = DownloadArchive::new(vec![DownloadArchiveRecord {
             content_key: download_plan_content_key(&plan),
             title: plan.title.clone(),
-            output_dir: default_plan_output_dir(&plan, &options),
+            output_dir: default_plan_output_dir(&plan, &options)?,
             completed_at_unix: 42,
             entries: Vec::new(),
         }]);
@@ -5351,7 +5880,7 @@ mod tests {
             .with_retry_policy(RetryPolicy::single_attempt())
             .with_danmaku(false)
             .with_mux(MuxOptions::Disabled);
-        let planned_output_dir = default_plan_output_dir(&plan, &options);
+        let planned_output_dir = default_plan_output_dir(&plan, &options)?;
         let planned_file_name = planned_output_dir
             .file_name()
             .ok_or_else(|| anyhow::anyhow!("missing planned output file name"))?;
@@ -5408,7 +5937,7 @@ mod tests {
             .with_retry_policy(RetryPolicy::single_attempt())
             .with_danmaku(false)
             .with_mux(MuxOptions::Disabled);
-        std::fs::create_dir_all(default_plan_output_dir(&plan, &options))?;
+        std::fs::create_dir_all(default_plan_output_dir(&plan, &options)?)?;
         let unrelated_output_dir = output_base.join("Mock video (2)");
         let mut archive = DownloadArchive::new(vec![DownloadArchiveRecord {
             content_key: "plan|unrelated".to_owned(),
@@ -5457,7 +5986,7 @@ mod tests {
             .with_retry_policy(RetryPolicy::single_attempt())
             .with_danmaku(false)
             .with_mux(MuxOptions::Disabled);
-        let planned_output_dir = default_plan_output_dir(&plan, &options);
+        let planned_output_dir = default_plan_output_dir(&plan, &options)?;
         let output_parent = planned_output_dir
             .parent()
             .ok_or_else(|| anyhow::anyhow!("missing planned output parent"))?;
@@ -5503,7 +6032,7 @@ mod tests {
             .with_retry_policy(RetryPolicy::single_attempt())
             .with_danmaku(false)
             .with_mux(MuxOptions::Disabled);
-        let planned_output_dir = default_plan_output_dir(&plan, &options);
+        let planned_output_dir = default_plan_output_dir(&plan, &options)?;
         let output_parent = planned_output_dir
             .parent()
             .ok_or_else(|| anyhow::anyhow!("missing planned output parent"))?;
@@ -5547,14 +6076,14 @@ mod tests {
             .with_retry_policy(RetryPolicy::single_attempt())
             .with_danmaku(false)
             .with_mux(MuxOptions::Disabled);
-        let entry_dir = test_entry_dir(&options.output_dir, &plan);
+        let entry_dir = test_entry_dir(&options.output_dir, &plan)?;
         std::fs::create_dir_all(&entry_dir)?;
         let video_path =
             entry_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
         std::fs::write(&video_path, "partial")?;
         let stale_sidecar = entry_dir.join("danmaku.xml");
         std::fs::write(&stale_sidecar, "<old/>")?;
-        let planned_output_dir = default_plan_output_dir(&plan, &options);
+        let planned_output_dir = default_plan_output_dir(&plan, &options)?;
         let planned_file_name = planned_output_dir
             .file_name()
             .ok_or_else(|| anyhow::anyhow!("missing planned output file name"))?;
@@ -5590,6 +6119,49 @@ mod tests {
             download_plan_content_key(&plan)
         );
         assert_ne!(archive.records[0].content_key, stale_content_key);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn archive_decision_replace_validates_templates_before_removing_output()
+    -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
+        let options = DownloadOptions::new(temp.path().join("downloads"))
+            .with_retry_policy(RetryPolicy::single_attempt())
+            .with_entry_template("{entry_count}")
+            .with_danmaku(false)
+            .with_mux(MuxOptions::Disabled);
+        let planned_output_dir = default_plan_output_dir(&plan, &options)?;
+        let marker = planned_output_dir.join("marker.txt");
+        std::fs::create_dir_all(&planned_output_dir)?;
+        std::fs::write(&marker, "keep")?;
+        let mut archive = DownloadArchive::default();
+
+        let error = match client
+            .download_plan_with_archive_decision(
+                &plan,
+                options,
+                &mut archive,
+                DuplicateDecision::Replace,
+            )
+            .await
+        {
+            Ok(report) => anyhow::bail!(
+                "invalid template unexpectedly downloaded to {}",
+                report.output_dir.display()
+            ),
+            Err(error) => error,
+        };
+
+        assert!(matches!(
+            error,
+            crate::Error::InvalidInput(message)
+                if message.contains("placeholder {entry_count} is only available for output templates")
+        ));
+        assert_eq!(std::fs::read_to_string(marker)?, "keep");
         Ok(())
     }
 
@@ -5653,7 +6225,7 @@ mod tests {
             .with_retry_policy(RetryPolicy::single_attempt())
             .with_danmaku(false)
             .with_mux(MuxOptions::Disabled);
-        let entry_dir = test_entry_dir(&options.output_dir, &plan);
+        let entry_dir = test_entry_dir(&options.output_dir, &plan)?;
         let video_path =
             entry_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
         let stale_sidecar = entry_dir.join("stale.txt");
@@ -6114,9 +6686,14 @@ mod tests {
             .map_or_else(|| host.to_owned(), |port| format!("{host}:{port}")))
     }
 
-    fn test_entry_dir(base: &Path, plan: &DownloadPlan) -> std::path::PathBuf {
-        base.join(safe_file_name(&plan.title))
-            .join(entry_dir_name(&plan.entries[0]))
+    fn test_entry_dir(base: &Path, plan: &DownloadPlan) -> anyhow::Result<std::path::PathBuf> {
+        Ok(
+            default_plan_output_dir(plan, &DownloadOptions::new(base))?.join(entry_dir_name(
+                &plan.title,
+                &plan.entries[0],
+                &DownloadOptions::default(),
+            )?),
+        )
     }
 
     #[cfg(unix)]

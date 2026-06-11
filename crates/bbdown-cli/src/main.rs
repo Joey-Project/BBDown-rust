@@ -4,10 +4,11 @@
 use anyhow::{Context, bail, ensure};
 use bbdown_core::{
     BiliClient, ClientConfig, CredentialStore, Credentials, DanmakuFormat, DownloadArchive,
-    DownloadMode, DownloadOptions, DownloadPreflight, DownloadReport, DuplicateDecision,
-    EndpointConfig, MediaHostOptions, MediaStream, MuxOptions, QrLoginKind, QrLoginState,
-    QrLoginTicket, ResolvedContent, RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy,
-    RestrictedAreaProxyKind, RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet,
+    DownloadMode, DownloadOptions, DownloadPathTemplates, DownloadPreflight, DownloadReport,
+    DuplicateDecision, EndpointConfig, MediaHostOptions, MediaStream, MuxOptions, QrLoginKind,
+    QrLoginState, QrLoginTicket, ResolvedContent, RestrictedArea, RestrictedAreaConfig,
+    RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection, StreamQuality,
+    StreamSelection, StreamSet,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::ffi::{OsStr, OsString};
@@ -95,61 +96,71 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    Download {
-        url: String,
-        #[arg(long)]
-        select: Option<Selection>,
-        #[arg(long, default_value = ".")]
-        output_dir: PathBuf,
-        #[arg(long)]
-        json: bool,
-        #[arg(long, default_value_t = 3)]
-        retry_attempts: u32,
-        #[arg(long, default_value_t = 250)]
-        retry_backoff_ms: u64,
-        #[arg(long, default_value_t = 30)]
-        download_idle_timeout_seconds: u64,
-        #[arg(long)]
-        no_resume: bool,
-        #[arg(long, value_enum, value_name = "KIND")]
-        only: Option<DownloadOnlyArg>,
-        #[arg(long)]
-        no_cover: bool,
-        #[arg(long)]
-        no_subtitles: bool,
-        #[arg(long)]
-        no_danmaku: bool,
-        #[arg(
-            long = "danmaku-format",
-            value_enum,
-            value_delimiter = ',',
-            default_value = "xml",
-            value_name = "FORMAT"
-        )]
-        danmaku_formats: Vec<DanmakuFormatArg>,
-        #[arg(long)]
-        no_mux: bool,
-        #[arg(long, value_name = "ID")]
-        video_quality: Option<u32>,
-        #[arg(long, value_name = "ID")]
-        audio_quality: Option<u32>,
-        #[arg(long, default_value = "ffmpeg")]
-        ffmpeg: PathBuf,
-        #[arg(long, value_name = "PATH")]
-        archive_file: Option<PathBuf>,
-        #[arg(long, value_enum)]
-        on_duplicate: Option<DuplicateDecisionArg>,
-        #[arg(long, value_name = "HOST")]
-        upos_host: Option<String>,
-        #[arg(long)]
-        force_replace_host: bool,
-        #[arg(long)]
-        allow_pcdn: bool,
-    },
+    Download(Box<DownloadCliArgs>),
     Auth {
         #[command(subcommand)]
         command: AuthCommand,
     },
+}
+
+#[derive(Debug, Args)]
+#[allow(clippy::struct_excessive_bools)]
+struct DownloadCliArgs {
+    url: String,
+    #[arg(long)]
+    select: Option<Selection>,
+    #[arg(long, default_value = ".")]
+    output_dir: PathBuf,
+    #[arg(long)]
+    json: bool,
+    #[arg(long, default_value_t = 3)]
+    retry_attempts: u32,
+    #[arg(long, default_value_t = 250)]
+    retry_backoff_ms: u64,
+    #[arg(long, default_value_t = 30)]
+    download_idle_timeout_seconds: u64,
+    #[arg(long)]
+    no_resume: bool,
+    #[arg(long, value_enum, value_name = "KIND")]
+    only: Option<DownloadOnlyArg>,
+    #[arg(long)]
+    no_cover: bool,
+    #[arg(long)]
+    no_subtitles: bool,
+    #[arg(long)]
+    no_danmaku: bool,
+    #[arg(
+        long = "danmaku-format",
+        value_enum,
+        value_delimiter = ',',
+        default_value = "xml",
+        value_name = "FORMAT"
+    )]
+    danmaku_formats: Vec<DanmakuFormatArg>,
+    #[arg(long)]
+    no_mux: bool,
+    #[arg(long, value_name = "ID")]
+    video_quality: Option<u32>,
+    #[arg(long, value_name = "ID")]
+    audio_quality: Option<u32>,
+    #[arg(long, value_name = "TEMPLATE")]
+    output_template: Option<String>,
+    #[arg(long, value_name = "TEMPLATE")]
+    entry_template: Option<String>,
+    #[arg(long, value_name = "TEMPLATE")]
+    mux_template: Option<String>,
+    #[arg(long, default_value = "ffmpeg")]
+    ffmpeg: PathBuf,
+    #[arg(long, value_name = "PATH")]
+    archive_file: Option<PathBuf>,
+    #[arg(long, value_enum)]
+    on_duplicate: Option<DuplicateDecisionArg>,
+    #[arg(long, value_name = "HOST")]
+    upos_host: Option<String>,
+    #[arg(long)]
+    force_replace_host: bool,
+    #[arg(long)]
+    allow_pcdn: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -270,6 +281,7 @@ struct DownloadOptionCliArgs {
     danmaku_formats: Vec<DanmakuFormatArg>,
     video_quality: Option<u32>,
     audio_quality: Option<u32>,
+    templates: DownloadTemplateCliFlags,
     ffmpeg: PathBuf,
 }
 
@@ -288,6 +300,12 @@ struct DownloadMediaHostCliFlags {
     upos_host: Option<String>,
     force_replace_host: bool,
     allow_pcdn: bool,
+}
+
+struct DownloadTemplateCliFlags {
+    output: Option<String>,
+    entry: Option<String>,
+    mux: Option<String>,
 }
 
 fn download_options_from_cli(args: DownloadOptionCliArgs) -> anyhow::Result<DownloadOptions> {
@@ -315,12 +333,14 @@ fn download_options_from_cli(args: DownloadOptionCliArgs) -> anyhow::Result<Down
         MuxOptions::ffmpeg(args.ffmpeg)
     };
     let media_hosts = media_host_options_from_cli(args.media_hosts)?;
+    let path_templates = path_templates_from_cli(args.templates);
     Ok(DownloadOptions::new(args.output_dir)
         .with_retry_policy(RetryPolicy::new(
             args.retry_attempts,
             Duration::from_millis(args.retry_backoff_ms),
         ))
         .with_stream_selection(StreamSelection::new(args.video_quality, args.audio_quality))
+        .with_path_templates(path_templates)
         .with_download_idle_timeout(download_idle_timeout)
         .with_resume(!args.execution.no_resume)
         .with_download_mode(mode)
@@ -330,6 +350,20 @@ fn download_options_from_cli(args: DownloadOptionCliArgs) -> anyhow::Result<Down
         .with_danmaku_formats(args.danmaku_formats.into_iter().map(Into::into))
         .with_media_hosts(media_hosts)
         .with_mux(mux))
+}
+
+fn path_templates_from_cli(flags: DownloadTemplateCliFlags) -> DownloadPathTemplates {
+    let mut templates = DownloadPathTemplates::new();
+    if let Some(output_template) = flags.output {
+        templates = templates.with_output_dir(output_template);
+    }
+    if let Some(entry_template) = flags.entry {
+        templates = templates.with_entry_dir(entry_template);
+    }
+    if let Some(mux_template) = flags.mux {
+        templates = templates.with_mux_file_stem(mux_template);
+    }
+    templates
 }
 
 fn media_host_options_from_cli(
@@ -425,71 +459,73 @@ async fn main() -> anyhow::Result<()> {
             )
             .await?;
         }
-        Command::Download {
-            url,
-            select,
-            output_dir,
-            json,
-            retry_attempts,
-            retry_backoff_ms,
-            download_idle_timeout_seconds,
-            no_resume,
-            only,
-            no_cover,
-            no_subtitles,
-            no_danmaku,
-            danmaku_formats,
-            no_mux,
-            video_quality,
-            audio_quality,
-            ffmpeg,
-            archive_file,
-            on_duplicate,
-            upos_host,
-            force_replace_host,
-            allow_pcdn,
-        } => {
-            ensure!(
-                archive_file.is_some() || on_duplicate.is_none(),
-                "--on-duplicate requires --archive-file"
-            );
-            let options = download_options_from_cli(DownloadOptionCliArgs {
-                output_dir,
-                retry_attempts,
-                retry_backoff_ms,
-                download_idle_timeout_seconds,
-                only,
-                execution: DownloadExecutionCliFlags { no_resume, no_mux },
-                sidecars: DownloadSidecarCliFlags {
-                    no_cover,
-                    no_subtitles,
-                    no_danmaku,
-                },
-                media_hosts: DownloadMediaHostCliFlags {
-                    upos_host,
-                    force_replace_host,
-                    allow_pcdn,
-                },
-                danmaku_formats,
-                video_quality,
-                audio_quality,
-                ffmpeg,
-            })?;
-            let args = DownloadCommandArgs {
-                url,
-                select,
-                json,
-                options,
-                archive_file,
-                on_duplicate: on_duplicate.map(Into::into),
-            };
-            handle_download(&store, endpoints, restricted_area, request_timeout, args).await?;
+        Command::Download(args) => {
+            handle_download_cli(&store, endpoints, restricted_area, request_timeout, *args).await?;
         }
         Command::Auth { command } => {
             handle_auth(command, &store, endpoints, restricted_area, request_timeout).await?;
         }
     }
     Ok(())
+}
+
+async fn handle_download_cli(
+    store: &CredentialStore,
+    endpoints: EndpointConfig,
+    restricted_area: RestrictedAreaConfig,
+    request_timeout: Duration,
+    args: DownloadCliArgs,
+) -> anyhow::Result<()> {
+    ensure!(
+        args.archive_file.is_some() || args.on_duplicate.is_none(),
+        "--on-duplicate requires --archive-file"
+    );
+    let options = download_options_from_cli(DownloadOptionCliArgs {
+        output_dir: args.output_dir,
+        retry_attempts: args.retry_attempts,
+        retry_backoff_ms: args.retry_backoff_ms,
+        download_idle_timeout_seconds: args.download_idle_timeout_seconds,
+        only: args.only,
+        execution: DownloadExecutionCliFlags {
+            no_resume: args.no_resume,
+            no_mux: args.no_mux,
+        },
+        sidecars: DownloadSidecarCliFlags {
+            no_cover: args.no_cover,
+            no_subtitles: args.no_subtitles,
+            no_danmaku: args.no_danmaku,
+        },
+        media_hosts: DownloadMediaHostCliFlags {
+            upos_host: args.upos_host,
+            force_replace_host: args.force_replace_host,
+            allow_pcdn: args.allow_pcdn,
+        },
+        danmaku_formats: args.danmaku_formats,
+        video_quality: args.video_quality,
+        audio_quality: args.audio_quality,
+        templates: DownloadTemplateCliFlags {
+            output: args.output_template,
+            entry: args.entry_template,
+            mux: args.mux_template,
+        },
+        ffmpeg: args.ffmpeg,
+    })?;
+    let command_args = DownloadCommandArgs {
+        url: args.url,
+        select: args.select,
+        json: args.json,
+        options,
+        archive_file: args.archive_file,
+        on_duplicate: args.on_duplicate.map(Into::into),
+    };
+    handle_download(
+        store,
+        endpoints,
+        restricted_area,
+        request_timeout,
+        command_args,
+    )
+    .await
 }
 
 struct DownloadCommandArgs {

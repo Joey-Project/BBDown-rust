@@ -23,8 +23,8 @@ constructor 和 builder 风格 API，例如 `ClientConfig::default().with_*()`�
 
 ```rust,no_run
 use bbdown_core::{
-    BiliClient, ClientConfig, DownloadMode, DownloadOptions, MediaHostOptions, RetryPolicy, Selection,
-    StreamSelection,
+    BiliClient, ClientConfig, DownloadMode, DownloadOptions, DownloadPathTemplates,
+    MediaHostOptions, RetryPolicy, Selection, StreamSelection,
 };
 use std::time::Duration;
 
@@ -41,6 +41,11 @@ async fn main() -> bbdown_core::Result<()> {
     let options = DownloadOptions::new("downloads")
         .with_stream_selection(StreamSelection::video(80))
         .with_download_mode(DownloadMode::VideoOnly)
+        .with_path_templates(
+            DownloadPathTemplates::new()
+                .with_output_dir("{title}-{entry_count:02}")
+                .with_entry_dir("{index:03}-{entry_title}-{content_id}"),
+        )
         .with_media_hosts(
             MediaHostOptions::new().with_upos_host("upos-sz-mirrorcoso1.bilivideo.com"),
         )
@@ -59,6 +64,9 @@ metadata，`selected_items` 则携带当前选中子集。选中的条目随后�
 
 library 默认保留 plan 中的媒体 URL。嵌入应用需要自定义 UPOS host、强制替换，或
 CLI-compatible PCDN fallback 处理时，应显式设置 `MediaHostOptions`。
+嵌入应用需要 BBDown 风格或应用自定义输出名时，可以设置 `DownloadPathTemplates`。模板会
+为输出根目录、条目目录和 mux 后文件名 stem 渲染经过清洗的文件名组件；媒体和 sidecar 文
+件名保持稳定，以支持续传和归档记录。条目模板必须在选中条目之间渲染出唯一目录名。
 
 受限区域代理、端点覆盖、凭据、下载归档和下载执行示例见仓库嵌入指南：
 [英文](https://github.com/Joey-Project/BBDown-rust/blob/master/docs/embedding.md) /

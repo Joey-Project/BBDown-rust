@@ -621,6 +621,65 @@ fn download_json_writes_mock_media_files() -> anyhow::Result<()> {
 }
 
 #[test]
+fn download_json_applies_path_templates() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    mock_minimal_download(&server);
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("download")
+        .arg("av170001")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--output-template")
+        .arg("{title}-{entry_count:02}")
+        .arg("--entry-template")
+        .arg("{index:02}-{entry_title}-{aid}-{cid}")
+        .arg("--no-cover")
+        .arg("--no-subtitles")
+        .arg("--no-danmaku")
+        .arg("--no-mux")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    let output_path = Path::new(
+        json["output_dir"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing output_dir"))?,
+    );
+    let entry_path = Path::new(
+        json["entries"][0]["directory"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing entry directory"))?,
+    );
+
+    assert_eq!(
+        output_path.file_name().and_then(std::ffi::OsStr::to_str),
+        Some("Mock video-01")
+    );
+    assert_eq!(
+        entry_path.file_name().and_then(std::ffi::OsStr::to_str),
+        Some("01-Main-170001-2")
+    );
+    assert_eq!(
+        fs::read_to_string(downloaded_file_path(&json, "video")?)?,
+        "video"
+    );
+    assert_eq!(
+        fs::read_to_string(downloaded_file_path(&json, "audio")?)?,
+        "audio"
+    );
+    Ok(())
+}
+
+#[test]
 fn download_no_cover_skips_cover_sidecar() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;

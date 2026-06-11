@@ -64,6 +64,7 @@ bbdown download fav456 --select page:1 --output-dir downloads
 bbdown download av170001 --output-dir downloads --no-mux --json
 bbdown download av170001 --only cover --output-dir downloads --json
 bbdown download av170001 --output-dir downloads --archive-file downloads/archive.json --on-duplicate keep-both
+bbdown download av170001 --output-template "{title}-{entry_count:02}" --entry-template "{index:02}-{entry_title}" --no-mux
 bbdown download av170001 --upos-host upos-sz-mirrorcoso1.bilivideo.com --no-mux
 ```
 
@@ -76,6 +77,10 @@ XML; pass `--danmaku-format ass` for ASS-only output or `--danmaku-format xml,as
 XML and ASS sidecars.
 Use `--only video`, `--only audio`, `--only subtitle`, `--only danmaku`, or `--only cover` for a
 single output kind; single-output modes skip muxing.
+Use `--output-template`, `--entry-template`, and `--mux-template` to customize the output root,
+entry directory, and muxed file stem. Template output is sanitized as a filename component; media,
+cover, subtitle, and danmaku sidecar filenames remain stable for resume and duplicate-track safety.
+Entry templates must render unique directory names across selected entries.
 The CLI avoids suspected PCDN media URLs by default while leaving local and private hosts alone.
 Pass `--allow-pcdn` to keep original PCDN candidates, `--upos-host <HOST>` to rewrite DASH/FLV
 media candidates to a specific UPOS host, or `--force-replace-host` to rewrite media candidates to
