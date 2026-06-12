@@ -68,11 +68,11 @@ library 默认保留 plan 中的媒体 URL。嵌入应用需要自定义 UPOS ho
 CLI-compatible PCDN fallback 处理时，应显式设置 `MediaHostOptions`。
 当嵌入应用需要给下游 streaming/cache service 使用的可序列化 DASH video/audio 或 FLV
 segment 请求规格时，使用 `BiliClient::plan_playback`。`PlaybackPlan` 包含主 URL、备用
-URL、媒体 headers、mime/codec metadata、时长、大小和 cache key，但不实现播放器状态、HLS
-playlist 生成或 HTTP segment serving。每个 `PlaybackVariant` 还包含
-`selection_hints.avplayer`，提供 exact codec 字符串、codec-family metadata、`format_key`
-和排序信号。嵌入客户端需要优先 H.264、HEVC、AV1 或其它 codec 顺序时，可以使用
-`PlaybackCodecPreference`。
+URL、媒体 headers、mime/codec metadata、时长、大小、entry/variant/media cache key，以及
+codec/mime-compatible ABR group/level metadata，但不实现播放器状态、HLS playlist 生成或
+HTTP segment serving。每个 `PlaybackVariant` 还包含 `selection_hints.avplayer`，提供 exact
+codec 字符串、codec-family metadata、`format_key` 和排序信号。嵌入客户端需要优先 H.264、
+HEVC、AV1 或其它 codec 顺序时，可以使用 `PlaybackCodecPreference`。
 嵌入应用需要 BBDown 风格或应用自定义输出名时，可以设置 `DownloadPathTemplates`。模板会
 为输出根目录、条目目录和 mux 后文件名 stem 渲染经过清洗的文件名组件；媒体和 sidecar 文
 件名保持稳定，以支持续传和归档记录。条目模板必须在选中条目之间渲染出唯一目录名。

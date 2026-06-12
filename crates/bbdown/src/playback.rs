@@ -5,6 +5,7 @@ use crate::{
 use md5::{Digest, Md5};
 use reqwest::header::HeaderMap;
 use serde::{Deserialize, Serialize, de};
+use std::{cmp::Ordering, collections::BTreeMap};
 use url::Url;
 
 #[non_exhaustive]
@@ -29,7 +30,7 @@ impl PlaybackPlan {
 }
 
 #[non_exhaustive]
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct PlaybackEntry {
     pub index: u32,
     pub aid: u64,
@@ -39,14 +40,64 @@ pub struct PlaybackEntry {
     pub title: String,
     pub cover_url: Option<String>,
     pub source: StreamSource,
+    pub cache_key: PlaybackEntryCacheKey,
     pub qualities: Vec<StreamQuality>,
     pub duration_seconds: Option<u32>,
+    pub abr: PlaybackAbrMetadata,
     pub variants: Vec<PlaybackVariant>,
+}
+
+impl<'de> Deserialize<'de> for PlaybackEntry {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = PlaybackEntryWire::deserialize(deserializer)?;
+        let cache_key = wire.cache_key.unwrap_or_else(|| {
+            playback_entry_cache_key_from_parts(wire.bvid.as_deref(), wire.epid, wire.aid, wire.cid)
+        });
+        let mut variants = wire.variants;
+        let abr = apply_abr_metadata(&mut variants);
+        Ok(Self {
+            index: wire.index,
+            aid: wire.aid,
+            bvid: wire.bvid,
+            cid: wire.cid,
+            epid: wire.epid,
+            title: wire.title,
+            cover_url: wire.cover_url,
+            source: wire.source,
+            cache_key,
+            qualities: wire.qualities,
+            duration_seconds: wire.duration_seconds,
+            abr,
+            variants,
+        })
+    }
+}
+
+#[derive(Deserialize)]
+struct PlaybackEntryWire {
+    index: u32,
+    aid: u64,
+    bvid: Option<String>,
+    cid: u64,
+    epid: Option<u64>,
+    title: String,
+    cover_url: Option<String>,
+    source: StreamSource,
+    cache_key: Option<PlaybackEntryCacheKey>,
+    qualities: Vec<StreamQuality>,
+    duration_seconds: Option<u32>,
+    #[serde(rename = "abr")]
+    _abr: Option<PlaybackAbrMetadata>,
+    variants: Vec<PlaybackVariant>,
 }
 
 impl PlaybackEntry {
     fn from_download_entry(entry: &DownloadEntry, request_headers: &[HttpHeaderSpec]) -> Self {
-        let variants = playback_variants(entry, request_headers);
+        let mut variants = playback_variants(entry, request_headers);
+        let abr = apply_abr_metadata(&mut variants);
         Self {
             index: entry.index,
             aid: entry.aid,
@@ -56,11 +107,52 @@ impl PlaybackEntry {
             title: entry.title.clone(),
             cover_url: entry.cover_url.clone(),
             source: entry.source.clone(),
+            cache_key: playback_entry_cache_key(entry),
             qualities: entry.streams.qualities.clone(),
             duration_seconds: entry.streams.duration_seconds,
+            abr,
             variants,
         }
     }
+}
+
+#[non_exhaustive]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PlaybackEntryCacheKey {
+    pub content_id: String,
+}
+
+#[non_exhaustive]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PlaybackAbrMetadata {
+    pub groups: Vec<PlaybackAbrGroup>,
+}
+
+#[non_exhaustive]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PlaybackAbrGroup {
+    pub id: String,
+    pub kind: PlaybackAbrGroupKind,
+    pub variant_ids: Vec<String>,
+    pub level_count: u32,
+    pub min_bandwidth: Option<u64>,
+    pub max_bandwidth: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaybackAbrGroupKind {
+    DashVideo,
+    DashAudioOnly,
+}
+
+#[non_exhaustive]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PlaybackAbrLevel {
+    pub group_id: String,
+    pub level_index: u32,
+    pub level_count: u32,
+    pub switchable: bool,
 }
 
 #[non_exhaustive]
@@ -78,6 +170,8 @@ pub struct PlaybackVariant {
     pub height: Option<u32>,
     pub frame_rate: Option<String>,
     pub duration_seconds: Option<u32>,
+    pub cache_key: PlaybackVariantCacheKey,
+    pub abr: Option<PlaybackAbrLevel>,
     pub selection_hints: PlaybackSelectionHints,
 }
 
@@ -91,6 +185,15 @@ impl<'de> Deserialize<'de> for PlaybackVariant {
             || selection_hints(wire.kind, wire.video.as_ref(), wire.audio.as_ref()),
             |hints| hints.into_selection_hints(wire.kind, wire.video.as_ref(), wire.audio.as_ref()),
         );
+        let cache_key = wire.cache_key.unwrap_or_else(|| {
+            playback_variant_cache_key(
+                &wire.id,
+                wire.kind,
+                wire.video.as_ref(),
+                wire.audio.as_ref(),
+                &wire.flv_segments,
+            )
+        });
         Ok(Self {
             id: wire.id,
             kind: wire.kind,
@@ -104,6 +207,8 @@ impl<'de> Deserialize<'de> for PlaybackVariant {
             height: wire.height,
             frame_rate: wire.frame_rate,
             duration_seconds: wire.duration_seconds,
+            cache_key,
+            abr: wire.abr,
             selection_hints,
         })
     }
@@ -126,7 +231,18 @@ struct PlaybackVariantWire {
     height: Option<u32>,
     frame_rate: Option<String>,
     duration_seconds: Option<u32>,
+    cache_key: Option<PlaybackVariantCacheKey>,
+    abr: Option<PlaybackAbrLevel>,
     selection_hints: Option<PlaybackSelectionHintsWire>,
+}
+
+#[non_exhaustive]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PlaybackVariantCacheKey {
+    pub content_id: String,
+    pub variant_kind: PlaybackVariantKind,
+    pub variant_id: String,
+    pub media_keys: Vec<MediaCacheKey>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -423,6 +539,7 @@ fn dash_variant(
     audio: Option<&MediaRequestSpec>,
 ) -> PlaybackVariant {
     let id = dash_variant_id(video, audio);
+    let cache_key = playback_variant_cache_key(&id, PlaybackVariantKind::Dash, video, audio, &[]);
     let mut codecs = Vec::new();
     let mut mime_types = Vec::new();
     push_unique(
@@ -454,6 +571,8 @@ fn dash_variant(
         height: video.and_then(|request| request.height),
         frame_rate: video.and_then(|request| request.frame_rate.clone()),
         duration_seconds: entry.streams.duration_seconds,
+        cache_key,
+        abr: None,
         selection_hints: selection_hints(PlaybackVariantKind::Dash, video, audio),
     }
 }
@@ -469,8 +588,11 @@ fn flv_variant(entry: &DownloadEntry, request_headers: &[HttpHeaderSpec]) -> Pla
     for segment in &flv_segments {
         push_unique(&mut mime_types, segment.mime_type.as_deref());
     }
+    let id = flv_variant_id(&flv_segments);
+    let cache_key =
+        playback_variant_cache_key(&id, PlaybackVariantKind::Flv, None, None, &flv_segments);
     PlaybackVariant {
-        id: flv_variant_id(&flv_segments),
+        id,
         kind: PlaybackVariantKind::Flv,
         video: None,
         audio: None,
@@ -484,6 +606,8 @@ fn flv_variant(entry: &DownloadEntry, request_headers: &[HttpHeaderSpec]) -> Pla
             .streams
             .duration_seconds
             .or_else(|| flv_segments_duration_seconds(&entry.streams.flv_segments)),
+        cache_key,
+        abr: None,
         selection_hints: flv_selection_hints(),
         flv_segments,
     }
@@ -564,20 +688,70 @@ fn media_cache_key(
     }
 }
 
+fn playback_entry_cache_key(entry: &DownloadEntry) -> PlaybackEntryCacheKey {
+    playback_entry_cache_key_from_parts(entry.bvid.as_deref(), entry.epid, entry.aid, entry.cid)
+}
+
+fn playback_entry_cache_key_from_parts(
+    bvid: Option<&str>,
+    epid: Option<u64>,
+    aid: u64,
+    cid: u64,
+) -> PlaybackEntryCacheKey {
+    PlaybackEntryCacheKey {
+        content_id: entry_content_id_from_parts(bvid, epid, aid, cid),
+    }
+}
+
+fn playback_variant_cache_key(
+    variant_id: &str,
+    kind: PlaybackVariantKind,
+    video: Option<&MediaRequestSpec>,
+    audio: Option<&MediaRequestSpec>,
+    flv_segments: &[MediaRequestSpec],
+) -> PlaybackVariantCacheKey {
+    let media_keys = variant_media_keys(video, audio, flv_segments);
+    PlaybackVariantCacheKey {
+        content_id: media_keys
+            .first()
+            .map_or_else(String::new, |key| key.content_id.clone()),
+        variant_kind: kind,
+        variant_id: variant_id.to_owned(),
+        media_keys,
+    }
+}
+
+fn variant_media_keys(
+    video: Option<&MediaRequestSpec>,
+    audio: Option<&MediaRequestSpec>,
+    flv_segments: &[MediaRequestSpec],
+) -> Vec<MediaCacheKey> {
+    let mut media_keys = Vec::new();
+    if let Some(video) = video {
+        media_keys.push(video.cache_key.clone());
+    }
+    if let Some(audio) = audio {
+        media_keys.push(audio.cache_key.clone());
+    }
+    media_keys.extend(flv_segments.iter().map(|segment| segment.cache_key.clone()));
+    media_keys
+}
+
 fn entry_content_id(entry: &DownloadEntry) -> String {
-    let primary = entry
-        .bvid
-        .as_deref()
-        .filter(|bvid| !bvid.is_empty())
-        .map_or_else(
-            || {
-                entry
-                    .epid
-                    .map_or_else(|| format!("av{}", entry.aid), |epid| format!("ep{epid}"))
-            },
-            ToOwned::to_owned,
-        );
-    format!("{primary}-cid{}", entry.cid)
+    entry_content_id_from_parts(entry.bvid.as_deref(), entry.epid, entry.aid, entry.cid)
+}
+
+fn entry_content_id_from_parts(
+    bvid: Option<&str>,
+    epid: Option<u64>,
+    aid: u64,
+    cid: u64,
+) -> String {
+    let primary = bvid.filter(|bvid| !bvid.is_empty()).map_or_else(
+        || epid.map_or_else(|| format!("av{aid}"), |epid| format!("ep{epid}")),
+        ToOwned::to_owned,
+    );
+    format!("{primary}-cid{cid}")
 }
 
 fn source_hash(url: &str) -> String {
@@ -651,6 +825,170 @@ fn media_id_token(request: &MediaRequestSpec) -> String {
 
 fn short_source_hash(request: &MediaRequestSpec) -> String {
     request.cache_key.source_hash.chars().take(8).collect()
+}
+
+fn apply_abr_metadata(variants: &mut [PlaybackVariant]) -> PlaybackAbrMetadata {
+    for variant in variants.iter_mut() {
+        variant.abr = None;
+    }
+
+    let mut grouped = BTreeMap::<String, (PlaybackAbrGroupKind, Vec<usize>)>::new();
+    for (index, variant) in variants.iter().enumerate() {
+        if let Some((group_id, group_kind)) = abr_group_identity(variant) {
+            grouped
+                .entry(group_id)
+                .and_modify(|(_kind, indices)| indices.push(index))
+                .or_insert_with(|| (group_kind, vec![index]));
+        }
+    }
+
+    let mut groups = Vec::new();
+    for (group_id, (group_kind, mut indices)) in grouped {
+        indices.sort_by(|left, right| abr_variant_cmp(&variants[*left], &variants[*right]));
+        let level_count = u32::try_from(indices.len()).unwrap_or(u32::MAX);
+        let switchable = indices.len() > 1;
+        let min_bandwidth = indices
+            .iter()
+            .filter_map(|index| variants[*index].bandwidth)
+            .min();
+        let max_bandwidth = indices
+            .iter()
+            .filter_map(|index| variants[*index].bandwidth)
+            .max();
+        let variant_ids = indices
+            .iter()
+            .map(|index| variants[*index].id.clone())
+            .collect::<Vec<_>>();
+
+        for (level_index, variant_index) in indices.iter().enumerate() {
+            variants[*variant_index].abr = Some(PlaybackAbrLevel {
+                group_id: group_id.clone(),
+                level_index: u32::try_from(level_index).unwrap_or(u32::MAX),
+                level_count,
+                switchable,
+            });
+        }
+
+        groups.push(PlaybackAbrGroup {
+            id: group_id,
+            kind: group_kind,
+            variant_ids,
+            level_count,
+            min_bandwidth,
+            max_bandwidth,
+        });
+    }
+
+    PlaybackAbrMetadata { groups }
+}
+
+fn abr_group_identity(variant: &PlaybackVariant) -> Option<(String, PlaybackAbrGroupKind)> {
+    if variant.kind != PlaybackVariantKind::Dash {
+        return None;
+    }
+    if variant.video.is_some() {
+        let video_identity = variant
+            .video
+            .as_ref()
+            .map_or_else(|| "novideo".to_owned(), media_compatibility_component);
+        let audio_identity = variant
+            .audio
+            .as_ref()
+            .map_or_else(|| "noaudio".to_owned(), media_cache_component);
+        return Some((
+            format!(
+                "dash-video-{}-{video_identity}-{audio_identity}",
+                variant.cache_key.content_id
+            ),
+            PlaybackAbrGroupKind::DashVideo,
+        ));
+    }
+    if variant.audio.is_some() {
+        let audio_identity = variant
+            .audio
+            .as_ref()
+            .map_or_else(|| "noaudio".to_owned(), media_compatibility_component);
+        return Some((
+            format!(
+                "dash-audio-{}-{audio_identity}",
+                variant.cache_key.content_id
+            ),
+            PlaybackAbrGroupKind::DashAudioOnly,
+        ));
+    }
+    None
+}
+
+fn media_cache_component(request: &MediaRequestSpec) -> String {
+    format!(
+        "{}{}-{}",
+        media_kind_prefix(request.kind),
+        media_id_token(request),
+        request.cache_key.source_hash
+    )
+}
+
+fn media_compatibility_component(request: &MediaRequestSpec) -> String {
+    let codec = request.codecs.as_deref().map_or_else(
+        || format!("unknown-{}", media_cache_component(request)),
+        |codec| {
+            let normalized = codec.trim().to_ascii_lowercase();
+            match codec_family(&normalized) {
+                PlaybackCodecFamily::Unknown => {
+                    format!("unknown-{}", media_cache_component(request))
+                }
+                PlaybackCodecFamily::Other => format!("other-{}", abr_identity_part(&normalized)),
+                family => codec_family_key(family).to_owned(),
+            }
+        },
+    );
+    let mime = request
+        .mime_type
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .map_or_else(|| "unknown".to_owned(), abr_identity_part);
+    format!("{codec}-{mime}")
+}
+
+fn abr_identity_part(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+fn media_kind_prefix(kind: MediaRequestKind) -> &'static str {
+    match kind {
+        MediaRequestKind::Video => "v",
+        MediaRequestKind::Audio => "a",
+        MediaRequestKind::FlvSegment => "s",
+    }
+}
+
+fn abr_variant_cmp(left: &PlaybackVariant, right: &PlaybackVariant) -> Ordering {
+    abr_bandwidth_sort_key(left)
+        .cmp(&abr_bandwidth_sort_key(right))
+        .then_with(|| {
+            left.height
+                .unwrap_or_default()
+                .cmp(&right.height.unwrap_or_default())
+        })
+        .then_with(|| {
+            left.width
+                .unwrap_or_default()
+                .cmp(&right.width.unwrap_or_default())
+        })
+        .then_with(|| left.id.cmp(&right.id))
+}
+
+fn abr_bandwidth_sort_key(variant: &PlaybackVariant) -> u64 {
+    variant.bandwidth.unwrap_or(u64::MAX)
 }
 
 fn selection_hints(
@@ -895,19 +1233,12 @@ fn combined_bandwidth(
     video: Option<&MediaRequestSpec>,
     audio: Option<&MediaRequestSpec>,
 ) -> Option<u64> {
-    let mut total = 0_u64;
-    let mut has_value = false;
-    for bandwidth in [
-        video.and_then(|request| request.bandwidth),
-        audio.and_then(|request| request.bandwidth),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        total = total.saturating_add(bandwidth);
-        has_value = true;
+    match (video, audio) {
+        (Some(video), Some(audio)) => Some(video.bandwidth?.saturating_add(audio.bandwidth?)),
+        (Some(video), None) => video.bandwidth,
+        (None, Some(audio)) => audio.bandwidth,
+        (None, None) => None,
     }
-    has_value.then_some(total)
 }
 
 fn flv_segments_duration_seconds(segments: &[FlvSegment]) -> Option<u32> {
@@ -929,9 +1260,9 @@ fn ms_to_seconds_ceil_u32(milliseconds: u64) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::{
-        HttpHeaderSpec, MediaRequestKind, PlaybackCodecFamily, PlaybackCodecPreference,
-        PlaybackPlan, PlaybackSelectionReason, PlaybackVariant, PlaybackVariantKind, codec_family,
-        source_hash,
+        HttpHeaderSpec, MediaRequestKind, PlaybackAbrGroupKind, PlaybackCodecFamily,
+        PlaybackCodecPreference, PlaybackEntry, PlaybackPlan, PlaybackSelectionReason,
+        PlaybackVariant, PlaybackVariantKind, codec_family, source_hash,
     };
     use crate::{
         DanmakuTrack, DownloadEntry, DownloadPlan, FlvSegment, MediaStream, StreamDiagnostics,
@@ -977,14 +1308,44 @@ mod tests {
         let playback = PlaybackPlan::from_download_plan(&plan, &headers);
 
         assert_eq!(playback.title, "Mock video");
+        assert_eq!(
+            playback.entries[0].cache_key.content_id,
+            "BV1xx411c7mD-cid2"
+        );
+        assert_eq!(playback.entries[0].abr.groups.len(), 3);
         assert_eq!(playback.entries[0].variants.len(), 3);
         let variant = &playback.entries[0].variants[0];
+        let hevc_variant = &playback.entries[0].variants[1];
+        let av1_variant = &playback.entries[0].variants[2];
         assert_eq!(variant.kind, PlaybackVariantKind::Dash);
         assert_eq!(variant.bandwidth, Some(1_328_000));
         assert_eq!(variant.codecs, ["avc1.640028", "mp4a.40.2"]);
         assert_eq!(variant.mime_types, ["video/mp4", "audio/mp4"]);
         assert_eq!(variant.width, Some(1920));
         assert_eq!(variant.height, Some(1080));
+        assert_eq!(variant.cache_key.content_id, "BV1xx411c7mD-cid2");
+        assert_eq!(variant.cache_key.variant_kind, PlaybackVariantKind::Dash);
+        assert_eq!(variant.cache_key.variant_id, variant.id);
+        assert_eq!(variant.cache_key.media_keys.len(), 2);
+        let abr = variant
+            .abr
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("missing ABR level"))?;
+        let abr_group = playback.entries[0]
+            .abr
+            .groups
+            .iter()
+            .find(|group| group.id == abr.group_id)
+            .ok_or_else(|| anyhow::anyhow!("missing ABR group"))?;
+        assert_eq!(abr_group.kind, PlaybackAbrGroupKind::DashVideo);
+        assert_eq!(abr_group.level_count, 1);
+        assert_eq!(abr_group.min_bandwidth, Some(1_328_000));
+        assert_eq!(abr_group.max_bandwidth, Some(1_328_000));
+        assert_eq!(abr_group.variant_ids, vec![variant.id.clone()]);
+        assert_eq!(abr.group_id, abr_group.id);
+        assert_eq!(abr.level_index, 0);
+        assert_eq!(abr.level_count, 1);
+        assert!(!abr.switchable);
         assert_preferred_avplayer_hint(variant);
         let video = variant
             .video
@@ -1006,8 +1367,8 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("missing audio request"))?;
         assert_eq!(audio.cache_key.media_kind, MediaRequestKind::Audio);
         assert!(variant.id.starts_with("dash-v80-"));
-        assert_hevc_avplayer_hint(&playback.entries[0].variants[1]);
-        assert_av1_avplayer_hint(&playback.entries[0].variants[2]);
+        assert_hevc_avplayer_hint(hevc_variant);
+        assert_av1_avplayer_hint(av1_variant);
         Ok(())
     }
 
@@ -1039,10 +1400,13 @@ mod tests {
 
         let playback = PlaybackPlan::from_download_plan(&plan, &[]);
 
+        assert!(playback.entries[0].abr.groups.is_empty());
         assert_eq!(playback.entries[0].variants.len(), 1);
         let variant = &playback.entries[0].variants[0];
         assert_eq!(variant.kind, PlaybackVariantKind::Flv);
         assert_eq!(variant.mime_types, ["video/x-flv"]);
+        assert!(variant.abr.is_none());
+        assert_eq!(variant.cache_key.media_keys.len(), 2);
         assert_flv_avplayer_hint(variant);
         assert!(
             !variant
@@ -1124,6 +1488,167 @@ mod tests {
 
         assert_hevc_avplayer_hint(&variant);
         Ok(())
+    }
+
+    #[test]
+    fn deserializes_legacy_entry_without_cache_or_abr_metadata() -> anyhow::Result<()> {
+        let entry: PlaybackEntry = serde_json::from_value(serde_json::json!({
+            "index": 1,
+            "aid": 170_001,
+            "bvid": "BV1xx411c7mD",
+            "cid": 2,
+            "epid": null,
+            "title": "Main",
+            "cover_url": null,
+            "source": "normal_web",
+            "qualities": [],
+            "duration_seconds": 90,
+            "variants": [
+                {
+                    "id": "legacy-h264",
+                    "kind": "dash",
+                    "video": legacy_request_json("video", 80, "video/mp4", "avc1.640028"),
+                    "audio": legacy_request_json("audio", 30280, "audio/mp4", "mp4a.40.2"),
+                    "flv_segments": [],
+                    "bandwidth": 1_328_000,
+                    "codecs": ["avc1.640028", "mp4a.40.2"],
+                    "mime_types": ["video/mp4", "audio/mp4"],
+                    "width": 1920,
+                    "height": 1080,
+                    "frame_rate": "60",
+                    "duration_seconds": 90
+                },
+                {
+                    "id": "legacy-hevc",
+                    "kind": "dash",
+                    "video": legacy_request_json("video", 64, "video/mp4", "hev1.1.6.L120.90"),
+                    "audio": legacy_request_json("audio", 30280, "audio/mp4", "mp4a.40.2"),
+                    "flv_segments": [],
+                    "bandwidth": 928_000,
+                    "codecs": ["hev1.1.6.L120.90", "mp4a.40.2"],
+                    "mime_types": ["video/mp4", "audio/mp4"],
+                    "width": 1280,
+                    "height": 720,
+                    "frame_rate": "30",
+                    "duration_seconds": 90
+                }
+            ]
+        }))?;
+
+        assert_eq!(entry.cache_key.content_id, "BV1xx411c7mD-cid2");
+        assert_eq!(entry.abr.groups.len(), 2);
+        assert!(entry.abr.groups.iter().all(|group| group.level_count == 1));
+        assert_eq!(entry.variants[0].cache_key.media_keys.len(), 2);
+        assert_eq!(
+            entry.variants[0].abr.as_ref().map(|abr| abr.level_index),
+            Some(0)
+        );
+        assert_eq!(
+            entry.variants[1].abr.as_ref().map(|abr| abr.level_index),
+            Some(0)
+        );
+        assert!(
+            entry
+                .variants
+                .iter()
+                .all(|variant| !variant.abr.as_ref().is_some_and(|abr| abr.switchable))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn abr_order_treats_partial_combined_bandwidth_as_unknown() {
+        let mut unknown_high_video = media_stream(80, "avc1.640028", 1_200_000);
+        unknown_high_video.bandwidth = None;
+        unknown_high_video.width = Some(1920);
+        unknown_high_video.height = Some(1080);
+        let known_low_video = media_stream(64, "avc1.640028", 800_000);
+        let plan = test_plan(StreamSet {
+            videos: vec![unknown_high_video, known_low_video],
+            audios: vec![audio_stream("mp4a.40.2", 128_000)],
+            flv_segments: Vec::new(),
+            accept_quality: vec![80, 64],
+            qualities: Vec::new(),
+            duration_seconds: Some(90),
+        });
+
+        let playback = PlaybackPlan::from_download_plan(&plan, &[]);
+        let variants = &playback.entries[0].variants;
+        let abr_group = &playback.entries[0].abr.groups[0];
+
+        assert_eq!(variants[0].bandwidth, None);
+        assert_eq!(variants[1].bandwidth, Some(928_000));
+        assert_eq!(abr_group.min_bandwidth, Some(928_000));
+        assert_eq!(abr_group.max_bandwidth, Some(928_000));
+        assert_eq!(
+            abr_group.variant_ids,
+            vec![variants[1].id.clone(), variants[0].id.clone()]
+        );
+        assert_eq!(abr_group.level_count, 2);
+        assert_eq!(variants[0].abr.as_ref().map(|abr| abr.level_index), Some(1));
+        assert_eq!(variants[1].abr.as_ref().map(|abr| abr.level_index), Some(0));
+        assert!(variants[0].abr.as_ref().is_some_and(|abr| abr.switchable));
+        assert!(variants[1].abr.as_ref().is_some_and(|abr| abr.switchable));
+    }
+
+    #[test]
+    fn abr_groups_isolate_missing_video_codecs() {
+        let mut first_unknown = media_stream(80, "avc1.640028", 1_200_000);
+        first_unknown.codecs = None;
+        let mut second_unknown = media_stream(64, "avc1.640028", 800_000);
+        second_unknown.codecs = None;
+        let plan = test_plan(StreamSet {
+            videos: vec![first_unknown, second_unknown],
+            audios: vec![audio_stream("mp4a.40.2", 128_000)],
+            flv_segments: Vec::new(),
+            accept_quality: vec![80, 64],
+            qualities: Vec::new(),
+            duration_seconds: Some(90),
+        });
+
+        let playback = PlaybackPlan::from_download_plan(&plan, &[]);
+        let variants = &playback.entries[0].variants;
+
+        assert_eq!(playback.entries[0].abr.groups.len(), 2);
+        assert!(
+            playback.entries[0]
+                .abr
+                .groups
+                .iter()
+                .all(|group| group.level_count == 1)
+        );
+        assert_ne!(
+            variants[0].abr.as_ref().map(|abr| abr.group_id.as_str()),
+            variants[1].abr.as_ref().map(|abr| abr.group_id.as_str())
+        );
+        assert!(
+            variants
+                .iter()
+                .all(|variant| !variant.abr.as_ref().is_some_and(|abr| abr.switchable))
+        );
+    }
+
+    #[test]
+    fn abr_groups_separate_other_video_codec_strings() {
+        let first_other = media_stream(80, "future.1", 1_200_000);
+        let second_other = media_stream(64, "future.2", 800_000);
+        let plan = test_plan(StreamSet {
+            videos: vec![first_other, second_other],
+            audios: vec![audio_stream("mp4a.40.2", 128_000)],
+            flv_segments: Vec::new(),
+            accept_quality: vec![80, 64],
+            qualities: Vec::new(),
+            duration_seconds: Some(90),
+        });
+
+        let playback = PlaybackPlan::from_download_plan(&plan, &[]);
+        let variants = &playback.entries[0].variants;
+
+        assert_eq!(playback.entries[0].abr.groups.len(), 2);
+        assert_ne!(
+            variants[0].abr.as_ref().map(|abr| abr.group_id.as_str()),
+            variants[1].abr.as_ref().map(|abr| abr.group_id.as_str())
+        );
     }
 
     #[test]

@@ -78,10 +78,15 @@ async fn main() -> bbdown_core::Result<()> {
 `audio_codec` 字符串、codec-family 字段、`format_key` 和机器可读 reason code。下游客户端
 可以用 `PlaybackCodecPreference` 按自己的 H.264、HEVC、AV1 或其它 codec 顺序给 variants
 排序，然后在交给平台播放器前验证 exact codec 字符串。cache key 会对 source URL 做 hash，
-避免暴露明文，同时保留 query-string 的资源身份；更长期的 ABR grouping 和 cache-retention
-policy helper 会单独排期。crate 不实现播放任务状态、HLS playlist 生成、segment serving、
-retention、cleanup、AVPlayer event/VOD playlist 切换或 library 注册。下游播放器和缓存服务
-器负责这些部分，并可把 `PlaybackPlan` 作为稳定的 HTTP request contract。
+避免暴露明文，同时保留 query-string 的资源身份。`PlaybackEntry.cache_key` 标识所选内容，
+`PlaybackVariant.cache_key` 组合一个可播放 variant 里的媒体 cache keys，
+`PlaybackEntry.abr.groups` 按低到高 level 顺序列出 codec/mime-compatible switching
+groups，而 `PlaybackVariant.abr` 会指向该 variant 所在的 group 和 level。cache server 可以
+用 `MediaCacheKey` 存储已获取媒体，用 `PlaybackVariantCacheKey` 保留已完成 variants，并在
+ABR policy 升级或降级时保留下层或曾访问过的兼容 level。crate 不实现播放任务状态、HLS
+playlist 生成、segment serving、retention、cleanup、AVPlayer event/VOD playlist 切换或
+library 注册。下游播放器和缓存服务器负责这些部分，并可把 `PlaybackPlan` 作为稳定的 HTTP
+request contract。
 
 ## 批量和集合输入
 
