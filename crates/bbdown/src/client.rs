@@ -6737,11 +6737,22 @@ mod tests {
                 }
             }));
         });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/player/v2")
+                .query_param("aid", "10")
+                .query_param("cid", "100");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {"subtitle": {"subtitles": []}}
+            }));
+        });
 
         let client = BiliClient::new(
             ClientConfig::default()
                 .with_endpoints(
                     EndpointConfig::default()
+                        .with_api_base(server.base_url())
                         .with_pgc_base(server.base_url())
                         .with_tv_api_base(server.base_url()),
                 )

@@ -44,3 +44,7 @@ superseded_by:
   `85f4ce274592d34d8434ecd09dd4877b412caabc..3643e2c12f7e96556880654fb9ffed4813373fcf`
   found that TV playurl requests leaked WEB cookies; fixed by using the no-cookie request path for
   `NormalTv` and `PgcTv`.
+- PR review fix: helper-backed `codex-readonly` on
+  `85f4ce274592d34d8434ecd09dd4877b412caabc..0434d63479517be5d77041137a8392973e1b62f8`
+  found that the PGC TV unit test could hit the default real subtitle API; fixed by mocking
+  `/x/player/v2` and pointing `api_base` at the mock server.
