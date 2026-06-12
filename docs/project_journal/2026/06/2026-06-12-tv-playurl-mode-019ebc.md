@@ -36,3 +36,6 @@ superseded_by:
 ## Evidence
 - Targeted validation: `cargo test -p bbdown-core tv_playurl --lib`.
 - Targeted validation: `cargo test -p bbdown-cli --test cli_e2e playback_json_uses_tv_playurl_mode`.
+- Full validation: `just ci`.
+- Internal review: helper-backed `codex-readonly` on
+  `85f4ce274592d34d8434ecd09dd4877b412caabc..4fdea88149be7df4a234e61a5ad0cf312eddf050`, LGTM.
