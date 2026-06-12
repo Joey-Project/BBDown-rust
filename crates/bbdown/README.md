@@ -72,7 +72,9 @@ fallback handling.
 Use `BiliClient::plan_playback` when an embedding application needs serializable DASH video/audio
 or FLV segment request specs for a downstream streaming/cache service. `PlaybackPlan` includes
 primary and backup URLs, media headers, mime/codec metadata, duration, size, and cache keys, but it
-does not implement player state, HLS playlist generation, or HTTP segment serving.
+does not implement player state, HLS playlist generation, or HTTP segment serving. Each
+`PlaybackVariant` also includes `selection_hints.avplayer_h264_aac` so AVPlayer-oriented clients
+can prefer H.264/AAC streams and avoid less compatible codec combinations.
 Set `DownloadPathTemplates` when an embedding application needs BBDown-style or application-specific
 output names. Templates render sanitized filename components for the output root, entry directory,
 and muxed file stem while media and sidecar filenames remain stable for resume and archive records.

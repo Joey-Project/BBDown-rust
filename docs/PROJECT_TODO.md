@@ -31,7 +31,7 @@
   episode indexes, and batch collection items.
 - [completed] Add a playback ladder and serializable media request spec for downstream player/cache
   integrations without implementing a player or HLS cache server in this repository.
-- [pending] Add AVPlayer-oriented codec/device compatibility profiles, starting with H.264/AAC
+- [completed] Add AVPlayer-oriented codec/device compatibility profiles, starting with H.264/AAC
   selection hints for tvOS-friendly playback.
 - [pending] Add ABR policy metadata and cache identity helpers so downstream cache servers can
   retain already fetched variants and segments while switching bitrate levels.

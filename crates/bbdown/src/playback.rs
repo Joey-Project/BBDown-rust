@@ -64,7 +64,7 @@ impl PlaybackEntry {
 }
 
 #[non_exhaustive]
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct PlaybackVariant {
     pub id: String,
     pub kind: PlaybackVariantKind,
@@ -78,6 +78,54 @@ pub struct PlaybackVariant {
     pub height: Option<u32>,
     pub frame_rate: Option<String>,
     pub duration_seconds: Option<u32>,
+    pub selection_hints: PlaybackSelectionHints,
+}
+
+impl<'de> Deserialize<'de> for PlaybackVariant {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = PlaybackVariantWire::deserialize(deserializer)?;
+        let selection_hints = wire.selection_hints.unwrap_or_else(|| {
+            selection_hints(wire.kind, wire.video.as_ref(), wire.audio.as_ref())
+        });
+        Ok(Self {
+            id: wire.id,
+            kind: wire.kind,
+            video: wire.video,
+            audio: wire.audio,
+            flv_segments: wire.flv_segments,
+            bandwidth: wire.bandwidth,
+            codecs: wire.codecs,
+            mime_types: wire.mime_types,
+            width: wire.width,
+            height: wire.height,
+            frame_rate: wire.frame_rate,
+            duration_seconds: wire.duration_seconds,
+            selection_hints,
+        })
+    }
+}
+
+#[derive(Deserialize)]
+struct PlaybackVariantWire {
+    id: String,
+    kind: PlaybackVariantKind,
+    video: Option<MediaRequestSpec>,
+    audio: Option<MediaRequestSpec>,
+    #[serde(default)]
+    flv_segments: Vec<MediaRequestSpec>,
+    bandwidth: Option<u64>,
+    #[serde(default)]
+    codecs: Vec<String>,
+    #[serde(default)]
+    mime_types: Vec<String>,
+    width: Option<u32>,
+    height: Option<u32>,
+    frame_rate: Option<String>,
+    duration_seconds: Option<u32>,
+    selection_hints: Option<PlaybackSelectionHints>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -85,6 +133,54 @@ pub struct PlaybackVariant {
 pub enum PlaybackVariantKind {
     Dash,
     Flv,
+}
+
+#[non_exhaustive]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PlaybackSelectionHints {
+    pub avplayer_h264_aac: PlaybackSelectionHint,
+}
+
+#[non_exhaustive]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PlaybackSelectionHint {
+    pub playable: bool,
+    pub preferred: bool,
+    pub score: i32,
+    pub video_codec_family: Option<PlaybackCodecFamily>,
+    pub audio_codec_family: Option<PlaybackCodecFamily>,
+    pub reasons: Vec<PlaybackSelectionReason>,
+}
+
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaybackCodecFamily {
+    H264,
+    Hevc,
+    Av1,
+    Vp9,
+    Aac,
+    Flac,
+    Dolby,
+    Unknown,
+    Other,
+}
+
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaybackSelectionReason {
+    DashContainer,
+    FlvContainer,
+    H264Video,
+    AacAudio,
+    MissingVideo,
+    MissingAudio,
+    UnknownVideoCodec,
+    UnknownAudioCodec,
+    UnsupportedVideoCodec,
+    UnsupportedAudioCodec,
 }
 
 #[non_exhaustive]
@@ -229,6 +325,7 @@ fn dash_variant(
         height: video.and_then(|request| request.height),
         frame_rate: video.and_then(|request| request.frame_rate.clone()),
         duration_seconds: entry.streams.duration_seconds,
+        selection_hints: selection_hints(PlaybackVariantKind::Dash, video, audio),
     }
 }
 
@@ -258,6 +355,7 @@ fn flv_variant(entry: &DownloadEntry, request_headers: &[HttpHeaderSpec]) -> Pla
             .streams
             .duration_seconds
             .or_else(|| flv_segments_duration_seconds(&entry.streams.flv_segments)),
+        selection_hints: flv_selection_hints(),
         flv_segments,
     }
 }
@@ -426,6 +524,143 @@ fn short_source_hash(request: &MediaRequestSpec) -> String {
     request.cache_key.source_hash.chars().take(8).collect()
 }
 
+fn selection_hints(
+    kind: PlaybackVariantKind,
+    video: Option<&MediaRequestSpec>,
+    audio: Option<&MediaRequestSpec>,
+) -> PlaybackSelectionHints {
+    PlaybackSelectionHints {
+        avplayer_h264_aac: avplayer_h264_aac_hint(kind, video, audio),
+    }
+}
+
+fn flv_selection_hints() -> PlaybackSelectionHints {
+    PlaybackSelectionHints {
+        avplayer_h264_aac: PlaybackSelectionHint {
+            playable: false,
+            preferred: false,
+            score: -100,
+            video_codec_family: None,
+            audio_codec_family: None,
+            reasons: vec![PlaybackSelectionReason::FlvContainer],
+        },
+    }
+}
+
+fn avplayer_h264_aac_hint(
+    kind: PlaybackVariantKind,
+    video: Option<&MediaRequestSpec>,
+    audio: Option<&MediaRequestSpec>,
+) -> PlaybackSelectionHint {
+    if kind != PlaybackVariantKind::Dash {
+        return PlaybackSelectionHint {
+            playable: false,
+            preferred: false,
+            score: -100,
+            video_codec_family: None,
+            audio_codec_family: None,
+            reasons: vec![PlaybackSelectionReason::FlvContainer],
+        };
+    }
+
+    let video_family = video
+        .and_then(|request| request.codecs.as_deref())
+        .map(codec_family);
+    let audio_family = audio
+        .and_then(|request| request.codecs.as_deref())
+        .map(codec_family);
+    let mut playable = video.is_some() || audio.is_some();
+    let mut score = 0_i32;
+    let mut reasons = vec![PlaybackSelectionReason::DashContainer];
+
+    match (video, video_family) {
+        (Some(_), Some(PlaybackCodecFamily::H264)) => {
+            score += 60;
+            reasons.push(PlaybackSelectionReason::H264Video);
+        }
+        (Some(_), Some(PlaybackCodecFamily::Unknown) | None) => {
+            playable = false;
+            score -= 30;
+            reasons.push(PlaybackSelectionReason::UnknownVideoCodec);
+        }
+        (Some(_), Some(_)) => {
+            playable = false;
+            score -= 40;
+            reasons.push(PlaybackSelectionReason::UnsupportedVideoCodec);
+        }
+        (None, _) => {
+            score -= 20;
+            reasons.push(PlaybackSelectionReason::MissingVideo);
+        }
+    }
+
+    match (audio, audio_family) {
+        (Some(_), Some(PlaybackCodecFamily::Aac)) => {
+            score += 30;
+            reasons.push(PlaybackSelectionReason::AacAudio);
+        }
+        (Some(_), Some(PlaybackCodecFamily::Unknown) | None) => {
+            playable = false;
+            score -= 20;
+            reasons.push(PlaybackSelectionReason::UnknownAudioCodec);
+        }
+        (Some(_), Some(_)) => {
+            playable = false;
+            score -= 30;
+            reasons.push(PlaybackSelectionReason::UnsupportedAudioCodec);
+        }
+        (None, _) => {
+            score -= 10;
+            reasons.push(PlaybackSelectionReason::MissingAudio);
+        }
+    }
+
+    PlaybackSelectionHint {
+        playable,
+        preferred: matches!(video_family, Some(PlaybackCodecFamily::H264))
+            && matches!(audio_family, Some(PlaybackCodecFamily::Aac)),
+        score,
+        video_codec_family: video_family,
+        audio_codec_family: audio_family,
+        reasons,
+    }
+}
+
+fn codec_family(codec: &str) -> PlaybackCodecFamily {
+    let normalized = codec.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return PlaybackCodecFamily::Unknown;
+    }
+    if normalized.starts_with("avc1") || normalized.starts_with("avc3") {
+        PlaybackCodecFamily::H264
+    } else if normalized.starts_with("hev1") || normalized.starts_with("hvc1") {
+        PlaybackCodecFamily::Hevc
+    } else if normalized.starts_with("av01") {
+        PlaybackCodecFamily::Av1
+    } else if normalized.starts_with("vp09") || normalized.starts_with("vp9") {
+        PlaybackCodecFamily::Vp9
+    } else if is_aac_mp4a_codec(&normalized) {
+        PlaybackCodecFamily::Aac
+    } else if normalized.starts_with("flac") {
+        PlaybackCodecFamily::Flac
+    } else if normalized.starts_with("ec-3")
+        || normalized.starts_with("ec3")
+        || normalized.starts_with("ac-3")
+        || normalized.starts_with("ac3")
+    {
+        PlaybackCodecFamily::Dolby
+    } else {
+        PlaybackCodecFamily::Other
+    }
+}
+
+fn is_aac_mp4a_codec(codec: &str) -> bool {
+    matches!(
+        codec,
+        "mp4a.40.2" | "mp4a.40.5" | "mp4a.40.29" | "mp4a.40.42"
+    )
+}
+
 fn push_unique(values: &mut Vec<String>, value: Option<&str>) {
     if let Some(value) = value.filter(|value| !value.is_empty())
         && !values.iter().any(|existing| existing == value)
@@ -471,7 +706,10 @@ fn ms_to_seconds_ceil_u32(milliseconds: u64) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{HttpHeaderSpec, MediaRequestKind, PlaybackPlan, PlaybackVariantKind, source_hash};
+    use super::{
+        HttpHeaderSpec, MediaRequestKind, PlaybackCodecFamily, PlaybackPlan,
+        PlaybackSelectionReason, PlaybackVariant, PlaybackVariantKind, codec_family, source_hash,
+    };
     use crate::{
         DanmakuTrack, DownloadEntry, DownloadPlan, FlvSegment, MediaStream, StreamDiagnostics,
         StreamQuality, StreamSet, StreamSource,
@@ -548,6 +786,7 @@ mod tests {
         assert_eq!(variant.mime_types, ["video/mp4", "audio/mp4"]);
         assert_eq!(variant.width, Some(1920));
         assert_eq!(variant.height, Some(1080));
+        assert_preferred_avplayer_hint(variant);
         let video = variant
             .video
             .as_ref()
@@ -568,6 +807,7 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("missing audio request"))?;
         assert_eq!(audio.cache_key.media_kind, MediaRequestKind::Audio);
         assert!(variant.id.starts_with("dash-v80-"));
+        assert_hevc_avplayer_hint(&playback.entries[0].variants[1]);
         Ok(())
     }
 
@@ -603,6 +843,7 @@ mod tests {
         let variant = &playback.entries[0].variants[0];
         assert_eq!(variant.kind, PlaybackVariantKind::Flv);
         assert_eq!(variant.mime_types, ["video/x-flv"]);
+        assert_flv_avplayer_hint(variant);
         assert_eq!(variant.duration_seconds, Some(4));
         assert_eq!(variant.flv_segments.len(), 2);
         assert_eq!(variant.flv_segments[0].stream_id, Some(1));
@@ -626,6 +867,102 @@ mod tests {
         assert_eq!(
             source_hash("https://video.example/80.m4s?token=secret#frag"),
             source_hash("https://video.example/80.m4s?token=secret")
+        );
+    }
+
+    #[test]
+    fn deserializes_legacy_variant_without_selection_hints() -> anyhow::Result<()> {
+        let variant: PlaybackVariant = serde_json::from_value(serde_json::json!({
+            "id": "legacy",
+            "kind": "dash",
+            "video": legacy_request_json("video", 80, "video/mp4", "avc1.640028"),
+            "audio": legacy_request_json("audio", 30280, "audio/mp4", "mp4a.40.2"),
+            "flv_segments": [],
+            "bandwidth": 1_328_000,
+            "codecs": ["avc1.640028", "mp4a.40.2"],
+            "mime_types": ["video/mp4", "audio/mp4"],
+            "width": 1920,
+            "height": 1080,
+            "frame_rate": "60",
+            "duration_seconds": 90
+        }))?;
+
+        assert_preferred_avplayer_hint(&variant);
+        Ok(())
+    }
+
+    #[test]
+    fn codec_family_distinguishes_mp4a_object_types() {
+        assert_eq!(codec_family("mp4a.40.2"), PlaybackCodecFamily::Aac);
+        assert_eq!(codec_family("mp4a.40.5"), PlaybackCodecFamily::Aac);
+        assert_eq!(codec_family("mp4a.40.29"), PlaybackCodecFamily::Aac);
+        assert_eq!(codec_family("mp4a.40.42"), PlaybackCodecFamily::Aac);
+        assert_eq!(codec_family("mp4a.40"), PlaybackCodecFamily::Other);
+        assert_eq!(codec_family("mp4a.40.34"), PlaybackCodecFamily::Other);
+        assert_eq!(codec_family("mp4a.69"), PlaybackCodecFamily::Other);
+        assert_eq!(codec_family("mp4a.6b"), PlaybackCodecFamily::Other);
+    }
+
+    fn legacy_request_json(
+        kind: &str,
+        stream_id: u32,
+        mime_type: &str,
+        codecs: &str,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "kind": kind,
+            "stream_id": stream_id,
+            "url": format!("https://media.example/{stream_id}.m4s"),
+            "backup_urls": [],
+            "headers": [],
+            "mime_type": mime_type,
+            "codecs": codecs,
+            "bandwidth": 1_000,
+            "width": null,
+            "height": null,
+            "frame_rate": null,
+            "size": 1_000,
+            "duration_seconds": 90,
+            "cache_key": {
+                "content_id": "BV1xx411c7mD-cid2",
+                "media_kind": kind,
+                "stream_id": stream_id,
+                "codecs": codecs,
+                "source_hash": "0123456789abcdef0123456789abcdef"
+            }
+        })
+    }
+
+    fn assert_preferred_avplayer_hint(variant: &PlaybackVariant) {
+        let hint = &variant.selection_hints.avplayer_h264_aac;
+        assert!(hint.playable);
+        assert!(hint.preferred);
+        assert_eq!(hint.score, 90);
+        assert_eq!(hint.video_codec_family, Some(PlaybackCodecFamily::H264));
+        assert_eq!(hint.audio_codec_family, Some(PlaybackCodecFamily::Aac));
+        assert!(hint.reasons.contains(&PlaybackSelectionReason::H264Video));
+        assert!(hint.reasons.contains(&PlaybackSelectionReason::AacAudio));
+    }
+
+    fn assert_hevc_avplayer_hint(variant: &PlaybackVariant) {
+        let hint = &variant.selection_hints.avplayer_h264_aac;
+        assert!(!hint.playable);
+        assert!(!hint.preferred);
+        assert_eq!(hint.video_codec_family, Some(PlaybackCodecFamily::Hevc));
+        assert!(
+            hint.reasons
+                .contains(&PlaybackSelectionReason::UnsupportedVideoCodec)
+        );
+    }
+
+    fn assert_flv_avplayer_hint(variant: &PlaybackVariant) {
+        let hint = &variant.selection_hints.avplayer_h264_aac;
+        assert!(!hint.playable);
+        assert!(!hint.preferred);
+        assert_eq!(hint.score, -100);
+        assert!(
+            hint.reasons
+                .contains(&PlaybackSelectionReason::FlvContainer)
         );
     }
 

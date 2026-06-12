@@ -307,6 +307,7 @@ fn playback_json_resolves_media_request_specs() -> anyhow::Result<()> {
     );
     assert_eq!(variant["width"], 1920);
     assert_eq!(variant["height"], 1080);
+    assert_playback_avplayer_hints(&json);
     assert_eq!(
         variant["video"]["url"],
         "https://video.example/80.m4s?token=secret"
@@ -351,8 +352,46 @@ fn playback_json_resolves_media_request_specs() -> anyhow::Result<()> {
     assert!(text.contains("variants: 2"));
     assert!(text.contains("kind=dash"));
     assert!(text.contains("avc1.640028+mp4a.40.2"));
+    assert!(text.contains("avplayer=preferred"));
     subtitle_mock.assert_calls(0);
     Ok(())
+}
+
+fn assert_playback_avplayer_hints(json: &Value) {
+    let variant = &json["entries"][0]["variants"][0];
+    assert_eq!(
+        variant["selection_hints"]["avplayer_h264_aac"]["playable"],
+        true
+    );
+    assert_eq!(
+        variant["selection_hints"]["avplayer_h264_aac"]["preferred"],
+        true
+    );
+    assert_eq!(
+        variant["selection_hints"]["avplayer_h264_aac"]["video_codec_family"],
+        "h264"
+    );
+    assert_eq!(
+        variant["selection_hints"]["avplayer_h264_aac"]["audio_codec_family"],
+        "aac"
+    );
+    assert_eq!(
+        variant["selection_hints"]["avplayer_h264_aac"]["reasons"],
+        serde_json::json!(["dash_container", "h264_video", "aac_audio"])
+    );
+    let hevc_variant = &json["entries"][0]["variants"][1];
+    assert_eq!(
+        hevc_variant["selection_hints"]["avplayer_h264_aac"]["playable"],
+        false
+    );
+    assert_eq!(
+        hevc_variant["selection_hints"]["avplayer_h264_aac"]["video_codec_family"],
+        "hevc"
+    );
+    assert_eq!(
+        hevc_variant["selection_hints"]["avplayer_h264_aac"]["reasons"][1],
+        "unsupported_video_codec"
+    );
 }
 
 fn mock_playback_metadata(server: &MockServer) {

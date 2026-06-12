@@ -113,6 +113,8 @@ CLI 通过 `bbdown plan` 暴露这一层。该命令被有意设计为规划表�
 headers、mime type、codec 字符串、码率、尺寸、时长、大小和结构化 cache key。cache key
 基于内容身份、媒体种类、stream id、codec，以及去掉 fragment 但保留 query 身份的 source
 URL hash。这样既避免暴露 URL 明文，也避免让 query string 区分资源的 proxy URL 发生碰撞。
+`PlaybackVariant.selection_hints.avplayer_h264_aac` 增加了面向 AVPlayer 的 profile，会给
+H.264/AAC DASH 组合更高分，并用机器可读 reason 标出兼容性较差的 codec/container 形状。
 更长期的 ABR grouping 和 cache-retention policy helper 会作为后续工作处理。
 
 本仓库不实现播放器运行时职责。下游 cache/player service 负责 `preparing`、

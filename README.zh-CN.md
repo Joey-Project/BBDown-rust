@@ -64,7 +64,8 @@ bbdown playback fav456 --select 1,3-5 --json
 
 `playback` 会解析与 `plan` 相同的选中条目，然后输出选中的 DASH 视频/音频请求规格，或
 FLV segment 规格，其中包含主 URL、备用 URL、headers、mime/codec metadata、时长/大小和
-cache key。它不会下载文件、创建 HLS playlist 或运行播放器。
+cache key，并包含 `selection_hints.avplayer_h264_aac` metadata，用于下游选择更适合
+AVPlayer/tvOS 的 H.264/AAC 流。它不会下载文件、创建 HLS playlist 或运行播放器。
 
 下载所选媒体文件：
 

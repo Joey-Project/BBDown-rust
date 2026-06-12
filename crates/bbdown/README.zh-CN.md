@@ -69,7 +69,9 @@ CLI-compatible PCDN fallback 处理时，应显式设置 `MediaHostOptions`。
 当嵌入应用需要给下游 streaming/cache service 使用的可序列化 DASH video/audio 或 FLV
 segment 请求规格时，使用 `BiliClient::plan_playback`。`PlaybackPlan` 包含主 URL、备用
 URL、媒体 headers、mime/codec metadata、时长、大小和 cache key，但不实现播放器状态、HLS
-playlist 生成或 HTTP segment serving。
+playlist 生成或 HTTP segment serving。每个 `PlaybackVariant` 还包含
+`selection_hints.avplayer_h264_aac`，让面向 AVPlayer 的客户端可以优先选择 H.264/AAC 流，
+并避开兼容性较差的 codec 组合。
 嵌入应用需要 BBDown 风格或应用自定义输出名时，可以设置 `DownloadPathTemplates`。模板会
 为输出根目录、条目目录和 mux 后文件名 stem 渲染经过清洗的文件名组件；媒体和 sidecar 文
 件名保持稳定，以支持续传和归档记录。条目模板必须在选中条目之间渲染出唯一目录名。

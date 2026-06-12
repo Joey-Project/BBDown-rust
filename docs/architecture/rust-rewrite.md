@@ -120,8 +120,10 @@ backup URLs, media headers, mime type, codec string, bandwidth, dimensions, dura
 structured cache key. The cache key is based on content identity, media kind, stream id, codec, and
 a hash of the source URL with fragments removed but query identity preserved. This avoids exposing
 the URL in plaintext while preventing collisions for proxy URLs whose query string identifies the
-resource. Longer-lived ABR grouping and cache-retention policy helpers are tracked as follow-up
-work.
+resource. `PlaybackVariant.selection_hints.avplayer_h264_aac` adds an AVPlayer-oriented profile
+that scores H.264/AAC DASH combinations higher and marks less compatible codec/container shapes with
+machine-readable reasons. Longer-lived ABR grouping and cache-retention policy helpers are tracked
+as follow-up work.
 
 This repository does not implement player runtime responsibilities. A downstream cache/player
 service owns task state such as `preparing`, `playback_ready`, `downloading`, `completed`, and
