@@ -66,7 +66,10 @@ bbdown playback fav456 --select 1,3-5 --json
 
 `playback` resolves the same selected entries as `plan`, then emits selected DASH video/audio
 request specs or FLV segment specs with primary URLs, backup URLs, headers, mime/codec metadata,
-duration/size, and cache keys. It does not download files, create HLS playlists, or run a player.
+duration/size, cache keys, and `selection_hints.avplayer` metadata with exact codec strings,
+codec families, a `format_key`, and AVPlayer-oriented ranking signals. Downstream clients can use
+`PlaybackCodecPreference` to prefer H.264, HEVC, AV1, or another codec order. It does not download
+files, create HLS playlists, or run a player.
 
 Download selected media files:
 

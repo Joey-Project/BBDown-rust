@@ -126,9 +126,10 @@ bbdown playback fav456 --select 1,3-5 --json
 
 该命令会解析与 `plan` 相同的选中条目，然后输出 `PlaybackPlan` JSON。每个 variant 包含
 DASH 视频/音频请求规格，或 FLV segment 规格，其中有主 URL、备用 URL、headers、mime type、
-codec、码率、尺寸、时长、大小和 cache-key metadata。这是只读规划表面：它不会下载媒体、
-启动播放器、创建 HLS playlist、serve segments 或注册完成 artifact。下游 cache/player
-service 负责这些运行时部分。
+codec、码率、尺寸、时长、大小、cache-key metadata，以及面向 AVPlayer 的 selection hints；
+这些 hints 包含 exact codec 字符串、codec family 和 `format_key`。这是只读规划表面：它不
+会下载媒体、启动播放器、创建 HLS playlist、serve segments 或注册完成 artifact。下游
+cache/player service 负责这些运行时部分。
 
 ## 下载
 

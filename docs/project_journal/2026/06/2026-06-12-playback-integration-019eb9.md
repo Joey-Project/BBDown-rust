@@ -15,7 +15,8 @@ superseded_by:
 ## Summary
 - Added a `PlaybackPlan` surface for downstream streaming and cache integrations.
 - Kept playback planning on the same resolver path as download planning so input parsing,
-  selection, restricted-area fallback, intl access, and diagnostics remain consistent.
+  selection, restricted-area fallback, intl access, and selected stream source reporting remain
+  aligned.
 - Documented the boundary between `bbdown-core` and downstream player/cache services.
 
 ## Current State
@@ -29,7 +30,6 @@ superseded_by:
   segment serving, AVPlayer playlist transitions, retention/cleanup, or library registration.
 
 ## Next Steps
-- Add AVPlayer-oriented codec/device compatibility profiles, starting with H.264/AAC hints.
 - Add ABR policy metadata and cache identity helpers so downstream services can retain fetched
   variants and segments while switching bitrate levels.
 - Add app/TV playurl modes once the request-spec surface is stable.

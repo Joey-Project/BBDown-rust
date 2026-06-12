@@ -73,11 +73,15 @@ async fn main() -> bbdown_core::Result<()> {
 
 每个 `PlaybackVariant` 包含选中的 DASH 视频/音频请求规格，或 FLV 分段请求规格。
 `MediaRequestSpec` 包含主 URL、备用 URL、HTTP headers、mime type、codec 字符串、码率、
-尺寸、时长、大小和 cache key。cache key 会对 source URL 做 hash，避免暴露明文，同时保留
-query-string 的资源身份；更长期的 ABR grouping 和 cache-retention policy helper 会单独排
-期。crate 不实现播放任务状态、HLS playlist 生成、segment serving、retention、cleanup、
-AVPlayer event/VOD playlist 切换或 library 注册。下游播放器和缓存服务器负责这些部分，并
-可把 `PlaybackPlan` 作为稳定的 HTTP request contract。
+尺寸、时长、大小和 cache key。`PlaybackVariant.selection_hints` 包含
+`avplayer` profile，其中有 `playable`、`preferred`、`score`、exact `video_codec` /
+`audio_codec` 字符串、codec-family 字段、`format_key` 和机器可读 reason code。下游客户端
+可以用 `PlaybackCodecPreference` 按自己的 H.264、HEVC、AV1 或其它 codec 顺序给 variants
+排序，然后在交给平台播放器前验证 exact codec 字符串。cache key 会对 source URL 做 hash，
+避免暴露明文，同时保留 query-string 的资源身份；更长期的 ABR grouping 和 cache-retention
+policy helper 会单独排期。crate 不实现播放任务状态、HLS playlist 生成、segment serving、
+retention、cleanup、AVPlayer event/VOD playlist 切换或 library 注册。下游播放器和缓存服务
+器负责这些部分，并可把 `PlaybackPlan` 作为稳定的 HTTP request contract。
 
 ## 批量和集合输入
 

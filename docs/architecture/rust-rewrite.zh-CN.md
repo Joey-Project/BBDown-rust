@@ -113,7 +113,11 @@ CLI 通过 `bbdown plan` 暴露这一层。该命令被有意设计为规划表�
 headers、mime type、codec 字符串、码率、尺寸、时长、大小和结构化 cache key。cache key
 基于内容身份、媒体种类、stream id、codec，以及去掉 fragment 但保留 query 身份的 source
 URL hash。这样既避免暴露 URL 明文，也避免让 query string 区分资源的 proxy URL 发生碰撞。
-更长期的 ABR grouping 和 cache-retention policy helper 会作为后续工作处理。
+`PlaybackVariant.selection_hints.avplayer` 增加了面向 AVPlayer 的 profile，包含 exact
+codec 字符串、codec family、`format_key`、score/preferred 信号和机器可读 reason。公开的
+`PlaybackCodecPreference` helper 允许下游按自己的 H.264、HEVC、AV1 或其它 codec 顺序给
+variants 排名，而不是接受写死的 H.264-first 策略。更长期的 ABR grouping 和
+cache-retention policy helper 会作为后续工作处理。
 
 本仓库不实现播放器运行时职责。下游 cache/player service 负责 `preparing`、
 `playback_ready`、`downloading`、`completed`、`failed` 等 task state；HLS session 目录、
