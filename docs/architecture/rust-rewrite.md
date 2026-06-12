@@ -64,12 +64,15 @@ The library resolves media availability into `DownloadPlan`:
   endpoint base.
 
 `ss`, `md`, and `cheese/ss` require a `Selection` in non-interactive contexts. Batch collection
-inputs default to all parsed items; callers can pass `Selection::Page(...)` for one item or
-`Selection::Latest` for the first parsed item in the upstream list order. Empty batch collections resolve as empty selected
-item lists for the default/all selection. `plan_download` may fetch only the selected batch items
-because `DownloadPlan` does not expose collection metadata. The CLI will later add interactive
-prompting, but the library keeps season-like contracts explicit so integrations cannot accidentally
-download a full season.
+inputs default to all parsed items; callers can pass `Selection::Page(...)` for one item,
+`Selection::Indices(IndexSelection)` for list/range selection over item indexes, or
+`Selection::Latest` for the first parsed item in the upstream list order. The same index-selection
+surface applies to normal video pages and season episode indexes, while `Selection::Episode(...)`
+continues to mean an exact PGC episode id. Empty batch collections resolve as empty selected item
+lists for the default/all selection. `plan_download` may fetch only enough batch items to cover the
+selected maximum index because `DownloadPlan` does not expose collection metadata. The CLI will
+later add interactive prompting, but the library keeps season-like contracts explicit so
+integrations cannot accidentally download a full season.
 
 Mode-aware planning uses the same resolver dispatch but skips media stream resolution for
 sidecar-only modes. Callers that need a plan for archive preflight or UI decisions with a

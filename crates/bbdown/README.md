@@ -61,7 +61,9 @@ async fn main() -> bbdown_core::Result<()> {
 Batch inputs such as `fav456`, `mid123`, `collection456`, and `series456` resolve through
 `ResolvedContent::Collection`; `resolve_input` keeps full parsed collection metadata while
 `selected_items` carries the active subset. Selected items then plan and download through the normal
-video pipeline.
+video pipeline. Use `Selection::Page(index)` for one item or `Selection::Indices(...)` with
+`IndexSelection` / `IndexSelector` when an embedding application needs list and range selection such
+as `1,3-5`.
 
 The library default preserves planned media URLs. Set `MediaHostOptions` explicitly when an
 embedding application wants a custom UPOS host, force-replace behavior, or CLI-compatible PCDN

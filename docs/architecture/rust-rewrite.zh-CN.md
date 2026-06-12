@@ -63,11 +63,14 @@ library 会把媒体可用性解析为 `DownloadPlan`：
 - `DanmakuTrack` 记录从 `cid` 和配置的 comment endpoint base 推导出的 XML 弹幕端点。
 
 `ss`、`md` 和 `cheese/ss` 在非交互上下文中需要 `Selection`。批量集合输入默认选择全部解
-析条目；调用方可以传入 `Selection::Page(...)` 选择一个条目，或传入 `Selection::Latest`
-选择上游列表顺序中的第一个解析条目。空批量集合在默认/all selection 下会解析为空 selected item 列表。
-因为 `DownloadPlan` 不暴露 collection metadata，`plan_download` 可以只抓取选中的批量条
-目。CLI 未来会增加交互式提示，但 library 保持 season-like 契约显式，避免集成方意外下载
-整季。
+析条目；调用方可以传入 `Selection::Page(...)` 选择一个条目，传入
+`Selection::Indices(IndexSelection)` 对条目 index 做列表/范围选择，或传入
+`Selection::Latest` 选择上游列表顺序中的第一个解析条目。同一个 index selection 表面也适
+用于普通视频分 P 和 season 分集序号；`Selection::Episode(...)` 则继续表示精确 PGC
+episode id。空批量集合在默认/all selection 下会解析为空 selected item 列表。因为
+`DownloadPlan` 不暴露 collection metadata，`plan_download` 可以只抓取覆盖所选最大 index
+所需的批量条目。CLI 未来会增加交互式提示，但 library 保持 season-like 契约显式，避免集
+成方意外下载整季。
 
 Mode-aware planning 使用同一套 resolver 分发，但 sidecar-only mode 会跳过媒体 stream 解
 析。当调用方需要为 archive preflight 或 UI 决策生成非默认 `DownloadMode` 的 plan 时，使

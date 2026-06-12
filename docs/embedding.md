@@ -50,17 +50,24 @@ episode. This is intentional so libraries cannot accidentally plan a full season
 `ResolvedContent::Collection`, which carries full collection metadata plus the selected items.
 Owner-scoped space list URLs keep the uploader mid so the resolver can use newer space collection
 and series APIs. Without a selector, collection-like inputs select all parsed items; pass
-`Selection::Page(index)` for one item or `Selection::Latest` for the first parsed item in the upstream list order. Empty
-collections are represented as empty item lists, not as missing-field errors.
+`Selection::Page(index)` for one item, `Selection::Indices(...)` for index lists and ranges, or
+`Selection::Latest` for the first parsed item in the upstream list order. Empty collections are
+represented as empty item lists, not as missing-field errors.
 
 ```rust,no_run
-use bbdown_core::{BiliClient, ClientConfig, ResolvedContent, Selection};
+use bbdown_core::{
+    BiliClient, ClientConfig, IndexSelection, IndexSelector, ResolvedContent, Selection,
+};
 
 #[tokio::main]
 async fn main() -> bbdown_core::Result<()> {
     let client = BiliClient::new(ClientConfig::default());
+    let selection = Selection::Indices(IndexSelection::new([
+        IndexSelector::index(1),
+        IndexSelector::range(3, 5),
+    ])?);
     let resolved = client
-        .resolve_input("fav456", Some(Selection::Page(1)))
+        .resolve_input("fav456", Some(selection))
         .await?;
 
     if let ResolvedContent::Collection(collection) = resolved {
@@ -74,6 +81,10 @@ async fn main() -> bbdown_core::Result<()> {
     Ok(())
 }
 ```
+
+The same index selection type applies to normal video pages and season episode indexes. The CLI
+parser accepts equivalent strings such as `1`, `page:1`, `1,3-5`, and `page:2-4,7`.
+`Selection::Episode(epid)` remains an exact PGC episode-id selector.
 
 Download planning maps selected collection items back to normal video entries, so downstream
 download execution, archive duplicate checks, stream selection, cover, subtitles, and danmaku
