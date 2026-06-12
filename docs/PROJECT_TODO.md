@@ -29,6 +29,17 @@
 - [completed] Add richer output, entry, and mux filename templates for CLI and API downloads.
 - [completed] Add richer selection syntax for numeric lists and ranges across video pages, season
   episode indexes, and batch collection items.
-- [pending] Continue BBDown parity work after the current slices: additional app/TV playurl modes,
-  API/server integration surfaces, aria2 or multi-thread download integration, MP4Box muxing, and
-  subtitle-to-SRT conversion.
+- [completed] Add a playback ladder and serializable media request spec for downstream player/cache
+  integrations without implementing a player or HLS cache server in this repository.
+- [pending] Add AVPlayer-oriented codec/device compatibility profiles, starting with H.264/AAC
+  selection hints for tvOS-friendly playback.
+- [pending] Add ABR policy metadata and cache identity helpers so downstream cache servers can
+  retain already fetched variants and segments while switching bitrate levels.
+- [pending] Add additional app/TV playurl modes after the playback request-spec surface is stable.
+- [pending] Add a feed/list resolver abstraction for richer Bilibili page families.
+- [pending] Add history record parsing on top of the feed/list resolver abstraction.
+- [pending] Add following/UP page parsing on top of the feed/list resolver abstraction.
+- [pending] Add recommendation page parsing on top of the feed/list resolver abstraction.
+- [pending] Add watch-later parsing after the other feed/list inputs are in place.
+- [pending] Continue the remaining BBDown parity backlog after the current playback/list slices:
+  aria2 or multi-thread download integration, MP4Box muxing, and subtitle-to-SRT conversion.

@@ -114,6 +114,22 @@ PGC 和 intl 规划仍可能需要符合条件的账号或区域访问。当 int
 payload 时，CLI 会把它报告为访问限制。配置后，PGC playurl 解析会回退到受限区域代理候选，
 并在条目 JSON 中包含解析器诊断。
 
+## 播放请求规格
+
+当另一个服务需要用于流式播放或缓存的选中媒体请求规格时，使用 `playback`：
+
+```bash
+bbdown playback av170001 --json
+bbdown playback ss26801 --select latest --json
+bbdown playback fav456 --select 1,3-5 --json
+```
+
+该命令会解析与 `plan` 相同的选中条目，然后输出 `PlaybackPlan` JSON。每个 variant 包含
+DASH 视频/音频请求规格，或 FLV segment 规格，其中有主 URL、备用 URL、headers、mime type、
+codec、码率、尺寸、时长、大小和 cache-key metadata。这是只读规划表面：它不会下载媒体、
+启动播放器、创建 HLS playlist、serve segments 或注册完成 artifact。下游 cache/player
+service 负责这些运行时部分。
+
 ## 下载
 
 使用 `download` 解析计划并写入文件：

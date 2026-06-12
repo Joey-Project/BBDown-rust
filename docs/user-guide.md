@@ -123,6 +123,23 @@ returns a region-limit payload, the CLI reports it as an access restriction.
 When configured, PGC playurl resolution falls back to restricted-area proxy candidates and includes
 resolver diagnostics in the entry JSON.
 
+## Playback Request Specs
+
+Use `playback` when another service needs selected media request specs for streaming or caching:
+
+```bash
+bbdown playback av170001 --json
+bbdown playback ss26801 --select latest --json
+bbdown playback fav456 --select 1,3-5 --json
+```
+
+The command resolves the same selected entries as `plan`, then emits `PlaybackPlan` JSON. Each
+variant contains DASH video/audio request specs or FLV segment specs with primary URL, backup URLs,
+headers, mime type, codec, bandwidth, dimensions, duration, size, and cache-key metadata. This is a
+read-only planning surface: it does not download media, start a player, create HLS playlists, serve
+segments, or register completed artifacts. Downstream cache/player services own those runtime
+concerns.
+
 ## Downloads
 
 Use `download` to resolve a plan and write files:

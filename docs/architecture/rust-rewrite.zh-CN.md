@@ -101,6 +101,28 @@ Intl season metadata 可能返回 `code: 0`，同时包含 region-limit payload 
 CLI 通过 `bbdown plan` 暴露这一层。该命令被有意设计为规划表面：它打印 typed JSON 或简
 短的人类摘要，但不会下载、合并或修改输出文件。
 
+## 播放集成契约
+
+`BiliClient::plan_playback` 和 `BiliClient::plan_playback_input` 会从与 `DownloadPlan` 相
+同的 resolver 路径构建 `PlaybackPlan`。这个表面面向需要媒体请求、但不希望调用文件下载
+器的下游播放器、缓存服务器和 API 层。playback entry 会保留所选 aid/bvid/cid/epid、标题、
+来源、质量标签、时长，以及一组 playback variants。DASH variant 携带选中的 video/audio
+`MediaRequestSpec`；FLV variant 携带有序的 segment spec。
+
+`MediaRequestSpec` 被设计为可序列化且与传输层解耦。它包含主 URL、备用 URL、媒体
+headers、mime type、codec 字符串、码率、尺寸、时长、大小和结构化 cache key。cache key
+基于内容身份、媒体种类、stream id、codec，以及去掉 fragment 但保留 query 身份的 source
+URL hash。这样既避免暴露 URL 明文，也避免让 query string 区分资源的 proxy URL 发生碰撞。
+更长期的 ABR grouping 和 cache-retention policy helper 会作为后续工作处理。
+
+本仓库不实现播放器运行时职责。下游 cache/player service 负责 `preparing`、
+`playback_ready`、`downloading`、`completed`、`failed` 等 task state；HLS session 目录、
+playlist、segment 文件、retention、cleanup 和 finalization；例如
+`/tasks/{id}/hls/master.m3u8` 的 HTTP serving；下载中的 AVPlayer-compatible event playlist
+和完成后的 VOD playlist；以及把完成的 HLS 或 remux 后 MP4 artifact 注册为 library item。
+后续 crate 工作应增加 codec/device hints、ABR policy metadata 和 app/TV playurl modes，但
+不应把这些运行时职责移入 `bbdown-core`。
+
 ## 下载执行
 
 `BiliClient::download_plan` 执行调用方提供的 `DownloadPlan`。`BiliClient::download` 和

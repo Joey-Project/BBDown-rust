@@ -12,12 +12,12 @@
 
 当前实现已经建立 crate / CLI / CI 基础、元数据解析器、流规划、媒体下载、封面/字幕/弹幕
 旁路文件下载、重试和断点续传、可选 `ffmpeg` 封装、二维码登录、可选 live 测试框架、带诊
-断信息的受限区域代理排序、UPOS/PCDN 媒体 host 控制，以及 builder 风格的 crate 集成 API。
-它还支持显式下载归档，用于重复下载预检查，以及 CLI 的 replace / keep-both / cancel 决
-策。输入解析覆盖普通视频、PGC 和 intl 分集、PUGV/cheese 课程、B23 短链接、收藏夹、空
-间投稿、合集和系列。URL 解析包括 canonical `bilibili.com/list/...` 页面、path-based
-medialist 收藏夹 URL，以及带 uploader mid 的空间合集 / 系列 URL，以便使用较新的空间
-API。
+断信息的受限区域代理排序、面向下游流式播放 / 缓存集成的播放请求规格、UPOS/PCDN 媒体
+host 控制，以及 builder 风格的 crate 集成 API。它还支持显式下载归档，用于重复下载预检
+查，以及 CLI 的 replace / keep-both / cancel 决策。输入解析覆盖普通视频、PGC 和 intl 分
+集、PUGV/cheese 课程、B23 短链接、收藏夹、空间投稿、合集和系列。URL 解析包括 canonical
+`bilibili.com/list/...` 页面、path-based medialist 收藏夹 URL，以及带 uploader mid 的空间
+合集 / 系列 URL，以便使用较新的空间 API。
 
 ## 当前 CLI
 
@@ -53,6 +53,18 @@ URL。PGC 和 intl 规划仍可能需要符合条件的账号或区域访问。P
 `--select page:<index>` 可规划一个集合条目，使用 `--select latest` 可规划上游列表顺序中的第一个解析条目。
 `info --json` 会在 `collection.collection.items` 保留完整解析到的集合 metadata；`plan` 只
 输出选中条目。
+
+生成播放请求规格并输出 JSON：
+
+```bash
+bbdown playback av170001 --json
+bbdown playback ss26801 --select latest --json
+bbdown playback fav456 --select 1,3-5 --json
+```
+
+`playback` 会解析与 `plan` 相同的选中条目，然后输出选中的 DASH 视频/音频请求规格，或
+FLV segment 规格，其中包含主 URL、备用 URL、headers、mime/codec metadata、时长/大小和
+cache key。它不会下载文件、创建 HLS playlist 或运行播放器。
 
 下载所选媒体文件：
 

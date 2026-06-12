@@ -5,10 +5,11 @@
 `bbdown-core` is the reusable Rust library package behind BBDown Rust. Rust code imports it as
 `bbdown_core`. It resolves Bilibili and Bilibili intl inputs into typed metadata, download plans,
 media downloads, single-output download modes, cover/subtitle/XML-or-ASS danmaku sidecars, QR login
-credentials, download archive preflight data, batch collection metadata, and restricted-area proxy
-diagnostics. Download execution can also apply explicit UPOS host replacement or BBDown-like PCDN
-avoidance through `MediaHostOptions`. Raw input parsing covers normal videos, PGC and intl episodes,
-PUGV/cheese courses, B23 short links, favorite lists, space videos, collections, and series.
+credentials, download archive preflight data, playback request specs, batch collection metadata,
+and restricted-area proxy diagnostics. Download execution can also apply explicit UPOS host
+replacement or BBDown-like PCDN avoidance through `MediaHostOptions`. Raw input parsing covers
+normal videos, PGC and intl episodes, PUGV/cheese courses, B23 short links, favorite lists, space
+videos, collections, and series.
 
 Install with `cargo add bbdown-core`, then import with `bbdown_core`.
 
@@ -68,6 +69,10 @@ as `1,3-5`.
 The library default preserves planned media URLs. Set `MediaHostOptions` explicitly when an
 embedding application wants a custom UPOS host, force-replace behavior, or CLI-compatible PCDN
 fallback handling.
+Use `BiliClient::plan_playback` when an embedding application needs serializable DASH video/audio
+or FLV segment request specs for a downstream streaming/cache service. `PlaybackPlan` includes
+primary and backup URLs, media headers, mime/codec metadata, duration, size, and cache keys, but it
+does not implement player state, HLS playlist generation, or HTTP segment serving.
 Set `DownloadPathTemplates` when an embedding application needs BBDown-style or application-specific
 output names. Templates render sanitized filename components for the output root, entry directory,
 and muxed file stem while media and sidecar filenames remain stable for resume and archive records.

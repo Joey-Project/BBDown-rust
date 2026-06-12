@@ -5,10 +5,10 @@ use anyhow::{Context, bail, ensure};
 use bbdown_core::{
     BiliClient, ClientConfig, CredentialStore, Credentials, DanmakuFormat, DownloadArchive,
     DownloadMode, DownloadOptions, DownloadPathTemplates, DownloadPreflight, DownloadReport,
-    DuplicateDecision, EndpointConfig, MediaHostOptions, MediaStream, MuxOptions, QrLoginKind,
-    QrLoginState, QrLoginTicket, ResolvedContent, RestrictedArea, RestrictedAreaConfig,
-    RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection, StreamQuality,
-    StreamSelection, StreamSet,
+    DuplicateDecision, EndpointConfig, MediaHostOptions, MediaStream, MuxOptions, PlaybackPlan,
+    QrLoginKind, QrLoginState, QrLoginTicket, ResolvedContent, RestrictedArea,
+    RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection,
+    StreamQuality, StreamSelection, StreamSet,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::ffi::{OsStr, OsString};
@@ -90,6 +90,13 @@ enum Command {
         json: bool,
     },
     Plan {
+        url: String,
+        #[arg(long)]
+        select: Option<Selection>,
+        #[arg(long)]
+        json: bool,
+    },
+    Playback {
         url: String,
         #[arg(long)]
         select: Option<Selection>,
@@ -459,6 +466,18 @@ async fn main() -> anyhow::Result<()> {
             )
             .await?;
         }
+        Command::Playback { url, select, json } => {
+            handle_playback(
+                &store,
+                endpoints.clone(),
+                restricted_area.clone(),
+                request_timeout,
+                url,
+                select,
+                json,
+            )
+            .await?;
+        }
         Command::Download(args) => {
             handle_download_cli(&store, endpoints, restricted_area, request_timeout, *args).await?;
         }
@@ -587,6 +606,31 @@ async fn handle_plan(
     Ok(())
 }
 
+async fn handle_playback(
+    store: &CredentialStore,
+    endpoints: EndpointConfig,
+    restricted_area: RestrictedAreaConfig,
+    request_timeout: Duration,
+    url: String,
+    select: Option<Selection>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let credentials = store.load().context("failed to load credentials")?;
+    let client = BiliClient::new(client_config(
+        endpoints,
+        restricted_area,
+        request_timeout,
+        credentials,
+    ));
+    let plan = client.plan_playback(&url, select).await?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&plan)?);
+    } else {
+        print_playback_summary(&plan);
+    }
+    Ok(())
+}
+
 fn print_plan_summary(plan: &bbdown_core::DownloadPlan) {
     println!("title: {}", plan.title);
     println!("entries: {}", plan.entries.len());
@@ -598,6 +642,36 @@ fn print_plan_summary(plan: &bbdown_core::DownloadPlan) {
         print_streams(&entry.streams);
         println!("  subtitles: {}", entry.subtitles.len());
         println!("  danmaku: {}", entry.danmaku.xml_url);
+    }
+}
+
+fn print_playback_summary(plan: &PlaybackPlan) {
+    println!("title: {}", plan.title);
+    println!("entries: {}", plan.entries.len());
+    for entry in &plan.entries {
+        println!(
+            "- P{} aid={} cid={} title={}",
+            entry.index, entry.aid, entry.cid, entry.title
+        );
+        println!("  qualities: {}", quality_list(&entry.qualities));
+        println!("  variants: {}", entry.variants.len());
+        for variant in &entry.variants {
+            let mut parts = vec![format!("id={}", variant.id)];
+            parts.push(format!("kind={:?}", variant.kind).to_ascii_lowercase());
+            if let (Some(width), Some(height)) = (variant.width, variant.height) {
+                parts.push(format!("{width}x{height}"));
+            }
+            if let Some(frame_rate) = variant.frame_rate.as_deref() {
+                parts.push(format!("{frame_rate}fps"));
+            }
+            if !variant.codecs.is_empty() {
+                parts.push(variant.codecs.join("+"));
+            }
+            if let Some(bandwidth) = variant.bandwidth {
+                parts.push(format!("{bandwidth}bps"));
+            }
+            println!("    - {}", parts.join(" "));
+        }
     }
 }
 

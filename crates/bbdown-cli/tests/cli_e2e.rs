@@ -268,6 +268,195 @@ fn plan_json_resolves_mock_video_streams() -> anyhow::Result<()> {
 }
 
 #[test]
+fn playback_json_resolves_media_request_specs() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    mock_playback_metadata(&server);
+    mock_playback_streams(&server);
+    let subtitle_mock = mock_empty_player_v2(&server, "170001", "2");
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("playback")
+        .arg("av170001")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    assert_eq!(json["title"], "Mock video");
+    assert_eq!(json["entries"][0]["qualities"][0]["id"], 80);
+    assert_eq!(json["entries"][0]["duration_seconds"], 90);
+    assert_eq!(
+        json["entries"][0]["variants"].as_array().map(Vec::len),
+        Some(2)
+    );
+    let variant = &json["entries"][0]["variants"][0];
+    assert_eq!(variant["kind"], "dash");
+    assert_eq!(variant["bandwidth"], 1_328_000);
+    assert_eq!(
+        variant["codecs"],
+        serde_json::json!(["avc1.640028", "mp4a.40.2"])
+    );
+    assert_eq!(
+        variant["mime_types"],
+        serde_json::json!(["video/mp4", "audio/mp4"])
+    );
+    assert_eq!(variant["width"], 1920);
+    assert_eq!(variant["height"], 1080);
+    assert_eq!(
+        variant["video"]["url"],
+        "https://video.example/80.m4s?token=secret"
+    );
+    assert_eq!(
+        variant["video"]["backup_urls"],
+        serde_json::json!(["https://backup.example/80.m4s"])
+    );
+    assert_eq!(variant["video"]["headers"][0]["name"], "referer");
+    assert_eq!(
+        variant["video"]["headers"][0]["value"],
+        "https://www.bilibili.com/"
+    );
+    assert_eq!(variant["video"]["headers"][1]["name"], "user-agent");
+    assert_eq!(
+        variant["video"]["cache_key"]["content_id"],
+        "BV1xx411c7mD-cid2"
+    );
+    assert_eq!(variant["video"]["cache_key"]["media_kind"], "video");
+    assert_eq!(variant["video"]["cache_key"]["stream_id"], 80);
+    assert_eq!(
+        variant["video"]["cache_key"]["source_hash"]
+            .as_str()
+            .map(str::len),
+        Some(32)
+    );
+    assert_eq!(
+        variant["audio"]["url"],
+        "https://audio.example/30280.m4s?token=secret"
+    );
+    assert_eq!(variant["audio"]["cache_key"]["media_kind"], "audio");
+
+    let mut human = bbdown_command()?;
+    human
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("playback")
+        .arg("av170001");
+    let text = String::from_utf8(human.assert().success().get_output().stdout.clone())?;
+    assert!(text.contains("variants: 2"));
+    assert!(text.contains("kind=dash"));
+    assert!(text.contains("avc1.640028+mp4a.40.2"));
+    subtitle_mock.assert_calls(0);
+    Ok(())
+}
+
+fn mock_playback_metadata(server: &MockServer) {
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/view")
+            .query_param("aid", "170001");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "aid": 170_001,
+                "bvid": "BV1xx411c7mD",
+                "title": "Mock video",
+                "pic": format!("{}/cover.jpg", server.base_url()),
+                "pages": [{"page": 1, "cid": 2, "part": "Main"}]
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/tag/archive/tags")
+            .query_param("aid", "170001");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": []
+        }));
+    });
+}
+
+fn mock_playback_streams(server: &MockServer) {
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/playurl")
+            .query_param("avid", "170001")
+            .query_param("cid", "2")
+            .query_param("try_look", "1");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "accept_quality": [80, 64],
+                "support_formats": [
+                    {"quality": 80, "new_description": "1080P 高码率"},
+                    {"quality": 64, "display_desc": "720P"}
+                ],
+                "dash": {
+                    "duration": 90,
+                    "video": [
+                        {
+                            "id": 80,
+                            "baseUrl": "https://video.example/80.m4s?token=secret",
+                            "backupUrl": ["https://backup.example/80.m4s"],
+                            "codecs": "avc1.640028",
+                            "bandwidth": 1_200_000,
+                            "width": 1920,
+                            "height": 1080,
+                            "frameRate": "60",
+                            "mimeType": "video/mp4",
+                            "size": 10000
+                        },
+                        {
+                            "id": 64,
+                            "baseUrl": "https://video.example/64.m4s?token=secret",
+                            "codecs": "hev1.1.6.L120.90",
+                            "bandwidth": 800_000,
+                            "width": 1280,
+                            "height": 720,
+                            "frameRate": "30",
+                            "mimeType": "video/mp4",
+                            "size": 8000
+                        }
+                    ],
+                    "audio": [{
+                        "id": 30280,
+                        "baseUrl": "https://audio.example/30280.m4s?token=secret",
+                        "backupUrl": ["https://backup.example/30280.m4s"],
+                        "codecs": "mp4a.40.2",
+                        "bandwidth": 128_000,
+                        "mimeType": "audio/mp4",
+                        "size": 2000
+                    }]
+                }
+            }
+        }));
+    });
+}
+
+fn mock_empty_player_v2<'a>(
+    server: &'a MockServer,
+    aid: &'static str,
+    cid: &'static str,
+) -> httpmock::Mock<'a> {
+    server.mock(move |when, then| {
+        when.method(GET)
+            .path("/x/player/v2")
+            .query_param("aid", aid)
+            .query_param("cid", cid);
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {"subtitle": {"subtitles": []}}
+        }));
+    })
+}
+
+#[test]
 fn plan_json_applies_index_range_selection() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;
