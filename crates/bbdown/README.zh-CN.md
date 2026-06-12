@@ -73,6 +73,9 @@ codec/mime-compatible ABR group/level metadata，但不实现播放器状态、H
 HTTP segment serving。每个 `PlaybackVariant` 还包含 `selection_hints.avplayer`，提供 exact
 codec 字符串、codec-family metadata、`format_key` 和排序信号。嵌入客户端需要优先 H.264、
 HEVC、AV1 或其它 codec 顺序时，可以使用 `PlaybackCodecPreference`。
+当嵌入应用需要给普通视频或 PGC 分集使用 BBDown-compatible TV HTTP playurl 解析时，可设置
+`ClientConfig::with_playurl_mode(PlayurlMode::Tv)` 和 `EndpointConfig::with_tv_api_base`。
+TV mode 使用 `Credentials::tv_access_key`，不会复用通用 intl access key。
 嵌入应用需要 BBDown 风格或应用自定义输出名时，可以设置 `DownloadPathTemplates`。模板会
 为输出根目录、条目目录和 mux 后文件名 stem 渲染经过清洗的文件名组件；媒体和 sidecar 文
 件名保持稳定，以支持续传和归档记录。条目模板必须在选中条目之间渲染出唯一目录名。

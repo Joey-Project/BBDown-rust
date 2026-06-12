@@ -60,6 +60,7 @@ Build a playback request spec as JSON:
 
 ```bash
 bbdown playback av170001 --json
+bbdown --playurl-mode tv playback av170001 --json
 bbdown playback ss26801 --select latest --json
 bbdown playback fav456 --select 1,3-5 --json
 ```
@@ -72,6 +73,9 @@ AVPlayer-oriented ranking signals. Downstream clients can use `PlaybackCodecPref
 H.264, HEVC, AV1, or another codec order, then use `PlaybackVariant.abr` and `PlaybackEntry.abr`
 to keep already cached variants available while switching codec/mime-compatible levels. It does not
 download files, create HLS playlists, or run a player.
+Set `--playurl-mode tv` or `BBDOWN_PLAYURL_MODE=tv` to resolve normal videos and PGC episodes
+through BBDown-compatible TV HTTP playurl endpoints. TV mode uses the TV-specific access key saved
+by `auth login-tv` and `--tv-api-base` / `BBDOWN_TV_API_BASE` for endpoint overrides.
 
 Download selected media files:
 
@@ -158,6 +162,8 @@ endpoint. Use `--passport-base` for WEB QR login mocks or proxies, and use `--tv
 `--tv-passport-poll-base` for TV QR login mocks or proxies. TV QR polling follows
 `--tv-passport-base` only when that TV-specific override is supplied; otherwise it uses the upstream
 TV poll default unless `--tv-passport-poll-base` is set explicitly.
+Use `--playurl-mode tv` with `--tv-api-base` when a plan, playback request, or download should use
+the TV playurl host instead of the default web playurl host.
 
 Configure restricted-area PGC playurl fallback with explicit proxy hosts. Fallback runs only when the
 official PGC playurl response reports a region/area restriction:

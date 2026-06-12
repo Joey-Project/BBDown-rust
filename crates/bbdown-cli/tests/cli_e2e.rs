@@ -18,8 +18,10 @@ const CLI_OVERRIDE_ENV_VARS: &[&str] = &[
     "BBDOWN_INTL_BASE",
     "BBDOWN_COMMENT_BASE",
     "BBDOWN_PASSPORT_BASE",
+    "BBDOWN_TV_API_BASE",
     "BBDOWN_TV_PASSPORT_BASE",
     "BBDOWN_TV_PASSPORT_POLL_BASE",
+    "BBDOWN_PLAYURL_MODE",
     "BBDOWN_RESTRICTED_AREA",
     "BBDOWN_RESTRICTED_AREA_PROXY",
     "BBDOWN_RESTRICTED_API_PROXY",
@@ -357,6 +359,69 @@ fn playback_json_resolves_media_request_specs() -> anyhow::Result<()> {
     assert!(text.contains("avc1.640028+mp4a.40.2"));
     assert!(text.contains("avplayer=preferred"));
     subtitle_mock.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+fn playback_json_uses_tv_playurl_mode() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    CredentialStore::new(credential_file.clone())
+        .save(&Credentials::default().with_tv_access_key("TV_ACCESS"))?;
+    mock_playback_metadata(&server);
+    let tv_playurl = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/tv/playurl")
+            .query_param("access_key", "TV_ACCESS")
+            .query_param("appkey", "4409e2ce8ffd12b8")
+            .query_param("cid", "2")
+            .query_param("mobi_app", "android_tv_yst")
+            .query_param("object_id", "170001")
+            .query_param("platform", "android")
+            .query_param("playurl_type", "1")
+            .query_param_exists("ts")
+            .query_param_exists("sign");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "dash": {
+                    "duration": 3,
+                    "video": [{
+                        "id": 80,
+                        "base_url": "https://tv.example/video.m4s",
+                        "codecs": "avc1.640028",
+                        "bandwidth": 1_000_000,
+                        "mime_type": "video/mp4"
+                    }],
+                    "audio": []
+                }
+            }
+        }));
+    });
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--tv-api-base")
+        .arg(server.base_url())
+        .arg("--playurl-mode")
+        .arg("tv")
+        .arg("playback")
+        .arg("av170001")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+
+    tv_playurl.assert();
+    assert_eq!(json["entries"][0]["source"], "normal_tv");
+    assert_eq!(
+        json["entries"][0]["variants"][0]["video"]["url"],
+        "https://tv.example/video.m4s"
+    );
     Ok(())
 }
 

@@ -91,6 +91,12 @@ segment serving, retention, cleanup, AVPlayer event/VOD playlist switching, or l
 registration. Downstream players and cache servers own those responsibilities and can use
 `PlaybackPlan` as their stable HTTP request contract.
 
+For BBDown-compatible TV HTTP playurl resolution, set
+`ClientConfig::with_playurl_mode(PlayurlMode::Tv)`, configure `EndpointConfig::with_tv_api_base`
+when a mock or proxy is needed, and provide `Credentials::tv_access_key` when the TV endpoint
+requires account access. TV mode currently applies to normal videos and PGC episodes; APP/gRPC
+playurl mode remains a later transport-specific slice.
+
 ## Batch And Collection Inputs
 
 `BiliClient::resolve_input` accepts CLI-style raw inputs such as B23 short links, `fav...`,

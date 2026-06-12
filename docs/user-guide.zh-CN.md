@@ -120,6 +120,7 @@ payload 时，CLI 会把它报告为访问限制。配置后，PGC playurl 解�
 
 ```bash
 bbdown playback av170001 --json
+bbdown --playurl-mode tv playback av170001 --json
 bbdown playback ss26801 --select latest --json
 bbdown playback fav456 --select 1,3-5 --json
 ```
@@ -131,7 +132,10 @@ codec、码率、尺寸、时长、大小、cache-key metadata，以及面向 AV
 codec/mime-compatible ABR groups，每个 DASH variant 会指回自己的 group 和低到高排序的
 level index，方便下游 cache/player service 在切换兼容 level 时保留已经缓存的媒体对象。
 这是只读规划表面：它不会下载媒体、启动播放器、创建 HLS playlist、serve segments 或注册完成 artifact。下游
-cache/player service 负责这些运行时部分。
+cache/player service 负责这些运行时部分。当下游集成需要来自 BBDown-compatible TV HTTP
+playurl 端点的媒体请求规格时，可以使用 `--playurl-mode tv` 或 `BBDOWN_PLAYURL_MODE=tv`。
+TV mode 适用于普通视频和 PGC 分集，使用 `auth login-tv` 保存的 TV 专用 access key，并可通过
+`--tv-api-base` / `BBDOWN_TV_API_BASE` 指向 mock 或代理。
 
 ## 下载
 
@@ -260,6 +264,7 @@ bbdown --tv-passport-base http://127.0.0.1:8080 --tv-passport-poll-base http://1
 OGV playurl 端点。弹幕 XML 下载使用可配置的 comment 端点。WEB 二维码登录使用
 `--passport-base`；TV 二维码登录使用 TV 专用 passport 覆盖。提供 `--tv-passport-base` 时，
 TV 二维码轮询会跟随该覆盖；对 split-host mock 或代理，请设置 `--tv-passport-poll-base`。
+TV playurl mode 使用 `--tv-api-base`，它独立于只服务二维码登录的 TV passport host。
 
 ## Live E2E 样例
 

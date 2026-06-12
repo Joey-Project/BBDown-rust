@@ -16,6 +16,9 @@ use std::fmt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use url::Url;
 
+const TV_PLAYURL_APPKEY: &str = "4409e2ce8ffd12b8";
+const TV_PLAYURL_APP_SECRET: &str = "59b43e04ad6965f34319062b478f83dd";
+
 #[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct EndpointConfig {
@@ -24,6 +27,7 @@ pub struct EndpointConfig {
     pub intl_base: String,
     pub comment_base: String,
     pub passport_base: String,
+    pub tv_api_base: String,
     pub tv_passport_base: String,
     pub tv_passport_poll_base: String,
 }
@@ -36,6 +40,7 @@ impl Default for EndpointConfig {
             intl_base: "https://api.bilibili.tv".to_owned(),
             comment_base: "https://comment.bilibili.com".to_owned(),
             passport_base: "https://passport.bilibili.com".to_owned(),
+            tv_api_base: "https://api.snm0516.aisee.tv".to_owned(),
             tv_passport_base: "https://passport.snm0516.aisee.tv".to_owned(),
             tv_passport_poll_base: "https://passport.bilibili.com".to_owned(),
         }
@@ -74,6 +79,12 @@ impl EndpointConfig {
     }
 
     #[must_use]
+    pub fn with_tv_api_base(mut self, tv_api_base: impl Into<String>) -> Self {
+        self.tv_api_base = tv_api_base.into();
+        self
+    }
+
+    #[must_use]
     pub fn with_tv_passport_base(mut self, tv_passport_base: impl Into<String>) -> Self {
         self.tv_passport_base = tv_passport_base.into();
         self
@@ -87,11 +98,20 @@ impl EndpointConfig {
 }
 
 #[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum PlayurlMode {
+    #[default]
+    Web,
+    Tv,
+}
+
+#[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct ClientConfig {
     pub endpoints: EndpointConfig,
     pub credentials: Credentials,
     pub restricted_area: RestrictedAreaConfig,
+    pub playurl_mode: PlayurlMode,
     pub user_agent: String,
     pub request_timeout: Duration,
 }
@@ -102,6 +122,7 @@ impl Default for ClientConfig {
             endpoints: EndpointConfig::default(),
             credentials: Credentials::default(),
             restricted_area: RestrictedAreaConfig::default(),
+            playurl_mode: PlayurlMode::default(),
             user_agent: "bbdown-rs/0.1".to_owned(),
             request_timeout: Duration::from_secs(30),
         }
@@ -133,6 +154,12 @@ impl ClientConfig {
     #[must_use]
     pub fn with_restricted_area(mut self, restricted_area: RestrictedAreaConfig) -> Self {
         self.restricted_area = restricted_area;
+        self
+    }
+
+    #[must_use]
+    pub fn with_playurl_mode(mut self, playurl_mode: PlayurlMode) -> Self {
+        self.playurl_mode = playurl_mode;
         self
     }
 
@@ -517,7 +544,7 @@ impl BiliClient {
                 let season = self
                     .fetch_season_by_ep(epid, selection.or(Some(Selection::Current)))
                     .await?;
-                self.plan_season(season, StreamSource::PgcWeb, planning_mode)
+                self.plan_season(season, self.pgc_stream_source(), planning_mode)
                     .await
             }
             Input::Season(season_id) => {
@@ -525,7 +552,7 @@ impl BiliClient {
                     input_kind: "season",
                 })?;
                 let season = self.fetch_season_by_season_id(season_id, selection).await?;
-                self.plan_season(season, StreamSource::PgcWeb, planning_mode)
+                self.plan_season(season, self.pgc_stream_source(), planning_mode)
                     .await
             }
             Input::Media(media_id) => {
@@ -533,7 +560,7 @@ impl BiliClient {
                     input_kind: "media",
                 })?;
                 let season = self.fetch_season_by_media_id(media_id, selection).await?;
-                self.plan_season(season, StreamSource::PgcWeb, planning_mode)
+                self.plan_season(season, self.pgc_stream_source(), planning_mode)
                     .await
             }
             Input::CheeseEpisode(epid) => {
@@ -1722,7 +1749,7 @@ impl BiliClient {
                     epid: None,
                     title: page.title,
                     cover_url: video.cover_url.clone(),
-                    source: StreamSource::NormalWeb,
+                    source: self.normal_stream_source(),
                     planning_mode,
                 })
                 .await?,
@@ -1779,7 +1806,7 @@ impl BiliClient {
                     epid: None,
                     title: item.title,
                     cover_url: item.cover_url,
-                    source: StreamSource::NormalWeb,
+                    source: self.normal_stream_source(),
                     planning_mode,
                 })
                 .await?,
@@ -1955,62 +1982,97 @@ impl BiliClient {
         if source == StreamSource::PgcWeb {
             return self.fetch_pgc_stream_set(aid, cid, epid).await;
         }
+        if source == StreamSource::PgcTv {
+            return self.fetch_pgc_tv_stream_set(aid, cid, epid).await;
+        }
         let mut url = match source {
             StreamSource::NormalWeb => {
                 Self::endpoint_url(&self.config.endpoints.api_base, "/x/player/playurl")?
             }
+            StreamSource::NormalTv => {
+                Self::endpoint_url(&self.config.endpoints.tv_api_base, "/x/tv/playurl")?
+            }
             StreamSource::PugvWeb => {
                 Self::endpoint_url(&self.config.endpoints.api_base, "/pugv/player/web/playurl")?
             }
-            StreamSource::PgcWeb | StreamSource::PgcProxy => unreachable!(),
+            StreamSource::PgcWeb | StreamSource::PgcTv | StreamSource::PgcProxy => unreachable!(),
             StreamSource::IntlWeb => Self::endpoint_url(
                 &self.config.endpoints.intl_base,
                 "/intl/gateway/v2/ogv/playurl",
             )?,
         };
-        {
-            let mut query = url.query_pairs_mut();
-            match source {
-                StreamSource::NormalWeb => {
-                    query
-                        .append_pair("avid", &aid.to_string())
-                        .append_pair("cid", &cid.to_string())
-                        .append_pair("qn", "0")
-                        .append_pair("fnval", "4048")
-                        .append_pair("fnver", "0")
-                        .append_pair("fourk", "1")
-                        .append_pair("try_look", "1")
-                        .append_pair("otype", "json");
-                }
-                StreamSource::PugvWeb => {
-                    let epid = epid.ok_or(Error::MissingField("epid"))?;
-                    query
-                        .append_pair("avid", &aid.to_string())
-                        .append_pair("cid", &cid.to_string())
-                        .append_pair("ep_id", &epid.to_string())
-                        .append_pair("module", "bangumi")
-                        .append_pair("qn", "0")
-                        .append_pair("fnval", "4048")
-                        .append_pair("fnver", "0")
-                        .append_pair("fourk", "1")
-                        .append_pair("otype", "json");
-                }
-                StreamSource::PgcWeb | StreamSource::PgcProxy => unreachable!(),
-                StreamSource::IntlWeb => {
-                    let epid = epid.ok_or(Error::MissingField("epid"))?;
-                    for (key, value) in intl_ogv_playurl_params(
-                        epid,
-                        cid,
-                        self.config.credentials.access_key.as_deref(),
-                        current_unix_timestamp(),
-                    ) {
-                        query.append_pair(key, &value);
-                    }
+        match source {
+            StreamSource::NormalWeb => {
+                url.query_pairs_mut()
+                    .append_pair("avid", &aid.to_string())
+                    .append_pair("cid", &cid.to_string())
+                    .append_pair("qn", "0")
+                    .append_pair("fnval", "4048")
+                    .append_pair("fnver", "0")
+                    .append_pair("fourk", "1")
+                    .append_pair("try_look", "1")
+                    .append_pair("otype", "json");
+            }
+            StreamSource::NormalTv => {
+                append_tv_playurl_params(
+                    &mut url,
+                    aid,
+                    cid,
+                    None,
+                    self.config.credentials.tv_access_key.as_deref(),
+                );
+            }
+            StreamSource::PugvWeb => {
+                let epid = epid.ok_or(Error::MissingField("epid"))?;
+                url.query_pairs_mut()
+                    .append_pair("avid", &aid.to_string())
+                    .append_pair("cid", &cid.to_string())
+                    .append_pair("ep_id", &epid.to_string())
+                    .append_pair("module", "bangumi")
+                    .append_pair("qn", "0")
+                    .append_pair("fnval", "4048")
+                    .append_pair("fnver", "0")
+                    .append_pair("fourk", "1")
+                    .append_pair("otype", "json");
+            }
+            StreamSource::PgcWeb | StreamSource::PgcTv | StreamSource::PgcProxy => unreachable!(),
+            StreamSource::IntlWeb => {
+                let epid = epid.ok_or(Error::MissingField("epid"))?;
+                let mut query = url.query_pairs_mut();
+                for (key, value) in intl_ogv_playurl_params(
+                    epid,
+                    cid,
+                    self.config.credentials.access_key.as_deref(),
+                    current_unix_timestamp(),
+                ) {
+                    query.append_pair(key, &value);
                 }
             }
         }
         let streams = self.fetch_playurl_stream_set(url).await?;
         Ok(ResolvedStreamSet::official(source, streams))
+    }
+
+    async fn fetch_pgc_tv_stream_set(
+        &self,
+        aid: u64,
+        cid: u64,
+        epid: Option<u64>,
+    ) -> Result<ResolvedStreamSet> {
+        let epid = epid.ok_or(Error::MissingField("epid"))?;
+        let mut url = Self::endpoint_url(
+            &self.config.endpoints.tv_api_base,
+            "/pgc/player/api/playurltv",
+        )?;
+        append_tv_playurl_params(
+            &mut url,
+            aid,
+            cid,
+            Some(epid),
+            self.config.credentials.tv_access_key.as_deref(),
+        );
+        let streams = self.fetch_playurl_stream_set(url).await?;
+        Ok(ResolvedStreamSet::official(StreamSource::PgcTv, streams))
     }
 
     async fn fetch_pgc_stream_set(
@@ -2140,7 +2202,9 @@ impl BiliClient {
     ) -> Result<Vec<SubtitleTrack>> {
         match source {
             StreamSource::NormalWeb
+            | StreamSource::NormalTv
             | StreamSource::PgcWeb
+            | StreamSource::PgcTv
             | StreamSource::PgcProxy
             | StreamSource::PugvWeb => {
                 let mut url = Self::endpoint_url(&self.config.endpoints.api_base, "/x/player/v2")?;
@@ -2169,6 +2233,20 @@ impl BiliClient {
                 let response: ApiData<IntlSubtitleData> = self.get_json(url).await?;
                 Ok(response.into_data()?.into_subtitles())
             }
+        }
+    }
+
+    fn normal_stream_source(&self) -> StreamSource {
+        match self.config.playurl_mode {
+            PlayurlMode::Web => StreamSource::NormalWeb,
+            PlayurlMode::Tv => StreamSource::NormalTv,
+        }
+    }
+
+    fn pgc_stream_source(&self) -> StreamSource {
+        match self.config.playurl_mode {
+            PlayurlMode::Web => StreamSource::PgcWeb,
+            PlayurlMode::Tv => StreamSource::PgcTv,
         }
     }
 
@@ -3232,6 +3310,50 @@ fn encode_query(params: &[(&'static str, String)]) -> String {
     serializer.finish()
 }
 
+fn app_sign(query: &str, secret: &str) -> String {
+    format!("{:x}", Md5::digest(format!("{query}{secret}").as_bytes()))
+}
+
+fn append_tv_playurl_params(
+    url: &mut Url,
+    aid: u64,
+    cid: u64,
+    epid: Option<u64>,
+    access_key: Option<&str>,
+) {
+    let mut params = Vec::new();
+    if let Some(access_key) = access_key.filter(|value| !value.is_empty()) {
+        params.push(("access_key", access_key.to_owned()));
+    }
+    params.extend([
+        ("appkey", TV_PLAYURL_APPKEY.to_owned()),
+        ("build", "106500".to_owned()),
+        ("cid", cid.to_string()),
+        ("device", "android".to_owned()),
+    ]);
+    if let Some(epid) = epid {
+        params.extend([("ep_id", epid.to_string()), ("expire", "0".to_owned())]);
+    }
+    params.extend([
+        ("fnval", "4048".to_owned()),
+        ("fnver", "0".to_owned()),
+        ("fourk", "1".to_owned()),
+        ("mid", "0".to_owned()),
+        ("mobi_app", "android_tv_yst".to_owned()),
+        ("object_id", aid.to_string()),
+        ("platform", "android".to_owned()),
+        ("playurl_type", "1".to_owned()),
+        ("qn", "0".to_owned()),
+        ("ts", current_unix_timestamp().to_string()),
+    ]);
+    let sign = app_sign(&encode_query(&params), TV_PLAYURL_APP_SECRET);
+    let mut query = url.query_pairs_mut();
+    for (key, value) in params {
+        query.append_pair(key, &value);
+    }
+    query.append_pair("sign", &sign);
+}
+
 fn wbi_mixin_key(img_url: &str, sub_url: &str) -> Result<String> {
     const MIXIN_KEY_ENC_TAB: [usize; 32] = [
         46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49, 33, 9, 42, 19,
@@ -4166,8 +4288,9 @@ pub(crate) fn sign_ordered_params(params: &[(&str, String)], secret: &str) -> St
 #[cfg(test)]
 mod tests {
     use super::{
-        BiliClient, ClientConfig, EndpointConfig, MediaListKind, PlayUrlRoot, RestrictedArea,
-        RestrictedAreaConfig, RestrictedAreaProxy, intl_ogv_playurl_params,
+        BiliClient, ClientConfig, EndpointConfig, MediaListKind, PlayUrlRoot, PlayurlMode,
+        RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy, TV_PLAYURL_APPKEY,
+        intl_ogv_playurl_params,
     };
     use crate::{
         Credentials, EpisodeMetadata, Error, IndexSelection, IndexSelector, Input, PageMetadata,
@@ -4777,6 +4900,87 @@ mod tests {
         assert_eq!(
             entry.danmaku.xml_url,
             format!("{}/9988.xml", server.base_url())
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn plans_video_download_with_tv_playurl_mode() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("aid", "170001");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "aid": 170_001,
+                    "bvid": "BV1xx411c7mD",
+                    "title": "TV video",
+                    "pages": [{"page": 1, "cid": 9988, "part": "P1"}]
+                }
+            }));
+        });
+        let tv_playurl = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/tv/playurl")
+                .query_param("access_key", "TV_ACCESS")
+                .query_param("appkey", TV_PLAYURL_APPKEY)
+                .query_param("cid", "9988")
+                .query_param("mobi_app", "android_tv_yst")
+                .query_param("object_id", "170001")
+                .query_param("platform", "android")
+                .query_param("playurl_type", "1")
+                .query_param("qn", "0")
+                .query_param_exists("ts")
+                .query_param_exists("sign");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "dash": {
+                        "duration": 123,
+                        "video": [{
+                            "id": 80,
+                            "base_url": "https://tv.example/80.m4s",
+                            "codecs": "avc1.640028",
+                            "bandwidth": 1_000_000,
+                            "mime_type": "video/mp4"
+                        }],
+                        "audio": []
+                    }
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/player/v2")
+                .query_param("aid", "170001")
+                .query_param("cid", "9988");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {"subtitle": {"subtitles": []}}
+            }));
+        });
+
+        let client = BiliClient::new(
+            ClientConfig::default()
+                .with_endpoints(
+                    EndpointConfig::default()
+                        .with_api_base(server.base_url())
+                        .with_comment_base(server.base_url())
+                        .with_tv_api_base(server.base_url()),
+                )
+                .with_credentials(Credentials::default().with_tv_access_key("TV_ACCESS"))
+                .with_playurl_mode(PlayurlMode::Tv),
+        );
+        let plan = client.plan_download("av170001", None).await?;
+
+        tv_playurl.assert();
+        let entry = &plan.entries[0];
+        assert_eq!(entry.source, StreamSource::NormalTv);
+        assert_eq!(
+            entry.streams.videos[0].base_url,
+            "https://tv.example/80.m4s"
         );
         Ok(())
     }
@@ -6180,6 +6384,7 @@ mod tests {
                 intl_base: server.base_url(),
                 comment_base: server.base_url(),
                 passport_base: server.base_url(),
+                tv_api_base: server.base_url(),
                 tv_passport_base: server.base_url(),
                 tv_passport_poll_base: server.base_url(),
             },
@@ -6189,6 +6394,7 @@ mod tests {
                 tv_access_key: None,
             },
             restricted_area: RestrictedAreaConfig::default(),
+            playurl_mode: PlayurlMode::Web,
             user_agent: "test".to_owned(),
             request_timeout: Duration::from_secs(30),
         });
@@ -6384,6 +6590,7 @@ mod tests {
                 intl_base: server.base_url(),
                 comment_base: server.base_url(),
                 passport_base: server.base_url(),
+                tv_api_base: server.base_url(),
                 tv_passport_base: server.base_url(),
                 tv_passport_poll_base: server.base_url(),
             },
@@ -6393,6 +6600,7 @@ mod tests {
                 tv_access_key: None,
             },
             restricted_area: RestrictedAreaConfig::default(),
+            playurl_mode: PlayurlMode::Web,
             user_agent: "test".to_owned(),
             request_timeout: Duration::from_secs(30),
         });
@@ -6471,6 +6679,79 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn plans_pgc_download_with_tv_playurl_mode() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/pgc/view/web/season")
+                .query_param("ep_id", "1000");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "result": {
+                    "season_id": 123,
+                    "title": "A Season",
+                    "episodes": [
+                        {"aid": 10, "bvid": "BV1aa", "cid": 100, "id": 1000, "ep_id": 1000, "title": "1", "long_title": "Start"}
+                    ]
+                }
+            }));
+        });
+        let tv_playurl = server.mock(|when, then| {
+            when.method(GET)
+                .path("/pgc/player/api/playurltv")
+                .query_param("access_key", "TV_ACCESS")
+                .query_param("appkey", TV_PLAYURL_APPKEY)
+                .query_param("cid", "100")
+                .query_param("ep_id", "1000")
+                .query_param("expire", "0")
+                .query_param("mobi_app", "android_tv_yst")
+                .query_param("object_id", "10")
+                .query_param("platform", "android")
+                .query_param("playurl_type", "1")
+                .query_param_exists("ts")
+                .query_param_exists("sign");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "dash": {
+                        "duration": 456,
+                        "video": [{
+                            "id": 64,
+                            "base_url": "https://tv.example/pgc-64.m4s",
+                            "codecs": "hev1",
+                            "bandwidth": 900,
+                            "mime_type": "video/mp4"
+                        }],
+                        "audio": []
+                    }
+                }
+            }));
+        });
+
+        let client = BiliClient::new(
+            ClientConfig::default()
+                .with_endpoints(
+                    EndpointConfig::default()
+                        .with_pgc_base(server.base_url())
+                        .with_tv_api_base(server.base_url()),
+                )
+                .with_credentials(Credentials::default().with_tv_access_key("TV_ACCESS"))
+                .with_playurl_mode(PlayurlMode::Tv),
+        );
+        let plan = client.plan_download("ep1000", None).await?;
+
+        tv_playurl.assert();
+        let entry = &plan.entries[0];
+        assert_eq!(entry.source, StreamSource::PgcTv);
+        assert_eq!(entry.epid, Some(1000));
+        assert_eq!(
+            entry.streams.videos[0].base_url,
+            "https://tv.example/pgc-64.m4s"
+        );
+        Ok(())
+    }
+
     #[test]
     fn endpoint_client_and_restricted_area_builders_configure_embedding_inputs() {
         let endpoints = EndpointConfig::default()
@@ -6479,6 +6760,7 @@ mod tests {
             .with_intl_base("https://intl.test")
             .with_comment_base("https://comment.test")
             .with_passport_base("https://passport.test")
+            .with_tv_api_base("https://tv-api.test")
             .with_tv_passport_base("https://tv-passport.test")
             .with_tv_passport_poll_base("https://tv-poll.test");
         let restricted_area = RestrictedAreaConfig::default()
@@ -6499,10 +6781,12 @@ mod tests {
             .with_endpoints(endpoints)
             .with_credentials(credentials)
             .with_restricted_area(restricted_area)
+            .with_playurl_mode(PlayurlMode::Tv)
             .with_user_agent("embedding-test/1.0")
             .with_request_timeout(Duration::from_secs(7));
 
         assert_eq!(config.endpoints.api_base, "https://api.test");
+        assert_eq!(config.endpoints.tv_api_base, "https://tv-api.test");
         assert_eq!(
             config.endpoints.tv_passport_poll_base,
             "https://tv-poll.test"
@@ -6510,6 +6794,7 @@ mod tests {
         assert_eq!(config.credentials.access_key.as_deref(), Some("access-key"));
         assert_eq!(config.restricted_area.area_hint, Some(RestrictedArea::Tw));
         assert_eq!(config.restricted_area.proxies.len(), 2);
+        assert_eq!(config.playurl_mode, PlayurlMode::Tv);
         assert_eq!(config.user_agent, "embedding-test/1.0");
         assert_eq!(config.request_timeout, Duration::from_secs(7));
     }
@@ -6610,6 +6895,7 @@ mod tests {
                 intl_base: server.base_url(),
                 comment_base: server.base_url(),
                 passport_base: server.base_url(),
+                tv_api_base: server.base_url(),
                 tv_passport_base: server.base_url(),
                 tv_passport_poll_base: server.base_url(),
             },
@@ -6628,6 +6914,7 @@ mod tests {
                     Some(RestrictedArea::Hk),
                 )],
             },
+            playurl_mode: PlayurlMode::Web,
             user_agent: "test".to_owned(),
             request_timeout: Duration::from_secs(30),
         });
@@ -6707,6 +6994,7 @@ mod tests {
                 intl_base: server.base_url(),
                 comment_base: server.base_url(),
                 passport_base: server.base_url(),
+                tv_api_base: server.base_url(),
                 tv_passport_base: server.base_url(),
                 tv_passport_poll_base: server.base_url(),
             },
@@ -6724,6 +7012,7 @@ mod tests {
                     ),
                 ],
             },
+            playurl_mode: PlayurlMode::Web,
             user_agent: "test".to_owned(),
             request_timeout: Duration::from_secs(30),
         });
@@ -6795,6 +7084,7 @@ mod tests {
                     intl_base: server.base_url(),
                     comment_base: server.base_url(),
                     passport_base: server.base_url(),
+                    tv_api_base: server.base_url(),
                     tv_passport_base: server.base_url(),
                     tv_passport_poll_base: server.base_url(),
                 },
@@ -6810,6 +7100,7 @@ mod tests {
                         Some(RestrictedArea::Hk),
                     )],
                 },
+                playurl_mode: PlayurlMode::Web,
                 user_agent: "test".to_owned(),
                 request_timeout: Duration::from_secs(30),
             });
@@ -6868,6 +7159,7 @@ mod tests {
                 intl_base: server.base_url(),
                 comment_base: server.base_url(),
                 passport_base: server.base_url(),
+                tv_api_base: server.base_url(),
                 tv_passport_base: server.base_url(),
                 tv_passport_poll_base: server.base_url(),
             },
@@ -6883,6 +7175,7 @@ mod tests {
                     None,
                 )],
             },
+            playurl_mode: PlayurlMode::Web,
             user_agent: "test".to_owned(),
             request_timeout: Duration::from_secs(30),
         });
@@ -7012,6 +7305,7 @@ mod tests {
                 intl_base: server.base_url(),
                 comment_base: server.base_url(),
                 passport_base: server.base_url(),
+                tv_api_base: server.base_url(),
                 tv_passport_base: server.base_url(),
                 tv_passport_poll_base: server.base_url(),
             },
@@ -7022,6 +7316,7 @@ mod tests {
                     Some(RestrictedArea::Hk),
                 )],
             },
+            playurl_mode: PlayurlMode::Web,
             user_agent: "test".to_owned(),
             request_timeout: Duration::from_secs(30),
             ..ClientConfig::default()
@@ -7101,11 +7396,13 @@ mod tests {
                 intl_base: "http://127.0.0.1:1".to_owned(),
                 comment_base: "http://127.0.0.1:1".to_owned(),
                 passport_base: "http://127.0.0.1:1".to_owned(),
+                tv_api_base: "http://127.0.0.1:1".to_owned(),
                 tv_passport_base: "http://127.0.0.1:1".to_owned(),
                 tv_passport_poll_base: "http://127.0.0.1:1".to_owned(),
             },
             credentials: Credentials::default(),
             restricted_area: RestrictedAreaConfig::default(),
+            playurl_mode: PlayurlMode::Web,
             user_agent: "test".to_owned(),
             request_timeout: Duration::from_millis(30),
         });
@@ -7324,11 +7621,13 @@ mod tests {
                 intl_base: server.base_url(),
                 comment_base: server.base_url(),
                 passport_base: server.base_url(),
+                tv_api_base: server.base_url(),
                 tv_passport_base: server.base_url(),
                 tv_passport_poll_base: server.base_url(),
             },
             credentials: Credentials::default(),
             restricted_area: RestrictedAreaConfig::default(),
+            playurl_mode: PlayurlMode::Web,
             user_agent: "test".to_owned(),
             request_timeout: Duration::from_secs(30),
         })

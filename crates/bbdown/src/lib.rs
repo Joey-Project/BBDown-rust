@@ -14,7 +14,7 @@ mod playback;
 mod selection;
 
 pub use client::{
-    BiliClient, ClientConfig, EndpointConfig, RestrictedArea, RestrictedAreaConfig,
+    BiliClient, ClientConfig, EndpointConfig, PlayurlMode, RestrictedArea, RestrictedAreaConfig,
     RestrictedAreaProxy, RestrictedAreaProxyKind,
 };
 pub use credentials::{CredentialSource, CredentialStore, Credentials};
