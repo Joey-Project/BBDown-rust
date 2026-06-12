@@ -106,6 +106,31 @@ The CLI exposes this layer through `bbdown plan`. The command is intentionally a
 it prints typed JSON or a short human summary, but it does not download, merge, or mutate output
 files.
 
+## Playback Integration Contract
+
+`BiliClient::plan_playback` and `BiliClient::plan_playback_input` build a `PlaybackPlan` from the
+same resolver path used by `DownloadPlan`. This surface is intended for downstream players, cache
+servers, and API layers that need media requests without invoking the file downloader. A playback
+entry preserves the selected aid/bvid/cid/epid, title, source, quality labels, duration, and a set
+of playback variants. DASH variants carry selected video and audio `MediaRequestSpec` values; FLV
+variants carry ordered segment specs.
+
+`MediaRequestSpec` is deliberately serializable and transport-neutral. It contains the primary URL,
+backup URLs, media headers, mime type, codec string, bandwidth, dimensions, duration, size, and a
+structured cache key. The cache key is based on content identity, media kind, stream id, codec, and
+a hash of the source URL with fragments removed but query identity preserved. This avoids exposing
+the URL in plaintext while preventing collisions for proxy URLs whose query string identifies the
+resource. Longer-lived ABR grouping and cache-retention policy helpers are tracked as follow-up
+work.
+
+This repository does not implement player runtime responsibilities. A downstream cache/player
+service owns task state such as `preparing`, `playback_ready`, `downloading`, `completed`, and
+`failed`; HLS session directories, playlists, segment files, retention, cleanup, and finalization;
+HTTP serving such as `/tasks/{id}/hls/master.m3u8`; AVPlayer-compatible event playlists during
+download and VOD playlists after completion; and registering completed HLS or remuxed MP4 artifacts
+as library items. Future crate work should add codec/device hints, ABR policy metadata, and app/TV
+playurl modes without moving those runtime responsibilities into `bbdown-core`.
+
 ## Download Execution
 
 `BiliClient::download_plan` executes a caller-provided `DownloadPlan`. `BiliClient::download` and

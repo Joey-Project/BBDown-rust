@@ -6,6 +6,7 @@ use crate::models::{
     SubtitleFormat, SubtitleTrack, Tag, VideoCollectionItem, VideoCollectionKind,
     VideoCollectionMetadata, VideoCollectionResolution, VideoMetadata,
 };
+use crate::playback::{PlaybackPlan, header_specs_from_map};
 use crate::{Credentials, Error, IndexSelection, Input, Result, Selection};
 use md5::{Digest, Md5};
 use reqwest::header::{COOKIE, HeaderMap, HeaderValue, REFERER, USER_AGENT};
@@ -465,6 +466,27 @@ impl BiliClient {
     ) -> Result<DownloadPlan> {
         self.plan_with_mode(input, selection, PlanningMode::from_download_mode(mode))
             .await
+    }
+
+    pub async fn plan_playback(
+        &self,
+        raw: &str,
+        selection: Option<Selection>,
+    ) -> Result<PlaybackPlan> {
+        let input = self.parse_input(raw).await?;
+        self.plan_playback_input(input, selection).await
+    }
+
+    pub async fn plan_playback_input(
+        &self,
+        input: Input,
+        selection: Option<Selection>,
+    ) -> Result<PlaybackPlan> {
+        let plan = self
+            .plan_with_mode(input, selection, PlanningMode::StreamsOnly)
+            .await?;
+        let headers = header_specs_from_map(&self.media_headers()?)?;
+        Ok(PlaybackPlan::from_download_plan(&plan, &headers))
     }
 
     pub(crate) async fn plan_for_download(

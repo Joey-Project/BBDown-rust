@@ -42,6 +42,46 @@ async fn main() -> bbdown_core::Result<()> {
 Season and media inputs require an explicit `Selection` unless the input itself identifies an
 episode. This is intentional so libraries cannot accidentally plan a full season.
 
+## Playback Request Specs
+
+Use `BiliClient::plan_playback` when a player, cache server, or HTTP proxy needs selected media
+request data instead of filesystem download execution. The returned `PlaybackPlan` is derived from
+the same resolver path as `DownloadPlan`, so input parsing, selection, restricted-area fallback,
+intl access, and stream diagnostics remain consistent.
+
+```rust,no_run
+use bbdown_core::{BiliClient, ClientConfig, Selection};
+
+#[tokio::main]
+async fn main() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let playback = client
+        .plan_playback("BV1qt4y1X7TW", Some(Selection::Current))
+        .await?;
+
+    for entry in &playback.entries {
+        for variant in &entry.variants {
+            if let Some(video) = &variant.video {
+                println!("{} {}", variant.id, video.url);
+                println!("headers: {}", video.headers.len());
+                println!("cache key: {}", video.cache_key.source_hash);
+            }
+        }
+    }
+
+    Ok(())
+}
+```
+
+Each `PlaybackVariant` contains selected DASH video/audio request specs or FLV segment request specs.
+`MediaRequestSpec` includes primary and backup URLs, HTTP headers, mime type, codec string,
+bandwidth, dimensions, duration, size, and a cache key. The cache key hashes the source URL without
+exposing it in plaintext while preserving query-string resource identity; longer-lived ABR grouping
+and cache-retention policy helpers are planned separately. The crate does not implement playback
+task state, HLS playlist generation, segment serving, retention, cleanup, AVPlayer event/VOD
+playlist switching, or library registration. Downstream players and cache servers own those
+responsibilities and can use `PlaybackPlan` as their stable HTTP request contract.
+
 ## Batch And Collection Inputs
 
 `BiliClient::resolve_input` accepts CLI-style raw inputs such as B23 short links, `fav...`,

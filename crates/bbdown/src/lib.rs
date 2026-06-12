@@ -10,6 +10,7 @@ mod error;
 mod input;
 mod login;
 mod models;
+mod playback;
 mod selection;
 
 pub use client::{
@@ -33,5 +34,9 @@ pub use models::{
     StreamQuality, StreamResolverAttempt, StreamResolverOutcome, StreamSet, StreamSource,
     SubtitleFormat, SubtitleTrack, Tag, VideoCollectionItem, VideoCollectionKind,
     VideoCollectionMetadata, VideoCollectionResolution, VideoMetadata,
+};
+pub use playback::{
+    HttpHeaderSpec, MediaCacheKey, MediaRequestKind, MediaRequestSpec, PlaybackEntry, PlaybackPlan,
+    PlaybackVariant, PlaybackVariantKind,
 };
 pub use selection::{IndexSelection, IndexSelector, Selection};

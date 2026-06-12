@@ -5,9 +5,9 @@
 `bbdown-core` 是 BBDown Rust 背后的可复用 Rust library package。Rust 代码中以
 `bbdown_core` 导入。它把 Bilibili 和 Bilibili intl 输入解析为 typed metadata、下载计划、
 媒体下载、单独输出下载模式、封面/字幕/XML 或 ASS 弹幕旁路文件、二维码登录凭据、下载归档预检查数
-据、批量集合 metadata，以及受限区域代理诊断。下载执行也可以通过 `MediaHostOptions` 应
-用显式 UPOS host 替换或 BBDown-like PCDN 规避。原始输入解析覆盖普通视频、PGC 和 intl
-分集、PUGV/cheese 课程、B23 短链接、收藏夹、空间投稿、合集和系列。
+据、播放请求规格、批量集合 metadata，以及受限区域代理诊断。下载执行也可以通过
+`MediaHostOptions` 应用显式 UPOS host 替换或 BBDown-like PCDN 规避。原始输入解析覆盖普
+通视频、PGC 和 intl 分集、PUGV/cheese 课程、B23 短链接、收藏夹、空间投稿、合集和系列。
 
 使用 `cargo add bbdown-core` 安装，然后用 `bbdown_core` 导入。
 
@@ -66,6 +66,10 @@ metadata，`selected_items` 则携带当前选中子集。选中的条目随后�
 
 library 默认保留 plan 中的媒体 URL。嵌入应用需要自定义 UPOS host、强制替换，或
 CLI-compatible PCDN fallback 处理时，应显式设置 `MediaHostOptions`。
+当嵌入应用需要给下游 streaming/cache service 使用的可序列化 DASH video/audio 或 FLV
+segment 请求规格时，使用 `BiliClient::plan_playback`。`PlaybackPlan` 包含主 URL、备用
+URL、媒体 headers、mime/codec metadata、时长、大小和 cache key，但不实现播放器状态、HLS
+playlist 生成或 HTTP segment serving。
 嵌入应用需要 BBDown 风格或应用自定义输出名时，可以设置 `DownloadPathTemplates`。模板会
 为输出根目录、条目目录和 mux 后文件名 stem 渲染经过清洗的文件名组件；媒体和 sidecar 文
 件名保持稳定，以支持续传和归档记录。条目模板必须在选中条目之间渲染出唯一目录名。

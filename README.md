@@ -13,10 +13,11 @@ Bilibili behavior reference. Thanks to BBDown and its contributors for that refe
 The current implementation establishes the crate/CLI/CI foundation, metadata resolver, stream
 planning, media downloads, cover/subtitle/danmaku sidecar downloads, retry/resume behavior,
 optional ffmpeg muxing, QR login, opt-in live test harnesses, configured restricted-area proxy
-ordering with diagnostics, UPOS/PCDN media host controls, and builder-style crate integration APIs.
-It also supports an explicit download archive for duplicate preflight and CLI replace / keep-both /
-cancel decisions. Input parsing covers normal videos, PGC and intl episodes, PUGV/cheese courses,
-B23 short links, favorite lists, space videos, collections, and series. URL parsing includes
+ordering with diagnostics, playback request specs for downstream streaming/cache integrations,
+UPOS/PCDN media host controls, and builder-style crate integration APIs. It also supports an
+explicit download archive for duplicate preflight and CLI replace / keep-both / cancel decisions.
+Input parsing covers normal videos, PGC and intl episodes, PUGV/cheese courses, B23 short links,
+favorite lists, space videos, collections, and series. URL parsing includes
 canonical `bilibili.com/list/...` pages, path-based medialist favorite URLs, and space
 collection/series URLs that carry the uploader mid needed by newer space APIs.
 
@@ -54,6 +55,18 @@ access. PGC playurl resolution can fall back to user-configured restricted-area 
 not download files. Collection-like inputs default to all items; use `--select page:<index>` to plan
 one collection item or `--select latest` for the first parsed item in the upstream list order. `info --json` keeps full
 parsed collection metadata under `collection.collection.items`; `plan` emits only selected entries.
+
+Build a playback request spec as JSON:
+
+```bash
+bbdown playback av170001 --json
+bbdown playback ss26801 --select latest --json
+bbdown playback fav456 --select 1,3-5 --json
+```
+
+`playback` resolves the same selected entries as `plan`, then emits selected DASH video/audio
+request specs or FLV segment specs with primary URLs, backup URLs, headers, mime/codec metadata,
+duration/size, and cache keys. It does not download files, create HLS playlists, or run a player.
 
 Download selected media files:
 

@@ -41,6 +41,44 @@ async fn main() -> bbdown_core::Result<()> {
 Season 和 media 输入需要显式 `Selection`，除非输入本身已经标识某个分集。这是有意设计，
 避免 library 意外规划整季内容。
 
+## 播放请求规格
+
+当播放器、缓存服务器或 HTTP proxy 需要选中媒体的请求数据，而不是执行文件下载时，使用
+`BiliClient::plan_playback`。返回的 `PlaybackPlan` 来自和 `DownloadPlan` 相同的 resolver
+路径，因此输入解析、selection、受限区域回退、intl 访问和 stream diagnostics 会保持一致。
+
+```rust,no_run
+use bbdown_core::{BiliClient, ClientConfig, Selection};
+
+#[tokio::main]
+async fn main() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let playback = client
+        .plan_playback("BV1qt4y1X7TW", Some(Selection::Current))
+        .await?;
+
+    for entry in &playback.entries {
+        for variant in &entry.variants {
+            if let Some(video) = &variant.video {
+                println!("{} {}", variant.id, video.url);
+                println!("headers: {}", video.headers.len());
+                println!("cache key: {}", video.cache_key.source_hash);
+            }
+        }
+    }
+
+    Ok(())
+}
+```
+
+每个 `PlaybackVariant` 包含选中的 DASH 视频/音频请求规格，或 FLV 分段请求规格。
+`MediaRequestSpec` 包含主 URL、备用 URL、HTTP headers、mime type、codec 字符串、码率、
+尺寸、时长、大小和 cache key。cache key 会对 source URL 做 hash，避免暴露明文，同时保留
+query-string 的资源身份；更长期的 ABR grouping 和 cache-retention policy helper 会单独排
+期。crate 不实现播放任务状态、HLS playlist 生成、segment serving、retention、cleanup、
+AVPlayer event/VOD playlist 切换或 library 注册。下游播放器和缓存服务器负责这些部分，并
+可把 `PlaybackPlan` 作为稳定的 HTTP request contract。
+
 ## 批量和集合输入
 
 `BiliClient::resolve_input` 接受 CLI 风格原始输入，例如 B23 短链接、`fav...`、`mid...`、
