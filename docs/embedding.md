@@ -47,7 +47,7 @@ episode. This is intentional so libraries cannot accidentally plan a full season
 Use `BiliClient::plan_playback` when a player, cache server, or HTTP proxy needs selected media
 request data instead of filesystem download execution. The returned `PlaybackPlan` is derived from
 the same resolver path as `DownloadPlan`, so input parsing, selection, restricted-area fallback,
-intl access, and stream diagnostics remain consistent.
+intl access, and selected stream source reporting remain aligned.
 
 ```rust,no_run
 use bbdown_core::{BiliClient, ClientConfig, Selection};

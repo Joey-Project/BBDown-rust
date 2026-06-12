@@ -45,7 +45,7 @@ Season 和 media 输入需要显式 `Selection`，除非输入本身已经标识
 
 当播放器、缓存服务器或 HTTP proxy 需要选中媒体的请求数据，而不是执行文件下载时，使用
 `BiliClient::plan_playback`。返回的 `PlaybackPlan` 来自和 `DownloadPlan` 相同的 resolver
-路径，因此输入解析、selection、受限区域回退、intl 访问和 stream diagnostics 会保持一致。
+路径，因此输入解析、selection、受限区域回退、intl 访问和选中流的 source reporting 会保持一致。
 
 ```rust,no_run
 use bbdown_core::{BiliClient, ClientConfig, Selection};

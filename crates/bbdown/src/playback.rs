@@ -239,6 +239,10 @@ fn flv_variant(entry: &DownloadEntry, request_headers: &[HttpHeaderSpec]) -> Pla
         .iter()
         .map(|segment| flv_segment_request(entry, segment, request_headers))
         .collect::<Vec<_>>();
+    let mut mime_types = Vec::new();
+    for segment in &flv_segments {
+        push_unique(&mut mime_types, segment.mime_type.as_deref());
+    }
     PlaybackVariant {
         id: flv_variant_id(&flv_segments),
         kind: PlaybackVariantKind::Flv,
@@ -246,7 +250,7 @@ fn flv_variant(entry: &DownloadEntry, request_headers: &[HttpHeaderSpec]) -> Pla
         audio: None,
         bandwidth: None,
         codecs: Vec::new(),
-        mime_types: Vec::new(),
+        mime_types,
         width: None,
         height: None,
         frame_rate: None,
@@ -598,6 +602,7 @@ mod tests {
         assert_eq!(playback.entries[0].variants.len(), 1);
         let variant = &playback.entries[0].variants[0];
         assert_eq!(variant.kind, PlaybackVariantKind::Flv);
+        assert_eq!(variant.mime_types, ["video/x-flv"]);
         assert_eq!(variant.duration_seconds, Some(4));
         assert_eq!(variant.flv_segments.len(), 2);
         assert_eq!(variant.flv_segments[0].stream_id, Some(1));
