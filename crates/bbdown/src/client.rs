@@ -2049,7 +2049,10 @@ impl BiliClient {
                 }
             }
         }
-        let streams = self.fetch_playurl_stream_set(url).await?;
+        let streams = match source {
+            StreamSource::NormalTv => self.fetch_playurl_stream_set_without_cookie(url).await?,
+            _ => self.fetch_playurl_stream_set(url).await?,
+        };
         Ok(ResolvedStreamSet::official(source, streams))
     }
 
@@ -2071,7 +2074,7 @@ impl BiliClient {
             Some(epid),
             self.config.credentials.tv_access_key.as_deref(),
         );
-        let streams = self.fetch_playurl_stream_set(url).await?;
+        let streams = self.fetch_playurl_stream_set_without_cookie(url).await?;
         Ok(ResolvedStreamSet::official(StreamSource::PgcTv, streams))
     }
 
@@ -2115,7 +2118,7 @@ impl BiliClient {
                     };
                     for request_url in request_urls {
                         match self
-                            .fetch_proxy_playurl_stream_set(request_url.clone())
+                            .fetch_playurl_stream_set_without_cookie(request_url.clone())
                             .await
                         {
                             Ok(streams) => {
@@ -2188,7 +2191,7 @@ impl BiliClient {
         response.into_stream_set()
     }
 
-    async fn fetch_proxy_playurl_stream_set(&self, url: Url) -> Result<StreamSet> {
+    async fn fetch_playurl_stream_set_without_cookie(&self, url: Url) -> Result<StreamSet> {
         let response: PlayUrlRoot = self.get_json_without_cookie(url).await?;
         response.into_stream_set()
     }
@@ -4933,7 +4936,8 @@ mod tests {
                 .query_param("playurl_type", "1")
                 .query_param("qn", "0")
                 .query_param_exists("ts")
-                .query_param_exists("sign");
+                .query_param_exists("sign")
+                .header_missing("cookie");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {
@@ -4970,7 +4974,11 @@ mod tests {
                         .with_comment_base(server.base_url())
                         .with_tv_api_base(server.base_url()),
                 )
-                .with_credentials(Credentials::default().with_tv_access_key("TV_ACCESS"))
+                .with_credentials(
+                    Credentials::default()
+                        .with_cookie("SESSDATA=WEB_COOKIE")
+                        .with_tv_access_key("TV_ACCESS"),
+                )
                 .with_playurl_mode(PlayurlMode::Tv),
         );
         let plan = client.plan_download("av170001", None).await?;
@@ -6710,7 +6718,8 @@ mod tests {
                 .query_param("platform", "android")
                 .query_param("playurl_type", "1")
                 .query_param_exists("ts")
-                .query_param_exists("sign");
+                .query_param_exists("sign")
+                .header_missing("cookie");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {
@@ -6736,7 +6745,11 @@ mod tests {
                         .with_pgc_base(server.base_url())
                         .with_tv_api_base(server.base_url()),
                 )
-                .with_credentials(Credentials::default().with_tv_access_key("TV_ACCESS"))
+                .with_credentials(
+                    Credentials::default()
+                        .with_cookie("SESSDATA=WEB_COOKIE")
+                        .with_tv_access_key("TV_ACCESS"),
+                )
                 .with_playurl_mode(PlayurlMode::Tv),
         );
         let plan = client.plan_download("ep1000", None).await?;

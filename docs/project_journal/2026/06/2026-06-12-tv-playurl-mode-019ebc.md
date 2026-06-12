@@ -27,6 +27,7 @@ superseded_by:
 - CLI callers can use `--playurl-mode tv` and `--tv-api-base`; environment overrides are
   `BBDOWN_PLAYURL_MODE` and `BBDOWN_TV_API_BASE`.
 - TV playurl requests use `Credentials::tv_access_key` and do not reuse the generic intl access key.
+- TV playurl requests do not send WEB cookies to the TV API or custom TV API proxy.
 
 ## Next Steps
 - Add APP/gRPC playurl mode as a separate transport-specific slice.
@@ -39,3 +40,7 @@ superseded_by:
 - Full validation: `just ci`.
 - Internal review: helper-backed `codex-readonly` on
   `85f4ce274592d34d8434ecd09dd4877b412caabc..4fdea88149be7df4a234e61a5ad0cf312eddf050`, LGTM.
+- PR review fix: helper-backed `codex-readonly` on
+  `85f4ce274592d34d8434ecd09dd4877b412caabc..3643e2c12f7e96556880654fb9ffed4813373fcf`
+  found that TV playurl requests leaked WEB cookies; fixed by using the no-cookie request path for
+  `NormalTv` and `PgcTv`.
