@@ -81,8 +81,12 @@ strings, codec-family fields, a `format_key`, and machine-readable reason codes.
 can use `PlaybackCodecPreference` to rank variants by their own H.264, HEVC, AV1, or other codec
 order, then verify the exact codec strings before handing a request to a platform player. The cache
 key hashes the source URL without exposing it in plaintext while preserving query-string resource
-identity; longer-lived ABR grouping and cache-retention policy helpers are planned separately. The
-crate does not implement playback task state, HLS playlist generation,
+identity. `PlaybackEntry.cache_key` identifies the selected content, `PlaybackVariant.cache_key`
+groups the media cache keys that make up one playable variant, `PlaybackEntry.abr.groups` lists
+codec/mime-compatible switching groups in low-to-high level order, and `PlaybackVariant.abr` points
+to the variant's group and level. A cache server can store fetched media by `MediaCacheKey`, keep
+completed variants by `PlaybackVariantCacheKey`, and retain lower or previously visited compatible
+levels while ABR policy moves up or down. The crate does not implement playback task state, HLS playlist generation,
 segment serving, retention, cleanup, AVPlayer event/VOD playlist switching, or library
 registration. Downstream players and cache servers own those responsibilities and can use
 `PlaybackPlan` as their stable HTTP request contract.

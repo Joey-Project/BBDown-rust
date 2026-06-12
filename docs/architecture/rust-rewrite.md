@@ -120,19 +120,22 @@ backup URLs, media headers, mime type, codec string, bandwidth, dimensions, dura
 structured cache key. The cache key is based on content identity, media kind, stream id, codec, and
 a hash of the source URL with fragments removed but query identity preserved. This avoids exposing
 the URL in plaintext while preventing collisions for proxy URLs whose query string identifies the
-resource. `PlaybackVariant.selection_hints.avplayer` adds an AVPlayer-oriented profile with exact
-codec strings, codec families, a `format_key`, score/preferred signals, and machine-readable
-reasons. The public `PlaybackCodecPreference` helper lets downstream clients rank variants with
-their own H.264, HEVC, AV1, or other codec order instead of accepting a hard-coded H.264-first
-policy. Longer-lived ABR grouping and cache-retention policy helpers are tracked as follow-up work.
+resource. Playback planning also exposes `PlaybackEntry.cache_key`, `PlaybackVariant.cache_key`,
+`PlaybackEntry.abr.groups`, and `PlaybackVariant.abr` so a downstream cache server can store media
+by request key, retain completed variants by variant key, and map ABR level changes back to the same
+codec/mime-compatible switching group without refetching already cached levels.
+`PlaybackVariant.selection_hints.avplayer` adds an AVPlayer-oriented profile with exact codec
+strings, codec families, a `format_key`, score/preferred signals, and machine-readable reasons. The
+public `PlaybackCodecPreference` helper lets downstream clients rank variants with their own H.264,
+HEVC, AV1, or other codec order instead of accepting a hard-coded H.264-first policy.
 
 This repository does not implement player runtime responsibilities. A downstream cache/player
 service owns task state such as `preparing`, `playback_ready`, `downloading`, `completed`, and
 `failed`; HLS session directories, playlists, segment files, retention, cleanup, and finalization;
 HTTP serving such as `/tasks/{id}/hls/master.m3u8`; AVPlayer-compatible event playlists during
 download and VOD playlists after completion; and registering completed HLS or remuxed MP4 artifacts
-as library items. Future crate work should add codec/device hints, ABR policy metadata, and app/TV
-playurl modes without moving those runtime responsibilities into `bbdown-core`.
+as library items. Future crate work should add app/TV playurl modes and richer device policy
+profiles without moving those runtime responsibilities into `bbdown-core`.
 
 ## Download Execution
 

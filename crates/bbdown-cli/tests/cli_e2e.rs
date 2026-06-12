@@ -294,6 +294,7 @@ fn playback_json_resolves_media_request_specs() -> anyhow::Result<()> {
         json["entries"][0]["variants"].as_array().map(Vec::len),
         Some(3)
     );
+    assert_playback_abr_metadata(&json)?;
     let variant = &json["entries"][0]["variants"][0];
     assert_eq!(variant["kind"], "dash");
     assert_eq!(variant["bandwidth"], 1_328_000);
@@ -351,10 +352,46 @@ fn playback_json_resolves_media_request_specs() -> anyhow::Result<()> {
     let text = String::from_utf8(human.assert().success().get_output().stdout.clone())?;
     assert!(text.contains("variants: 3"));
     assert!(text.contains("kind=dash"));
+    assert!(text.contains("abr=1/1 switchable=false"));
     assert!(text.contains("format=h264+aac"));
     assert!(text.contains("avc1.640028+mp4a.40.2"));
     assert!(text.contains("avplayer=preferred"));
     subtitle_mock.assert_calls(0);
+    Ok(())
+}
+
+fn assert_playback_abr_metadata(json: &Value) -> anyhow::Result<()> {
+    assert_eq!(
+        json["entries"][0]["cache_key"]["content_id"],
+        "BV1xx411c7mD-cid2"
+    );
+    let groups = json["entries"][0]["abr"]["groups"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("ABR groups should be an array"))?;
+    let variant = &json["entries"][0]["variants"][0];
+    assert_eq!(groups.len(), 3);
+    let group_id = variant["abr"]["group_id"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("variant ABR group id should be a string"))?;
+    let abr_group = groups
+        .iter()
+        .find(|group| group["id"].as_str() == Some(group_id))
+        .ok_or_else(|| anyhow::anyhow!("variant ABR group should exist"))?;
+    assert_eq!(abr_group["kind"], "dash_video");
+    assert_eq!(abr_group["level_count"], 1);
+    assert_eq!(abr_group["min_bandwidth"], 1_328_000);
+    assert_eq!(abr_group["max_bandwidth"], 1_328_000);
+    assert_eq!(abr_group["variant_ids"], serde_json::json!([variant["id"]]));
+    assert_eq!(variant["cache_key"]["variant_kind"], "dash");
+    assert_eq!(variant["cache_key"]["variant_id"], variant["id"]);
+    assert_eq!(
+        variant["cache_key"]["media_keys"].as_array().map(Vec::len),
+        Some(2)
+    );
+    assert_eq!(variant["abr"]["group_id"], abr_group["id"]);
+    assert_eq!(variant["abr"]["level_index"], 0);
+    assert_eq!(variant["abr"]["level_count"], 1);
+    assert_eq!(variant["abr"]["switchable"], false);
     Ok(())
 }
 

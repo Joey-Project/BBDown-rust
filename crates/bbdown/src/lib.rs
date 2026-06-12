@@ -36,8 +36,10 @@ pub use models::{
     VideoCollectionMetadata, VideoCollectionResolution, VideoMetadata,
 };
 pub use playback::{
-    HttpHeaderSpec, MediaCacheKey, MediaRequestKind, MediaRequestSpec, PlaybackCodecFamily,
-    PlaybackCodecPreference, PlaybackEntry, PlaybackPlan, PlaybackSelectionHint,
-    PlaybackSelectionHints, PlaybackSelectionReason, PlaybackVariant, PlaybackVariantKind,
+    HttpHeaderSpec, MediaCacheKey, MediaRequestKind, MediaRequestSpec, PlaybackAbrGroup,
+    PlaybackAbrGroupKind, PlaybackAbrLevel, PlaybackAbrMetadata, PlaybackCodecFamily,
+    PlaybackCodecPreference, PlaybackEntry, PlaybackEntryCacheKey, PlaybackPlan,
+    PlaybackSelectionHint, PlaybackSelectionHints, PlaybackSelectionReason, PlaybackVariant,
+    PlaybackVariantCacheKey, PlaybackVariantKind,
 };
 pub use selection::{IndexSelection, IndexSelector, Selection};

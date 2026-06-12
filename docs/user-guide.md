@@ -137,8 +137,10 @@ The command resolves the same selected entries as `plan`, then emits `PlaybackPl
 variant contains DASH video/audio request specs or FLV segment specs with primary URL, backup URLs,
 headers, mime type, codec, bandwidth, dimensions, duration, size, cache-key metadata, and
 AVPlayer-oriented selection hints with exact codec strings, codec families, and a `format_key`.
-This is a read-only planning surface: it does not
-download media, start a player, create HLS playlists, serve segments, or register completed
+Playback entries also include codec/mime-compatible ABR groups, and each DASH variant points back
+to its group and low-to-high level index so a downstream cache/player service can switch compatible
+levels without losing already cached media objects. This is a read-only planning surface: it does
+not download media, start a player, create HLS playlists, serve segments, or register completed
 artifacts. Downstream cache/player services own those runtime concerns.
 
 ## Downloads

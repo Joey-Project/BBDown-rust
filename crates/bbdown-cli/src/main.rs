@@ -670,6 +670,14 @@ fn print_playback_summary(plan: &PlaybackPlan) {
             if let Some(bandwidth) = variant.bandwidth {
                 parts.push(format!("{bandwidth}bps"));
             }
+            if let Some(abr) = &variant.abr {
+                parts.push(format!(
+                    "abr={}/{} switchable={}",
+                    abr.level_index.saturating_add(1),
+                    abr.level_count,
+                    abr.switchable
+                ));
+            }
             let avplayer_hint = &variant.selection_hints.avplayer;
             parts.push(format!("format={}", avplayer_hint.format_key));
             let avplayer_status = if avplayer_hint.preferred {
