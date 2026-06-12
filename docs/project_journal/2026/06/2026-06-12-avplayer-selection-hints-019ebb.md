@@ -49,4 +49,7 @@ superseded_by:
 - Internal review finding fixed: legacy `selection_hints.avplayer_h264_aac` payloads are ignored
   for `PlaybackVariant` backfill so old H.264-only policy metadata cannot override current exact
   codec preference hints.
+- Independent review findings fixed: deprecated hint payloads are parsed as raw JSON so malformed
+  old keys cannot fail before backfill, and codec preference matching now rejects
+  `playable=false` hints such as FLV/AVPlayer-avoid variants.
 - Internal review final: helper-backed `codex-readonly` returned `LGTM`.

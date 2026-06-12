@@ -150,7 +150,6 @@ impl<'de> Deserialize<'de> for PlaybackSelectionHints {
         let wire = PlaybackSelectionHintsWire::deserialize(deserializer)?;
         let avplayer = wire
             .avplayer
-            .or(wire.avplayer_h264_aac)
             .ok_or_else(|| de::Error::missing_field("avplayer"))?;
         Ok(Self { avplayer })
     }
@@ -159,8 +158,8 @@ impl<'de> Deserialize<'de> for PlaybackSelectionHints {
 #[derive(Deserialize)]
 struct PlaybackSelectionHintsWire {
     avplayer: Option<PlaybackSelectionHint>,
-    #[serde(default)]
-    avplayer_h264_aac: Option<PlaybackSelectionHint>,
+    #[serde(default, rename = "avplayer_h264_aac")]
+    _avplayer_h264_aac: Option<serde_json::Value>,
 }
 
 impl PlaybackSelectionHintsWire {
@@ -253,6 +252,9 @@ impl PlaybackCodecPreference {
 
     #[must_use]
     pub fn rank_hint(&self, hint: &PlaybackSelectionHint) -> Option<usize> {
+        if !hint.playable {
+            return None;
+        }
         let video_rank = codec_preference_rank(
             hint.video_codec_family,
             self.video_codec_families.as_slice(),
@@ -1042,6 +1044,10 @@ mod tests {
         assert_eq!(variant.kind, PlaybackVariantKind::Flv);
         assert_eq!(variant.mime_types, ["video/x-flv"]);
         assert_flv_avplayer_hint(variant);
+        assert!(
+            !variant
+                .matches_codec_preference(&PlaybackCodecPreference::new(Vec::new(), Vec::new()))
+        );
         assert_eq!(variant.duration_seconds, Some(4));
         assert_eq!(variant.flv_segments.len(), 2);
         assert_eq!(variant.flv_segments[0].stream_id, Some(1));
@@ -1111,8 +1117,7 @@ mod tests {
                     "preferred": false,
                     "score": -10,
                     "video_codec_family": "hevc",
-                    "audio_codec_family": "aac",
-                    "reasons": ["dash_container", "unsupported_video_codec", "aac_audio"]
+                    "audio_codec_family": "aac"
                 }
             }
         }))?;
