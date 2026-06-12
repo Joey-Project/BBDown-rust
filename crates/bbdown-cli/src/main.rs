@@ -670,7 +670,8 @@ fn print_playback_summary(plan: &PlaybackPlan) {
             if let Some(bandwidth) = variant.bandwidth {
                 parts.push(format!("{bandwidth}bps"));
             }
-            let avplayer_hint = &variant.selection_hints.avplayer_h264_aac;
+            let avplayer_hint = &variant.selection_hints.avplayer;
+            parts.push(format!("format={}", avplayer_hint.format_key));
             let avplayer_status = if avplayer_hint.preferred {
                 "preferred"
             } else if avplayer_hint.playable {

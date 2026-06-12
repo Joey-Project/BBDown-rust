@@ -292,7 +292,7 @@ fn playback_json_resolves_media_request_specs() -> anyhow::Result<()> {
     assert_eq!(json["entries"][0]["duration_seconds"], 90);
     assert_eq!(
         json["entries"][0]["variants"].as_array().map(Vec::len),
-        Some(2)
+        Some(3)
     );
     let variant = &json["entries"][0]["variants"][0];
     assert_eq!(variant["kind"], "dash");
@@ -307,7 +307,7 @@ fn playback_json_resolves_media_request_specs() -> anyhow::Result<()> {
     );
     assert_eq!(variant["width"], 1920);
     assert_eq!(variant["height"], 1080);
-    assert_playback_avplayer_hints(&json);
+    assert_playback_selection_hints(&json);
     assert_eq!(
         variant["video"]["url"],
         "https://video.example/80.m4s?token=secret"
@@ -349,49 +349,44 @@ fn playback_json_resolves_media_request_specs() -> anyhow::Result<()> {
         .arg("playback")
         .arg("av170001");
     let text = String::from_utf8(human.assert().success().get_output().stdout.clone())?;
-    assert!(text.contains("variants: 2"));
+    assert!(text.contains("variants: 3"));
     assert!(text.contains("kind=dash"));
+    assert!(text.contains("format=h264+aac"));
     assert!(text.contains("avc1.640028+mp4a.40.2"));
     assert!(text.contains("avplayer=preferred"));
     subtitle_mock.assert_calls(0);
     Ok(())
 }
 
-fn assert_playback_avplayer_hints(json: &Value) {
+fn assert_playback_selection_hints(json: &Value) {
     let variant = &json["entries"][0]["variants"][0];
+    let hint = &variant["selection_hints"]["avplayer"];
+    assert_eq!(hint["format_key"], "h264+aac");
+    assert_eq!(hint["video_codec"], "avc1.640028");
+    assert_eq!(hint["audio_codec"], "mp4a.40.2");
+    assert_eq!(hint["playable"], true);
+    assert_eq!(hint["preferred"], true);
+    assert_eq!(hint["video_codec_family"], "h264");
+    assert_eq!(hint["audio_codec_family"], "aac");
     assert_eq!(
-        variant["selection_hints"]["avplayer_h264_aac"]["playable"],
-        true
-    );
-    assert_eq!(
-        variant["selection_hints"]["avplayer_h264_aac"]["preferred"],
-        true
-    );
-    assert_eq!(
-        variant["selection_hints"]["avplayer_h264_aac"]["video_codec_family"],
-        "h264"
-    );
-    assert_eq!(
-        variant["selection_hints"]["avplayer_h264_aac"]["audio_codec_family"],
-        "aac"
-    );
-    assert_eq!(
-        variant["selection_hints"]["avplayer_h264_aac"]["reasons"],
+        hint["reasons"],
         serde_json::json!(["dash_container", "h264_video", "aac_audio"])
     );
     let hevc_variant = &json["entries"][0]["variants"][1];
-    assert_eq!(
-        hevc_variant["selection_hints"]["avplayer_h264_aac"]["playable"],
-        false
-    );
-    assert_eq!(
-        hevc_variant["selection_hints"]["avplayer_h264_aac"]["video_codec_family"],
-        "hevc"
-    );
-    assert_eq!(
-        hevc_variant["selection_hints"]["avplayer_h264_aac"]["reasons"][1],
-        "unsupported_video_codec"
-    );
+    let hevc_hint = &hevc_variant["selection_hints"]["avplayer"];
+    assert_eq!(hevc_hint["format_key"], "hevc+aac");
+    assert_eq!(hevc_hint["video_codec"], "hev1.1.6.L120.90");
+    assert_eq!(hevc_hint["playable"], true);
+    assert_eq!(hevc_hint["video_codec_family"], "hevc");
+    assert_eq!(hevc_hint["reasons"][1], "hevc_video");
+
+    let av1_variant = &json["entries"][0]["variants"][2];
+    let av1_hint = &av1_variant["selection_hints"]["avplayer"];
+    assert_eq!(av1_hint["format_key"], "av1+aac");
+    assert_eq!(av1_hint["video_codec"], "av01.0.08M.08");
+    assert_eq!(av1_hint["playable"], true);
+    assert_eq!(av1_hint["video_codec_family"], "av1");
+    assert_eq!(av1_hint["reasons"][1], "av1_video");
 }
 
 fn mock_playback_metadata(server: &MockServer) {
@@ -461,6 +456,17 @@ fn mock_playback_streams(server: &MockServer) {
                             "frameRate": "30",
                             "mimeType": "video/mp4",
                             "size": 8000
+                        },
+                        {
+                            "id": 120,
+                            "baseUrl": "https://video.example/120.m4s?token=secret",
+                            "codecs": "av01.0.08M.08",
+                            "bandwidth": 600_000,
+                            "width": 1280,
+                            "height": 720,
+                            "frameRate": "30",
+                            "mimeType": "video/mp4",
+                            "size": 6000
                         }
                     ],
                     "audio": [{

@@ -37,7 +37,7 @@ pub use models::{
 };
 pub use playback::{
     HttpHeaderSpec, MediaCacheKey, MediaRequestKind, MediaRequestSpec, PlaybackCodecFamily,
-    PlaybackEntry, PlaybackPlan, PlaybackSelectionHint, PlaybackSelectionHints,
-    PlaybackSelectionReason, PlaybackVariant, PlaybackVariantKind,
+    PlaybackCodecPreference, PlaybackEntry, PlaybackPlan, PlaybackSelectionHint,
+    PlaybackSelectionHints, PlaybackSelectionReason, PlaybackVariant, PlaybackVariantKind,
 };
 pub use selection::{IndexSelection, IndexSelector, Selection};
