@@ -199,6 +199,11 @@ fn decode_grpc_frame(frame: &[u8]) -> Result<Vec<u8>> {
     let end = 5_usize
         .checked_add(len)
         .ok_or_else(|| Error::InvalidInput("APP playurl gRPC frame length overflow".to_owned()))?;
+    if end != frame.len() {
+        return Err(Error::InvalidInput(
+            "APP playurl gRPC response must contain exactly one frame".to_owned(),
+        ));
+    }
     let payload = frame
         .get(5..end)
         .ok_or(Error::MissingField("APP playurl gRPC payload"))?;
@@ -457,10 +462,11 @@ impl PlayViewReply {
     fn into_stream_set(self) -> Result<StreamSet> {
         let access_limit_message = self.access_limit_message();
         if self.is_preview_only() {
-            return Err(Error::AccessRestricted(
-                access_limit_message
-                    .unwrap_or_else(|| APP_PREVIEW_ONLY_RESTRICTION_MESSAGE.to_owned()),
-            ));
+            let message = access_limit_message.map_or_else(
+                || APP_PREVIEW_ONLY_RESTRICTION_MESSAGE.to_owned(),
+                |message| format!("{APP_PREVIEW_ONLY_RESTRICTION_MESSAGE}: {message}"),
+            );
+            return Err(Error::AccessRestricted(message));
         }
         let video_info = self.video_info.ok_or_else(|| {
             access_limit_message
@@ -1051,6 +1057,13 @@ pub(crate) fn test_pgc_region_limit_response_frame(message: &str) -> Result<Vec<
 
 #[cfg(test)]
 pub(crate) fn test_pgc_preview_only_response_frame() -> Result<Vec<u8>> {
+    test_pgc_preview_only_response_frame_with_message(None)
+}
+
+#[cfg(test)]
+pub(crate) fn test_pgc_preview_only_response_frame_with_message(
+    message: Option<&str>,
+) -> Result<Vec<u8>> {
     let reply = PlayViewReply {
         video_info: Some(VideoInfo {
             quality: None,
@@ -1092,7 +1105,13 @@ pub(crate) fn test_pgc_preview_only_response_frame() -> Result<Vec<u8>> {
         business: Some(BusinessInfo {
             is_preview: Some(true),
         }),
-        view_info: None,
+        view_info: message.map(|message| ViewInfo {
+            dialog: Some(Dialog {
+                code: None,
+                msg: Some(message.to_owned()),
+            }),
+            toast: None,
+        }),
         pgc_view_info: None,
     };
     encode_grpc_frame(&reply.encode_to_vec(), false)
@@ -1119,6 +1138,20 @@ mod tests {
     fn grpc_frame_decodes_compressed_payload() -> anyhow::Result<()> {
         let frame = encode_grpc_frame(b"hello", true)?;
         assert_eq!(decode_grpc_frame(&frame)?, b"hello");
+        Ok(())
+    }
+
+    #[test]
+    fn grpc_frame_rejects_trailing_bytes() -> anyhow::Result<()> {
+        let mut frame = encode_grpc_frame(b"hello", false)?;
+        frame.extend_from_slice(b"extra");
+        let error = decode_grpc_frame(&frame)
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("trailing bytes should fail"))?;
+
+        assert!(
+            matches!(error, Error::InvalidInput(message) if message == "APP playurl gRPC response must contain exactly one frame")
+        );
         Ok(())
     }
 
@@ -1294,6 +1327,20 @@ mod tests {
 
         assert!(
             matches!(error, Error::AccessRestricted(message) if message == super::APP_PREVIEW_ONLY_RESTRICTION_MESSAGE)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn pgc_preview_only_streams_keep_stable_prefix_with_access_message() -> anyhow::Result<()> {
+        let frame =
+            super::test_pgc_preview_only_response_frame_with_message(Some("preview ended"))?;
+        let error = super::decode_play_view_response(&frame)
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("PGC preview-only response should fail"))?;
+
+        assert!(
+            matches!(error, Error::AccessRestricted(message) if message == "APP playurl returned preview-only streams: preview ended")
         );
         Ok(())
     }

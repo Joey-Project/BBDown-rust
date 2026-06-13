@@ -106,6 +106,15 @@ superseded_by:
 - Independent review fix: PGC APP restricted-area fallback now also accepts APP permission-denied
   gRPC status code 7 and the preview-only business signal. This keeps status-only gRPC denials and
   preview-only PGC response bodies from bypassing the configured proxy chain.
+- Follow-up independent review fix: preview-only PGC APP responses keep a stable fallback prefix
+  even when the response also includes non-region access-limit text, and the APP gRPC decoder now
+  rejects response bodies that contain bytes outside the single expected unary frame.
+- Validation after follow-up independent review fix:
+  `cargo test -p bbdown-core app_playurl --lib`,
+  `cargo test -p bbdown-core pgc_app --lib`,
+  `cargo fmt --all -- --check`,
+  `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/29f61f3e579e2a4166436b963eab301ac5d80d94/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`,
+  and `just ci`.
 - Targeted validation after codec-family fix:
   `cargo test -p bbdown-core app_playurl --lib`.
 - Targeted validation after codec-family fix:

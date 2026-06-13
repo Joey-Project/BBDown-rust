@@ -3595,7 +3595,7 @@ fn is_restricted_area_fallback_error(source: &StreamSource, error: &Error) -> bo
         Error::AccessRestricted(message) => {
             is_restricted_area_message(message)
                 || source == &StreamSource::PgcApp
-                    && message == app_playurl::APP_PREVIEW_ONLY_RESTRICTION_MESSAGE
+                    && message.starts_with(app_playurl::APP_PREVIEW_ONLY_RESTRICTION_MESSAGE)
         }
         _ => false,
     }
@@ -7527,7 +7527,8 @@ mod tests {
     async fn pgc_app_preview_only_body_falls_back_to_restricted_area_proxy() -> anyhow::Result<()> {
         let server = MockServer::start();
         mock_pgc_episode_metadata(&server);
-        let app_response = app_playurl::test_pgc_preview_only_response_frame()?;
+        let app_response =
+            app_playurl::test_pgc_preview_only_response_frame_with_message(Some("preview ended"))?;
         let app_playurl = server.mock(|when, then| {
             when.method(POST)
                 .path(app_playurl::PGC_PLAYURL_PATH)
@@ -7550,7 +7551,7 @@ mod tests {
         assert_eq!(entry.diagnostics.attempts[0].source, StreamSource::PgcApp);
         assert_eq!(
             entry.diagnostics.attempts[0].message.as_deref(),
-            Some("access restricted: APP playurl returned preview-only streams")
+            Some("access restricted: APP playurl returned preview-only streams: preview ended")
         );
         assert_eq!(entry.diagnostics.attempts[1].source, StreamSource::PgcProxy);
         assert_eq!(
