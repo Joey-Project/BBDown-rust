@@ -185,8 +185,11 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64",
+ "bytes",
  "flate2",
  "futures-util",
+ "http",
+ "http-body-util",
  "httpmock",
  "md-5",
  "prost",

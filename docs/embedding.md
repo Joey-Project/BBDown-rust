@@ -103,7 +103,9 @@ For BBDown-compatible APP gRPC playurl resolution, set
 `StreamSource::NormalApp` or `StreamSource::PgcApp`, and normalizes protobuf DASH/FLV media into
 the same `StreamSet` and `PlaybackPlan` surfaces as the HTTP modes. PGC APP gRPC failures with
 recognizable region-limit messages still enter the configured restricted-area HTTP playurl proxy
-fallback.
+fallback. Non-zero gRPC status is checked from initial headers and trailing metadata. Multiple APP
+legacy FLV segment qualities are reduced to one highest-quality segment set because the current
+`StreamSet` schema represents legacy FLV as a single ordered segment list.
 
 ## Batch And Collection Inputs
 

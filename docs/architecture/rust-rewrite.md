@@ -141,7 +141,10 @@ The same planning path honors `PlayurlMode::Tv` and `PlayurlMode::App`, so `Down
 `PlaybackPlan` can expose `NormalTv`, `PgcTv`, `NormalApp`, or `PgcApp` sources without changing the
 downstream request-spec shape. TV mode uses `Credentials::tv_access_key`. APP/gRPC mode uses
 `Credentials::tv_access_key` first, falls back to `Credentials::access_key`, sends BBDown-compatible
-protobuf gRPC frames, and normalizes APP DASH/FLV replies into `StreamSet`.
+protobuf gRPC frames, reads gRPC status from both initial headers and trailing metadata, and
+normalizes APP DASH/FLV replies into `StreamSet`. APP legacy FLV replies can contain segment sets
+for multiple qualities; because `StreamSet::flv_segments` is a single ordered list, the normalizer
+keeps one highest-quality FLV candidate instead of concatenating incompatible qualities.
 
 This repository does not implement player runtime responsibilities. A downstream cache/player
 service owns task state such as `preparing`, `playback_ready`, `downloading`, `completed`, and

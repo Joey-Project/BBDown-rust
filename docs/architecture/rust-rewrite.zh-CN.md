@@ -134,7 +134,10 @@ variants 排名，而不是接受写死的 H.264-first 策略。
 `PlaybackPlan` 可以暴露 `NormalTv`、`PgcTv`、`NormalApp` 或 `PgcApp` source，同时不改变下
 游 request-spec shape。TV mode 使用 `Credentials::tv_access_key`。APP/gRPC mode 优先使用
 `Credentials::tv_access_key`，再回退到 `Credentials::access_key`，发送 BBDown-compatible
-protobuf gRPC frame，并把 APP DASH/FLV 响应规范化为 `StreamSet`。
+protobuf gRPC frame，会从 initial headers 和 trailing metadata 读取 gRPC status，并把 APP
+DASH/FLV 响应规范化为 `StreamSet`。APP legacy FLV 响应可能包含多个清晰度的 segment set；
+由于 `StreamSet::flv_segments` 是单个有序列表，normalizer 会保留最高质量的一个 FLV
+candidate，而不是拼接互不兼容的清晰度。
 
 本仓库不实现播放器运行时职责。下游 cache/player service 负责 `preparing`、
 `playback_ready`、`downloading`、`completed`、`failed` 等 task state；HLS session 目录、

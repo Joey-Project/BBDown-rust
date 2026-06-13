@@ -399,7 +399,7 @@ impl PlayViewReply {
             .and_then(|value| u32::try_from(value / 1000).ok());
         let mut qualities = Vec::new();
         let mut videos = Vec::new();
-        let mut flv_segments = Vec::new();
+        let mut selected_flv: Option<FlvCandidate> = None;
         for item in video_info.stream_list {
             let stream_info = item.stream_info;
             if let Some(dash_video) = item.dash_video
@@ -423,14 +423,38 @@ impl PlayViewReply {
                 videos.push(stream);
             }
             if let Some(segment_video) = item.segment_video {
-                flv_segments.extend(
-                    segment_video
-                        .segment
-                        .into_iter()
-                        .enumerate()
-                        .filter_map(|(index, segment)| segment.into_flv_segment(index)),
-                );
+                let segments = segment_video
+                    .segment
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(index, segment)| segment.into_flv_segment(index))
+                    .collect::<Vec<_>>();
+                if !segments.is_empty() {
+                    let candidate = FlvCandidate {
+                        quality: stream_info
+                            .as_ref()
+                            .and_then(|info| info.quality)
+                            .or(fallback_quality),
+                        description: stream_info.as_ref().and_then(|info| {
+                            info.description
+                                .as_ref()
+                                .filter(|value| !value.is_empty())
+                                .cloned()
+                        }),
+                        segments,
+                    };
+                    if should_replace_flv_candidate(selected_flv.as_ref(), &candidate) {
+                        selected_flv = Some(candidate);
+                    }
+                }
             }
+        }
+        let mut flv_segments = Vec::new();
+        if let Some(candidate) = selected_flv {
+            if let Some(quality) = candidate.quality {
+                push_stream_quality(&mut qualities, quality, candidate.description);
+            }
+            flv_segments = candidate.segments;
         }
         let mut audios = video_info
             .dash_audio
@@ -452,7 +476,10 @@ impl PlayViewReply {
         if videos.is_empty() && audios.is_empty() && flv_segments.is_empty() {
             return Err(Error::MissingField("APP playurl streams"));
         }
-        let accept_quality = videos.iter().map(|stream| stream.id).collect::<Vec<_>>();
+        let accept_quality = qualities
+            .iter()
+            .map(|quality| quality.id)
+            .collect::<Vec<_>>();
         Ok(StreamSet {
             videos,
             audios,
@@ -461,6 +488,19 @@ impl PlayViewReply {
             qualities,
             duration_seconds,
         })
+    }
+}
+
+struct FlvCandidate {
+    quality: Option<u32>,
+    description: Option<String>,
+    segments: Vec<FlvSegment>,
+}
+
+fn should_replace_flv_candidate(current: Option<&FlvCandidate>, candidate: &FlvCandidate) -> bool {
+    match current {
+        None => true,
+        Some(current) => candidate.quality.unwrap_or(0) > current.quality.unwrap_or(0),
     }
 }
 
@@ -785,7 +825,11 @@ pub(crate) fn test_play_view_response_frame(video_url: &str) -> Result<Vec<u8>> 
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_grpc_frame, encode_grpc_frame, test_play_view_response_frame};
+    use super::{
+        PlayViewReply, ResponseUrl, SegmentVideo, StreamInfo, StreamItem, VideoInfo,
+        decode_grpc_frame, encode_grpc_frame, test_play_view_response_frame,
+    };
+    use prost::Message as _;
 
     #[test]
     fn grpc_frame_decodes_uncompressed_payload() -> anyhow::Result<()> {
@@ -814,5 +858,59 @@ mod tests {
         assert_eq!(streams.duration_seconds, Some(123));
         assert_eq!(streams.qualities[0].description.as_deref(), Some("1080P"));
         Ok(())
+    }
+
+    #[test]
+    fn play_view_reply_keeps_one_flv_quality() -> anyhow::Result<()> {
+        let reply = PlayViewReply {
+            video_info: Some(VideoInfo {
+                quality: None,
+                format: None,
+                timelength: Some(60_000),
+                video_codecid: None,
+                stream_list: vec![
+                    flv_stream_item(32, "480P", "https://app.example/480.flv"),
+                    flv_stream_item(64, "720P", "https://app.example/720.flv"),
+                ],
+                dash_audio: Vec::new(),
+                dolby: None,
+                flac: None,
+            }),
+        };
+        let frame = encode_grpc_frame(&reply.encode_to_vec(), false)?;
+        let streams = super::decode_play_view_response(&frame)?;
+
+        assert_eq!(streams.flv_segments.len(), 1);
+        assert_eq!(streams.flv_segments[0].url, "https://app.example/720.flv");
+        assert_eq!(streams.accept_quality, vec![64]);
+        assert_eq!(streams.qualities[0].description.as_deref(), Some("720P"));
+        Ok(())
+    }
+
+    fn flv_stream_item(quality: u32, description: &str, url: &str) -> StreamItem {
+        StreamItem {
+            stream_info: Some(StreamInfo {
+                quality: Some(quality),
+                format: Some("flv".to_owned()),
+                description: Some(description.to_owned()),
+                err_code: None,
+                need_vip: None,
+                need_login: None,
+                intact: None,
+                no_rexcode: None,
+                attribute: None,
+            }),
+            dash_video: None,
+            segment_video: Some(SegmentVideo {
+                segment: vec![ResponseUrl {
+                    order: Some(1),
+                    length: Some(30_000),
+                    size: Some(10_000),
+                    url: Some(url.to_owned()),
+                    backup_url: Vec::new(),
+                    md5: None,
+                }],
+            }),
+        }
     }
 }

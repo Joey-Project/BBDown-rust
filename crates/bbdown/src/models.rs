@@ -140,6 +140,7 @@ pub struct DownloadEntry {
     pub danmaku: DanmakuTrack,
 }
 
+#[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StreamSource {

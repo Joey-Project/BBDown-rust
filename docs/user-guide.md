@@ -153,7 +153,10 @@ request specs from BBDown-compatible APP gRPC playurl endpoints. APP mode applie
 and PGC episodes, uses the saved TV access key first and then the generic imported access key, and
 can be pointed at mocks or proxies with `--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` and
 `--app-pgc-grpc-base` / `BBDOWN_APP_PGC_GRPC_BASE`. PGC APP gRPC region-limit errors still fall
-back to configured restricted-area HTTP playurl proxies.
+back to configured restricted-area HTTP playurl proxies. The resolver checks non-zero gRPC status
+in both initial headers and trailing metadata. If an APP response returns multiple legacy FLV
+segment qualities, only the highest-quality segment set is exposed so the downloader and playback
+JSON never mix segments from different qualities.
 
 ## Downloads
 

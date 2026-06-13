@@ -32,9 +32,12 @@ superseded_by:
 - APP playurl requests use `Credentials::tv_access_key` first and fall back to
   `Credentials::access_key`; WEB cookies are not sent to APP gRPC endpoints.
 - APP gRPC non-zero `grpc-status` responses are surfaced as API errors with decoded
-  `grpc-message` text.
+  `grpc-message` text from initial headers or trailing metadata.
+- APP legacy FLV responses with multiple segment qualities are normalized to one highest-quality
+  segment set instead of concatenating incompatible qualities into `StreamSet::flv_segments`.
 - PGC APP region-limit errors can fall back to the existing restricted-area HTTP playurl proxy
-  resolver and record `PgcApp` then `PgcProxy` diagnostics.
+  resolver, reuse the APP playurl access key for proxy requests, and record `PgcApp` then
+  `PgcProxy` diagnostics.
 
 ## Next Steps
 - Continue feed/list resolver work for history, following/UP pages, recommendation pages, and
@@ -57,3 +60,8 @@ superseded_by:
 - Independent review fix: the PR readiness `independent-codex-pr-review` found that APP PGC
   region-limit failures bypassed restricted-area proxy fallback and that non-zero gRPC status
   headers were not reported clearly; fixed both paths and added regression tests.
+- Second review fix: independent and frozen reviews found that APP gRPC trailers were not preserved,
+  APP PGC proxy fallback did not cover `tv_access_key`-only credentials, and multiple APP FLV
+  qualities could be mixed as one segment list. Fixed by collecting response trailers, reusing the
+  APP access-key selection for PGC proxy fallback, selecting a single highest-quality FLV candidate,
+  marking `StreamSource` non-exhaustive for future source variants, and adding regression tests.
