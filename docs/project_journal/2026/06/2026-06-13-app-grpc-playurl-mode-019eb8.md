@@ -45,6 +45,8 @@ superseded_by:
 - APP DASH width, height, and frame-rate metadata is preserved on `MediaStream` and playback JSON.
 - APP numeric video codec ids are exposed as structured `codec_family` metadata instead of
   fabricated exact MP4 codec strings; exact `codecs` remains unset when APP does not provide it.
+- APP FLAC DASH audio exposes `codec_family=Flac` with `audio/mp4` MIME and leaves exact `codecs`
+  unset instead of describing the fMP4 track as raw FLAC.
 
 ## Next Steps
 - Continue feed/list resolver work for history, following/UP pages, recommendation pages, and
@@ -91,6 +93,9 @@ superseded_by:
   Added `codec_family` metadata to `MediaStream` / `MediaRequestSpec`, kept playback selection and
   ABR grouping family-aware, and documented that downstreams should validate exact codec strings
   only when present.
+- Frozen review fix: APP FLAC DASH audio no longer emits the misleading `audio/flac` + `flac`
+  pair; it now preserves the FLAC family while leaving exact codec unknown and keeping the DASH
+  MIME as `audio/mp4`.
 - Targeted validation after codec-family fix:
   `cargo test -p bbdown-core app_playurl --lib`.
 - Targeted validation after codec-family fix:

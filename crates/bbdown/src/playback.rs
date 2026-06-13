@@ -1688,6 +1688,41 @@ mod tests {
     }
 
     #[test]
+    fn codec_family_keeps_family_only_app_audio_visible() -> anyhow::Result<()> {
+        let mut flac_audio = audio_stream("flac", 800_000);
+        flac_audio.codecs = None;
+        flac_audio.codec_family = Some(CodecFamily::Flac);
+        let plan = test_plan(StreamSet {
+            videos: vec![media_stream(80, "avc1.640028", 1_200_000)],
+            audios: vec![flac_audio],
+            flv_segments: Vec::new(),
+            accept_quality: vec![80],
+            qualities: Vec::new(),
+            duration_seconds: Some(90),
+        });
+
+        let playback = PlaybackPlan::from_download_plan(&plan, &[]);
+        let variant = &playback.entries[0].variants[0];
+        let audio = variant
+            .audio
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("audio request"))?;
+        let hint = &variant.selection_hints.avplayer;
+
+        assert_eq!(audio.codecs, None);
+        assert_eq!(audio.codec_family, Some(PlaybackCodecFamily::Flac));
+        assert_eq!(hint.audio_codec, None);
+        assert_eq!(hint.audio_codec_family, Some(PlaybackCodecFamily::Flac));
+        assert_eq!(hint.format_key, "h264+flac");
+        assert!(!hint.playable);
+        assert!(
+            hint.reasons
+                .contains(&PlaybackSelectionReason::UnsupportedAudioCodec)
+        );
+        Ok(())
+    }
+
+    #[test]
     fn abr_groups_separate_other_video_codec_strings() {
         let first_other = media_stream(80, "future.1", 1_200_000);
         let second_other = media_stream(64, "future.2", 800_000);

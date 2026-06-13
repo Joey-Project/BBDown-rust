@@ -700,7 +700,7 @@ impl DashItem {
             id: self.id?,
             base_url: normalize_media_url(&base_url),
             backup_urls: normalize_media_url_list(self.backup_url),
-            codecs: Some(audio_codec(kind, self.codecid)),
+            codecs: audio_codec(kind, self.codecid),
             codec_family: Some(audio_codec_family(kind)),
             bandwidth: self.bandwidth.map(u64::from),
             width: None,
@@ -738,8 +738,7 @@ enum AudioKind {
 impl AudioKind {
     const fn mime_type(self) -> &'static str {
         match self {
-            Self::Aac | Self::Dolby => "audio/mp4",
-            Self::Flac => "audio/flac",
+            Self::Aac | Self::Flac | Self::Dolby => "audio/mp4",
         }
     }
 }
@@ -753,11 +752,11 @@ fn video_codec_family(codecid: Option<u32>) -> Option<CodecFamily> {
     }
 }
 
-fn audio_codec(kind: AudioKind, _codecid: Option<u32>) -> String {
+fn audio_codec(kind: AudioKind, _codecid: Option<u32>) -> Option<String> {
     match kind {
-        AudioKind::Aac => "mp4a.40.2".to_owned(),
-        AudioKind::Flac => "flac".to_owned(),
-        AudioKind::Dolby => "ec-3".to_owned(),
+        AudioKind::Aac => Some("mp4a.40.2".to_owned()),
+        AudioKind::Flac => None,
+        AudioKind::Dolby => Some("ec-3".to_owned()),
     }
 }
 
@@ -1076,8 +1075,9 @@ mod tests {
         assert_eq!(streams.videos[0].frame_rate.as_deref(), Some("60"));
         assert_eq!(streams.audios[0].codecs.as_deref(), Some("mp4a.40.2"));
         assert_eq!(streams.audios[0].codec_family, Some(CodecFamily::Aac));
-        assert_eq!(streams.audios[1].codecs.as_deref(), Some("flac"));
+        assert_eq!(streams.audios[1].codecs, None);
         assert_eq!(streams.audios[1].codec_family, Some(CodecFamily::Flac));
+        assert_eq!(streams.audios[1].mime_type.as_deref(), Some("audio/mp4"));
         assert_eq!(streams.audios[2].codecs.as_deref(), Some("ec-3"));
         assert_eq!(streams.audios[2].codec_family, Some(CodecFamily::Dolby));
         assert_eq!(streams.flv_segments[0].order, 1);
