@@ -101,7 +101,9 @@ For BBDown-compatible APP gRPC playurl resolution, set
 `EndpointConfig::with_app_pgc_grpc_base` for PGC mocks or proxies. APP mode uses
 `Credentials::tv_access_key` first and falls back to `Credentials::access_key`, emits
 `StreamSource::NormalApp` or `StreamSource::PgcApp`, and normalizes protobuf DASH/FLV media into
-the same `StreamSet` and `PlaybackPlan` surfaces as the HTTP modes.
+the same `StreamSet` and `PlaybackPlan` surfaces as the HTTP modes. PGC APP gRPC failures with
+recognizable region-limit messages still enter the configured restricted-area HTTP playurl proxy
+fallback.
 
 ## Batch And Collection Inputs
 

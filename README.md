@@ -81,7 +81,8 @@ Set `--playurl-mode app` or `BBDOWN_PLAYURL_MODE=app` to use BBDown-compatible A
 endpoints for normal videos and PGC episodes. APP mode uses `Credentials::tv_access_key` first and
 falls back to the generic `Credentials::access_key`; use `--app-grpc-base` /
 `BBDOWN_APP_GRPC_BASE` and `--app-pgc-grpc-base` / `BBDOWN_APP_PGC_GRPC_BASE` for mock or proxy
-endpoint overrides.
+endpoint overrides. PGC APP gRPC responses with recognizable region-limit messages still fall back
+to configured restricted-area HTTP playurl proxies.
 
 Download selected media files:
 

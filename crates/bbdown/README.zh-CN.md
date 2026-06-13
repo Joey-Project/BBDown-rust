@@ -80,7 +80,8 @@ TV mode 使用 `Credentials::tv_access_key`，不会复用通用 intl access key
 `ClientConfig::with_playurl_mode(PlayurlMode::App)`、
 `EndpointConfig::with_app_grpc_base` 和 `EndpointConfig::with_app_pgc_grpc_base`。APP mode
 适用于普通视频和 PGC 分集，优先使用 `Credentials::tv_access_key`，再回退到
-`Credentials::access_key`，并输出规范化后的 `StreamSet` / `PlaybackPlan` 媒体规格。
+`Credentials::access_key`，并输出规范化后的 `StreamSet` / `PlaybackPlan` 媒体规格；PGC
+出现可识别区域限制错误时仍可回退到已配置的 restricted-area HTTP playurl proxy。
 嵌入应用需要 BBDown 风格或应用自定义输出名时，可以设置 `DownloadPathTemplates`。模板会
 为输出根目录、条目目录和 mux 后文件名 stem 渲染经过清洗的文件名组件；媒体和 sidecar 文
 件名保持稳定，以支持续传和归档记录。条目模板必须在选中条目之间渲染出唯一目录名。

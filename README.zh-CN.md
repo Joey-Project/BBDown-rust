@@ -78,7 +78,8 @@ access key，并可用 `--tv-api-base` / `BBDOWN_TV_API_BASE` 覆盖端点。
 BBDown-compatible APP gRPC playurl 端点解析。APP mode 优先使用
 `Credentials::tv_access_key`，没有 TV token 时回退到通用 `Credentials::access_key`；mock
 或代理端点可用 `--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` 和 `--app-pgc-grpc-base` /
-`BBDOWN_APP_PGC_GRPC_BASE` 覆盖。
+`BBDOWN_APP_PGC_GRPC_BASE` 覆盖。PGC APP gRPC 响应如果带有可识别的区域限制消息，仍会
+回退到已配置的 restricted-area HTTP playurl proxy。
 
 下载所选媒体文件：
 

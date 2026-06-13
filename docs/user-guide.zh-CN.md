@@ -141,7 +141,8 @@ TV mode 适用于普通视频和 PGC 分集，使用 `auth login-tv` 保存的 T
 `--playurl-mode app` 或 `BBDOWN_PLAYURL_MODE=app`。APP mode 适用于普通视频和 PGC 分集，
 会优先使用已保存的 TV access key，再回退到通用导入 access key；mock 或代理可通过
 `--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` 和 `--app-pgc-grpc-base` /
-`BBDOWN_APP_PGC_GRPC_BASE` 配置。
+`BBDOWN_APP_PGC_GRPC_BASE` 配置。PGC APP gRPC 区域限制错误仍会回退到已配置的
+restricted-area HTTP playurl proxy。
 
 ## 下载
 

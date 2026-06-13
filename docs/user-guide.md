@@ -152,7 +152,8 @@ Use `--playurl-mode app` or `BBDOWN_PLAYURL_MODE=app` when a downstream integrat
 request specs from BBDown-compatible APP gRPC playurl endpoints. APP mode applies to normal videos
 and PGC episodes, uses the saved TV access key first and then the generic imported access key, and
 can be pointed at mocks or proxies with `--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` and
-`--app-pgc-grpc-base` / `BBDOWN_APP_PGC_GRPC_BASE`.
+`--app-pgc-grpc-base` / `BBDOWN_APP_PGC_GRPC_BASE`. PGC APP gRPC region-limit errors still fall
+back to configured restricted-area HTTP playurl proxies.
 
 ## Downloads
 

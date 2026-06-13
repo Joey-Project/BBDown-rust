@@ -5,7 +5,7 @@ status: completed
 created: 2026-06-13
 updated: 2026-06-13
 branch: wip/app-grpc-playurl-mode
-pr:
+pr: 31
 supersedes: []
 superseded_by:
 ---
@@ -31,6 +31,10 @@ superseded_by:
   `BBDOWN_APP_PGC_GRPC_BASE`.
 - APP playurl requests use `Credentials::tv_access_key` first and fall back to
   `Credentials::access_key`; WEB cookies are not sent to APP gRPC endpoints.
+- APP gRPC non-zero `grpc-status` responses are surfaced as API errors with decoded
+  `grpc-message` text.
+- PGC APP region-limit errors can fall back to the existing restricted-area HTTP playurl proxy
+  resolver and record `PgcApp` then `PgcProxy` diagnostics.
 
 ## Next Steps
 - Continue feed/list resolver work for history, following/UP pages, recommendation pages, and
@@ -40,6 +44,9 @@ superseded_by:
 
 ## Evidence
 - Targeted validation: `cargo test -p bbdown-core app_playurl --lib`.
+- Targeted validation: `cargo test -p bbdown-core app_grpc_status_error_is_reported --lib`.
+- Targeted validation:
+  `cargo test -p bbdown-core pgc_app_streams_fall_back_to_restricted_area_proxy --lib`.
 - Targeted validation: `cargo test -p bbdown-cli --test cli_e2e playback_json_uses_app_playurl_mode`.
 - Full validation: `just ci`.
 - Journal validation:
@@ -47,3 +54,6 @@ superseded_by:
 - Internal review fix: helper-backed `codex-readonly` found that APP gRPC requests need reqwest
   HTTP/2 support when default reqwest features are disabled; fixed by enabling the `http2` feature
   in the workspace reqwest dependency and rerunning `just ci`.
+- Independent review fix: the PR readiness `independent-codex-pr-review` found that APP PGC
+  region-limit failures bypassed restricted-area proxy fallback and that non-zero gRPC status
+  headers were not reported clearly; fixed both paths and added regression tests.

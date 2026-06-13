@@ -98,7 +98,8 @@ TV mode 当前适用于普通视频和 PGC 分集。
 `EndpointConfig::with_app_pgc_grpc_base`。APP mode 优先使用
 `Credentials::tv_access_key`，再回退到 `Credentials::access_key`；输出
 `StreamSource::NormalApp` 或 `StreamSource::PgcApp`，并把 protobuf DASH/FLV 媒体规范化到与
-HTTP modes 相同的 `StreamSet` 和 `PlaybackPlan` 表面。
+HTTP modes 相同的 `StreamSet` 和 `PlaybackPlan` 表面。PGC APP gRPC 失败如果带有可识别的
+区域限制消息，仍会进入已配置的 restricted-area HTTP playurl proxy fallback。
 
 ## 批量和集合输入
 
