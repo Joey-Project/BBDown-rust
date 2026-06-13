@@ -20,6 +20,8 @@
   - `docs/project_journal/2026/06/2026-06-08-bilingual-docs-live-e2e-019ea775.md`.
   - `docs/project_journal/2026/06/2026-06-08-release-automation-019ea7.md`.
   - `docs/project_journal/2026/06/2026-06-09-release-0-1-0-019ead.md`.
+  - `docs/project_journal/2026/06/2026-06-13-app-grpc-playurl-mode-019eb8.md`.
+  - `docs/project_journal/2026/06/2026-06-13-version-0-3-0-bump-019eb8.md`.
 - The originally planned rewrite continuation slices are complete through download archive and
   duplicate decision handling.
 - Human-facing docs now have English and Simplified Chinese versions, and the latest real live e2e
@@ -29,8 +31,8 @@
   Release and crates.io.
 - Version `0.1.0` has shipped through that flow as GitHub Release `v0.1.0` and crates.io package
   `bbdown-core` `0.1.0`.
-- Current post-release development is on version `0.2.0` because batch collection metadata adds the
-  breaking `ResolvedContent::Collection` API shape after `0.1.0`.
+- Current post-release development is on version `0.3.0` after the completed batch collection,
+  cover/sidecar-only, playback request/ABR, TV playurl, and APP gRPC playurl API work.
 
 ## Recovery Pointers
 
