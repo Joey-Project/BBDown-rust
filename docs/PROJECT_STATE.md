@@ -32,9 +32,9 @@
   Release and crates.io.
 - Version `0.1.0` has shipped through that flow as GitHub Release `v0.1.0` and crates.io package
   `bbdown-core` `0.1.0`.
-- Current `0.2.0` release source is `release/0.2.0` at
-  `a1c6062561f3902ea31394151b50a57764f521e0`; use `Create Release Candidate` from `master` with
-  `source_ref=release/0.2.0` to create the next `v0.2.0-rc.*` tag.
+- Current `0.2.0` release source is the `release/0.2.0` branch; use `Create Release Candidate`
+  from that branch to create the next `v0.2.0-rc.*` tag after the RC workflow provenance fix lands
+  there, then verify the RC tag points at the release branch HEAD used by the workflow run.
 - `v0.3.0-rc.1` is abandoned; its promotion run was cancelled before final tag, GitHub Release, or
   crates.io publication.
 
