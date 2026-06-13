@@ -28,6 +28,8 @@ const APP_ID: i32 = 1;
 const APP_REGION: &str = "CN";
 const APP_LANGUAGE: &str = "zh";
 const APP_NETWORK_OID: &str = "46007";
+pub(crate) const APP_PREVIEW_ONLY_RESTRICTION_MESSAGE: &str =
+    "APP playurl returned preview-only streams";
 
 pub(crate) fn play_view_request_body(content_id: u64, cid: u64, is_pgc: bool) -> Result<Vec<u8>> {
     let content_id = i64::try_from(content_id)
@@ -457,7 +459,7 @@ impl PlayViewReply {
         if self.is_preview_only() {
             return Err(Error::AccessRestricted(
                 access_limit_message
-                    .unwrap_or_else(|| "APP playurl returned preview-only streams".to_owned()),
+                    .unwrap_or_else(|| APP_PREVIEW_ONLY_RESTRICTION_MESSAGE.to_owned()),
             ));
         }
         let video_info = self.video_info.ok_or_else(|| {
@@ -1048,11 +1050,60 @@ pub(crate) fn test_pgc_region_limit_response_frame(message: &str) -> Result<Vec<
 }
 
 #[cfg(test)]
+pub(crate) fn test_pgc_preview_only_response_frame() -> Result<Vec<u8>> {
+    let reply = PlayViewReply {
+        video_info: Some(VideoInfo {
+            quality: None,
+            format: None,
+            timelength: Some(30_000),
+            video_codecid: None,
+            stream_list: vec![StreamItem {
+                stream_info: Some(StreamInfo {
+                    quality: Some(32),
+                    format: Some("dash".to_owned()),
+                    description: Some("Preview".to_owned()),
+                    err_code: None,
+                    limit: None,
+                    need_vip: None,
+                    need_login: None,
+                    intact: None,
+                    no_rexcode: None,
+                    attribute: None,
+                }),
+                dash_video: Some(DashVideo {
+                    base_url: Some("https://app.example/preview.m4s".to_owned()),
+                    backup_url: Vec::new(),
+                    bandwidth: Some(300_000),
+                    codecid: Some(7),
+                    md5: None,
+                    size: Some(1_000_000),
+                    audio_id: Some(30280),
+                    no_rexcode: None,
+                    frame_rate: None,
+                    width: Some(640),
+                    height: Some(360),
+                }),
+                segment_video: None,
+            }],
+            dash_audio: Vec::new(),
+            dolby: None,
+            flac: None,
+        }),
+        business: Some(BusinessInfo {
+            is_preview: Some(true),
+        }),
+        view_info: None,
+        pgc_view_info: None,
+    };
+    encode_grpc_frame(&reply.encode_to_vec(), false)
+}
+
+#[cfg(test)]
 mod tests {
     use super::{
-        BusinessInfo, DashItem, DashVideo, Dialog, PlayViewReply, PlayViewReq, ResponseUrl,
-        SegmentVideo, StreamInfo, StreamItem, VideoInfo, ViewInfo, decode_grpc_frame,
-        encode_grpc_frame, play_view_request_body, test_play_view_response_frame,
+        DashItem, Dialog, PlayViewReply, PlayViewReq, ResponseUrl, SegmentVideo, StreamInfo,
+        StreamItem, VideoInfo, ViewInfo, decode_grpc_frame, encode_grpc_frame,
+        play_view_request_body, test_play_view_response_frame,
     };
     use crate::{CodecFamily, Error};
     use prost::Message as _;
@@ -1236,57 +1287,13 @@ mod tests {
 
     #[test]
     fn pgc_preview_only_streams_map_to_access_restricted() -> anyhow::Result<()> {
-        let reply = PlayViewReply {
-            video_info: Some(VideoInfo {
-                quality: None,
-                format: None,
-                timelength: Some(30_000),
-                video_codecid: None,
-                stream_list: vec![StreamItem {
-                    stream_info: Some(StreamInfo {
-                        quality: Some(32),
-                        format: Some("dash".to_owned()),
-                        description: Some("Preview".to_owned()),
-                        err_code: None,
-                        limit: None,
-                        need_vip: None,
-                        need_login: None,
-                        intact: None,
-                        no_rexcode: None,
-                        attribute: None,
-                    }),
-                    dash_video: Some(DashVideo {
-                        base_url: Some("https://app.example/preview.m4s".to_owned()),
-                        backup_url: Vec::new(),
-                        bandwidth: Some(300_000),
-                        codecid: Some(7),
-                        md5: None,
-                        size: Some(1_000_000),
-                        audio_id: Some(30280),
-                        no_rexcode: None,
-                        frame_rate: None,
-                        width: Some(640),
-                        height: Some(360),
-                    }),
-                    segment_video: None,
-                }],
-                dash_audio: Vec::new(),
-                dolby: None,
-                flac: None,
-            }),
-            business: Some(BusinessInfo {
-                is_preview: Some(true),
-            }),
-            view_info: None,
-            pgc_view_info: None,
-        };
-        let frame = encode_grpc_frame(&reply.encode_to_vec(), false)?;
+        let frame = super::test_pgc_preview_only_response_frame()?;
         let error = super::decode_play_view_response(&frame)
             .err()
             .ok_or_else(|| anyhow::anyhow!("PGC preview-only response should fail"))?;
 
         assert!(
-            matches!(error, Error::AccessRestricted(message) if message == "APP playurl returned preview-only streams")
+            matches!(error, Error::AccessRestricted(message) if message == super::APP_PREVIEW_ONLY_RESTRICTION_MESSAGE)
         );
         Ok(())
     }

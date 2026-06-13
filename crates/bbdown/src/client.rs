@@ -2230,7 +2230,7 @@ impl BiliClient {
         error: Error,
     ) -> Result<ResolvedStreamSet> {
         if self.config.restricted_area.proxies.is_empty()
-            || !is_restricted_area_fallback_error(&error)
+            || !is_restricted_area_fallback_error(&official_source, &error)
         {
             return Err(error);
         }
@@ -3587,10 +3587,15 @@ fn append_pgc_playurl_params(
     }
 }
 
-fn is_restricted_area_fallback_error(error: &Error) -> bool {
+fn is_restricted_area_fallback_error(source: &StreamSource, error: &Error) -> bool {
     match error {
-        Error::Api { message, .. } | Error::AccessRestricted(message) => {
+        Error::Api { code, message } => {
+            is_restricted_area_message(message) || source == &StreamSource::PgcApp && *code == 7
+        }
+        Error::AccessRestricted(message) => {
             is_restricted_area_message(message)
+                || source == &StreamSource::PgcApp
+                    && message == app_playurl::APP_PREVIEW_ONLY_RESTRICTION_MESSAGE
         }
         _ => false,
     }
@@ -7247,6 +7252,67 @@ mod tests {
         Ok(())
     }
 
+    fn mock_pgc_app_proxy_playurl(server: &MockServer) -> httpmock::Mock<'_> {
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/proxy-playurl")
+                .query_param("proxy_token", "PROXY_SECRET")
+                .query_param("ep_id", "1000")
+                .query_param("area", "hk")
+                .query_param("access_key", "ACCESS_SECRET")
+                .header_missing("cookie");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "result": {
+                    "video_info": {
+                        "dash": {
+                            "duration": 456,
+                            "video": [{
+                                "id": 64,
+                                "baseUrl": "https://proxy.example/64.m4s",
+                                "base_url": "https://proxy.example/64.m4s",
+                                "codecs": "hev1",
+                                "bandwidth": 900,
+                                "mimeType": "video/mp4",
+                                "mime_type": "video/mp4"
+                            }],
+                            "audio": []
+                        }
+                    }
+                }
+            }));
+        })
+    }
+
+    fn pgc_app_proxy_client(server: &MockServer) -> BiliClient {
+        BiliClient::new(
+            ClientConfig::default()
+                .with_endpoints(
+                    EndpointConfig::default()
+                        .with_api_base(server.base_url())
+                        .with_pgc_base(server.base_url())
+                        .with_app_pgc_grpc_base(server.base_url()),
+                )
+                .with_credentials(
+                    Credentials::default()
+                        .with_tv_access_key("TV_ACCESS")
+                        .with_access_key("ACCESS_SECRET"),
+                )
+                .with_restricted_area(
+                    RestrictedAreaConfig::default()
+                        .with_area_hint(RestrictedArea::Hk)
+                        .with_proxy(RestrictedAreaProxy::playurl(
+                            format!(
+                                "{}/proxy-playurl?proxy_token=PROXY_SECRET",
+                                server.base_url()
+                            ),
+                            Some(RestrictedArea::Hk),
+                        )),
+                )
+                .with_playurl_mode(PlayurlMode::App),
+        )
+    }
+
     #[tokio::test]
     async fn pgc_app_streams_fall_back_to_restricted_area_proxy() -> anyhow::Result<()> {
         let server = MockServer::start();
@@ -7336,6 +7402,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pgc_app_status_code_falls_back_to_restricted_area_proxy() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        mock_pgc_episode_metadata(&server);
+        let app_playurl = server.mock(|when, then| {
+            when.method(POST)
+                .path(app_playurl::PGC_PLAYURL_PATH)
+                .header("content-type", "application/grpc")
+                .header("authorization", "identify_v1 TV_ACCESS")
+                .header_missing("cookie");
+            then.status(200).header("grpc-status", "7");
+        });
+        let proxy_playurl = mock_pgc_app_proxy_playurl(&server);
+        server_mock_player_v2(&server, 10, 100);
+
+        let client = pgc_app_proxy_client(&server);
+        let plan = client.plan_download("ep1000", None).await?;
+
+        app_playurl.assert();
+        proxy_playurl.assert();
+        let entry = &plan.entries[0];
+        assert_eq!(entry.source, StreamSource::PgcProxy);
+        assert_eq!(entry.diagnostics.attempts.len(), 2);
+        assert_eq!(entry.diagnostics.attempts[0].source, StreamSource::PgcApp);
+        assert_eq!(
+            entry.diagnostics.attempts[0].message.as_deref(),
+            Some("API code 7: APP playurl gRPC request failed")
+        );
+        assert_eq!(entry.diagnostics.attempts[1].source, StreamSource::PgcProxy);
+        assert_eq!(
+            entry.streams.videos[0].base_url,
+            "https://proxy.example/64.m4s"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn pgc_app_body_limit_falls_back_to_restricted_area_proxy() -> anyhow::Result<()> {
         let server = MockServer::start();
         mock_pgc_episode_metadata(&server);
@@ -7413,6 +7515,43 @@ mod tests {
         assert_eq!(entry.source, StreamSource::PgcProxy);
         assert_eq!(entry.diagnostics.attempts.len(), 2);
         assert_eq!(entry.diagnostics.attempts[0].source, StreamSource::PgcApp);
+        assert_eq!(entry.diagnostics.attempts[1].source, StreamSource::PgcProxy);
+        assert_eq!(
+            entry.streams.videos[0].base_url,
+            "https://proxy.example/64.m4s"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pgc_app_preview_only_body_falls_back_to_restricted_area_proxy() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        mock_pgc_episode_metadata(&server);
+        let app_response = app_playurl::test_pgc_preview_only_response_frame()?;
+        let app_playurl = server.mock(|when, then| {
+            when.method(POST)
+                .path(app_playurl::PGC_PLAYURL_PATH)
+                .header("content-type", "application/grpc")
+                .header("authorization", "identify_v1 TV_ACCESS")
+                .header_missing("cookie");
+            then.status(200).body(app_response.clone());
+        });
+        let proxy_playurl = mock_pgc_app_proxy_playurl(&server);
+        server_mock_player_v2(&server, 10, 100);
+
+        let client = pgc_app_proxy_client(&server);
+        let plan = client.plan_download("ep1000", None).await?;
+
+        app_playurl.assert();
+        proxy_playurl.assert();
+        let entry = &plan.entries[0];
+        assert_eq!(entry.source, StreamSource::PgcProxy);
+        assert_eq!(entry.diagnostics.attempts.len(), 2);
+        assert_eq!(entry.diagnostics.attempts[0].source, StreamSource::PgcApp);
+        assert_eq!(
+            entry.diagnostics.attempts[0].message.as_deref(),
+            Some("access restricted: APP playurl returned preview-only streams")
+        );
         assert_eq!(entry.diagnostics.attempts[1].source, StreamSource::PgcProxy);
         assert_eq!(
             entry.streams.videos[0].base_url,

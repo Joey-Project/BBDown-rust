@@ -81,8 +81,9 @@ TV mode 使用 `Credentials::tv_access_key`，不会复用通用 intl access key
 `EndpointConfig::with_app_grpc_base` 和 `EndpointConfig::with_app_pgc_grpc_base`。APP mode
 适用于普通视频和 PGC 分集，优先使用 `Credentials::tv_access_key`，再回退到
 `Credentials::access_key`，并输出规范化后的 `StreamSet` / `PlaybackPlan` 媒体规格；PGC
-出现由 gRPC status 或 PGC response body 报告的可识别区域限制错误时，仍可回退到已配置的
-restricted-area HTTP playurl proxy，且 proxy URL 只使用通用 access key。APP gRPC 非零 status 会读取 initial headers 和
+出现 restricted 或 preview-only 信号时，仍可回退到已配置的 restricted-area HTTP playurl
+proxy，且 proxy URL 只使用通用 access key。这些信号可以来自区域限制消息、APP
+permission-denied gRPC status 或 PGC response-body metadata。APP gRPC 非零 status 会读取 initial headers 和
 trailing metadata；APP DASH 的分辨率和帧率 metadata 会保留到规范化媒体规格；APP 数值
 codec id 会暴露为 `codec_family` metadata，不会伪造 exact MP4 codec 字符串；legacy FLV
 segment 响应会规范化为最高质量的一组 segment。

@@ -87,9 +87,9 @@ Set `ClientConfig::with_playurl_mode(PlayurlMode::App)`,
 embedding application needs BBDown-compatible APP gRPC playurl resolution. APP mode applies to
 normal videos and PGC episodes, uses `Credentials::tv_access_key` before falling back to
 `Credentials::access_key`, emits normalized `StreamSet` / `PlaybackPlan` media specs, and can still
-fall back to configured restricted-area HTTP playurl proxies for recognizable PGC region-limit
-errors using only the generic access key in proxy URLs. Those errors can be reported by gRPC status
-or the PGC response body. Non-zero APP gRPC status is read from
+fall back to configured restricted-area HTTP playurl proxies for PGC restricted or preview-only
+signals using only the generic access key in proxy URLs. Those signals can be reported by
+region-limit messages, APP permission-denied gRPC status, or PGC response-body metadata. Non-zero APP gRPC status is read from
 initial headers and trailing metadata. APP DASH resolution and frame-rate metadata is preserved in
 the normalized media specs. APP numeric codec ids are exposed as `codec_family` metadata without
 fabricating exact MP4 codec strings. Legacy FLV segment responses are normalized to one

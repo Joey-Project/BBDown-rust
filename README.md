@@ -83,9 +83,9 @@ endpoints for normal videos and PGC episodes. APP mode uses `Credentials::tv_acc
 falls back to the generic `Credentials::access_key`; use `--app-grpc-base` /
 `BBDOWN_APP_GRPC_BASE` and `--app-pgc-grpc-base` / `BBDOWN_APP_PGC_GRPC_BASE` for mock or proxy
 endpoint overrides; the normal-video APP default uses `https://grpc.biliapi.net` and the PGC APP
-default follows the BBDown reference host `https://app.bilibili.com`. PGC APP gRPC responses with
-recognizable region-limit messages still fall back to configured restricted-area HTTP playurl
-proxies, whether the limit is reported by gRPC status or inside the PGC response body. Proxy fallback
+default follows the BBDown reference host `https://app.bilibili.com`. PGC APP gRPC restricted or
+preview-only signals still fall back to configured restricted-area HTTP playurl proxies when reported
+by region-limit messages, APP permission-denied gRPC status, or PGC response-body metadata. Proxy fallback
 URLs use only the generic imported `Credentials::access_key`, never the TV-specific token. Non-zero
 gRPC status is read from both initial headers and trailing metadata. APP DASH response metadata such
 as resolution and frame rate is preserved in playback/API output. If an APP response returns
@@ -183,7 +183,8 @@ Use `--playurl-mode app` with `--app-grpc-base` and `--app-pgc-grpc-base` when a
 request, or download should use APP gRPC playurl hosts.
 
 Configure restricted-area PGC playurl fallback with explicit proxy hosts. Fallback runs only when the
-official PGC playurl response reports a region/area restriction:
+official PGC playurl response reports a region/area restriction, or when APP gRPC mode reports a
+permission-denied status or preview-only PGC response-body signal:
 
 ```bash
 bbdown --restricted-area hk --restricted-area-proxy hk=https://proxy.example/playurl plan ep267851 --json

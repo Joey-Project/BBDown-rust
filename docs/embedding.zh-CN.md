@@ -101,9 +101,9 @@ TV mode 当前适用于普通视频和 PGC 分集。
 `Credentials::tv_access_key`，再回退到 `Credentials::access_key`；输出
 `StreamSource::NormalApp` 或 `StreamSource::PgcApp`，并把 protobuf DASH/FLV 媒体规范化到与
 HTTP modes 相同的 `StreamSet` 和 `PlaybackPlan` 表面。PGC APP gRPC 失败如果带有可识别的
-区域限制消息，仍会进入已配置的 restricted-area HTTP playurl proxy fallback；但 proxy URL
-只会接收通用 `Credentials::access_key`。限制可以来自
-gRPC status，也可以来自 PGC response body。非零 gRPC status 会从 initial headers 和
+restricted 或 preview-only 信号，仍会进入已配置的 restricted-area HTTP playurl proxy
+fallback；但 proxy URL 只会接收通用 `Credentials::access_key`。这些信号可以来自区域限制消息、
+APP permission-denied gRPC status 或 PGC response-body metadata。非零 gRPC status 会从 initial headers 和
 trailing metadata 里读取。APP DASH 的分辨率和帧率 metadata 会保留到 `MediaStream` /
 `PlaybackPlan` 输出。APP 数值 codec id 会暴露为 `codec_family` metadata，不会伪造 exact
 MP4 codec 字符串。多个 APP legacy FLV 分段清晰度会压缩为最高质量的一组 segment，因为当前

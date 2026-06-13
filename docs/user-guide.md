@@ -155,9 +155,9 @@ and PGC episodes, uses the saved TV access key first and then the generic import
 can be pointed at mocks or proxies with `--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` and
 `--app-pgc-grpc-base` / `BBDOWN_APP_PGC_GRPC_BASE`; the normal-video APP default uses
 `https://grpc.biliapi.net`, while the PGC APP default follows the BBDown reference host
-`https://app.bilibili.com`. PGC APP gRPC region-limit errors still fall back to configured
-restricted-area HTTP playurl
-proxies when reported by gRPC status or by the PGC response body. Proxy fallback URLs use only the
+`https://app.bilibili.com`. PGC APP gRPC restricted or preview-only signals still fall back to
+configured restricted-area HTTP playurl proxies when reported by region-limit messages, APP
+permission-denied gRPC status, or PGC response-body metadata. Proxy fallback URLs use only the
 generic imported access key and never the TV-specific token. The resolver checks non-zero gRPC status
 in both initial headers and trailing metadata. APP DASH resolution and frame-rate metadata is
 preserved in playback JSON. If an APP response returns multiple legacy FLV segment qualities, only
@@ -339,9 +339,10 @@ failure and must contain the listed diagnostics.
 ## Restricted-Area Proxies
 
 The tool does not include public proxy defaults. Configure only proxy hosts you operate or trust.
-PGC playurl fallback is attempted only after the official PGC playurl response reports a region/area
-restriction. Other official failures, such as VIP/paywall errors, parse failures, or network errors,
-keep their original error instead of trying proxy hosts.
+PGC playurl fallback is attempted only after the official PGC playurl response reports a
+region/area restriction, or after APP gRPC mode reports a permission-denied status or preview-only
+PGC response-body signal. Other official failures, such as VIP/paywall errors, parse failures, or
+network errors, keep their original error instead of trying proxy hosts.
 
 ```bash
 bbdown --restricted-area hk --restricted-area-proxy hk=https://proxy.example/playurl plan ep267851 --json

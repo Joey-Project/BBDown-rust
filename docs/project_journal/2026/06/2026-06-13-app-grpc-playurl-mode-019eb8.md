@@ -35,11 +35,11 @@ superseded_by:
   `grpc-message` text from initial headers or trailing metadata.
 - APP legacy FLV responses with multiple segment qualities are normalized to one highest-quality
   segment set instead of concatenating incompatible qualities into `StreamSet::flv_segments`.
-- PGC APP region-limit errors can fall back to the existing restricted-area HTTP playurl proxy
-  resolver, use only the generic imported access key for proxy requests, and record `PgcApp` then
-  `PgcProxy` diagnostics.
-- PGC APP region-limit fallback covers both non-zero gRPC status metadata and recognized PGC
-  response-body messages such as `view_info.dialog`.
+- PGC APP restricted and preview-only signals can fall back to the existing restricted-area HTTP
+  playurl proxy resolver, use only the generic imported access key for proxy requests, and record
+  `PgcApp` then `PgcProxy` diagnostics.
+- PGC APP fallback covers recognized region-limit messages, APP permission-denied gRPC status, and
+  recognized PGC response-body metadata such as `view_info.dialog` or preview-only business state.
 - PGC APP requests set the protobuf `is_need_view_info` flag so real PGC responses can include
   body-carried view information needed by that fallback.
 - APP DASH width, height, and frame-rate metadata is preserved on `MediaStream` and playback JSON.
@@ -103,16 +103,26 @@ superseded_by:
   rejecting preview-only responses with `AccessRestricted` so restricted-area fallback can still run.
 - Reference parity fix: normal APP playurl defaults to `https://grpc.biliapi.net`, while PGC APP
   playurl defaults to the BBDown reference host `https://app.bilibili.com`.
+- Independent review fix: PGC APP restricted-area fallback now also accepts APP permission-denied
+  gRPC status code 7 and the preview-only business signal. This keeps status-only gRPC denials and
+  preview-only PGC response bodies from bypassing the configured proxy chain.
 - Targeted validation after codec-family fix:
   `cargo test -p bbdown-core app_playurl --lib`.
 - Targeted validation after codec-family fix:
   `cargo test -p bbdown-core playback --lib`.
 - Targeted validation after PGC APP field-9 / preview fix:
   `cargo test -p bbdown-core app_playurl --lib`.
-- Final validation after PGC APP host parity fix:
+- Validation after PGC APP host parity fix:
   `cargo fmt --all -- --check`,
   `cargo test -p bbdown-core endpoint_defaults_use_reference_app_playurl_hosts --lib`,
   `cargo test -p bbdown-core app_playurl --lib`,
   `cargo test -p bbdown-core pgc_app --lib`,
+  `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/29f61f3e579e2a4166436b963eab301ac5d80d94/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`,
+  and `just ci`.
+- Targeted validation after independent review fix:
+  `cargo test -p bbdown-core app_playurl --lib` and
+  `cargo test -p bbdown-core pgc_app --lib`.
+- Final validation after independent review fix:
+  `cargo fmt --all -- --check`,
   `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/29f61f3e579e2a4166436b963eab301ac5d80d94/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`,
   and `just ci`.

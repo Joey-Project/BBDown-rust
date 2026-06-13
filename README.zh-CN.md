@@ -80,8 +80,9 @@ BBDown-compatible APP gRPC playurl 端点解析。APP mode 优先使用
 或代理端点可用 `--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` 和 `--app-pgc-grpc-base` /
 `BBDOWN_APP_PGC_GRPC_BASE` 覆盖；普通视频 APP 默认使用 `https://grpc.biliapi.net`，PGC
 APP 默认跟随 BBDown reference host `https://app.bilibili.com`。PGC APP gRPC
-响应如果带有可识别的区域限制消息，仍会回退到已配置的 restricted-area HTTP playurl proxy；
-限制既可以来自 gRPC status，也可以来自 PGC 响应 body。proxy fallback URL 只会使用通用导入
+响应如果带有区域限制或 preview-only 信号，仍会回退到已配置的 restricted-area HTTP playurl
+proxy；信号可以来自区域限制消息、APP permission-denied gRPC status 或 PGC response-body
+metadata。proxy fallback URL 只会使用通用导入
 的 `Credentials::access_key`，不会转发 TV 专用 token。非零 gRPC status 会同时读取 initial
 headers 和 trailing metadata。APP DASH 响应中的分辨率和帧率等 metadata 会保留到
 playback/API 输出。如果 APP 响应返回多个
@@ -171,7 +172,8 @@ TV 二维码轮询才会跟随 `--tv-passport-base`；否则除非显式设置 `
 当 `plan`、`playback` 或 `download` 需要使用 APP gRPC playurl host 时，可同时使用
 `--playurl-mode app`、`--app-grpc-base` 和 `--app-pgc-grpc-base`。
 
-通过显式代理主机配置受限区域 PGC playurl 回退。只有官方 PGC playurl 响应报告区域限制时
+通过显式代理主机配置受限区域 PGC playurl 回退。只有官方 PGC playurl 响应报告区域限制，
+或 APP gRPC mode 报告 permission-denied status / preview-only PGC response-body 信号时
 才会回退：
 
 ```bash

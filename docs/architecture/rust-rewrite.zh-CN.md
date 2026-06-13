@@ -92,7 +92,7 @@ wrapper。规划当前支持这些官方来源模式：
 - `PgcTv` 在 `ClientConfig.playurl_mode` 为 `PlayurlMode::Tv` 时，用 BBDown-compatible
   TV HTTP playurl 端点处理 PGC 输入。
 - `PgcApp` 在 `ClientConfig.playurl_mode` 为 `PlayurlMode::App` 时，用 BBDown-compatible
-  APP PGC gRPC playurl 端点处理 PGC 输入；可识别的区域限制失败仍可回退到已配置的
+  APP PGC gRPC playurl 端点处理 PGC 输入；restricted 或 preview-only 信号仍可回退到已配置的
   restricted-area HTTP playurl proxy。
 - `PugvWeb` 用 PUGV/cheese playurl 端点处理 `cheese/ep` 和选中的 `cheese/ss` 输入。
   PUGV metadata 会通过 episode-list 端点跟进 `episode_page` 分页，再应用 season
@@ -264,9 +264,9 @@ CLI 创建的配置还会在区域分组前保留来源优先级，因此显式�
 
 PGC stream planning 首先根据 `PlayurlMode` 调用选中的官方 PGC playurl 端点，即 web HTTP
 或 APP gRPC。如果响应明确报告区域限制，且配置了受限区域代理，client 会按顺序尝试候选，
-直到某个候选返回有效 DASH 或 FLV stream 形态。对于 APP gRPC，区域限制既可以来自非零
-gRPC status metadata，也可以来自 `view_info.dialog` 或 stream limit 等 PGC response-body
-消息。非区域类官方失败会保留原错误，不会联系代理主机。BBDown/BiliPlus 风格的 HTTP(S) playurl
+直到某个候选返回有效 DASH 或 FLV stream 形态。对于 APP gRPC，fallback 信号可以来自区域限制
+消息、permission-denied gRPC status，或 `view_info.dialog`、stream limit、preview-only
+business state 等 PGC response-body metadata。非区域类官方失败会保留原错误，不会联系代理主机。BBDown/BiliPlus 风格的 HTTP(S) playurl
 代理会在配置 URL 上接收 PGC playurl query。Bilibili API HTTP(S) 代理会在配置 base URL 下
 的 `/pgc/player/web/playurl` 接收同一 query，以匹配常见 BALH 风格 API 代理主机，然后再尝
 试 `/pgc/player/web/v2/playurl`，兼容已有 API proxy 部署。两条路径都会保留配置 base URL

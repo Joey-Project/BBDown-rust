@@ -143,8 +143,9 @@ TV mode 适用于普通视频和 PGC 分集，使用 `auth login-tv` 保存的 T
 `--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` 和 `--app-pgc-grpc-base` /
 `BBDOWN_APP_PGC_GRPC_BASE` 配置；普通视频 APP 默认使用 `https://grpc.biliapi.net`，PGC APP
 默认跟随 BBDown reference host `https://app.bilibili.com`。PGC APP
-gRPC 区域限制错误仍会回退到已配置的 restricted-area HTTP playurl proxy；限制既可以由 gRPC
-status 报告，也可以由 PGC response body 携带。proxy fallback URL 只会使用通用导入 access
+gRPC restricted 或 preview-only 信号仍会回退到已配置的 restricted-area HTTP playurl proxy；
+信号可以来自区域限制消息、APP permission-denied gRPC status 或 PGC response-body metadata。
+proxy fallback URL 只会使用通用导入 access
 key，不会转发 TV 专用 token。解析器会同时检查 initial headers 和 trailing metadata 里的非零
 gRPC status。APP DASH 的分辨率和帧率 metadata 会保留到 playback JSON。如果 APP 响应返回多
 个 legacy FLV 分段清晰度，只会暴露最高质量的一组 segment，避免 downloader 和 playback JSON 混合不
@@ -304,8 +305,9 @@ CLI 覆盖环境变量。未知 manifest 字段会被拒绝，因此拼错的 ex
 ## 受限区域代理
 
 工具不包含公共代理默认值。只配置你自己运营或信任的代理主机。PGC playurl 回退只会在官
-方 PGC playurl 响应报告区域限制后尝试。其他官方失败（例如 VIP/paywall 错误、解析失败或
-网络错误）会保留原错误，而不是尝试代理主机。
+方 PGC playurl 响应报告区域限制，或 APP gRPC mode 报告 permission-denied status /
+preview-only PGC response-body 信号后尝试。其他官方失败（例如 VIP/paywall 错误、解析失
+败或网络错误）会保留原错误，而不是尝试代理主机。
 
 ```bash
 bbdown --restricted-area hk --restricted-area-proxy hk=https://proxy.example/playurl plan ep267851 --json

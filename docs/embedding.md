@@ -104,9 +104,10 @@ For BBDown-compatible APP gRPC playurl resolution, set
 `https://app.bilibili.com`. APP mode uses
 `Credentials::tv_access_key` first and falls back to `Credentials::access_key`, emits
 `StreamSource::NormalApp` or `StreamSource::PgcApp`, and normalizes protobuf DASH/FLV media into
-the same `StreamSet` and `PlaybackPlan` surfaces as the HTTP modes. PGC APP gRPC failures with
-recognizable region-limit messages still enter the configured restricted-area HTTP playurl proxy
-fallback, whether the limit is carried by gRPC status or by the PGC response body. Proxy fallback
+the same `StreamSet` and `PlaybackPlan` surfaces as the HTTP modes. PGC APP gRPC restricted or
+preview-only signals still enter the configured restricted-area HTTP playurl proxy fallback when
+they are carried by region-limit messages, APP permission-denied gRPC status, or PGC response-body
+metadata. Proxy fallback
 URLs only receive the generic `Credentials::access_key`. Non-zero gRPC status is checked from
 initial headers and trailing metadata. APP DASH resolution and frame-rate metadata is preserved on
 `MediaStream` / `PlaybackPlan` output. APP numeric codec ids are exposed as `codec_family` metadata
