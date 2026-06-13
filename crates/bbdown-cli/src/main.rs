@@ -58,6 +58,18 @@ struct Cli {
         default_value = "https://api.snm0516.aisee.tv"
     )]
     tv_api_base: String,
+    #[arg(
+        long,
+        env = "BBDOWN_APP_GRPC_BASE",
+        default_value = "https://grpc.biliapi.net"
+    )]
+    app_grpc_base: String,
+    #[arg(
+        long,
+        env = "BBDOWN_APP_PGC_GRPC_BASE",
+        default_value = "https://grpc.biliapi.net"
+    )]
+    app_pgc_grpc_base: String,
     #[arg(long, env = "BBDOWN_TV_PASSPORT_BASE")]
     tv_passport_base: Option<String>,
     #[arg(long, env = "BBDOWN_TV_PASSPORT_POLL_BASE")]
@@ -238,6 +250,7 @@ impl From<DanmakuFormatArg> for DanmakuFormat {
 enum PlayurlModeArg {
     Web,
     Tv,
+    App,
 }
 
 impl From<PlayurlModeArg> for PlayurlMode {
@@ -245,6 +258,7 @@ impl From<PlayurlModeArg> for PlayurlMode {
         match value {
             PlayurlModeArg::Web => Self::Web,
             PlayurlModeArg::Tv => Self::Tv,
+            PlayurlModeArg::App => Self::App,
         }
     }
 }
@@ -1245,6 +1259,8 @@ fn endpoints_from_cli(cli: &Cli) -> EndpointConfig {
         .with_comment_base(cli.comment_base.clone())
         .with_passport_base(cli.passport_base.clone())
         .with_tv_api_base(cli.tv_api_base.clone())
+        .with_app_grpc_base(cli.app_grpc_base.clone())
+        .with_app_pgc_grpc_base(cli.app_pgc_grpc_base.clone())
         .with_tv_passport_base(tv_passport_base)
         .with_tv_passport_poll_base(tv_passport_poll_base)
 }
@@ -1844,6 +1860,16 @@ mod tests {
             endpoints.tv_passport_poll_base,
             defaults.tv_passport_poll_base
         );
+    }
+
+    #[test]
+    fn app_grpc_cli_defaults_match_core_defaults() {
+        let cli = Cli::parse_from(["bbdown", "auth", "status"]);
+        let endpoints = endpoints_from_cli(&cli);
+        let defaults = EndpointConfig::default();
+
+        assert_eq!(endpoints.app_grpc_base, defaults.app_grpc_base);
+        assert_eq!(endpoints.app_pgc_grpc_base, defaults.app_pgc_grpc_base);
     }
 
     #[test]

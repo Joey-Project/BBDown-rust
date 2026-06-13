@@ -2,6 +2,7 @@ use assert_cmd::Command;
 use bbdown_core::{CredentialStore, Credentials};
 use httpmock::MockServer;
 use httpmock::prelude::*;
+use prost::Message as _;
 use serde_json::Value;
 use std::fs;
 use std::net::TcpListener;
@@ -19,6 +20,8 @@ const CLI_OVERRIDE_ENV_VARS: &[&str] = &[
     "BBDOWN_COMMENT_BASE",
     "BBDOWN_PASSPORT_BASE",
     "BBDOWN_TV_API_BASE",
+    "BBDOWN_APP_GRPC_BASE",
+    "BBDOWN_APP_PGC_GRPC_BASE",
     "BBDOWN_TV_PASSPORT_BASE",
     "BBDOWN_TV_PASSPORT_POLL_BASE",
     "BBDOWN_PLAYURL_MODE",
@@ -425,6 +428,57 @@ fn playback_json_uses_tv_playurl_mode() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test]
+fn playback_json_uses_app_playurl_mode() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    CredentialStore::new(credential_file.clone())
+        .save(&Credentials::default().with_access_key("APP_ACCESS"))?;
+    mock_playback_metadata(&server);
+    let app_response = app_play_view_response_frame("https://app.example/video.m4s")?;
+    let app_playurl = server.mock(|when, then| {
+        when.method(POST)
+            .path("/bilibili.app.playurl.v1.PlayURL/PlayView")
+            .header("content-type", "application/grpc")
+            .header("authorization", "identify_v1 APP_ACCESS")
+            .header_exists("x-bili-metadata-bin")
+            .header_missing("cookie");
+        then.status(200).body(app_response.clone());
+    });
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--app-grpc-base")
+        .arg(server.base_url())
+        .arg("--playurl-mode")
+        .arg("app")
+        .arg("playback")
+        .arg("av170001")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+
+    app_playurl.assert();
+    assert_eq!(json["entries"][0]["source"], "normal_app");
+    assert_eq!(
+        json["entries"][0]["variants"][0]["video"]["url"],
+        "https://app.example/video.m4s"
+    );
+    assert_eq!(
+        json["entries"][0]["variants"][0]["selection_hints"]["avplayer"]["video_codec_family"],
+        "hevc"
+    );
+    assert_eq!(json["entries"][0]["variants"][0]["width"], 1920);
+    assert_eq!(json["entries"][0]["variants"][0]["height"], 1080);
+    assert_eq!(json["entries"][0]["variants"][0]["frame_rate"], "60");
+    Ok(())
+}
+
 fn assert_playback_abr_metadata(json: &Value) -> anyhow::Result<()> {
     assert_eq!(
         json["entries"][0]["cache_key"]["content_id"],
@@ -458,6 +512,110 @@ fn assert_playback_abr_metadata(json: &Value) -> anyhow::Result<()> {
     assert_eq!(variant["abr"]["level_count"], 1);
     assert_eq!(variant["abr"]["switchable"], false);
     Ok(())
+}
+
+fn app_play_view_response_frame(video_url: &str) -> anyhow::Result<Vec<u8>> {
+    let reply = TestAppPlayViewReply {
+        video_info: Some(TestAppVideoInfo {
+            timelength: Some(3_000),
+            stream_list: vec![TestAppStreamItem {
+                stream_info: Some(TestAppStreamInfo {
+                    quality: Some(80),
+                    description: Some("1080P".to_owned()),
+                }),
+                dash_video: Some(TestAppDashVideo {
+                    base_url: Some(video_url.to_owned()),
+                    backup_url: Vec::new(),
+                    bandwidth: Some(1_000_000),
+                    codecid: Some(12),
+                    size: Some(1000),
+                    frame_rate: Some("60".to_owned()),
+                    width: Some(1920),
+                    height: Some(1080),
+                }),
+            }],
+            dash_audio: vec![TestAppDashItem {
+                id: Some(30280),
+                base_url: Some("https://app.example/audio.m4s".to_owned()),
+                backup_url: Vec::new(),
+                bandwidth: Some(128_000),
+                size: Some(300),
+            }],
+        }),
+    };
+    let payload = reply.encode_to_vec();
+    let len = u32::try_from(payload.len())?;
+    let mut frame = Vec::with_capacity(payload.len() + 5);
+    frame.push(0);
+    frame.extend_from_slice(&len.to_be_bytes());
+    frame.extend_from_slice(&payload);
+    Ok(frame)
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+struct TestAppPlayViewReply {
+    #[prost(message, optional, tag = "1")]
+    video_info: Option<TestAppVideoInfo>,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+struct TestAppVideoInfo {
+    #[prost(uint64, optional, tag = "3")]
+    timelength: Option<u64>,
+    #[prost(message, repeated, tag = "5")]
+    stream_list: Vec<TestAppStreamItem>,
+    #[prost(message, repeated, tag = "6")]
+    dash_audio: Vec<TestAppDashItem>,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+struct TestAppStreamItem {
+    #[prost(message, optional, tag = "1")]
+    stream_info: Option<TestAppStreamInfo>,
+    #[prost(message, optional, tag = "2")]
+    dash_video: Option<TestAppDashVideo>,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+struct TestAppStreamInfo {
+    #[prost(uint32, optional, tag = "1")]
+    quality: Option<u32>,
+    #[prost(string, optional, tag = "3")]
+    description: Option<String>,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+struct TestAppDashVideo {
+    #[prost(string, optional, tag = "1")]
+    base_url: Option<String>,
+    #[prost(string, repeated, tag = "2")]
+    backup_url: Vec<String>,
+    #[prost(uint32, optional, tag = "3")]
+    bandwidth: Option<u32>,
+    #[prost(uint32, optional, tag = "4")]
+    codecid: Option<u32>,
+    #[prost(uint64, optional, tag = "6")]
+    size: Option<u64>,
+    #[prost(string, optional, tag = "9")]
+    frame_rate: Option<String>,
+    #[prost(int32, optional, tag = "10")]
+    width: Option<i32>,
+    #[prost(int32, optional, tag = "11")]
+    height: Option<i32>,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+struct TestAppDashItem {
+    #[prost(uint32, optional, tag = "1")]
+    id: Option<u32>,
+    #[prost(string, optional, tag = "2")]
+    base_url: Option<String>,
+    #[prost(string, repeated, tag = "3")]
+    backup_url: Vec<String>,
+    #[prost(uint32, optional, tag = "4")]
+    bandwidth: Option<u32>,
+    #[prost(uint64, optional, tag = "7")]
+    size: Option<u64>,
 }
 
 fn assert_playback_selection_hints(json: &Value) {

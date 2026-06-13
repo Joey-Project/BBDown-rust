@@ -61,6 +61,7 @@ Build a playback request spec as JSON:
 ```bash
 bbdown playback av170001 --json
 bbdown --playurl-mode tv playback av170001 --json
+bbdown --playurl-mode app playback av170001 --json
 bbdown playback ss26801 --select latest --json
 bbdown playback fav456 --select 1,3-5 --json
 ```
@@ -68,14 +69,28 @@ bbdown playback fav456 --select 1,3-5 --json
 `playback` resolves the same selected entries as `plan`, then emits selected DASH video/audio
 request specs or FLV segment specs with primary URLs, backup URLs, headers, mime/codec metadata,
 duration/size, entry/variant/media cache keys, ABR switching groups, and
-`selection_hints.avplayer` metadata with exact codec strings, codec families, a `format_key`, and
-AVPlayer-oriented ranking signals. Downstream clients can use `PlaybackCodecPreference` to prefer
+`selection_hints.avplayer` metadata with exact codec strings when known, codec families, a
+`format_key`, and AVPlayer-oriented ranking signals. Downstream clients can use
+`PlaybackCodecPreference` to prefer
 H.264, HEVC, AV1, or another codec order, then use `PlaybackVariant.abr` and `PlaybackEntry.abr`
 to keep already cached variants available while switching codec/mime-compatible levels. It does not
 download files, create HLS playlists, or run a player.
 Set `--playurl-mode tv` or `BBDOWN_PLAYURL_MODE=tv` to resolve normal videos and PGC episodes
 through BBDown-compatible TV HTTP playurl endpoints. TV mode uses the TV-specific access key saved
 by `auth login-tv` and `--tv-api-base` / `BBDOWN_TV_API_BASE` for endpoint overrides.
+Set `--playurl-mode app` or `BBDOWN_PLAYURL_MODE=app` to use BBDown-compatible APP gRPC playurl
+endpoints for normal videos and PGC episodes. APP mode uses `Credentials::tv_access_key` first and
+falls back to the generic `Credentials::access_key`; use `--app-grpc-base` /
+`BBDOWN_APP_GRPC_BASE` and `--app-pgc-grpc-base` / `BBDOWN_APP_PGC_GRPC_BASE` for mock or proxy
+endpoint overrides; the normal-video APP default uses `https://grpc.biliapi.net` and the PGC APP
+default follows the BBDown reference host `https://app.bilibili.com`. PGC APP gRPC restricted or
+preview-only signals still fall back to configured restricted-area HTTP playurl proxies when reported
+by region-limit messages, APP permission-denied gRPC status, or PGC response-body metadata. Proxy fallback
+URLs use only the generic imported `Credentials::access_key`, never the TV-specific token. Non-zero
+gRPC status is read from both initial headers and trailing metadata. APP DASH response metadata such
+as resolution and frame rate is preserved in playback/API output. If an APP response returns
+multiple legacy FLV segment qualities, the normalized `StreamSet`
+exposes one highest-quality segment set instead of mixing segments from different qualities.
 
 Download selected media files:
 
@@ -164,9 +179,12 @@ endpoint. Use `--passport-base` for WEB QR login mocks or proxies, and use `--tv
 TV poll default unless `--tv-passport-poll-base` is set explicitly.
 Use `--playurl-mode tv` with `--tv-api-base` when a plan, playback request, or download should use
 the TV playurl host instead of the default web playurl host.
+Use `--playurl-mode app` with `--app-grpc-base` and `--app-pgc-grpc-base` when a plan, playback
+request, or download should use APP gRPC playurl hosts.
 
 Configure restricted-area PGC playurl fallback with explicit proxy hosts. Fallback runs only when the
-official PGC playurl response reports a region/area restriction:
+official PGC playurl response reports a region/area restriction, or when APP gRPC mode reports a
+permission-denied status or preview-only PGC response-body signal:
 
 ```bash
 bbdown --restricted-area hk --restricted-area-proxy hk=https://proxy.example/playurl plan ep267851 --json

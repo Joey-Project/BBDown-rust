@@ -86,9 +86,14 @@ wrapper。规划当前支持这些官方来源模式：
 - `NormalWeb` 用普通 web playurl 端点处理 `aid` / `bvid` 输入。
 - `NormalTv` 在 `ClientConfig.playurl_mode` 为 `PlayurlMode::Tv` 时，用 BBDown-compatible
   TV HTTP playurl 端点处理 `aid` / `bvid` 输入。
+- `NormalApp` 在 `ClientConfig.playurl_mode` 为 `PlayurlMode::App` 时，用 BBDown-compatible
+  APP gRPC playurl 端点处理 `aid` / `bvid` 输入。
 - `PgcWeb` 用 PGC web playurl 端点处理 `ep`、`ss` 和 `md` 输入。
 - `PgcTv` 在 `ClientConfig.playurl_mode` 为 `PlayurlMode::Tv` 时，用 BBDown-compatible
   TV HTTP playurl 端点处理 PGC 输入。
+- `PgcApp` 在 `ClientConfig.playurl_mode` 为 `PlayurlMode::App` 时，用 BBDown-compatible
+  APP PGC gRPC playurl 端点处理 PGC 输入；restricted 或 preview-only 信号仍可回退到已配置的
+  restricted-area HTTP playurl proxy。
 - `PugvWeb` 用 PUGV/cheese playurl 端点处理 `cheese/ep` 和选中的 `cheese/ss` 输入。
   PUGV metadata 会通过 episode-list 端点跟进 `episode_page` 分页，再应用 season
   selection。
@@ -114,29 +119,36 @@ CLI 通过 `bbdown plan` 暴露这一层。该命令被有意设计为规划表�
 `MediaRequestSpec`；FLV variant 携带有序的 segment spec。
 
 `MediaRequestSpec` 被设计为可序列化且与传输层解耦。它包含主 URL、备用 URL、媒体
-headers、mime type、codec 字符串、码率、尺寸、时长、大小和结构化 cache key。cache key
-基于内容身份、媒体种类、stream id、codec，以及去掉 fragment 但保留 query 身份的 source
-URL hash。这样既避免暴露 URL 明文，也避免让 query string 区分资源的 proxy URL 发生碰撞。
+headers、mime type、已知时的 exact codec 字符串、codec-family metadata、码率、尺寸、时长、
+大小和结构化 cache key。cache key 基于内容身份、媒体种类、stream id、存在时的 exact codec
+字符串，以及去掉 fragment 但保留 query 身份的 source URL hash。这样既避免暴露 URL 明文，
+也避免让 query string 区分资源的 proxy URL 发生碰撞。
 playback planning 还会暴露 `PlaybackEntry.cache_key`、`PlaybackVariant.cache_key`、
 `PlaybackEntry.abr.groups` 和 `PlaybackVariant.abr`，让下游 cache server 可以按 request
 key 存储媒体、按 variant key 保留已完成 variants，并把 ABR level 切换映射回同一个
 codec/mime-compatible switching group，避免重新获取已经缓存过的 levels。
-`PlaybackVariant.selection_hints.avplayer` 增加了面向 AVPlayer 的 profile，包含 exact codec
-字符串、codec family、`format_key`、score/preferred 信号和机器可读 reason。公开的
-`PlaybackCodecPreference` helper 允许下游按自己的 H.264、HEVC、AV1 或其它 codec 顺序给
-variants 排名，而不是接受写死的 H.264-first 策略。
-同一 planning 路径会遵守 `PlayurlMode::Tv`，因此 `DownloadPlan` 和 `PlaybackPlan` 可以从
-TV HTTP 端点暴露 `NormalTv` 或 `PgcTv` source，同时不改变下游 request-spec shape。TV mode
-使用 `Credentials::tv_access_key`；APP/gRPC playurl transport 因为需要 protobuf
-request/response framing，保留为后续独立切片。
+`PlaybackVariant.selection_hints.avplayer` 增加了面向 AVPlayer 的 profile，包含已知时的
+exact codec 字符串、codec family、`format_key`、score/preferred 信号和机器可读 reason。
+公开的 `PlaybackCodecPreference` helper 允许下游按自己的 H.264、HEVC、AV1 或其它 codec
+顺序给 variants 排名，而不是接受写死的 H.264-first 策略。APP/gRPC streams 会把数值 codec id
+暴露为 family metadata，不会伪造 exact MP4 codec 字符串。
+同一 planning 路径会遵守 `PlayurlMode::Tv` 和 `PlayurlMode::App`，因此 `DownloadPlan` 和
+`PlaybackPlan` 可以暴露 `NormalTv`、`PgcTv`、`NormalApp` 或 `PgcApp` source，同时不改变下
+游 request-spec shape。TV mode 使用 `Credentials::tv_access_key`。APP/gRPC mode 优先使用
+`Credentials::tv_access_key`，再回退到 `Credentials::access_key`，发送 BBDown-compatible
+protobuf gRPC frame，会从 initial headers 和 trailing metadata 读取 gRPC status，并把 APP
+DASH/FLV 响应规范化为 `StreamSet`。APP DASH 的 width、height 和 frame-rate metadata 会
+保留在 HTTP playurl mode 共用的 `MediaStream` 字段上。APP legacy FLV 响应可能包含多个清
+晰度的 segment set；由于 `StreamSet::flv_segments` 是单个有序列表，normalizer 会保留最
+高质量的一个 FLV candidate，而不是拼接互不兼容的清晰度。
 
 本仓库不实现播放器运行时职责。下游 cache/player service 负责 `preparing`、
 `playback_ready`、`downloading`、`completed`、`failed` 等 task state；HLS session 目录、
 playlist、segment 文件、retention、cleanup 和 finalization；例如
 `/tasks/{id}/hls/master.m3u8` 的 HTTP serving；下载中的 AVPlayer-compatible event playlist
 和完成后的 VOD playlist；以及把完成的 HLS 或 remux 后 MP4 artifact 注册为 library item。
-后续 crate 工作应增加 APP/gRPC playurl mode 和更丰富的 device policy profiles，但不应把
-这些运行时职责移入 `bbdown-core`。
+后续 crate 工作可以增加更丰富的 device policy profiles，但不应把这些运行时职责移入
+`bbdown-core`。
 
 ## 下载执行
 
@@ -250,9 +262,11 @@ stderr 与 CLI stdio 隔离。Mux 会先写入临时输出，校验后再替换�
 CLI 创建的配置还会在区域分组前保留来源优先级，因此显式命令行代理候选会先于环境变量派
 生的代理候选尝试。
 
-PGC stream planning 首先调用官方 PGC web playurl 端点。如果响应明确报告区域限制，且配置
-了受限区域代理，client 会按顺序尝试候选，直到某个候选返回有效 DASH 或 FLV stream 形态。
-非区域类官方失败会保留原错误，不会联系代理主机。BBDown/BiliPlus 风格的 HTTP(S) playurl
+PGC stream planning 首先根据 `PlayurlMode` 调用选中的官方 PGC playurl 端点，即 web HTTP
+或 APP gRPC。如果响应明确报告区域限制，且配置了受限区域代理，client 会按顺序尝试候选，
+直到某个候选返回有效 DASH 或 FLV stream 形态。对于 APP gRPC，fallback 信号可以来自区域限制
+消息、permission-denied gRPC status，或 `view_info.dialog`、stream limit、preview-only
+business state 等 PGC response-body metadata。非区域类官方失败会保留原错误，不会联系代理主机。BBDown/BiliPlus 风格的 HTTP(S) playurl
 代理会在配置 URL 上接收 PGC playurl query。Bilibili API HTTP(S) 代理会在配置 base URL 下
 的 `/pgc/player/web/playurl` 接收同一 query，以匹配常见 BALH 风格 API 代理主机，然后再尝
 试 `/pgc/player/web/v2/playurl`，兼容已有 API proxy 部署。两条路径都会保留配置 base URL

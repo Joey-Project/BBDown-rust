@@ -130,6 +130,7 @@ Use `playback` when another service needs selected media request specs for strea
 ```bash
 bbdown playback av170001 --json
 bbdown --playurl-mode tv playback av170001 --json
+bbdown --playurl-mode app playback av170001 --json
 bbdown playback ss26801 --select latest --json
 bbdown playback fav456 --select 1,3-5 --json
 ```
@@ -137,7 +138,8 @@ bbdown playback fav456 --select 1,3-5 --json
 The command resolves the same selected entries as `plan`, then emits `PlaybackPlan` JSON. Each
 variant contains DASH video/audio request specs or FLV segment specs with primary URL, backup URLs,
 headers, mime type, codec, bandwidth, dimensions, duration, size, cache-key metadata, and
-AVPlayer-oriented selection hints with exact codec strings, codec families, and a `format_key`.
+AVPlayer-oriented selection hints with exact codec strings when known, codec families, and a
+`format_key`.
 Playback entries also include codec/mime-compatible ABR groups, and each DASH variant points back
 to its group and low-to-high level index so a downstream cache/player service can switch compatible
 levels without losing already cached media objects. This is a read-only planning surface: it does
@@ -147,6 +149,20 @@ Use `--playurl-mode tv` or `BBDOWN_PLAYURL_MODE=tv` when a downstream integratio
 request specs from BBDown-compatible TV HTTP playurl endpoints. TV mode applies to normal videos and
 PGC episodes, uses the TV-specific access key saved by `auth login-tv`, and can be pointed at a mock
 or proxy with `--tv-api-base` / `BBDOWN_TV_API_BASE`.
+Use `--playurl-mode app` or `BBDOWN_PLAYURL_MODE=app` when a downstream integration needs media
+request specs from BBDown-compatible APP gRPC playurl endpoints. APP mode applies to normal videos
+and PGC episodes, uses the saved TV access key first and then the generic imported access key, and
+can be pointed at mocks or proxies with `--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` and
+`--app-pgc-grpc-base` / `BBDOWN_APP_PGC_GRPC_BASE`; the normal-video APP default uses
+`https://grpc.biliapi.net`, and the PGC APP default uses the same gRPC host. PGC APP gRPC
+restricted or preview-only signals still fall back to
+configured restricted-area HTTP playurl proxies when reported by region-limit messages, APP
+permission-denied gRPC status, or PGC response-body metadata. Proxy fallback URLs use only the
+generic imported access key and never the TV-specific token. The resolver checks non-zero gRPC status
+in both initial headers and trailing metadata. APP DASH resolution and frame-rate metadata is
+preserved in playback JSON. If an APP response returns multiple legacy FLV segment qualities, only
+the highest-quality segment set is exposed so the downloader and playback JSON never mix segments
+from different qualities.
 
 ## Downloads
 
@@ -294,6 +310,9 @@ passport overrides. TV QR polling follows `--tv-passport-base` when that overrid
 `--tv-passport-poll-base` for split-host mocks or proxies.
 TV playurl mode uses `--tv-api-base`; it is separate from the TV passport host used only for QR
 login.
+APP gRPC playurl mode uses `--app-grpc-base` for normal videos and `--app-pgc-grpc-base` for PGC
+episodes; both APP gRPC defaults use `https://grpc.biliapi.net`, and both are separate from WEB,
+TV, and intl HTTP endpoint overrides.
 
 ## Live E2E Samples
 
@@ -320,9 +339,10 @@ failure and must contain the listed diagnostics.
 ## Restricted-Area Proxies
 
 The tool does not include public proxy defaults. Configure only proxy hosts you operate or trust.
-PGC playurl fallback is attempted only after the official PGC playurl response reports a region/area
-restriction. Other official failures, such as VIP/paywall errors, parse failures, or network errors,
-keep their original error instead of trying proxy hosts.
+PGC playurl fallback is attempted only after the official PGC playurl response reports a
+region/area restriction, or after APP gRPC mode reports a permission-denied status or preview-only
+PGC response-body signal. Other official failures, such as VIP/paywall errors, parse failures, or
+network errors, keep their original error instead of trying proxy hosts.
 
 ```bash
 bbdown --restricted-area hk --restricted-area-proxy hk=https://proxy.example/playurl plan ep267851 --json

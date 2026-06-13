@@ -121,6 +121,7 @@ payload 时，CLI 会把它报告为访问限制。配置后，PGC playurl 解�
 ```bash
 bbdown playback av170001 --json
 bbdown --playurl-mode tv playback av170001 --json
+bbdown --playurl-mode app playback av170001 --json
 bbdown playback ss26801 --select latest --json
 bbdown playback fav456 --select 1,3-5 --json
 ```
@@ -128,7 +129,7 @@ bbdown playback fav456 --select 1,3-5 --json
 该命令会解析与 `plan` 相同的选中条目，然后输出 `PlaybackPlan` JSON。每个 variant 包含
 DASH 视频/音频请求规格，或 FLV segment 规格，其中有主 URL、备用 URL、headers、mime type、
 codec、码率、尺寸、时长、大小、cache-key metadata，以及面向 AVPlayer 的 selection hints；
-这些 hints 包含 exact codec 字符串、codec family 和 `format_key`。playback entry 还包含
+这些 hints 包含已知时的 exact codec 字符串、codec family 和 `format_key`。playback entry 还包含
 codec/mime-compatible ABR groups，每个 DASH variant 会指回自己的 group 和低到高排序的
 level index，方便下游 cache/player service 在切换兼容 level 时保留已经缓存的媒体对象。
 这是只读规划表面：它不会下载媒体、启动播放器、创建 HLS playlist、serve segments 或注册完成 artifact。下游
@@ -136,6 +137,19 @@ cache/player service 负责这些运行时部分。当下游集成需要来自 B
 playurl 端点的媒体请求规格时，可以使用 `--playurl-mode tv` 或 `BBDOWN_PLAYURL_MODE=tv`。
 TV mode 适用于普通视频和 PGC 分集，使用 `auth login-tv` 保存的 TV 专用 access key，并可通过
 `--tv-api-base` / `BBDOWN_TV_API_BASE` 指向 mock 或代理。
+当下游集成需要来自 BBDown-compatible APP gRPC playurl 端点的媒体请求规格时，可以使用
+`--playurl-mode app` 或 `BBDOWN_PLAYURL_MODE=app`。APP mode 适用于普通视频和 PGC 分集，
+会优先使用已保存的 TV access key，再回退到通用导入 access key；mock 或代理可通过
+`--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` 和 `--app-pgc-grpc-base` /
+`BBDOWN_APP_PGC_GRPC_BASE` 配置；普通视频和 PGC APP 默认都使用
+`https://grpc.biliapi.net`。PGC APP gRPC restricted 或 preview-only
+信号仍会回退到已配置的 restricted-area HTTP playurl proxy；
+信号可以来自区域限制消息、APP permission-denied gRPC status 或 PGC response-body metadata。
+proxy fallback URL 只会使用通用导入 access
+key，不会转发 TV 专用 token。解析器会同时检查 initial headers 和 trailing metadata 里的非零
+gRPC status。APP DASH 的分辨率和帧率 metadata 会保留到 playback JSON。如果 APP 响应返回多
+个 legacy FLV 分段清晰度，只会暴露最高质量的一组 segment，避免 downloader 和 playback JSON 混合不
+同清晰度的分段。
 
 ## 下载
 
@@ -265,6 +279,9 @@ OGV playurl 端点。弹幕 XML 下载使用可配置的 comment 端点。WEB �
 `--passport-base`；TV 二维码登录使用 TV 专用 passport 覆盖。提供 `--tv-passport-base` 时，
 TV 二维码轮询会跟随该覆盖；对 split-host mock 或代理，请设置 `--tv-passport-poll-base`。
 TV playurl mode 使用 `--tv-api-base`，它独立于只服务二维码登录的 TV passport host。
+APP gRPC playurl mode 使用 `--app-grpc-base` 处理普通视频，使用 `--app-pgc-grpc-base` 处理
+PGC 分集；两个 APP gRPC 默认值都使用 `https://grpc.biliapi.net`，并且独立于 WEB、TV 和
+intl HTTP endpoint 覆盖。
 
 ## Live E2E 样例
 
@@ -289,8 +306,9 @@ CLI 覆盖环境变量。未知 manifest 字段会被拒绝，因此拼错的 ex
 ## 受限区域代理
 
 工具不包含公共代理默认值。只配置你自己运营或信任的代理主机。PGC playurl 回退只会在官
-方 PGC playurl 响应报告区域限制后尝试。其他官方失败（例如 VIP/paywall 错误、解析失败或
-网络错误）会保留原错误，而不是尝试代理主机。
+方 PGC playurl 响应报告区域限制，或 APP gRPC mode 报告 permission-denied status /
+preview-only PGC response-body 信号后尝试。其他官方失败（例如 VIP/paywall 错误、解析失
+败或网络错误）会保留原错误，而不是尝试代理主机。
 
 ```bash
 bbdown --restricted-area hk --restricted-area-proxy hk=https://proxy.example/playurl plan ep267851 --json

@@ -72,12 +72,13 @@ async fn main() -> bbdown_core::Result<()> {
 ```
 
 每个 `PlaybackVariant` 包含选中的 DASH 视频/音频请求规格，或 FLV 分段请求规格。
-`MediaRequestSpec` 包含主 URL、备用 URL、HTTP headers、mime type、codec 字符串、码率、
-尺寸、时长、大小和 cache key。`PlaybackVariant.selection_hints` 包含
-`avplayer` profile，其中有 `playable`、`preferred`、`score`、exact `video_codec` /
-`audio_codec` 字符串、codec-family 字段、`format_key` 和机器可读 reason code。下游客户端
-可以用 `PlaybackCodecPreference` 按自己的 H.264、HEVC、AV1 或其它 codec 顺序给 variants
-排序，然后在交给平台播放器前验证 exact codec 字符串。cache key 会对 source URL 做 hash，
+`MediaRequestSpec` 包含主 URL、备用 URL、HTTP headers、mime type、上游提供时的 exact
+codec 字符串、codec-family metadata、码率、尺寸、时长、大小和 cache key。
+`PlaybackVariant.selection_hints` 包含 `avplayer` profile，其中有 `playable`、`preferred`、
+`score`、已知时的 exact `video_codec` / `audio_codec` 字符串、codec-family 字段、
+`format_key` 和机器可读 reason code。下游客户端可以用 `PlaybackCodecPreference` 按自己的
+H.264、HEVC、AV1 或其它 codec 顺序给 variants 排序，然后在交给平台播放器前验证存在的 exact
+codec 字符串。cache key 会对 source URL 做 hash，
 避免暴露明文，同时保留 query-string 的资源身份。`PlaybackEntry.cache_key` 标识所选内容，
 `PlaybackVariant.cache_key` 组合一个可播放 variant 里的媒体 cache keys，
 `PlaybackEntry.abr.groups` 按低到高 level 顺序列出 codec/mime-compatible switching
@@ -91,7 +92,22 @@ request contract。
 如需 BBDown-compatible TV HTTP playurl 解析，可设置
 `ClientConfig::with_playurl_mode(PlayurlMode::Tv)`；需要 mock 或代理时配置
 `EndpointConfig::with_tv_api_base`；TV 端点需要账号访问时提供 `Credentials::tv_access_key`。
-TV mode 当前适用于普通视频和 PGC 分集；APP/gRPC playurl mode 仍是后续独立 transport 切片。
+TV mode 当前适用于普通视频和 PGC 分集。
+如需 BBDown-compatible APP gRPC playurl 解析，可设置
+`ClientConfig::with_playurl_mode(PlayurlMode::App)`。普通视频 mock 或代理使用
+`EndpointConfig::with_app_grpc_base`，PGC mock 或代理使用
+`EndpointConfig::with_app_pgc_grpc_base`；普通视频和 PGC 默认都使用
+`https://grpc.biliapi.net`。APP mode 优先使用
+`Credentials::tv_access_key`，再回退到 `Credentials::access_key`；输出
+`StreamSource::NormalApp` 或 `StreamSource::PgcApp`，并把 protobuf DASH/FLV 媒体规范化到与
+HTTP modes 相同的 `StreamSet` 和 `PlaybackPlan` 表面。PGC APP gRPC 失败如果带有可识别的
+restricted 或 preview-only 信号，仍会进入已配置的 restricted-area HTTP playurl proxy
+fallback；但 proxy URL 只会接收通用 `Credentials::access_key`。这些信号可以来自区域限制消息、
+APP permission-denied gRPC status 或 PGC response-body metadata。非零 gRPC status 会从 initial headers 和
+trailing metadata 里读取。APP DASH 的分辨率和帧率 metadata 会保留到 `MediaStream` /
+`PlaybackPlan` 输出。APP 数值 codec id 会暴露为 `codec_family` metadata，不会伪造 exact
+MP4 codec 字符串。多个 APP legacy FLV 分段清晰度会压缩为最高质量的一组 segment，因为当前
+`StreamSet` schema 把 legacy FLV 表示为单个有序 segment 列表。
 
 ## 批量和集合输入
 

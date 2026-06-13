@@ -74,12 +74,13 @@ async fn main() -> bbdown_core::Result<()> {
 ```
 
 Each `PlaybackVariant` contains selected DASH video/audio request specs or FLV segment request specs.
-`MediaRequestSpec` includes primary and backup URLs, HTTP headers, mime type, codec string,
-bandwidth, dimensions, duration, size, and a cache key. `PlaybackVariant.selection_hints` includes
-an `avplayer` profile with `playable`, `preferred`, `score`, exact `video_codec` / `audio_codec`
-strings, codec-family fields, a `format_key`, and machine-readable reason codes. Downstream clients
-can use `PlaybackCodecPreference` to rank variants by their own H.264, HEVC, AV1, or other codec
-order, then verify the exact codec strings before handing a request to a platform player. The cache
+`MediaRequestSpec` includes primary and backup URLs, HTTP headers, mime type, exact codec string
+when the upstream surface provides one, codec-family metadata, bandwidth, dimensions, duration, size,
+and a cache key. `PlaybackVariant.selection_hints` includes an `avplayer` profile with `playable`,
+`preferred`, `score`, exact `video_codec` / `audio_codec` strings when known, codec-family fields, a
+`format_key`, and machine-readable reason codes. Downstream clients can use
+`PlaybackCodecPreference` to rank variants by their own H.264, HEVC, AV1, or other codec order, then
+verify exact codec strings when present before handing a request to a platform player. The cache
 key hashes the source URL without exposing it in plaintext while preserving query-string resource
 identity. `PlaybackEntry.cache_key` identifies the selected content, `PlaybackVariant.cache_key`
 groups the media cache keys that make up one playable variant, `PlaybackEntry.abr.groups` lists
@@ -94,8 +95,24 @@ registration. Downstream players and cache servers own those responsibilities an
 For BBDown-compatible TV HTTP playurl resolution, set
 `ClientConfig::with_playurl_mode(PlayurlMode::Tv)`, configure `EndpointConfig::with_tv_api_base`
 when a mock or proxy is needed, and provide `Credentials::tv_access_key` when the TV endpoint
-requires account access. TV mode currently applies to normal videos and PGC episodes; APP/gRPC
-playurl mode remains a later transport-specific slice.
+requires account access. TV mode currently applies to normal videos and PGC episodes.
+For BBDown-compatible APP gRPC playurl resolution, set
+`ClientConfig::with_playurl_mode(PlayurlMode::App)`. Configure
+`EndpointConfig::with_app_grpc_base` for normal-video mocks or proxies and
+`EndpointConfig::with_app_pgc_grpc_base` for PGC mocks or proxies. The normal-video default uses
+`https://grpc.biliapi.net`; the PGC default uses the same gRPC host. APP mode uses
+`Credentials::tv_access_key` first and falls back to `Credentials::access_key`, emits
+`StreamSource::NormalApp` or `StreamSource::PgcApp`, and normalizes protobuf DASH/FLV media into
+the same `StreamSet` and `PlaybackPlan` surfaces as the HTTP modes. PGC APP gRPC restricted or
+preview-only signals still enter the configured restricted-area HTTP playurl proxy fallback when
+they are carried by region-limit messages, APP permission-denied gRPC status, or PGC response-body
+metadata. Proxy fallback
+URLs only receive the generic `Credentials::access_key`. Non-zero gRPC status is checked from
+initial headers and trailing metadata. APP DASH resolution and frame-rate metadata is preserved on
+`MediaStream` / `PlaybackPlan` output. APP numeric codec ids are exposed as `codec_family` metadata
+without fabricating exact MP4 codec strings. Multiple APP legacy FLV segment
+qualities are reduced to one highest-quality segment set because the current `StreamSet` schema
+represents legacy FLV as a single ordered segment list.
 
 ## Batch And Collection Inputs
 

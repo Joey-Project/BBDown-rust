@@ -88,9 +88,14 @@ wrapper for CLI-style callers. Planning currently supports these official source
 - `NormalWeb` uses the normal web playurl endpoint for `aid`/`bvid` inputs.
 - `NormalTv` uses the BBDown-compatible TV HTTP playurl endpoint for `aid`/`bvid` inputs when
   `ClientConfig.playurl_mode` is `PlayurlMode::Tv`.
+- `NormalApp` uses the BBDown-compatible APP gRPC playurl endpoint for `aid`/`bvid` inputs when
+  `ClientConfig.playurl_mode` is `PlayurlMode::App`.
 - `PgcWeb` uses the PGC web playurl endpoint for `ep`, `ss`, and `md` inputs.
 - `PgcTv` uses the BBDown-compatible TV HTTP playurl endpoint for PGC inputs when
   `ClientConfig.playurl_mode` is `PlayurlMode::Tv`.
+- `PgcApp` uses the BBDown-compatible APP PGC gRPC playurl endpoint for PGC inputs when
+  `ClientConfig.playurl_mode` is `PlayurlMode::App`; restricted or preview-only signals can still
+  fall back to configured restricted-area HTTP playurl proxies.
 - `PugvWeb` uses the PUGV/cheese playurl endpoint for `cheese/ep` and selected `cheese/ss` inputs.
   PUGV metadata follows `episode_page` pagination through the episode-list endpoint before applying
   season selection.
@@ -120,30 +125,39 @@ of playback variants. DASH variants carry selected video and audio `MediaRequest
 variants carry ordered segment specs.
 
 `MediaRequestSpec` is deliberately serializable and transport-neutral. It contains the primary URL,
-backup URLs, media headers, mime type, codec string, bandwidth, dimensions, duration, size, and a
-structured cache key. The cache key is based on content identity, media kind, stream id, codec, and
-a hash of the source URL with fragments removed but query identity preserved. This avoids exposing
-the URL in plaintext while preventing collisions for proxy URLs whose query string identifies the
-resource. Playback planning also exposes `PlaybackEntry.cache_key`, `PlaybackVariant.cache_key`,
+backup URLs, media headers, mime type, exact codec string when known, codec-family metadata,
+bandwidth, dimensions, duration, size, and a structured cache key. The cache key is based on content
+identity, media kind, stream id, exact codec string when present, and a hash of the source URL with
+fragments removed but query identity preserved. This avoids exposing the URL in plaintext while
+preventing collisions for proxy URLs whose query string identifies the resource. Playback planning
+also exposes `PlaybackEntry.cache_key`, `PlaybackVariant.cache_key`,
 `PlaybackEntry.abr.groups`, and `PlaybackVariant.abr` so a downstream cache server can store media
 by request key, retain completed variants by variant key, and map ABR level changes back to the same
 codec/mime-compatible switching group without refetching already cached levels.
 `PlaybackVariant.selection_hints.avplayer` adds an AVPlayer-oriented profile with exact codec
-strings, codec families, a `format_key`, score/preferred signals, and machine-readable reasons. The
-public `PlaybackCodecPreference` helper lets downstream clients rank variants with their own H.264,
-HEVC, AV1, or other codec order instead of accepting a hard-coded H.264-first policy.
-The same planning path honors `PlayurlMode::Tv`, so `DownloadPlan` and `PlaybackPlan` can expose
-`NormalTv` or `PgcTv` sources from TV HTTP endpoints without changing the downstream request-spec
-shape. TV mode uses `Credentials::tv_access_key`; APP/gRPC playurl transport is intentionally left
-as a later slice because it requires protobuf request/response framing.
+strings when known, codec families, a `format_key`, score/preferred signals, and machine-readable
+reasons. The public `PlaybackCodecPreference` helper lets downstream clients rank variants with
+their own H.264, HEVC, AV1, or other codec order instead of accepting a hard-coded H.264-first
+policy. APP/gRPC streams expose numeric codec ids as family metadata without fabricating exact MP4
+codec strings.
+The same planning path honors `PlayurlMode::Tv` and `PlayurlMode::App`, so `DownloadPlan` and
+`PlaybackPlan` can expose `NormalTv`, `PgcTv`, `NormalApp`, or `PgcApp` sources without changing the
+downstream request-spec shape. TV mode uses `Credentials::tv_access_key`. APP/gRPC mode uses
+`Credentials::tv_access_key` first, falls back to `Credentials::access_key`, sends BBDown-compatible
+protobuf gRPC frames, reads gRPC status from both initial headers and trailing metadata, and
+normalizes APP DASH/FLV replies into `StreamSet`. APP DASH width, height, and frame-rate metadata
+is preserved on the same `MediaStream` fields used by HTTP playurl modes. APP legacy FLV replies
+can contain segment sets for multiple qualities; because `StreamSet::flv_segments` is a single
+ordered list, the normalizer keeps one highest-quality FLV candidate instead of concatenating
+incompatible qualities.
 
 This repository does not implement player runtime responsibilities. A downstream cache/player
 service owns task state such as `preparing`, `playback_ready`, `downloading`, `completed`, and
 `failed`; HLS session directories, playlists, segment files, retention, cleanup, and finalization;
 HTTP serving such as `/tasks/{id}/hls/master.m3u8`; AVPlayer-compatible event playlists during
 download and VOD playlists after completion; and registering completed HLS or remuxed MP4 artifacts
-as library items. Future crate work should add APP/gRPC playurl mode and richer device policy
-profiles without moving those runtime responsibilities into `bbdown-core`.
+as library items. Future crate work may add richer device policy profiles without moving those
+runtime responsibilities into `bbdown-core`.
 
 ## Download Execution
 
@@ -274,10 +288,14 @@ and `tw`, with duplicate `(base_url, area, kind)` candidates removed. CLI-create
 preserve source priority before area grouping, so explicit command-line proxy candidates are tried
 before environment-derived proxy candidates.
 
-PGC stream planning first calls the official PGC web playurl endpoint. If that response clearly
-reports a region/area restriction and restricted-area proxies are configured, the client tries
-ordered candidates until one returns a valid DASH or FLV stream shape. Non-area official failures keep
-their original error and do not contact proxy hosts. A BBDown/BiliPlus-style HTTP(S) playurl proxy
+PGC stream planning first calls the selected official PGC playurl endpoint, either web HTTP or APP
+gRPC depending on `PlayurlMode`. If that response clearly reports a region/area restriction and
+restricted-area proxies are configured, the client tries ordered candidates until one returns a
+valid DASH or FLV stream shape. For APP gRPC, fallback signals can come from region/area messages,
+permission-denied gRPC status, or PGC response-body metadata such as `view_info.dialog`, stream
+limits, or preview-only business state.
+Non-area official failures keep their original error and do not contact proxy hosts. A
+BBDown/BiliPlus-style HTTP(S) playurl proxy
 receives the PGC playurl query at the configured URL. A Bilibili API HTTP(S) proxy receives the same
 query at `/pgc/player/web/playurl` below the configured base URL, matching common BALH-style API
 proxy hosts, and then tries `/pgc/player/web/v2/playurl` as a compatibility fallback for existing

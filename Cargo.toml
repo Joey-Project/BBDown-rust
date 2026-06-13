@@ -26,13 +26,19 @@ panic = "deny"
 anyhow = "1.0.99"
 assert_cmd = "2.0.17"
 async-trait = "0.1.89"
+base64 = "0.22.1"
+bytes = "1.11.1"
 clap = { version = "4.5.47", features = ["derive", "env"] }
 dirs = "6.0.0"
+flate2 = "1.1.2"
 futures-util = "0.3.31"
+http = "1.4.1"
+http-body-util = "0.1.3"
 httpmock = "0.8.0-alpha.1"
 md-5 = "0.10.6"
 predicates = "3.1.3"
-reqwest = { version = "0.12.23", default-features = false, features = ["charset", "gzip", "json", "rustls-tls", "stream"] }
+prost = "0.14.1"
+reqwest = { version = "0.12.23", default-features = false, features = ["charset", "gzip", "http2", "json", "rustls-tls", "stream"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.143"
 tempfile = "3.21.0"

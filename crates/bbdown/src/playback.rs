@@ -1,6 +1,6 @@
 use crate::{
-    DownloadEntry, DownloadPlan, Error, FlvSegment, MediaStream, Result, StreamQuality,
-    StreamSource,
+    CodecFamily, DownloadEntry, DownloadPlan, Error, FlvSegment, MediaStream, Result,
+    StreamQuality, StreamSource,
 };
 use md5::{Digest, Md5};
 use reqwest::header::HeaderMap;
@@ -395,20 +395,7 @@ impl PlaybackVariant {
     }
 }
 
-#[non_exhaustive]
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PlaybackCodecFamily {
-    H264,
-    Hevc,
-    Av1,
-    Vp9,
-    Aac,
-    Flac,
-    Dolby,
-    Unknown,
-    Other,
-}
+pub type PlaybackCodecFamily = CodecFamily;
 
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -438,6 +425,8 @@ pub struct MediaRequestSpec {
     pub headers: Vec<HttpHeaderSpec>,
     pub mime_type: Option<String>,
     pub codecs: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codec_family: Option<PlaybackCodecFamily>,
     pub bandwidth: Option<u64>,
     pub width: Option<u32>,
     pub height: Option<u32>,
@@ -627,6 +616,9 @@ fn media_stream_request(
         headers: request_headers.to_vec(),
         mime_type: stream.mime_type.clone(),
         codecs: stream.codecs.clone(),
+        codec_family: stream
+            .codec_family
+            .or_else(|| stream.codecs.as_deref().map(codec_family)),
         bandwidth: stream.bandwidth,
         width: stream.width,
         height: stream.height,
@@ -656,6 +648,7 @@ fn flv_segment_request(
         headers: request_headers.to_vec(),
         mime_type: Some("video/x-flv".to_owned()),
         codecs: None,
+        codec_family: None,
         bandwidth: None,
         width: None,
         height: None,
@@ -929,7 +922,27 @@ fn media_cache_component(request: &MediaRequestSpec) -> String {
 }
 
 fn media_compatibility_component(request: &MediaRequestSpec) -> String {
-    let codec = request.codecs.as_deref().map_or_else(
+    let codec = media_compatibility_codec_component(request);
+    let mime = request
+        .mime_type
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .map_or_else(|| "unknown".to_owned(), abr_identity_part);
+    format!("{codec}-{mime}")
+}
+
+fn media_compatibility_codec_component(request: &MediaRequestSpec) -> String {
+    if let Some(family) = request.codec_family {
+        return match family {
+            PlaybackCodecFamily::Unknown => format!("unknown-{}", media_cache_component(request)),
+            PlaybackCodecFamily::Other => request.codecs.as_deref().map_or_else(
+                || "other".to_owned(),
+                |codec| format!("other-{}", abr_identity_part(codec)),
+            ),
+            family => codec_family_key(family).to_owned(),
+        };
+    }
+    request.codecs.as_deref().map_or_else(
         || format!("unknown-{}", media_cache_component(request)),
         |codec| {
             let normalized = codec.trim().to_ascii_lowercase();
@@ -941,13 +954,7 @@ fn media_compatibility_component(request: &MediaRequestSpec) -> String {
                 family => codec_family_key(family).to_owned(),
             }
         },
-    );
-    let mime = request
-        .mime_type
-        .as_deref()
-        .filter(|value| !value.is_empty())
-        .map_or_else(|| "unknown".to_owned(), abr_identity_part);
-    format!("{codec}-{mime}")
+    )
 }
 
 fn abr_identity_part(value: &str) -> String {
@@ -1036,12 +1043,8 @@ fn avplayer_hint(
         };
     }
 
-    let video_family = video
-        .and_then(|request| request.codecs.as_deref())
-        .map(codec_family);
-    let audio_family = audio
-        .and_then(|request| request.codecs.as_deref())
-        .map(codec_family);
+    let video_family = request_codec_family(video);
+    let audio_family = request_codec_family(audio);
     let video_codec = video.and_then(|request| request.codecs.clone());
     let audio_codec = audio.and_then(|request| request.codecs.clone());
     let mut playable = video.is_some() || audio.is_some();
@@ -1134,16 +1137,26 @@ fn hint_needs_backfill(
 ) -> bool {
     let video_codec = request_codec(video);
     let audio_codec = request_codec(audio);
-    let video_family = video_codec.map(codec_family);
-    let audio_family = audio_codec.map(codec_family);
+    let video_family = request_codec_family(video);
+    let audio_family = request_codec_family(audio);
     let expected_format_key = format_key(kind, video_family, audio_family);
     hint.format_key != expected_format_key
+        || hint.video_codec_family != video_family
+        || hint.audio_codec_family != audio_family
         || video_codec.is_some() && hint.video_codec.as_deref() != video_codec
         || audio_codec.is_some() && hint.audio_codec.as_deref() != audio_codec
 }
 
 fn request_codec(request: Option<&MediaRequestSpec>) -> Option<&str> {
     request.and_then(|request| request.codecs.as_deref())
+}
+
+fn request_codec_family(request: Option<&MediaRequestSpec>) -> Option<PlaybackCodecFamily> {
+    request.and_then(|request| {
+        request
+            .codec_family
+            .or_else(|| request.codecs.as_deref().map(codec_family))
+    })
 }
 
 fn format_key(
@@ -1265,8 +1278,8 @@ mod tests {
         PlaybackVariant, PlaybackVariantKind, codec_family, source_hash,
     };
     use crate::{
-        DanmakuTrack, DownloadEntry, DownloadPlan, FlvSegment, MediaStream, StreamDiagnostics,
-        StreamQuality, StreamSet, StreamSource,
+        CodecFamily, DanmakuTrack, DownloadEntry, DownloadPlan, FlvSegment, MediaStream,
+        StreamDiagnostics, StreamQuality, StreamSet, StreamSource,
     };
 
     #[test]
@@ -1629,6 +1642,87 @@ mod tests {
     }
 
     #[test]
+    fn codec_family_keeps_family_only_app_streams_selectable() {
+        let mut hevc_video = media_stream(80, "hev1.1.6.L120.90", 1_200_000);
+        hevc_video.codecs = None;
+        hevc_video.codec_family = Some(CodecFamily::Hevc);
+        let mut lower_hevc_video = media_stream(64, "hev1.1.6.L120.90", 800_000);
+        lower_hevc_video.codecs = None;
+        lower_hevc_video.codec_family = Some(CodecFamily::Hevc);
+        let plan = test_plan(StreamSet {
+            videos: vec![hevc_video, lower_hevc_video],
+            audios: vec![audio_stream("mp4a.40.2", 128_000)],
+            flv_segments: Vec::new(),
+            accept_quality: vec![80, 64],
+            qualities: Vec::new(),
+            duration_seconds: Some(90),
+        });
+
+        let playback = PlaybackPlan::from_download_plan(&plan, &[]);
+        let variants = &playback.entries[0].variants;
+        let hint = &variants[0].selection_hints.avplayer;
+
+        assert_eq!(playback.entries[0].abr.groups.len(), 1);
+        assert_eq!(playback.entries[0].abr.groups[0].level_count, 2);
+        assert_eq!(
+            variants[0]
+                .video
+                .as_ref()
+                .and_then(|video| video.codecs.clone()),
+            None
+        );
+        assert_eq!(
+            variants[0]
+                .video
+                .as_ref()
+                .and_then(|video| video.codec_family),
+            Some(PlaybackCodecFamily::Hevc)
+        );
+        assert_eq!(hint.video_codec, None);
+        assert_eq!(hint.video_codec_family, Some(PlaybackCodecFamily::Hevc));
+        assert_eq!(
+            variants[0].codec_preference_rank(&PlaybackCodecPreference::hevc_aac()),
+            Some(1_001)
+        );
+        assert!(variants[0].abr.as_ref().is_some_and(|abr| abr.switchable));
+    }
+
+    #[test]
+    fn codec_family_keeps_family_only_app_audio_visible() -> anyhow::Result<()> {
+        let mut flac_audio = audio_stream("flac", 800_000);
+        flac_audio.codecs = None;
+        flac_audio.codec_family = Some(CodecFamily::Flac);
+        let plan = test_plan(StreamSet {
+            videos: vec![media_stream(80, "avc1.640028", 1_200_000)],
+            audios: vec![flac_audio],
+            flv_segments: Vec::new(),
+            accept_quality: vec![80],
+            qualities: Vec::new(),
+            duration_seconds: Some(90),
+        });
+
+        let playback = PlaybackPlan::from_download_plan(&plan, &[]);
+        let variant = &playback.entries[0].variants[0];
+        let audio = variant
+            .audio
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("audio request"))?;
+        let hint = &variant.selection_hints.avplayer;
+
+        assert_eq!(audio.codecs, None);
+        assert_eq!(audio.codec_family, Some(PlaybackCodecFamily::Flac));
+        assert_eq!(hint.audio_codec, None);
+        assert_eq!(hint.audio_codec_family, Some(PlaybackCodecFamily::Flac));
+        assert_eq!(hint.format_key, "h264+flac");
+        assert!(!hint.playable);
+        assert!(
+            hint.reasons
+                .contains(&PlaybackSelectionReason::UnsupportedAudioCodec)
+        );
+        Ok(())
+    }
+
+    #[test]
     fn abr_groups_separate_other_video_codec_strings() {
         let first_other = media_stream(80, "future.1", 1_200_000);
         let second_other = media_stream(64, "future.2", 800_000);
@@ -1807,6 +1901,7 @@ mod tests {
             base_url: format!("https://video.example/{id}.m4s?token=secret"),
             backup_urls: Vec::new(),
             codecs: Some(codecs.to_owned()),
+            codec_family: None,
             bandwidth: Some(bandwidth),
             width: Some(1280),
             height: Some(720),
@@ -1822,6 +1917,7 @@ mod tests {
             base_url: "https://audio.example/30280.m4s?token=secret".to_owned(),
             backup_urls: Vec::new(),
             codecs: Some(codecs.to_owned()),
+            codec_family: None,
             bandwidth: Some(bandwidth),
             width: None,
             height: None,

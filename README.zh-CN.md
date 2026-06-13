@@ -59,6 +59,7 @@ URL。PGC 和 intl 规划仍可能需要符合条件的账号或区域访问。P
 ```bash
 bbdown playback av170001 --json
 bbdown --playurl-mode tv playback av170001 --json
+bbdown --playurl-mode app playback av170001 --json
 bbdown playback ss26801 --select latest --json
 bbdown playback fav456 --select 1,3-5 --json
 ```
@@ -66,13 +67,27 @@ bbdown playback fav456 --select 1,3-5 --json
 `playback` 会解析与 `plan` 相同的选中条目，然后输出选中的 DASH 视频/音频请求规格，或
 FLV segment 规格，其中包含主 URL、备用 URL、headers、mime/codec metadata、时长/大小和
 entry/variant/media cache key、ABR switching group，并包含 `selection_hints.avplayer`
-metadata：exact codec 字符串、codec family、`format_key` 和面向 AVPlayer 的排序信号。
+metadata：已知时的 exact codec 字符串、codec family、`format_key` 和面向 AVPlayer 的排序信号。
 下游可以用 `PlaybackCodecPreference` 自定义 H.264、HEVC、AV1 或其它 codec 的优先级，
 再用 `PlaybackVariant.abr` 和 `PlaybackEntry.abr` 在切换 level 时保留已经缓存的
 codec/mime-compatible variants。它不会下载文件、创建 HLS playlist 或运行播放器。
 设置 `--playurl-mode tv` 或 `BBDOWN_PLAYURL_MODE=tv` 后，普通视频和 PGC 分集会通过
 BBDown-compatible TV HTTP playurl 端点解析。TV mode 使用 `auth login-tv` 保存的 TV 专用
 access key，并可用 `--tv-api-base` / `BBDOWN_TV_API_BASE` 覆盖端点。
+设置 `--playurl-mode app` 或 `BBDOWN_PLAYURL_MODE=app` 后，普通视频和 PGC 分集会通过
+BBDown-compatible APP gRPC playurl 端点解析。APP mode 优先使用
+`Credentials::tv_access_key`，没有 TV token 时回退到通用 `Credentials::access_key`；mock
+或代理端点可用 `--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` 和 `--app-pgc-grpc-base` /
+`BBDOWN_APP_PGC_GRPC_BASE` 覆盖；普通视频 APP 默认使用 `https://grpc.biliapi.net`，PGC
+APP 默认跟随 BBDown reference host `https://app.bilibili.com`。PGC APP gRPC
+响应如果带有区域限制或 preview-only 信号，仍会回退到已配置的 restricted-area HTTP playurl
+proxy；信号可以来自区域限制消息、APP permission-denied gRPC status 或 PGC response-body
+metadata。proxy fallback URL 只会使用通用导入
+的 `Credentials::access_key`，不会转发 TV 专用 token。非零 gRPC status 会同时读取 initial
+headers 和 trailing metadata。APP DASH 响应中的分辨率和帧率等 metadata 会保留到
+playback/API 输出。如果 APP 响应返回多个
+legacy FLV 分段清晰度，规范化后的 `StreamSet` 只暴露最高质量的一组 segment，不会把不同
+清晰度的分段混合到同一列表。
 
 下载所选媒体文件：
 
@@ -154,8 +169,11 @@ TV 二维码轮询才会跟随 `--tv-passport-base`；否则除非显式设置 `
 它会使用上游 TV 轮询默认值。
 当 `plan`、`playback` 或 `download` 需要使用 TV playurl host 而不是默认 web playurl host
 时，可同时使用 `--playurl-mode tv` 和 `--tv-api-base`。
+当 `plan`、`playback` 或 `download` 需要使用 APP gRPC playurl host 时，可同时使用
+`--playurl-mode app`、`--app-grpc-base` 和 `--app-pgc-grpc-base`。
 
-通过显式代理主机配置受限区域 PGC playurl 回退。只有官方 PGC playurl 响应报告区域限制时
+通过显式代理主机配置受限区域 PGC playurl 回退。只有官方 PGC playurl 响应报告区域限制，
+或 APP gRPC mode 报告 permission-denied status / preview-only PGC response-body 信号时
 才会回退：
 
 ```bash
