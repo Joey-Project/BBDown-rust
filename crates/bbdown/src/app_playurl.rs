@@ -29,7 +29,7 @@ const APP_REGION: &str = "CN";
 const APP_LANGUAGE: &str = "zh";
 const APP_NETWORK_OID: &str = "46007";
 
-pub(crate) fn play_view_request_body(content_id: u64, cid: u64, _is_pgc: bool) -> Result<Vec<u8>> {
+pub(crate) fn play_view_request_body(content_id: u64, cid: u64, is_pgc: bool) -> Result<Vec<u8>> {
     let content_id = i64::try_from(content_id)
         .map_err(|_| Error::InvalidInput("APP playurl content id is too large".to_owned()))?;
     let cid = i64::try_from(cid)
@@ -49,6 +49,7 @@ pub(crate) fn play_view_request_body(content_id: u64, cid: u64, _is_pgc: bool) -
         prefer_codec_type: Some(AppCodeType::Hevc.into()),
         is_preview: None,
         room_id: None,
+        is_need_view_info: is_pgc.then_some(true),
     };
     encode_grpc_frame(&request.encode_to_vec(), true)
 }
@@ -251,6 +252,8 @@ struct PlayViewReq {
     is_preview: Option<bool>,
     #[prost(int64, optional, tag = "14")]
     room_id: Option<i64>,
+    #[prost(bool, optional, tag = "15")]
+    is_need_view_info: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Enumeration)]
@@ -1000,8 +1003,9 @@ pub(crate) fn test_pgc_region_limit_response_frame(message: &str) -> Result<Vec<
 #[cfg(test)]
 mod tests {
     use super::{
-        Dialog, PlayViewReply, ResponseUrl, SegmentVideo, StreamInfo, StreamItem, VideoInfo,
-        ViewInfo, decode_grpc_frame, encode_grpc_frame, test_play_view_response_frame,
+        Dialog, PlayViewReply, PlayViewReq, ResponseUrl, SegmentVideo, StreamInfo, StreamItem,
+        VideoInfo, ViewInfo, decode_grpc_frame, encode_grpc_frame, play_view_request_body,
+        test_play_view_response_frame,
     };
     use crate::Error;
     use prost::Message as _;
@@ -1017,6 +1021,30 @@ mod tests {
     fn grpc_frame_decodes_compressed_payload() -> anyhow::Result<()> {
         let frame = encode_grpc_frame(b"hello", true)?;
         assert_eq!(decode_grpc_frame(&frame)?, b"hello");
+        Ok(())
+    }
+
+    #[test]
+    fn play_view_request_asks_pgc_for_view_info() -> anyhow::Result<()> {
+        let frame = play_view_request_body(1000, 2000, true)?;
+        let payload = decode_grpc_frame(&frame)?;
+        let request = PlayViewReq::decode(payload.as_slice())?;
+
+        assert_eq!(request.ep_id, Some(1000));
+        assert_eq!(request.cid, Some(2000));
+        assert_eq!(request.is_need_view_info, Some(true));
+        Ok(())
+    }
+
+    #[test]
+    fn play_view_request_omits_view_info_for_normal_video() -> anyhow::Result<()> {
+        let frame = play_view_request_body(170_001, 9988, false)?;
+        let payload = decode_grpc_frame(&frame)?;
+        let request = PlayViewReq::decode(payload.as_slice())?;
+
+        assert_eq!(request.ep_id, Some(170_001));
+        assert_eq!(request.cid, Some(9988));
+        assert_eq!(request.is_need_view_info, None);
         Ok(())
     }
 

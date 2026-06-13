@@ -40,6 +40,8 @@ superseded_by:
   `PgcProxy` diagnostics.
 - PGC APP region-limit fallback covers both non-zero gRPC status metadata and recognized PGC
   response-body messages such as `view_info.dialog`.
+- PGC APP requests set the protobuf `is_need_view_info` flag so real PGC responses can include
+  body-carried view information needed by that fallback.
 - APP DASH width, height, and frame-rate metadata is preserved on `MediaStream` and playback JSON.
 
 ## Next Steps
@@ -55,6 +57,7 @@ superseded_by:
   `cargo test -p bbdown-core pgc_app_streams_fall_back_to_restricted_area_proxy --lib`.
 - Targeted validation:
   `cargo test -p bbdown-core pgc_app_body_limit_falls_back_to_restricted_area_proxy --lib`.
+- Targeted validation: `cargo test -p bbdown-core play_view_request --lib`.
 - Targeted validation: `cargo test -p bbdown-cli --test cli_e2e playback_json_uses_app_playurl_mode`.
 - Full validation: `just ci`.
 - Journal validation:
@@ -75,3 +78,7 @@ superseded_by:
   preserved. Fixed by decoding the needed PGC `view_info` / stream-limit fields, mapping recognized
   access-limit messages to `AccessRestricted`, and adding metadata assertions to core and CLI
   playback tests.
+- Follow-up independent review fix: the PGC request did not ask the endpoint to include
+  `view_info`, which made the body-carried fallback path unreliable on real responses. Fixed by
+  setting protobuf tag 15 (`is_need_view_info`) for PGC APP requests and adding request-body
+  regression tests.
