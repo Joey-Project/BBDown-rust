@@ -212,12 +212,29 @@ pub struct MediaStream {
     pub base_url: String,
     pub backup_urls: Vec<String>,
     pub codecs: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codec_family: Option<CodecFamily>,
     pub bandwidth: Option<u64>,
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub frame_rate: Option<String>,
     pub mime_type: Option<String>,
     pub size: Option<u64>,
+}
+
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodecFamily {
+    H264,
+    Hevc,
+    Av1,
+    Vp9,
+    Aac,
+    Flac,
+    Dolby,
+    Unknown,
+    Other,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

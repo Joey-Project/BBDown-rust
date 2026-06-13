@@ -1,4 +1,4 @@
-use crate::models::{FlvSegment, MediaStream, StreamQuality, StreamSet};
+use crate::models::{CodecFamily, FlvSegment, MediaStream, StreamQuality, StreamSet};
 use crate::{Error, Result};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
@@ -681,7 +681,8 @@ impl DashVideo {
             id,
             base_url: normalize_media_url(&base_url),
             backup_urls: normalize_media_url_list(self.backup_url),
-            codecs: video_codec(self.codecid.or(fallback_video_codecid)),
+            codecs: None,
+            codec_family: video_codec_family(self.codecid.or(fallback_video_codecid)),
             bandwidth,
             width: self.width.and_then(|value| u32::try_from(value).ok()),
             height: self.height.and_then(|value| u32::try_from(value).ok()),
@@ -700,6 +701,7 @@ impl DashItem {
             base_url: normalize_media_url(&base_url),
             backup_urls: normalize_media_url_list(self.backup_url),
             codecs: Some(audio_codec(kind, self.codecid)),
+            codec_family: Some(audio_codec_family(kind)),
             bandwidth: self.bandwidth.map(u64::from),
             width: None,
             height: None,
@@ -742,11 +744,11 @@ impl AudioKind {
     }
 }
 
-fn video_codec(codecid: Option<u32>) -> Option<String> {
+fn video_codec_family(codecid: Option<u32>) -> Option<CodecFamily> {
     match codecid {
-        Some(7) => Some("avc1.640028".to_owned()),
-        Some(12) => Some("hev1.1.6.L120.90".to_owned()),
-        Some(13) => Some("av01.0.08M.08".to_owned()),
+        Some(7) => Some(CodecFamily::H264),
+        Some(12) => Some(CodecFamily::Hevc),
+        Some(13) => Some(CodecFamily::Av1),
         _ => None,
     }
 }
@@ -756,6 +758,14 @@ fn audio_codec(kind: AudioKind, _codecid: Option<u32>) -> String {
         AudioKind::Aac => "mp4a.40.2".to_owned(),
         AudioKind::Flac => "flac".to_owned(),
         AudioKind::Dolby => "ec-3".to_owned(),
+    }
+}
+
+const fn audio_codec_family(kind: AudioKind) -> CodecFamily {
+    match kind {
+        AudioKind::Aac => CodecFamily::Aac,
+        AudioKind::Flac => CodecFamily::Flac,
+        AudioKind::Dolby => CodecFamily::Dolby,
     }
 }
 
@@ -1013,7 +1023,7 @@ mod tests {
         StreamItem, VideoInfo, ViewInfo, decode_grpc_frame, encode_grpc_frame,
         play_view_request_body, test_play_view_response_frame,
     };
-    use crate::Error;
+    use crate::{CodecFamily, Error};
     use prost::Message as _;
 
     #[test]
@@ -1059,16 +1069,17 @@ mod tests {
         let frame = test_play_view_response_frame("https://app.example/video.m4s")?;
         let streams = super::decode_play_view_response(&frame)?;
         assert_eq!(streams.videos[0].id, 80);
-        assert_eq!(
-            streams.videos[0].codecs.as_deref(),
-            Some("hev1.1.6.L120.90")
-        );
+        assert_eq!(streams.videos[0].codecs, None);
+        assert_eq!(streams.videos[0].codec_family, Some(CodecFamily::Hevc));
         assert_eq!(streams.videos[0].width, Some(1920));
         assert_eq!(streams.videos[0].height, Some(1080));
         assert_eq!(streams.videos[0].frame_rate.as_deref(), Some("60"));
         assert_eq!(streams.audios[0].codecs.as_deref(), Some("mp4a.40.2"));
+        assert_eq!(streams.audios[0].codec_family, Some(CodecFamily::Aac));
         assert_eq!(streams.audios[1].codecs.as_deref(), Some("flac"));
+        assert_eq!(streams.audios[1].codec_family, Some(CodecFamily::Flac));
         assert_eq!(streams.audios[2].codecs.as_deref(), Some("ec-3"));
+        assert_eq!(streams.audios[2].codec_family, Some(CodecFamily::Dolby));
         assert_eq!(streams.flv_segments[0].order, 1);
         assert_eq!(streams.duration_seconds, Some(123));
         assert_eq!(streams.qualities[0].description.as_deref(), Some("1080P"));

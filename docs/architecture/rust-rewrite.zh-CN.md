@@ -119,17 +119,19 @@ CLI 通过 `bbdown plan` 暴露这一层。该命令被有意设计为规划表�
 `MediaRequestSpec`；FLV variant 携带有序的 segment spec。
 
 `MediaRequestSpec` 被设计为可序列化且与传输层解耦。它包含主 URL、备用 URL、媒体
-headers、mime type、codec 字符串、码率、尺寸、时长、大小和结构化 cache key。cache key
-基于内容身份、媒体种类、stream id、codec，以及去掉 fragment 但保留 query 身份的 source
-URL hash。这样既避免暴露 URL 明文，也避免让 query string 区分资源的 proxy URL 发生碰撞。
+headers、mime type、已知时的 exact codec 字符串、codec-family metadata、码率、尺寸、时长、
+大小和结构化 cache key。cache key 基于内容身份、媒体种类、stream id、存在时的 exact codec
+字符串，以及去掉 fragment 但保留 query 身份的 source URL hash。这样既避免暴露 URL 明文，
+也避免让 query string 区分资源的 proxy URL 发生碰撞。
 playback planning 还会暴露 `PlaybackEntry.cache_key`、`PlaybackVariant.cache_key`、
 `PlaybackEntry.abr.groups` 和 `PlaybackVariant.abr`，让下游 cache server 可以按 request
 key 存储媒体、按 variant key 保留已完成 variants，并把 ABR level 切换映射回同一个
 codec/mime-compatible switching group，避免重新获取已经缓存过的 levels。
-`PlaybackVariant.selection_hints.avplayer` 增加了面向 AVPlayer 的 profile，包含 exact codec
-字符串、codec family、`format_key`、score/preferred 信号和机器可读 reason。公开的
-`PlaybackCodecPreference` helper 允许下游按自己的 H.264、HEVC、AV1 或其它 codec 顺序给
-variants 排名，而不是接受写死的 H.264-first 策略。
+`PlaybackVariant.selection_hints.avplayer` 增加了面向 AVPlayer 的 profile，包含已知时的
+exact codec 字符串、codec family、`format_key`、score/preferred 信号和机器可读 reason。
+公开的 `PlaybackCodecPreference` helper 允许下游按自己的 H.264、HEVC、AV1 或其它 codec
+顺序给 variants 排名，而不是接受写死的 H.264-first 策略。APP/gRPC streams 会把数值 codec id
+暴露为 family metadata，不会伪造 exact MP4 codec 字符串。
 同一 planning 路径会遵守 `PlayurlMode::Tv` 和 `PlayurlMode::App`，因此 `DownloadPlan` 和
 `PlaybackPlan` 可以暴露 `NormalTv`、`PgcTv`、`NormalApp` 或 `PgcApp` source，同时不改变下
 游 request-spec shape。TV mode 使用 `Credentials::tv_access_key`。APP/gRPC mode 优先使用

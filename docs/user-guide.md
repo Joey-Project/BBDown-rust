@@ -138,7 +138,8 @@ bbdown playback fav456 --select 1,3-5 --json
 The command resolves the same selected entries as `plan`, then emits `PlaybackPlan` JSON. Each
 variant contains DASH video/audio request specs or FLV segment specs with primary URL, backup URLs,
 headers, mime type, codec, bandwidth, dimensions, duration, size, cache-key metadata, and
-AVPlayer-oriented selection hints with exact codec strings, codec families, and a `format_key`.
+AVPlayer-oriented selection hints with exact codec strings when known, codec families, and a
+`format_key`.
 Playback entries also include codec/mime-compatible ABR groups, and each DASH variant points back
 to its group and low-to-high level index so a downstream cache/player service can switch compatible
 levels without losing already cached media objects. This is a read-only planning surface: it does

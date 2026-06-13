@@ -72,12 +72,13 @@ async fn main() -> bbdown_core::Result<()> {
 ```
 
 每个 `PlaybackVariant` 包含选中的 DASH 视频/音频请求规格，或 FLV 分段请求规格。
-`MediaRequestSpec` 包含主 URL、备用 URL、HTTP headers、mime type、codec 字符串、码率、
-尺寸、时长、大小和 cache key。`PlaybackVariant.selection_hints` 包含
-`avplayer` profile，其中有 `playable`、`preferred`、`score`、exact `video_codec` /
-`audio_codec` 字符串、codec-family 字段、`format_key` 和机器可读 reason code。下游客户端
-可以用 `PlaybackCodecPreference` 按自己的 H.264、HEVC、AV1 或其它 codec 顺序给 variants
-排序，然后在交给平台播放器前验证 exact codec 字符串。cache key 会对 source URL 做 hash，
+`MediaRequestSpec` 包含主 URL、备用 URL、HTTP headers、mime type、上游提供时的 exact
+codec 字符串、codec-family metadata、码率、尺寸、时长、大小和 cache key。
+`PlaybackVariant.selection_hints` 包含 `avplayer` profile，其中有 `playable`、`preferred`、
+`score`、已知时的 exact `video_codec` / `audio_codec` 字符串、codec-family 字段、
+`format_key` 和机器可读 reason code。下游客户端可以用 `PlaybackCodecPreference` 按自己的
+H.264、HEVC、AV1 或其它 codec 顺序给 variants 排序，然后在交给平台播放器前验证存在的 exact
+codec 字符串。cache key 会对 source URL 做 hash，
 避免暴露明文，同时保留 query-string 的资源身份。`PlaybackEntry.cache_key` 标识所选内容，
 `PlaybackVariant.cache_key` 组合一个可播放 variant 里的媒体 cache keys，
 `PlaybackEntry.abr.groups` 按低到高 level 顺序列出 codec/mime-compatible switching
@@ -103,8 +104,9 @@ HTTP modes 相同的 `StreamSet` 和 `PlaybackPlan` 表面。PGC APP gRPC 失败
 只会接收通用 `Credentials::access_key`。限制可以来自
 gRPC status，也可以来自 PGC response body。非零 gRPC status 会从 initial headers 和
 trailing metadata 里读取。APP DASH 的分辨率和帧率 metadata 会保留到 `MediaStream` /
-`PlaybackPlan` 输出。多个 APP legacy FLV 分段清晰度会压缩为最高质量的一组 segment，因为
-当前 `StreamSet` schema 把 legacy FLV 表示为单个有序 segment 列表。
+`PlaybackPlan` 输出。APP 数值 codec id 会暴露为 `codec_family` metadata，不会伪造 exact
+MP4 codec 字符串。多个 APP legacy FLV 分段清晰度会压缩为最高质量的一组 segment，因为当前
+`StreamSet` schema 把 legacy FLV 表示为单个有序 segment 列表。
 
 ## 批量和集合输入
 

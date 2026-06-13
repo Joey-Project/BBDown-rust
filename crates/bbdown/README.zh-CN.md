@@ -71,8 +71,8 @@ segment 请求规格时，使用 `BiliClient::plan_playback`。`PlaybackPlan` �
 URL、媒体 headers、mime/codec metadata、时长、大小、entry/variant/media cache key，以及
 codec/mime-compatible ABR group/level metadata，但不实现播放器状态、HLS playlist 生成或
 HTTP segment serving。每个 `PlaybackVariant` 还包含 `selection_hints.avplayer`，提供 exact
-codec 字符串、codec-family metadata、`format_key` 和排序信号。嵌入客户端需要优先 H.264、
-HEVC、AV1 或其它 codec 顺序时，可以使用 `PlaybackCodecPreference`。
+codec 字符串（已知时）、codec-family metadata、`format_key` 和排序信号。嵌入客户端需要优先
+H.264、HEVC、AV1 或其它 codec 顺序时，可以使用 `PlaybackCodecPreference`。
 当嵌入应用需要给普通视频或 PGC 分集使用 BBDown-compatible TV HTTP playurl 解析时，可设置
 `ClientConfig::with_playurl_mode(PlayurlMode::Tv)` 和 `EndpointConfig::with_tv_api_base`。
 TV mode 使用 `Credentials::tv_access_key`，不会复用通用 intl access key。
@@ -83,7 +83,8 @@ TV mode 使用 `Credentials::tv_access_key`，不会复用通用 intl access key
 `Credentials::access_key`，并输出规范化后的 `StreamSet` / `PlaybackPlan` 媒体规格；PGC
 出现由 gRPC status 或 PGC response body 报告的可识别区域限制错误时，仍可回退到已配置的
 restricted-area HTTP playurl proxy，且 proxy URL 只使用通用 access key。APP gRPC 非零 status 会读取 initial headers 和
-trailing metadata；APP DASH 的分辨率和帧率 metadata 会保留到规范化媒体规格；legacy FLV
+trailing metadata；APP DASH 的分辨率和帧率 metadata 会保留到规范化媒体规格；APP 数值
+codec id 会暴露为 `codec_family` metadata，不会伪造 exact MP4 codec 字符串；legacy FLV
 segment 响应会规范化为最高质量的一组 segment。
 嵌入应用需要 BBDown 风格或应用自定义输出名时，可以设置 `DownloadPathTemplates`。模板会
 为输出根目录、条目目录和 mux 后文件名 stem 渲染经过清洗的文件名组件；媒体和 sidecar 文

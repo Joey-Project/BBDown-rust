@@ -30,10 +30,10 @@ pub use error::{Error, Result};
 pub use input::Input;
 pub use login::{QrLoginKind, QrLoginState, QrLoginTicket};
 pub use models::{
-    DanmakuTrack, DownloadEntry, DownloadPlan, EpisodeMetadata, FlvSegment, MediaStream, Owner,
-    PageMetadata, ResolvedContent, SeasonMetadata, SeasonResolution, StreamDiagnostics,
-    StreamQuality, StreamResolverAttempt, StreamResolverOutcome, StreamSet, StreamSource,
-    SubtitleFormat, SubtitleTrack, Tag, VideoCollectionItem, VideoCollectionKind,
+    CodecFamily, DanmakuTrack, DownloadEntry, DownloadPlan, EpisodeMetadata, FlvSegment,
+    MediaStream, Owner, PageMetadata, ResolvedContent, SeasonMetadata, SeasonResolution,
+    StreamDiagnostics, StreamQuality, StreamResolverAttempt, StreamResolverOutcome, StreamSet,
+    StreamSource, SubtitleFormat, SubtitleTrack, Tag, VideoCollectionItem, VideoCollectionKind,
     VideoCollectionMetadata, VideoCollectionResolution, VideoMetadata,
 };
 pub use playback::{

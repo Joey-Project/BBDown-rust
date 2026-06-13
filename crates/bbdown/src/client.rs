@@ -4216,6 +4216,7 @@ impl IntlMediaResource {
             base_url: normalize_media_url(&base_url),
             backup_urls: normalize_media_urls([self.backup_url, self.backup_url_camel]),
             codecs: self.codecs,
+            codec_family: None,
             bandwidth: self.bandwidth,
             width: self.width,
             height: self.height,
@@ -4275,6 +4276,7 @@ impl DashTrack {
             base_url: normalize_media_url(&base_url),
             backup_urls: normalize_media_urls([self.backup_url, self.backup_url_camel]),
             codecs: self.codecs,
+            codec_family: None,
             bandwidth: self.bandwidth,
             width: self.width,
             height: self.height,
@@ -4532,8 +4534,8 @@ mod tests {
         decode_app_grpc_stream_set, intl_ogv_playurl_params,
     };
     use crate::{
-        Credentials, EpisodeMetadata, Error, IndexSelection, IndexSelector, Input, PageMetadata,
-        ResolvedContent, SeasonMetadata, Selection, StreamSource, SubtitleFormat,
+        CodecFamily, Credentials, EpisodeMetadata, Error, IndexSelection, IndexSelector, Input,
+        PageMetadata, ResolvedContent, SeasonMetadata, Selection, StreamSource, SubtitleFormat,
         VideoCollectionItem, VideoCollectionKind, VideoCollectionMetadata, VideoMetadata,
         app_playurl,
     };
@@ -5298,9 +5300,10 @@ mod tests {
             entry.streams.videos[0].base_url,
             "https://app.example/80.m4s"
         );
+        assert_eq!(entry.streams.videos[0].codecs, None);
         assert_eq!(
-            entry.streams.videos[0].codecs.as_deref(),
-            Some("hev1.1.6.L120.90")
+            entry.streams.videos[0].codec_family,
+            Some(CodecFamily::Hevc)
         );
         assert_eq!(entry.streams.audios[0].codecs.as_deref(), Some("mp4a.40.2"));
         assert_eq!(entry.streams.flv_segments[0].order, 1);
@@ -7236,9 +7239,10 @@ mod tests {
             entry.streams.videos[0].base_url,
             "https://app.example/pgc-80.m4s"
         );
+        assert_eq!(entry.streams.videos[0].codecs, None);
         assert_eq!(
-            entry.streams.videos[0].codecs.as_deref(),
-            Some("hev1.1.6.L120.90")
+            entry.streams.videos[0].codec_family,
+            Some(CodecFamily::Hevc)
         );
         Ok(())
     }

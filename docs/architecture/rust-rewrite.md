@@ -125,18 +125,21 @@ of playback variants. DASH variants carry selected video and audio `MediaRequest
 variants carry ordered segment specs.
 
 `MediaRequestSpec` is deliberately serializable and transport-neutral. It contains the primary URL,
-backup URLs, media headers, mime type, codec string, bandwidth, dimensions, duration, size, and a
-structured cache key. The cache key is based on content identity, media kind, stream id, codec, and
-a hash of the source URL with fragments removed but query identity preserved. This avoids exposing
-the URL in plaintext while preventing collisions for proxy URLs whose query string identifies the
-resource. Playback planning also exposes `PlaybackEntry.cache_key`, `PlaybackVariant.cache_key`,
+backup URLs, media headers, mime type, exact codec string when known, codec-family metadata,
+bandwidth, dimensions, duration, size, and a structured cache key. The cache key is based on content
+identity, media kind, stream id, exact codec string when present, and a hash of the source URL with
+fragments removed but query identity preserved. This avoids exposing the URL in plaintext while
+preventing collisions for proxy URLs whose query string identifies the resource. Playback planning
+also exposes `PlaybackEntry.cache_key`, `PlaybackVariant.cache_key`,
 `PlaybackEntry.abr.groups`, and `PlaybackVariant.abr` so a downstream cache server can store media
 by request key, retain completed variants by variant key, and map ABR level changes back to the same
 codec/mime-compatible switching group without refetching already cached levels.
 `PlaybackVariant.selection_hints.avplayer` adds an AVPlayer-oriented profile with exact codec
-strings, codec families, a `format_key`, score/preferred signals, and machine-readable reasons. The
-public `PlaybackCodecPreference` helper lets downstream clients rank variants with their own H.264,
-HEVC, AV1, or other codec order instead of accepting a hard-coded H.264-first policy.
+strings when known, codec families, a `format_key`, score/preferred signals, and machine-readable
+reasons. The public `PlaybackCodecPreference` helper lets downstream clients rank variants with
+their own H.264, HEVC, AV1, or other codec order instead of accepting a hard-coded H.264-first
+policy. APP/gRPC streams expose numeric codec ids as family metadata without fabricating exact MP4
+codec strings.
 The same planning path honors `PlayurlMode::Tv` and `PlayurlMode::App`, so `DownloadPlan` and
 `PlaybackPlan` can expose `NormalTv`, `PgcTv`, `NormalApp`, or `PgcApp` sources without changing the
 downstream request-spec shape. TV mode uses `Credentials::tv_access_key`. APP/gRPC mode uses

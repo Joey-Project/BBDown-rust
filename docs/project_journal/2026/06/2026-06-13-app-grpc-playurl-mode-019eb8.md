@@ -43,6 +43,8 @@ superseded_by:
 - PGC APP requests set the protobuf `is_need_view_info` flag so real PGC responses can include
   body-carried view information needed by that fallback.
 - APP DASH width, height, and frame-rate metadata is preserved on `MediaStream` and playback JSON.
+- APP numeric video codec ids are exposed as structured `codec_family` metadata instead of
+  fabricated exact MP4 codec strings; exact `codecs` remains unset when APP does not provide it.
 
 ## Next Steps
 - Continue feed/list resolver work for history, following/UP pages, recommendation pages, and
@@ -83,6 +85,13 @@ superseded_by:
   setting protobuf tag 15 (`is_need_view_info`) for PGC APP requests and adding request-body
   regression tests.
 - Current-head review fix: PGC APP defaults now point both APP gRPC endpoint settings at the gRPC
-  host, proxy fallback no longer forwards TV-specific access keys, APP video codec strings use full
-  MP4 codec identifiers, and body-carried region-limit messages fail even if residual audio tracks
-  are present without video.
+  host, proxy fallback no longer forwards TV-specific access keys, and body-carried region-limit
+  messages fail even if residual audio tracks are present without video.
+- Current-head review fix: APP video `codecid` values no longer fabricate exact MP4 codec strings.
+  Added `codec_family` metadata to `MediaStream` / `MediaRequestSpec`, kept playback selection and
+  ABR grouping family-aware, and documented that downstreams should validate exact codec strings
+  only when present.
+- Targeted validation after codec-family fix:
+  `cargo test -p bbdown-core app_playurl --lib`.
+- Targeted validation after codec-family fix:
+  `cargo test -p bbdown-core playback --lib`.
