@@ -368,10 +368,11 @@ Release packaging is a separate GitHub Actions workflow stack. `Release Artifact
 manual-only: it builds Linux x86_64, macOS x86_64, macOS aarch64, and Windows x86_64 CLI archives
 without publishing tags, GitHub Releases, or crates. `Release Verification` is also reusable: both
 RC creation and RC promotion call it to run formatter, clippy, declared MSRV, tests, and crates.io
-dry-run validation for the selected commit. `Create Release Candidate` validates the repository
-default branch, builds those archives, and creates an annotated `vX.Y.Z-rc.N` tag through the release
-GitHub App, but first rejects versions that already have a final tag or GitHub Release. It repeats
-that final tag and GitHub Release check immediately before writing the RC tag.
+dry-run validation for the selected commit. `Create Release Candidate` validates either the
+repository default branch or a `release/*` source branch, builds those archives, and creates an
+annotated `vX.Y.Z-rc.N` tag through the release GitHub App at the workflow ref commit, but first
+rejects versions that already have a final tag or GitHub Release. It repeats that final tag and
+GitHub Release check immediately before writing the RC tag.
 `Promote Release Candidate` must be run from the latest RC tag for the requested version; it reruns
 validation, rebuilds final archives, rechecks that the selected RC is still latest immediately before
 publication, creates the final annotated `vX.Y.Z` tag, publishes the GitHub Release, then publishes

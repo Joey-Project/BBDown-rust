@@ -330,9 +330,10 @@ Release packaging 是单独的 GitHub Actions workflow stack。`Release Artifact
 x86_64 CLI 归档，但不发布 tag、GitHub Release 或 crate。`Release Verification` 也是可复用
 workflow：RC 创建和 RC promotion 都会调用它，对选中 commit 运行 formatter、clippy、
 declared MSRV、测试和 crates.io dry-run validation。`Create Release Candidate` 会验证
-repository default branch、构建这些归档，并通过 release GitHub App 创建 annotated
-`vX.Y.Z-rc.N` tag，但会先拒绝已经存在 final tag 或 GitHub Release 的 version。Create
-workflow 也会在真正写入 RC tag 前重复 final tag 和 GitHub Release 检查。`Promote Release
+repository default branch 或 `release/*` source branch、构建这些归档，并通过 release GitHub
+App 在 workflow ref commit 上创建 annotated `vX.Y.Z-rc.N` tag，但会先拒绝已经存在 final tag
+或 GitHub Release 的 version。Create workflow 也会在真正写入 RC tag 前重复 final tag 和
+GitHub Release 检查。`Promote Release
 Candidate` 必须从请求版本的最新 RC tag 运行；它会重新验证、重新构建正式归档，在
 发布前再次确认选中的 RC 仍然最新，创建正式 annotated `vX.Y.Z` tag，发布 GitHub Release，
 然后通过受保护的 `crates-io` environment 发布 `bbdown-core` 到 crates.io。它也会在创建
