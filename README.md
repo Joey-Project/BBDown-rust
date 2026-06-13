@@ -82,10 +82,11 @@ endpoints for normal videos and PGC episodes. APP mode uses `Credentials::tv_acc
 falls back to the generic `Credentials::access_key`; use `--app-grpc-base` /
 `BBDOWN_APP_GRPC_BASE` and `--app-pgc-grpc-base` / `BBDOWN_APP_PGC_GRPC_BASE` for mock or proxy
 endpoint overrides. PGC APP gRPC responses with recognizable region-limit messages still fall back
-to configured restricted-area HTTP playurl proxies. Non-zero gRPC status is read from both initial
-headers and trailing metadata. If an APP response returns multiple legacy FLV segment qualities, the
-normalized `StreamSet` exposes one highest-quality segment set instead of mixing segments from
-different qualities.
+to configured restricted-area HTTP playurl proxies, whether the limit is reported by gRPC status or
+inside the PGC response body. Non-zero gRPC status is read from both initial headers and trailing
+metadata. APP DASH response metadata such as resolution and frame rate is preserved in playback/API
+output. If an APP response returns multiple legacy FLV segment qualities, the normalized `StreamSet`
+exposes one highest-quality segment set instead of mixing segments from different qualities.
 
 Download selected media files:
 

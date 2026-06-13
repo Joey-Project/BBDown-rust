@@ -473,6 +473,9 @@ fn playback_json_uses_app_playurl_mode() -> anyhow::Result<()> {
         json["entries"][0]["variants"][0]["selection_hints"]["avplayer"]["video_codec_family"],
         "hevc"
     );
+    assert_eq!(json["entries"][0]["variants"][0]["width"], 1920);
+    assert_eq!(json["entries"][0]["variants"][0]["height"], 1080);
+    assert_eq!(json["entries"][0]["variants"][0]["frame_rate"], "60");
     Ok(())
 }
 
@@ -526,6 +529,9 @@ fn app_play_view_response_frame(video_url: &str) -> anyhow::Result<Vec<u8>> {
                     bandwidth: Some(1_000_000),
                     codecid: Some(12),
                     size: Some(1000),
+                    frame_rate: Some("60".to_owned()),
+                    width: Some(1920),
+                    height: Some(1080),
                 }),
             }],
             dash_audio: vec![TestAppDashItem {
@@ -590,6 +596,12 @@ struct TestAppDashVideo {
     codecid: Option<u32>,
     #[prost(uint64, optional, tag = "6")]
     size: Option<u64>,
+    #[prost(string, optional, tag = "9")]
+    frame_rate: Option<String>,
+    #[prost(int32, optional, tag = "10")]
+    width: Option<i32>,
+    #[prost(int32, optional, tag = "11")]
+    height: Option<i32>,
 }
 
 #[derive(Clone, PartialEq, prost::Message)]

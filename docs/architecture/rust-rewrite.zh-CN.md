@@ -135,9 +135,10 @@ variants 排名，而不是接受写死的 H.264-first 策略。
 游 request-spec shape。TV mode 使用 `Credentials::tv_access_key`。APP/gRPC mode 优先使用
 `Credentials::tv_access_key`，再回退到 `Credentials::access_key`，发送 BBDown-compatible
 protobuf gRPC frame，会从 initial headers 和 trailing metadata 读取 gRPC status，并把 APP
-DASH/FLV 响应规范化为 `StreamSet`。APP legacy FLV 响应可能包含多个清晰度的 segment set；
-由于 `StreamSet::flv_segments` 是单个有序列表，normalizer 会保留最高质量的一个 FLV
-candidate，而不是拼接互不兼容的清晰度。
+DASH/FLV 响应规范化为 `StreamSet`。APP DASH 的 width、height 和 frame-rate metadata 会
+保留在 HTTP playurl mode 共用的 `MediaStream` 字段上。APP legacy FLV 响应可能包含多个清
+晰度的 segment set；由于 `StreamSet::flv_segments` 是单个有序列表，normalizer 会保留最
+高质量的一个 FLV candidate，而不是拼接互不兼容的清晰度。
 
 本仓库不实现播放器运行时职责。下游 cache/player service 负责 `preparing`、
 `playback_ready`、`downloading`、`completed`、`failed` 等 task state；HLS session 目录、
@@ -261,8 +262,9 @@ CLI 创建的配置还会在区域分组前保留来源优先级，因此显式�
 
 PGC stream planning 首先根据 `PlayurlMode` 调用选中的官方 PGC playurl 端点，即 web HTTP
 或 APP gRPC。如果响应明确报告区域限制，且配置了受限区域代理，client 会按顺序尝试候选，
-直到某个候选返回有效 DASH 或 FLV stream 形态。非区域类官方失败会保留原错误，不会联系代
-理主机。BBDown/BiliPlus 风格的 HTTP(S) playurl
+直到某个候选返回有效 DASH 或 FLV stream 形态。对于 APP gRPC，区域限制既可以来自非零
+gRPC status metadata，也可以来自 `view_info.dialog` 或 stream limit 等 PGC response-body
+消息。非区域类官方失败会保留原错误，不会联系代理主机。BBDown/BiliPlus 风格的 HTTP(S) playurl
 代理会在配置 URL 上接收 PGC playurl query。Bilibili API HTTP(S) 代理会在配置 base URL 下
 的 `/pgc/player/web/playurl` 接收同一 query，以匹配常见 BALH 风格 API 代理主机，然后再尝
 试 `/pgc/player/web/v2/playurl`，兼容已有 API proxy 部署。两条路径都会保留配置 base URL

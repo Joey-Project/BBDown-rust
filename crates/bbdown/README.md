@@ -87,8 +87,10 @@ embedding application needs BBDown-compatible APP gRPC playurl resolution. APP m
 normal videos and PGC episodes, uses `Credentials::tv_access_key` before falling back to
 `Credentials::access_key`, emits normalized `StreamSet` / `PlaybackPlan` media specs, and can still
 fall back to configured restricted-area HTTP playurl proxies for recognizable PGC region-limit
-errors. Non-zero APP gRPC status is read from initial headers and trailing metadata. Legacy FLV
-segment responses are normalized to one highest-quality segment set.
+errors reported by gRPC status or the PGC response body. Non-zero APP gRPC status is read from
+initial headers and trailing metadata. APP DASH resolution and frame-rate metadata is preserved in
+the normalized media specs. Legacy FLV segment responses are normalized to one highest-quality
+segment set.
 Set `DownloadPathTemplates` when an embedding application needs BBDown-style or application-specific
 output names. Templates render sanitized filename components for the output root, entry directory,
 and muxed file stem while media and sidecar filenames remain stable for resume and archive records.

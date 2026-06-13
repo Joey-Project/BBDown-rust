@@ -142,9 +142,11 @@ The same planning path honors `PlayurlMode::Tv` and `PlayurlMode::App`, so `Down
 downstream request-spec shape. TV mode uses `Credentials::tv_access_key`. APP/gRPC mode uses
 `Credentials::tv_access_key` first, falls back to `Credentials::access_key`, sends BBDown-compatible
 protobuf gRPC frames, reads gRPC status from both initial headers and trailing metadata, and
-normalizes APP DASH/FLV replies into `StreamSet`. APP legacy FLV replies can contain segment sets
-for multiple qualities; because `StreamSet::flv_segments` is a single ordered list, the normalizer
-keeps one highest-quality FLV candidate instead of concatenating incompatible qualities.
+normalizes APP DASH/FLV replies into `StreamSet`. APP DASH width, height, and frame-rate metadata
+is preserved on the same `MediaStream` fields used by HTTP playurl modes. APP legacy FLV replies
+can contain segment sets for multiple qualities; because `StreamSet::flv_segments` is a single
+ordered list, the normalizer keeps one highest-quality FLV candidate instead of concatenating
+incompatible qualities.
 
 This repository does not implement player runtime responsibilities. A downstream cache/player
 service owns task state such as `preparing`, `playback_ready`, `downloading`, `completed`, and
@@ -286,8 +288,10 @@ before environment-derived proxy candidates.
 PGC stream planning first calls the selected official PGC playurl endpoint, either web HTTP or APP
 gRPC depending on `PlayurlMode`. If that response clearly reports a region/area restriction and
 restricted-area proxies are configured, the client tries ordered candidates until one returns a
-valid DASH or FLV stream shape. Non-area official failures keep their original error and do not
-contact proxy hosts. A BBDown/BiliPlus-style HTTP(S) playurl proxy
+valid DASH or FLV stream shape. For APP gRPC, region/area restrictions can come from non-zero gRPC
+status metadata or from PGC response-body messages such as `view_info.dialog` or stream limits.
+Non-area official failures keep their original error and do not contact proxy hosts. A
+BBDown/BiliPlus-style HTTP(S) playurl proxy
 receives the PGC playurl query at the configured URL. A Bilibili API HTTP(S) proxy receives the same
 query at `/pgc/player/web/playurl` below the configured base URL, matching common BALH-style API
 proxy hosts, and then tries `/pgc/player/web/v2/playurl` as a compatibility fallback for existing

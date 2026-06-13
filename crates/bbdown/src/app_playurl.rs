@@ -328,6 +328,8 @@ struct StreamInfo {
     description: Option<String>,
     #[prost(uint32, optional, tag = "4")]
     err_code: Option<u32>,
+    #[prost(message, optional, tag = "5")]
+    limit: Option<StreamLimit>,
     #[prost(bool, optional, tag = "6")]
     need_vip: Option<bool>,
     #[prost(bool, optional, tag = "7")]
@@ -358,6 +360,22 @@ struct DashVideo {
     audio_id: Option<u32>,
     #[prost(bool, optional, tag = "8")]
     no_rexcode: Option<bool>,
+    #[prost(string, optional, tag = "9")]
+    frame_rate: Option<String>,
+    #[prost(int32, optional, tag = "10")]
+    width: Option<i32>,
+    #[prost(int32, optional, tag = "11")]
+    height: Option<i32>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+struct StreamLimit {
+    #[prost(string, optional, tag = "1")]
+    title: Option<String>,
+    #[prost(string, optional, tag = "2")]
+    uri: Option<String>,
+    #[prost(string, optional, tag = "3")]
+    msg: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -386,11 +404,48 @@ struct ResponseUrl {
 struct PlayViewReply {
     #[prost(message, optional, tag = "1")]
     video_info: Option<VideoInfo>,
+    #[prost(message, optional, tag = "5")]
+    view_info: Option<ViewInfo>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+struct ViewInfo {
+    #[prost(message, optional, tag = "1")]
+    dialog: Option<Dialog>,
+    #[prost(message, optional, tag = "2")]
+    toast: Option<Toast>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+struct Dialog {
+    #[prost(int64, optional, tag = "1")]
+    code: Option<i64>,
+    #[prost(string, optional, tag = "2")]
+    msg: Option<String>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+struct Toast {
+    #[prost(string, optional, tag = "1")]
+    text: Option<String>,
+    #[prost(message, optional, tag = "5")]
+    toast_text: Option<TextInfo>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+struct TextInfo {
+    #[prost(string, optional, tag = "1")]
+    text: Option<String>,
 }
 
 impl PlayViewReply {
     fn into_stream_set(self) -> Result<StreamSet> {
-        let video_info = self.video_info.ok_or(Error::MissingField("videoInfo"))?;
+        let access_limit_message = self.access_limit_message();
+        let video_info = self.video_info.ok_or_else(|| {
+            access_limit_message
+                .clone()
+                .map_or(Error::MissingField("videoInfo"), Error::AccessRestricted)
+        })?;
         let fallback_quality = video_info.quality;
         let fallback_video_codecid = video_info.video_codecid;
         let timelength = video_info.timelength;
@@ -398,82 +453,19 @@ impl PlayViewReply {
             .timelength
             .and_then(|value| u32::try_from(value / 1000).ok());
         let mut qualities = Vec::new();
-        let mut videos = Vec::new();
-        let mut selected_flv: Option<FlvCandidate> = None;
-        for item in video_info.stream_list {
-            let stream_info = item.stream_info;
-            if let Some(dash_video) = item.dash_video
-                && let Some(stream) = dash_video.into_media_stream(
-                    stream_info.as_ref(),
-                    fallback_quality,
-                    fallback_video_codecid,
-                    timelength,
-                )
-            {
-                push_stream_quality(
-                    &mut qualities,
-                    stream.id,
-                    stream_info.as_ref().and_then(|info| {
-                        info.description
-                            .as_ref()
-                            .filter(|value| !value.is_empty())
-                            .cloned()
-                    }),
-                );
-                videos.push(stream);
-            }
-            if let Some(segment_video) = item.segment_video {
-                let segments = segment_video
-                    .segment
-                    .into_iter()
-                    .enumerate()
-                    .filter_map(|(index, segment)| segment.into_flv_segment(index))
-                    .collect::<Vec<_>>();
-                if !segments.is_empty() {
-                    let candidate = FlvCandidate {
-                        quality: stream_info
-                            .as_ref()
-                            .and_then(|info| info.quality)
-                            .or(fallback_quality),
-                        description: stream_info.as_ref().and_then(|info| {
-                            info.description
-                                .as_ref()
-                                .filter(|value| !value.is_empty())
-                                .cloned()
-                        }),
-                        segments,
-                    };
-                    if should_replace_flv_candidate(selected_flv.as_ref(), &candidate) {
-                        selected_flv = Some(candidate);
-                    }
-                }
-            }
-        }
-        let mut flv_segments = Vec::new();
-        if let Some(candidate) = selected_flv {
-            if let Some(quality) = candidate.quality {
-                push_stream_quality(&mut qualities, quality, candidate.description);
-            }
-            flv_segments = candidate.segments;
-        }
-        let mut audios = video_info
-            .dash_audio
-            .into_iter()
-            .filter_map(|audio| audio.into_audio_stream(AudioKind::Aac))
-            .collect::<Vec<_>>();
-        if let Some(flac) = video_info.flac
-            && let Some(audio) = flac.audio
-            && let Some(stream) = audio.into_audio_stream(AudioKind::Flac)
-        {
-            audios.push(stream);
-        }
-        if let Some(dolby) = video_info.dolby
-            && let Some(audio) = dolby.audio
-            && let Some(stream) = audio.into_audio_stream(AudioKind::Dolby)
-        {
-            audios.push(stream);
-        }
+        let (videos, flv_segments) = collect_stream_list(
+            video_info.stream_list,
+            fallback_quality,
+            fallback_video_codecid,
+            timelength,
+            &mut qualities,
+        );
+        let audios =
+            collect_audio_streams(video_info.dash_audio, video_info.flac, video_info.dolby);
         if videos.is_empty() && audios.is_empty() && flv_segments.is_empty() {
+            if let Some(message) = access_limit_message {
+                return Err(Error::AccessRestricted(message));
+            }
             return Err(Error::MissingField("APP playurl streams"));
         }
         let accept_quality = qualities
@@ -488,6 +480,158 @@ impl PlayViewReply {
             qualities,
             duration_seconds,
         })
+    }
+
+    fn access_limit_message(&self) -> Option<String> {
+        self.view_info
+            .as_ref()
+            .and_then(ViewInfo::access_limit_message)
+            .or_else(|| {
+                self.video_info.as_ref().and_then(|video_info| {
+                    video_info
+                        .stream_list
+                        .iter()
+                        .filter_map(|item| item.stream_info.as_ref())
+                        .find_map(StreamInfo::access_limit_message)
+                })
+            })
+    }
+}
+
+fn collect_stream_list(
+    stream_list: Vec<StreamItem>,
+    fallback_quality: Option<u32>,
+    fallback_video_codecid: Option<u32>,
+    timelength: Option<u64>,
+    qualities: &mut Vec<StreamQuality>,
+) -> (Vec<MediaStream>, Vec<FlvSegment>) {
+    let mut videos = Vec::new();
+    let mut selected_flv: Option<FlvCandidate> = None;
+    for item in stream_list {
+        let stream_info = item.stream_info;
+        if let Some(dash_video) = item.dash_video
+            && let Some(stream) = dash_video.into_media_stream(
+                stream_info.as_ref(),
+                fallback_quality,
+                fallback_video_codecid,
+                timelength,
+            )
+        {
+            push_stream_quality(
+                qualities,
+                stream.id,
+                stream_info.as_ref().and_then(|info| {
+                    info.description
+                        .as_ref()
+                        .filter(|value| !value.is_empty())
+                        .cloned()
+                }),
+            );
+            videos.push(stream);
+        }
+        if let Some(segment_video) = item.segment_video {
+            let segments = segment_video
+                .segment
+                .into_iter()
+                .enumerate()
+                .filter_map(|(index, segment)| segment.into_flv_segment(index))
+                .collect::<Vec<_>>();
+            if !segments.is_empty() {
+                let candidate = FlvCandidate {
+                    quality: stream_info
+                        .as_ref()
+                        .and_then(|info| info.quality)
+                        .or(fallback_quality),
+                    description: stream_info.as_ref().and_then(|info| {
+                        info.description
+                            .as_ref()
+                            .filter(|value| !value.is_empty())
+                            .cloned()
+                    }),
+                    segments,
+                };
+                if should_replace_flv_candidate(selected_flv.as_ref(), &candidate) {
+                    selected_flv = Some(candidate);
+                }
+            }
+        }
+    }
+    let mut flv_segments = Vec::new();
+    if let Some(candidate) = selected_flv {
+        if let Some(quality) = candidate.quality {
+            push_stream_quality(qualities, quality, candidate.description);
+        }
+        flv_segments = candidate.segments;
+    }
+    (videos, flv_segments)
+}
+
+fn collect_audio_streams(
+    dash_audio: Vec<DashItem>,
+    flac: Option<DolbyItem>,
+    dolby: Option<DolbyItem>,
+) -> Vec<MediaStream> {
+    let mut audios = dash_audio
+        .into_iter()
+        .filter_map(|audio| audio.into_audio_stream(AudioKind::Aac))
+        .collect::<Vec<_>>();
+    if let Some(flac) = flac
+        && let Some(audio) = flac.audio
+        && let Some(stream) = audio.into_audio_stream(AudioKind::Flac)
+    {
+        audios.push(stream);
+    }
+    if let Some(dolby) = dolby
+        && let Some(audio) = dolby.audio
+        && let Some(stream) = audio.into_audio_stream(AudioKind::Dolby)
+    {
+        audios.push(stream);
+    }
+    audios
+}
+
+impl StreamInfo {
+    fn access_limit_message(&self) -> Option<String> {
+        self.limit
+            .as_ref()
+            .and_then(StreamLimit::access_limit_message)
+    }
+}
+
+impl StreamLimit {
+    fn access_limit_message(&self) -> Option<String> {
+        first_non_empty([self.msg.as_deref(), self.title.as_deref()])
+    }
+}
+
+impl ViewInfo {
+    fn access_limit_message(&self) -> Option<String> {
+        self.dialog
+            .as_ref()
+            .and_then(Dialog::access_limit_message)
+            .or_else(|| self.toast.as_ref().and_then(Toast::access_limit_message))
+    }
+}
+
+impl Dialog {
+    fn access_limit_message(&self) -> Option<String> {
+        first_non_empty([self.msg.as_deref()])
+    }
+}
+
+impl Toast {
+    fn access_limit_message(&self) -> Option<String> {
+        first_non_empty([self.text.as_deref()]).or_else(|| {
+            self.toast_text
+                .as_ref()
+                .and_then(TextInfo::access_limit_message)
+        })
+    }
+}
+
+impl TextInfo {
+    fn access_limit_message(&self) -> Option<String> {
+        first_non_empty([self.text.as_deref()])
     }
 }
 
@@ -530,9 +674,9 @@ impl DashVideo {
             backup_urls: normalize_media_url_list(self.backup_url),
             codecs: video_codec(self.codecid.or(fallback_video_codecid)),
             bandwidth,
-            width: None,
-            height: None,
-            frame_rate: None,
+            width: self.width.and_then(|value| u32::try_from(value).ok()),
+            height: self.height.and_then(|value| u32::try_from(value).ok()),
+            frame_rate: self.frame_rate.filter(|value| !value.is_empty()),
             mime_type: Some("video/mp4".to_owned()),
             size: self.size,
         })
@@ -626,6 +770,15 @@ fn normalize_media_url_list(urls: Vec<String>) -> Vec<String> {
         .filter(|url| !url.is_empty())
         .map(|url| normalize_media_url(&url))
         .collect()
+}
+
+fn first_non_empty<'a>(values: impl IntoIterator<Item = Option<&'a str>>) -> Option<String> {
+    values
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -742,6 +895,7 @@ pub(crate) fn test_play_view_response_frame(video_url: &str) -> Result<Vec<u8>> 
                         format: Some("flv".to_owned()),
                         description: Some("1080P".to_owned()),
                         err_code: None,
+                        limit: None,
                         need_vip: None,
                         need_login: None,
                         intact: None,
@@ -757,6 +911,9 @@ pub(crate) fn test_play_view_response_frame(video_url: &str) -> Result<Vec<u8>> 
                         size: Some(18_000_000),
                         audio_id: Some(30280),
                         no_rexcode: None,
+                        frame_rate: Some("60".to_owned()),
+                        width: Some(1920),
+                        height: Some(1080),
                     }),
                     segment_video: None,
                 },
@@ -766,6 +923,7 @@ pub(crate) fn test_play_view_response_frame(video_url: &str) -> Result<Vec<u8>> 
                         format: Some("flv".to_owned()),
                         description: Some("FLV".to_owned()),
                         err_code: None,
+                        limit: None,
                         need_vip: None,
                         need_login: None,
                         intact: None,
@@ -819,6 +977,22 @@ pub(crate) fn test_play_view_response_frame(video_url: &str) -> Result<Vec<u8>> 
                 }),
             }),
         }),
+        view_info: None,
+    };
+    encode_grpc_frame(&reply.encode_to_vec(), false)
+}
+
+#[cfg(test)]
+pub(crate) fn test_pgc_region_limit_response_frame(message: &str) -> Result<Vec<u8>> {
+    let reply = PlayViewReply {
+        video_info: None,
+        view_info: Some(ViewInfo {
+            dialog: Some(Dialog {
+                code: Some(10001),
+                msg: Some(message.to_owned()),
+            }),
+            toast: None,
+        }),
     };
     encode_grpc_frame(&reply.encode_to_vec(), false)
 }
@@ -826,9 +1000,10 @@ pub(crate) fn test_play_view_response_frame(video_url: &str) -> Result<Vec<u8>> 
 #[cfg(test)]
 mod tests {
     use super::{
-        PlayViewReply, ResponseUrl, SegmentVideo, StreamInfo, StreamItem, VideoInfo,
-        decode_grpc_frame, encode_grpc_frame, test_play_view_response_frame,
+        Dialog, PlayViewReply, ResponseUrl, SegmentVideo, StreamInfo, StreamItem, VideoInfo,
+        ViewInfo, decode_grpc_frame, encode_grpc_frame, test_play_view_response_frame,
     };
+    use crate::Error;
     use prost::Message as _;
 
     #[test]
@@ -851,6 +1026,9 @@ mod tests {
         let streams = super::decode_play_view_response(&frame)?;
         assert_eq!(streams.videos[0].id, 80);
         assert_eq!(streams.videos[0].codecs.as_deref(), Some("hev1"));
+        assert_eq!(streams.videos[0].width, Some(1920));
+        assert_eq!(streams.videos[0].height, Some(1080));
+        assert_eq!(streams.videos[0].frame_rate.as_deref(), Some("60"));
         assert_eq!(streams.audios[0].codecs.as_deref(), Some("mp4a.40.2"));
         assert_eq!(streams.audios[1].codecs.as_deref(), Some("flac"));
         assert_eq!(streams.audios[2].codecs.as_deref(), Some("ec-3"));
@@ -876,6 +1054,7 @@ mod tests {
                 dolby: None,
                 flac: None,
             }),
+            view_info: None,
         };
         let frame = encode_grpc_frame(&reply.encode_to_vec(), false)?;
         let streams = super::decode_play_view_response(&frame)?;
@@ -887,6 +1066,27 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn pgc_view_info_limit_maps_to_access_restricted() -> anyhow::Result<()> {
+        let reply = PlayViewReply {
+            video_info: None,
+            view_info: Some(ViewInfo {
+                dialog: Some(Dialog {
+                    code: Some(10001),
+                    msg: Some("area restricted".to_owned()),
+                }),
+                toast: None,
+            }),
+        };
+        let frame = encode_grpc_frame(&reply.encode_to_vec(), false)?;
+        let error = super::decode_play_view_response(&frame)
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("PGC region-limit response should fail"))?;
+
+        assert!(matches!(error, Error::AccessRestricted(message) if message == "area restricted"));
+        Ok(())
+    }
+
     fn flv_stream_item(quality: u32, description: &str, url: &str) -> StreamItem {
         StreamItem {
             stream_info: Some(StreamInfo {
@@ -894,6 +1094,7 @@ mod tests {
                 format: Some("flv".to_owned()),
                 description: Some(description.to_owned()),
                 err_code: None,
+                limit: None,
                 need_vip: None,
                 need_login: None,
                 intact: None,

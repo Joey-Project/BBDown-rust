@@ -142,9 +142,11 @@ TV mode 适用于普通视频和 PGC 分集，使用 `auth login-tv` 保存的 T
 会优先使用已保存的 TV access key，再回退到通用导入 access key；mock 或代理可通过
 `--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` 和 `--app-pgc-grpc-base` /
 `BBDOWN_APP_PGC_GRPC_BASE` 配置。PGC APP gRPC 区域限制错误仍会回退到已配置的
-restricted-area HTTP playurl proxy。解析器会同时检查 initial headers 和 trailing metadata
-里的非零 gRPC status。如果 APP 响应返回多个 legacy FLV 分段清晰度，只会暴露最高质量的一
-组 segment，避免 downloader 和 playback JSON 混合不同清晰度的分段。
+restricted-area HTTP playurl proxy；限制既可以由 gRPC status 报告，也可以由 PGC response
+body 携带。解析器会同时检查 initial headers 和 trailing metadata 里的非零 gRPC status。
+APP DASH 的分辨率和帧率 metadata 会保留到 playback JSON。如果 APP 响应返回多个 legacy
+FLV 分段清晰度，只会暴露最高质量的一组 segment，避免 downloader 和 playback JSON 混合不
+同清晰度的分段。
 
 ## 下载
 

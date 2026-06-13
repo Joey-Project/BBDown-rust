@@ -7321,6 +7321,88 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn pgc_app_body_limit_falls_back_to_restricted_area_proxy() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        mock_pgc_episode_metadata(&server);
+        let app_response = app_playurl::test_pgc_region_limit_response_frame("area restricted")?;
+        let app_playurl = server.mock(|when, then| {
+            when.method(POST)
+                .path(app_playurl::PGC_PLAYURL_PATH)
+                .header("content-type", "application/grpc")
+                .header("authorization", "identify_v1 TV_ACCESS")
+                .header_missing("cookie");
+            then.status(200).body(app_response.clone());
+        });
+        let proxy_playurl = server.mock(|when, then| {
+            when.method(GET)
+                .path("/proxy-playurl")
+                .query_param("proxy_token", "PROXY_SECRET")
+                .query_param("ep_id", "1000")
+                .query_param("area", "hk")
+                .query_param("access_key", "TV_ACCESS")
+                .header_missing("cookie");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "result": {
+                    "video_info": {
+                        "dash": {
+                            "duration": 456,
+                            "video": [{
+                                "id": 64,
+                                "baseUrl": "https://proxy.example/64.m4s",
+                                "base_url": "https://proxy.example/64.m4s",
+                                "codecs": "hev1",
+                                "bandwidth": 900,
+                                "mimeType": "video/mp4",
+                                "mime_type": "video/mp4"
+                            }],
+                            "audio": []
+                        }
+                    }
+                }
+            }));
+        });
+        server_mock_player_v2(&server, 10, 100);
+
+        let client = BiliClient::new(
+            ClientConfig::default()
+                .with_endpoints(
+                    EndpointConfig::default()
+                        .with_api_base(server.base_url())
+                        .with_pgc_base(server.base_url())
+                        .with_app_pgc_grpc_base(server.base_url()),
+                )
+                .with_credentials(Credentials::default().with_tv_access_key("TV_ACCESS"))
+                .with_restricted_area(
+                    RestrictedAreaConfig::default()
+                        .with_area_hint(RestrictedArea::Hk)
+                        .with_proxy(RestrictedAreaProxy::playurl(
+                            format!(
+                                "{}/proxy-playurl?proxy_token=PROXY_SECRET",
+                                server.base_url()
+                            ),
+                            Some(RestrictedArea::Hk),
+                        )),
+                )
+                .with_playurl_mode(PlayurlMode::App),
+        );
+        let plan = client.plan_download("ep1000", None).await?;
+
+        app_playurl.assert();
+        proxy_playurl.assert();
+        let entry = &plan.entries[0];
+        assert_eq!(entry.source, StreamSource::PgcProxy);
+        assert_eq!(entry.diagnostics.attempts.len(), 2);
+        assert_eq!(entry.diagnostics.attempts[0].source, StreamSource::PgcApp);
+        assert_eq!(entry.diagnostics.attempts[1].source, StreamSource::PgcProxy);
+        assert_eq!(
+            entry.streams.videos[0].base_url,
+            "https://proxy.example/64.m4s"
+        );
+        Ok(())
+    }
+
     #[test]
     fn endpoint_client_and_restricted_area_builders_configure_embedding_inputs() {
         let endpoints = EndpointConfig::default()

@@ -79,9 +79,11 @@ BBDown-compatible APP gRPC playurl 端点解析。APP mode 优先使用
 `Credentials::tv_access_key`，没有 TV token 时回退到通用 `Credentials::access_key`；mock
 或代理端点可用 `--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` 和 `--app-pgc-grpc-base` /
 `BBDOWN_APP_PGC_GRPC_BASE` 覆盖。PGC APP gRPC 响应如果带有可识别的区域限制消息，仍会
-回退到已配置的 restricted-area HTTP playurl proxy。非零 gRPC status 会同时读取 initial
-headers 和 trailing metadata。如果 APP 响应返回多个 legacy FLV 分段清晰度，规范化后的
-`StreamSet` 只暴露最高质量的一组 segment，不会把不同清晰度的分段混合到同一列表。
+回退到已配置的 restricted-area HTTP playurl proxy；限制既可以来自 gRPC status，也可以来
+自 PGC 响应 body。非零 gRPC status 会同时读取 initial headers 和 trailing metadata。APP
+DASH 响应中的分辨率和帧率等 metadata 会保留到 playback/API 输出。如果 APP 响应返回多个
+legacy FLV 分段清晰度，规范化后的 `StreamSet` 只暴露最高质量的一组 segment，不会把不同
+清晰度的分段混合到同一列表。
 
 下载所选媒体文件：
 

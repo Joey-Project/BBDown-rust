@@ -38,6 +38,9 @@ superseded_by:
 - PGC APP region-limit errors can fall back to the existing restricted-area HTTP playurl proxy
   resolver, reuse the APP playurl access key for proxy requests, and record `PgcApp` then
   `PgcProxy` diagnostics.
+- PGC APP region-limit fallback covers both non-zero gRPC status metadata and recognized PGC
+  response-body messages such as `view_info.dialog`.
+- APP DASH width, height, and frame-rate metadata is preserved on `MediaStream` and playback JSON.
 
 ## Next Steps
 - Continue feed/list resolver work for history, following/UP pages, recommendation pages, and
@@ -50,6 +53,8 @@ superseded_by:
 - Targeted validation: `cargo test -p bbdown-core app_grpc_status_error_is_reported --lib`.
 - Targeted validation:
   `cargo test -p bbdown-core pgc_app_streams_fall_back_to_restricted_area_proxy --lib`.
+- Targeted validation:
+  `cargo test -p bbdown-core pgc_app_body_limit_falls_back_to_restricted_area_proxy --lib`.
 - Targeted validation: `cargo test -p bbdown-cli --test cli_e2e playback_json_uses_app_playurl_mode`.
 - Full validation: `just ci`.
 - Journal validation:
@@ -65,3 +70,8 @@ superseded_by:
   qualities could be mixed as one segment list. Fixed by collecting response trailers, reusing the
   APP access-key selection for PGC proxy fallback, selecting a single highest-quality FLV candidate,
   marking `StreamSource` non-exhaustive for future source variants, and adding regression tests.
+- Final independent review fix: body-carried PGC APP region-limit messages did not trigger
+  restricted-area fallback, and APP DASH width, height, and frame-rate fields were decoded but not
+  preserved. Fixed by decoding the needed PGC `view_info` / stream-limit fields, mapping recognized
+  access-limit messages to `AccessRestricted`, and adding metadata assertions to core and CLI
+  playback tests.
