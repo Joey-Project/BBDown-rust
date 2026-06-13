@@ -23,9 +23,10 @@ crates.io 发布目标是可复用的 `bbdown-core` library package。使用 `ju
 可以在本地执行锁定版本的 dry run，并允许工作树存在未提交修改；使用
 `just publish-dry-run-strict` 或 `cargo publish --dry-run -p bbdown-core --locked` 可以复现
 干净 CI 门禁。`bbdown-cli` 包标记为 `publish = false`；CLI 应通过 GitHub release 归档安
-装或分发。当前开发线是已发布 `0.1.0` 之后的 `0.2.0`，因为批量 collection metadata 增
-加了 `ResolvedContent::Collection`。嵌入调用方仍应优先使用 `DownloadOptions::new`、
-`StreamSelection::new`、`Default` 等构造器，而不是 public struct 字面量，并把公开的 plan
+装或分发。当前开发线是已发布 `0.1.0` 之后的 `0.3.0`，并包含批量 collection metadata、
+封面与 sidecar-only 下载表面、播放请求/ABR metadata，以及 BBDown-compatible TV/APP
+playurl modes。嵌入调用方仍应优先使用 `DownloadOptions::new`、`StreamSelection::new`、
+`Default` 等构造器，而不是 public struct 字面量，并把公开的 plan
 输出容器视为会随 crate 成熟继续新增字段的被消费数据表面。
 
 ## Library 嵌入

@@ -238,8 +238,9 @@ running, so sample behavior is driven by the manifest rather than shell state.
 ## Documentation
 
 - Crate API note: the publishable package is `bbdown-core`, imported as `bbdown_core`. This rewrite
-  is now on the `0.2` development line after the published `0.1.0` release because batch collection
-  metadata adds a new `ResolvedContent::Collection` API shape. Embedding projects should prefer
+  is now on the `0.3` development line after the published `0.1.0` release. The line includes batch
+  collection metadata, cover and sidecar-only download surfaces, playback request/ABR metadata, and
+  BBDown-compatible TV/APP playurl modes. Embedding projects should prefer
   `Default`, `new`, and `with_*` constructors such as `ClientConfig::default().with_*`,
   `EndpointConfig::default().with_*`, `RestrictedAreaConfig::default().with_*`,
   `DownloadOptions::new(...).with_*`, and `RetryPolicy::new(...)` over struct literals so added

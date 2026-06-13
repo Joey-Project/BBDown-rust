@@ -11,8 +11,9 @@
 
 使用 `cargo add bbdown-core` 安装，然后用 `bbdown_core` 导入。
 
-当前 crate 版本是 `0.2.0`，属于已发布 `0.1.0` 之后的开发线，并通过
-`ResolvedContent::Collection` 增加批量 collection metadata。嵌入项目应优先使用
+当前 crate 版本是 `0.3.0`，属于已发布 `0.1.0` 之后的开发线，并包含批量 collection
+metadata、封面与 sidecar-only 下载表面、播放请求/ABR metadata，以及 BBDown-compatible
+TV/APP playurl modes。嵌入项目应优先使用
 constructor 和 builder 风格 API，例如 `ClientConfig::default().with_*()`、
 `EndpointConfig::default().with_*()`、`RestrictedAreaConfig::default().with_*()`、
 `DownloadOptions::new(...).with_*()`、`RetryPolicy::new(...)` 和
