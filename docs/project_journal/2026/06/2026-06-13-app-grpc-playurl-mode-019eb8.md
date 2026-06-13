@@ -89,9 +89,8 @@ superseded_by:
   `view_info`, which made the body-carried fallback path unreliable on real responses. Fixed by
   setting protobuf tag 15 (`is_need_view_info`) for PGC APP requests and adding request-body
   regression tests.
-- Current-head review fix: PGC APP defaults now point both APP gRPC endpoint settings at the gRPC
-  host, proxy fallback no longer forwards TV-specific access keys, and body-carried region-limit
-  messages fail even if residual audio tracks are present without video.
+- Current-head review fix: proxy fallback no longer forwards TV-specific access keys, and
+  body-carried region-limit messages fail even if residual audio tracks are present without video.
 - Current-head review fix: APP video `codecid` values no longer fabricate exact MP4 codec strings.
   Added `codec_family` metadata to `MediaStream` / `MediaRequestSpec`, kept playback selection and
   ABR grouping family-aware, and documented that downstreams should validate exact codec strings
@@ -102,9 +101,18 @@ superseded_by:
 - GitHub Codex review fix: PGC APP `view_info` can be encoded on field 9, and business preview
   metadata can mark returned streams as preview-only. Fixed by decoding the alternate field and
   rejecting preview-only responses with `AccessRestricted` so restricted-area fallback can still run.
+- Reference parity fix: normal APP playurl defaults to `https://grpc.biliapi.net`, while PGC APP
+  playurl defaults to the BBDown reference host `https://app.bilibili.com`.
 - Targeted validation after codec-family fix:
   `cargo test -p bbdown-core app_playurl --lib`.
 - Targeted validation after codec-family fix:
   `cargo test -p bbdown-core playback --lib`.
 - Targeted validation after PGC APP field-9 / preview fix:
   `cargo test -p bbdown-core app_playurl --lib`.
+- Final validation after PGC APP host parity fix:
+  `cargo fmt --all -- --check`,
+  `cargo test -p bbdown-core endpoint_defaults_use_reference_app_playurl_hosts --lib`,
+  `cargo test -p bbdown-core app_playurl --lib`,
+  `cargo test -p bbdown-core pgc_app --lib`,
+  `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/29f61f3e579e2a4166436b963eab301ac5d80d94/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`,
+  and `just ci`.

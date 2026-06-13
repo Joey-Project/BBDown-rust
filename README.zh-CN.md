@@ -78,7 +78,8 @@ access key，并可用 `--tv-api-base` / `BBDOWN_TV_API_BASE` 覆盖端点。
 BBDown-compatible APP gRPC playurl 端点解析。APP mode 优先使用
 `Credentials::tv_access_key`，没有 TV token 时回退到通用 `Credentials::access_key`；mock
 或代理端点可用 `--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` 和 `--app-pgc-grpc-base` /
-`BBDOWN_APP_PGC_GRPC_BASE` 覆盖；两个 APP gRPC 端点默认都使用 gRPC host。PGC APP gRPC
+`BBDOWN_APP_PGC_GRPC_BASE` 覆盖；普通视频 APP 默认使用 `https://grpc.biliapi.net`，PGC
+APP 默认跟随 BBDown reference host `https://app.bilibili.com`。PGC APP gRPC
 响应如果带有可识别的区域限制消息，仍会回退到已配置的 restricted-area HTTP playurl proxy；
 限制既可以来自 gRPC status，也可以来自 PGC 响应 body。proxy fallback URL 只会使用通用导入
 的 `Credentials::access_key`，不会转发 TV 专用 token。非零 gRPC status 会同时读取 initial

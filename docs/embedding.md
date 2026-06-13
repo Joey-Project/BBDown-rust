@@ -99,8 +99,9 @@ requires account access. TV mode currently applies to normal videos and PGC epis
 For BBDown-compatible APP gRPC playurl resolution, set
 `ClientConfig::with_playurl_mode(PlayurlMode::App)`. Configure
 `EndpointConfig::with_app_grpc_base` for normal-video mocks or proxies and
-`EndpointConfig::with_app_pgc_grpc_base` for PGC mocks or proxies; both defaults use the gRPC host.
-APP mode uses
+`EndpointConfig::with_app_pgc_grpc_base` for PGC mocks or proxies. The normal-video default uses
+`https://grpc.biliapi.net`; the PGC default follows the BBDown reference host
+`https://app.bilibili.com`. APP mode uses
 `Credentials::tv_access_key` first and falls back to `Credentials::access_key`, emits
 `StreamSource::NormalApp` or `StreamSource::PgcApp`, and normalizes protobuf DASH/FLV media into
 the same `StreamSet` and `PlaybackPlan` surfaces as the HTTP modes. PGC APP gRPC failures with
