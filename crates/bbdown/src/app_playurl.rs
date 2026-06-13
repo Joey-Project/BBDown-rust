@@ -407,8 +407,18 @@ struct ResponseUrl {
 struct PlayViewReply {
     #[prost(message, optional, tag = "1")]
     video_info: Option<VideoInfo>,
+    #[prost(message, optional, tag = "3")]
+    business: Option<BusinessInfo>,
     #[prost(message, optional, tag = "5")]
     view_info: Option<ViewInfo>,
+    #[prost(message, optional, tag = "9")]
+    pgc_view_info: Option<ViewInfo>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+struct BusinessInfo {
+    #[prost(bool, optional, tag = "1")]
+    is_preview: Option<bool>,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -444,6 +454,12 @@ struct TextInfo {
 impl PlayViewReply {
     fn into_stream_set(self) -> Result<StreamSet> {
         let access_limit_message = self.access_limit_message();
+        if self.is_preview_only() {
+            return Err(Error::AccessRestricted(
+                access_limit_message
+                    .unwrap_or_else(|| "APP playurl returned preview-only streams".to_owned()),
+            ));
+        }
         let video_info = self.video_info.ok_or_else(|| {
             access_limit_message
                 .clone()
@@ -496,6 +512,11 @@ impl PlayViewReply {
             .as_ref()
             .and_then(ViewInfo::access_limit_message)
             .or_else(|| {
+                self.pgc_view_info
+                    .as_ref()
+                    .and_then(ViewInfo::access_limit_message)
+            })
+            .or_else(|| {
                 self.video_info.as_ref().and_then(|video_info| {
                     video_info
                         .stream_list
@@ -504,6 +525,13 @@ impl PlayViewReply {
                         .find_map(StreamInfo::access_limit_message)
                 })
             })
+    }
+
+    fn is_preview_only(&self) -> bool {
+        self.business
+            .as_ref()
+            .and_then(|business| business.is_preview)
+            .unwrap_or(false)
     }
 }
 
@@ -995,7 +1023,9 @@ pub(crate) fn test_play_view_response_frame(video_url: &str) -> Result<Vec<u8>> 
                 }),
             }),
         }),
+        business: None,
         view_info: None,
+        pgc_view_info: None,
     };
     encode_grpc_frame(&reply.encode_to_vec(), false)
 }
@@ -1004,6 +1034,7 @@ pub(crate) fn test_play_view_response_frame(video_url: &str) -> Result<Vec<u8>> 
 pub(crate) fn test_pgc_region_limit_response_frame(message: &str) -> Result<Vec<u8>> {
     let reply = PlayViewReply {
         video_info: None,
+        business: None,
         view_info: Some(ViewInfo {
             dialog: Some(Dialog {
                 code: Some(10001),
@@ -1011,6 +1042,7 @@ pub(crate) fn test_pgc_region_limit_response_frame(message: &str) -> Result<Vec<
             }),
             toast: None,
         }),
+        pgc_view_info: None,
     };
     encode_grpc_frame(&reply.encode_to_vec(), false)
 }
@@ -1018,9 +1050,9 @@ pub(crate) fn test_pgc_region_limit_response_frame(message: &str) -> Result<Vec<
 #[cfg(test)]
 mod tests {
     use super::{
-        DashItem, Dialog, PlayViewReply, PlayViewReq, ResponseUrl, SegmentVideo, StreamInfo,
-        StreamItem, VideoInfo, ViewInfo, decode_grpc_frame, encode_grpc_frame,
-        play_view_request_body, test_play_view_response_frame,
+        BusinessInfo, DashItem, DashVideo, Dialog, PlayViewReply, PlayViewReq, ResponseUrl,
+        SegmentVideo, StreamInfo, StreamItem, VideoInfo, ViewInfo, decode_grpc_frame,
+        encode_grpc_frame, play_view_request_body, test_play_view_response_frame,
     };
     use crate::{CodecFamily, Error};
     use prost::Message as _;
@@ -1102,7 +1134,9 @@ mod tests {
                 dolby: None,
                 flac: None,
             }),
+            business: None,
             view_info: None,
+            pgc_view_info: None,
         };
         let frame = encode_grpc_frame(&reply.encode_to_vec(), false)?;
         let streams = super::decode_play_view_response(&frame)?;
@@ -1118,7 +1152,32 @@ mod tests {
     fn pgc_view_info_limit_maps_to_access_restricted() -> anyhow::Result<()> {
         let reply = PlayViewReply {
             video_info: None,
+            business: None,
             view_info: Some(ViewInfo {
+                dialog: Some(Dialog {
+                    code: Some(10001),
+                    msg: Some("area restricted".to_owned()),
+                }),
+                toast: None,
+            }),
+            pgc_view_info: None,
+        };
+        let frame = encode_grpc_frame(&reply.encode_to_vec(), false)?;
+        let error = super::decode_play_view_response(&frame)
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("PGC region-limit response should fail"))?;
+
+        assert!(matches!(error, Error::AccessRestricted(message) if message == "area restricted"));
+        Ok(())
+    }
+
+    #[test]
+    fn pgc_view_info_field_9_limit_maps_to_access_restricted() -> anyhow::Result<()> {
+        let reply = PlayViewReply {
+            video_info: None,
+            business: None,
+            view_info: None,
+            pgc_view_info: Some(ViewInfo {
                 dialog: Some(Dialog {
                     code: Some(10001),
                     msg: Some("area restricted".to_owned()),
@@ -1129,7 +1188,7 @@ mod tests {
         let frame = encode_grpc_frame(&reply.encode_to_vec(), false)?;
         let error = super::decode_play_view_response(&frame)
             .err()
-            .ok_or_else(|| anyhow::anyhow!("PGC region-limit response should fail"))?;
+            .ok_or_else(|| anyhow::anyhow!("PGC field-9 region-limit response should fail"))?;
 
         assert!(matches!(error, Error::AccessRestricted(message) if message == "area restricted"));
         Ok(())
@@ -1156,6 +1215,7 @@ mod tests {
                 dolby: None,
                 flac: None,
             }),
+            business: None,
             view_info: Some(ViewInfo {
                 dialog: Some(Dialog {
                     code: Some(10001),
@@ -1163,6 +1223,7 @@ mod tests {
                 }),
                 toast: None,
             }),
+            pgc_view_info: None,
         };
         let frame = encode_grpc_frame(&reply.encode_to_vec(), false)?;
         let error = super::decode_play_view_response(&frame)
@@ -1170,6 +1231,63 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("audio-only PGC limit response should fail"))?;
 
         assert!(matches!(error, Error::AccessRestricted(message) if message == "area restricted"));
+        Ok(())
+    }
+
+    #[test]
+    fn pgc_preview_only_streams_map_to_access_restricted() -> anyhow::Result<()> {
+        let reply = PlayViewReply {
+            video_info: Some(VideoInfo {
+                quality: None,
+                format: None,
+                timelength: Some(30_000),
+                video_codecid: None,
+                stream_list: vec![StreamItem {
+                    stream_info: Some(StreamInfo {
+                        quality: Some(32),
+                        format: Some("dash".to_owned()),
+                        description: Some("Preview".to_owned()),
+                        err_code: None,
+                        limit: None,
+                        need_vip: None,
+                        need_login: None,
+                        intact: None,
+                        no_rexcode: None,
+                        attribute: None,
+                    }),
+                    dash_video: Some(DashVideo {
+                        base_url: Some("https://app.example/preview.m4s".to_owned()),
+                        backup_url: Vec::new(),
+                        bandwidth: Some(300_000),
+                        codecid: Some(7),
+                        md5: None,
+                        size: Some(1_000_000),
+                        audio_id: Some(30280),
+                        no_rexcode: None,
+                        frame_rate: None,
+                        width: Some(640),
+                        height: Some(360),
+                    }),
+                    segment_video: None,
+                }],
+                dash_audio: Vec::new(),
+                dolby: None,
+                flac: None,
+            }),
+            business: Some(BusinessInfo {
+                is_preview: Some(true),
+            }),
+            view_info: None,
+            pgc_view_info: None,
+        };
+        let frame = encode_grpc_frame(&reply.encode_to_vec(), false)?;
+        let error = super::decode_play_view_response(&frame)
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("PGC preview-only response should fail"))?;
+
+        assert!(
+            matches!(error, Error::AccessRestricted(message) if message == "APP playurl returned preview-only streams")
+        );
         Ok(())
     }
 

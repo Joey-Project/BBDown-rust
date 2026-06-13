@@ -47,6 +47,9 @@ superseded_by:
   fabricated exact MP4 codec strings; exact `codecs` remains unset when APP does not provide it.
 - APP FLAC DASH audio exposes `codec_family=Flac` with `audio/mp4` MIME and leaves exact `codecs`
   unset instead of describing the fMP4 track as raw FLAC.
+- PGC APP region-limit decoding accepts `view_info` from both field 5 and the PGC field 9 shape,
+  and preview-only APP business responses are rejected as access-restricted instead of being
+  treated as complete media.
 
 ## Next Steps
 - Continue feed/list resolver work for history, following/UP pages, recommendation pages, and
@@ -96,7 +99,12 @@ superseded_by:
 - Frozen review fix: APP FLAC DASH audio no longer emits the misleading `audio/flac` + `flac`
   pair; it now preserves the FLAC family while leaving exact codec unknown and keeping the DASH
   MIME as `audio/mp4`.
+- GitHub Codex review fix: PGC APP `view_info` can be encoded on field 9, and business preview
+  metadata can mark returned streams as preview-only. Fixed by decoding the alternate field and
+  rejecting preview-only responses with `AccessRestricted` so restricted-area fallback can still run.
 - Targeted validation after codec-family fix:
   `cargo test -p bbdown-core app_playurl --lib`.
 - Targeted validation after codec-family fix:
   `cargo test -p bbdown-core playback --lib`.
+- Targeted validation after PGC APP field-9 / preview fix:
+  `cargo test -p bbdown-core app_playurl --lib`.
