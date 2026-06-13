@@ -98,14 +98,16 @@ requires account access. TV mode currently applies to normal videos and PGC epis
 For BBDown-compatible APP gRPC playurl resolution, set
 `ClientConfig::with_playurl_mode(PlayurlMode::App)`. Configure
 `EndpointConfig::with_app_grpc_base` for normal-video mocks or proxies and
-`EndpointConfig::with_app_pgc_grpc_base` for PGC mocks or proxies. APP mode uses
+`EndpointConfig::with_app_pgc_grpc_base` for PGC mocks or proxies; both defaults use the gRPC host.
+APP mode uses
 `Credentials::tv_access_key` first and falls back to `Credentials::access_key`, emits
 `StreamSource::NormalApp` or `StreamSource::PgcApp`, and normalizes protobuf DASH/FLV media into
 the same `StreamSet` and `PlaybackPlan` surfaces as the HTTP modes. PGC APP gRPC failures with
 recognizable region-limit messages still enter the configured restricted-area HTTP playurl proxy
-fallback, whether the limit is carried by gRPC status or by the PGC response body. Non-zero gRPC
-status is checked from initial headers and trailing metadata. APP DASH resolution and frame-rate
-metadata is preserved on `MediaStream` / `PlaybackPlan` output. Multiple APP legacy FLV segment
+fallback, whether the limit is carried by gRPC status or by the PGC response body. Proxy fallback
+URLs only receive the generic `Credentials::access_key`. Non-zero gRPC status is checked from
+initial headers and trailing metadata. APP DASH resolution and frame-rate metadata is preserved on
+`MediaStream` / `PlaybackPlan` output. Multiple APP legacy FLV segment
 qualities are reduced to one highest-quality segment set because the current `StreamSet` schema
 represents legacy FLV as a single ordered segment list.
 

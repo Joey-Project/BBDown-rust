@@ -141,11 +141,12 @@ TV mode 适用于普通视频和 PGC 分集，使用 `auth login-tv` 保存的 T
 `--playurl-mode app` 或 `BBDOWN_PLAYURL_MODE=app`。APP mode 适用于普通视频和 PGC 分集，
 会优先使用已保存的 TV access key，再回退到通用导入 access key；mock 或代理可通过
 `--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` 和 `--app-pgc-grpc-base` /
-`BBDOWN_APP_PGC_GRPC_BASE` 配置。PGC APP gRPC 区域限制错误仍会回退到已配置的
-restricted-area HTTP playurl proxy；限制既可以由 gRPC status 报告，也可以由 PGC response
-body 携带。解析器会同时检查 initial headers 和 trailing metadata 里的非零 gRPC status。
-APP DASH 的分辨率和帧率 metadata 会保留到 playback JSON。如果 APP 响应返回多个 legacy
-FLV 分段清晰度，只会暴露最高质量的一组 segment，避免 downloader 和 playback JSON 混合不
+`BBDOWN_APP_PGC_GRPC_BASE` 配置；两个 APP gRPC 端点默认都使用同一个 gRPC host。PGC APP
+gRPC 区域限制错误仍会回退到已配置的 restricted-area HTTP playurl proxy；限制既可以由 gRPC
+status 报告，也可以由 PGC response body 携带。proxy fallback URL 只会使用通用导入 access
+key，不会转发 TV 专用 token。解析器会同时检查 initial headers 和 trailing metadata 里的非零
+gRPC status。APP DASH 的分辨率和帧率 metadata 会保留到 playback JSON。如果 APP 响应返回多
+个 legacy FLV 分段清晰度，只会暴露最高质量的一组 segment，避免 downloader 和 playback JSON 混合不
 同清晰度的分段。
 
 ## 下载
@@ -277,7 +278,7 @@ OGV playurl 端点。弹幕 XML 下载使用可配置的 comment 端点。WEB �
 TV 二维码轮询会跟随该覆盖；对 split-host mock 或代理，请设置 `--tv-passport-poll-base`。
 TV playurl mode 使用 `--tv-api-base`，它独立于只服务二维码登录的 TV passport host。
 APP gRPC playurl mode 使用 `--app-grpc-base` 处理普通视频，使用 `--app-pgc-grpc-base` 处理
-PGC 分集；这些 host 独立于 WEB、TV 和 intl HTTP endpoint 覆盖。
+PGC 分集；这两个端点默认使用同一个 gRPC host，并独立于 WEB、TV 和 intl HTTP endpoint 覆盖。
 
 ## Live E2E 样例
 

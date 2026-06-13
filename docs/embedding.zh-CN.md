@@ -95,11 +95,12 @@ TV mode 当前适用于普通视频和 PGC 分集。
 如需 BBDown-compatible APP gRPC playurl 解析，可设置
 `ClientConfig::with_playurl_mode(PlayurlMode::App)`。普通视频 mock 或代理使用
 `EndpointConfig::with_app_grpc_base`，PGC mock 或代理使用
-`EndpointConfig::with_app_pgc_grpc_base`。APP mode 优先使用
+`EndpointConfig::with_app_pgc_grpc_base`；两个默认值都使用 gRPC host。APP mode 优先使用
 `Credentials::tv_access_key`，再回退到 `Credentials::access_key`；输出
 `StreamSource::NormalApp` 或 `StreamSource::PgcApp`，并把 protobuf DASH/FLV 媒体规范化到与
 HTTP modes 相同的 `StreamSet` 和 `PlaybackPlan` 表面。PGC APP gRPC 失败如果带有可识别的
-区域限制消息，仍会进入已配置的 restricted-area HTTP playurl proxy fallback；限制可以来自
+区域限制消息，仍会进入已配置的 restricted-area HTTP playurl proxy fallback；但 proxy URL
+只会接收通用 `Credentials::access_key`。限制可以来自
 gRPC status，也可以来自 PGC response body。非零 gRPC status 会从 initial headers 和
 trailing metadata 里读取。APP DASH 的分辨率和帧率 metadata 会保留到 `MediaStream` /
 `PlaybackPlan` 输出。多个 APP legacy FLV 分段清晰度会压缩为最高质量的一组 segment，因为

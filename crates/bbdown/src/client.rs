@@ -46,7 +46,7 @@ impl Default for EndpointConfig {
             passport_base: "https://passport.bilibili.com".to_owned(),
             tv_api_base: "https://api.snm0516.aisee.tv".to_owned(),
             app_grpc_base: "https://grpc.biliapi.net".to_owned(),
-            app_pgc_grpc_base: "https://app.bilibili.com".to_owned(),
+            app_pgc_grpc_base: "https://grpc.biliapi.net".to_owned(),
             tv_passport_base: "https://passport.snm0516.aisee.tv".to_owned(),
             tv_passport_poll_base: "https://passport.bilibili.com".to_owned(),
         }
@@ -2234,7 +2234,7 @@ impl BiliClient {
         {
             return Err(error);
         }
-        let proxy_access_key = self.pgc_proxy_playurl_access_key(&official_source);
+        let proxy_access_key = self.pgc_proxy_playurl_access_key();
         let mut attempts = vec![resolver_attempt(
             official_source,
             None,
@@ -2318,12 +2318,12 @@ impl BiliClient {
         Ok(urls)
     }
 
-    fn pgc_proxy_playurl_access_key(&self, official_source: &StreamSource) -> Option<&str> {
-        if official_source == &StreamSource::PgcApp {
-            self.app_playurl_access_key()
-        } else {
-            self.config.credentials.access_key.as_deref()
-        }
+    fn pgc_proxy_playurl_access_key(&self) -> Option<&str> {
+        self.config
+            .credentials
+            .access_key
+            .as_deref()
+            .filter(|value| !value.is_empty())
     }
 
     async fn collect_app_grpc_response(response: reqwest::Response) -> Result<AppGrpcResponse> {
@@ -5298,7 +5298,10 @@ mod tests {
             entry.streams.videos[0].base_url,
             "https://app.example/80.m4s"
         );
-        assert_eq!(entry.streams.videos[0].codecs.as_deref(), Some("hev1"));
+        assert_eq!(
+            entry.streams.videos[0].codecs.as_deref(),
+            Some("hev1.1.6.L120.90")
+        );
         assert_eq!(entry.streams.audios[0].codecs.as_deref(), Some("mp4a.40.2"));
         assert_eq!(entry.streams.flv_segments[0].order, 1);
         Ok(())
@@ -7233,7 +7236,10 @@ mod tests {
             entry.streams.videos[0].base_url,
             "https://app.example/pgc-80.m4s"
         );
-        assert_eq!(entry.streams.videos[0].codecs.as_deref(), Some("hev1"));
+        assert_eq!(
+            entry.streams.videos[0].codecs.as_deref(),
+            Some("hev1.1.6.L120.90")
+        );
         Ok(())
     }
 
@@ -7257,7 +7263,7 @@ mod tests {
                 .query_param("proxy_token", "PROXY_SECRET")
                 .query_param("ep_id", "1000")
                 .query_param("area", "hk")
-                .query_param("access_key", "TV_ACCESS")
+                .query_param("access_key", "ACCESS_SECRET")
                 .header_missing("cookie");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
@@ -7290,7 +7296,11 @@ mod tests {
                         .with_pgc_base(server.base_url())
                         .with_app_pgc_grpc_base(server.base_url()),
                 )
-                .with_credentials(Credentials::default().with_tv_access_key("TV_ACCESS"))
+                .with_credentials(
+                    Credentials::default()
+                        .with_tv_access_key("TV_ACCESS")
+                        .with_access_key("ACCESS_SECRET"),
+                )
                 .with_restricted_area(
                     RestrictedAreaConfig::default()
                         .with_area_hint(RestrictedArea::Hk)
@@ -7340,7 +7350,7 @@ mod tests {
                 .query_param("proxy_token", "PROXY_SECRET")
                 .query_param("ep_id", "1000")
                 .query_param("area", "hk")
-                .query_param("access_key", "TV_ACCESS")
+                .query_param("access_key", "ACCESS_SECRET")
                 .header_missing("cookie");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
@@ -7373,7 +7383,11 @@ mod tests {
                         .with_pgc_base(server.base_url())
                         .with_app_pgc_grpc_base(server.base_url()),
                 )
-                .with_credentials(Credentials::default().with_tv_access_key("TV_ACCESS"))
+                .with_credentials(
+                    Credentials::default()
+                        .with_tv_access_key("TV_ACCESS")
+                        .with_access_key("ACCESS_SECRET"),
+                )
                 .with_restricted_area(
                     RestrictedAreaConfig::default()
                         .with_area_hint(RestrictedArea::Hk)
@@ -7455,6 +7469,14 @@ mod tests {
         assert_eq!(config.playurl_mode, PlayurlMode::App);
         assert_eq!(config.user_agent, "embedding-test/1.0");
         assert_eq!(config.request_timeout, Duration::from_secs(7));
+    }
+
+    #[test]
+    fn endpoint_defaults_use_grpc_host_for_app_playurl() {
+        let endpoints = EndpointConfig::default();
+
+        assert_eq!(endpoints.app_grpc_base, "https://grpc.biliapi.net");
+        assert_eq!(endpoints.app_pgc_grpc_base, endpoints.app_grpc_base);
     }
 
     #[test]

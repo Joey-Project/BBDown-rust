@@ -152,12 +152,14 @@ Use `--playurl-mode app` or `BBDOWN_PLAYURL_MODE=app` when a downstream integrat
 request specs from BBDown-compatible APP gRPC playurl endpoints. APP mode applies to normal videos
 and PGC episodes, uses the saved TV access key first and then the generic imported access key, and
 can be pointed at mocks or proxies with `--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` and
-`--app-pgc-grpc-base` / `BBDOWN_APP_PGC_GRPC_BASE`. PGC APP gRPC region-limit errors still fall
-back to configured restricted-area HTTP playurl proxies when reported by gRPC status or by the PGC
-response body. The resolver checks non-zero gRPC status in both initial headers and trailing
-metadata. APP DASH resolution and frame-rate metadata is preserved in playback JSON. If an APP
-response returns multiple legacy FLV segment qualities, only the highest-quality segment set is
-exposed so the downloader and playback JSON never mix segments from different qualities.
+`--app-pgc-grpc-base` / `BBDOWN_APP_PGC_GRPC_BASE`; both APP gRPC endpoint defaults use the gRPC
+host. PGC APP gRPC region-limit errors still fall back to configured restricted-area HTTP playurl
+proxies when reported by gRPC status or by the PGC response body. Proxy fallback URLs use only the
+generic imported access key and never the TV-specific token. The resolver checks non-zero gRPC status
+in both initial headers and trailing metadata. APP DASH resolution and frame-rate metadata is
+preserved in playback JSON. If an APP response returns multiple legacy FLV segment qualities, only
+the highest-quality segment set is exposed so the downloader and playback JSON never mix segments
+from different qualities.
 
 ## Downloads
 
@@ -306,7 +308,8 @@ passport overrides. TV QR polling follows `--tv-passport-base` when that overrid
 TV playurl mode uses `--tv-api-base`; it is separate from the TV passport host used only for QR
 login.
 APP gRPC playurl mode uses `--app-grpc-base` for normal videos and `--app-pgc-grpc-base` for PGC
-episodes; these hosts are separate from WEB, TV, and intl HTTP endpoint overrides.
+episodes; these endpoints default to the same gRPC host and are separate from WEB, TV, and intl HTTP
+endpoint overrides.
 
 ## Live E2E Samples
 

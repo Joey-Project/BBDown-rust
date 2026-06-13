@@ -82,7 +82,7 @@ TV mode 使用 `Credentials::tv_access_key`，不会复用通用 intl access key
 适用于普通视频和 PGC 分集，优先使用 `Credentials::tv_access_key`，再回退到
 `Credentials::access_key`，并输出规范化后的 `StreamSet` / `PlaybackPlan` 媒体规格；PGC
 出现由 gRPC status 或 PGC response body 报告的可识别区域限制错误时，仍可回退到已配置的
-restricted-area HTTP playurl proxy。APP gRPC 非零 status 会读取 initial headers 和
+restricted-area HTTP playurl proxy，且 proxy URL 只使用通用 access key。APP gRPC 非零 status 会读取 initial headers 和
 trailing metadata；APP DASH 的分辨率和帧率 metadata 会保留到规范化媒体规格；legacy FLV
 segment 响应会规范化为最高质量的一组 segment。
 嵌入应用需要 BBDown 风格或应用自定义输出名时，可以设置 `DownloadPathTemplates`。模板会

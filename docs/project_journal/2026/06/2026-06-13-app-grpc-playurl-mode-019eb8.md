@@ -36,7 +36,7 @@ superseded_by:
 - APP legacy FLV responses with multiple segment qualities are normalized to one highest-quality
   segment set instead of concatenating incompatible qualities into `StreamSet::flv_segments`.
 - PGC APP region-limit errors can fall back to the existing restricted-area HTTP playurl proxy
-  resolver, reuse the APP playurl access key for proxy requests, and record `PgcApp` then
+  resolver, use only the generic imported access key for proxy requests, and record `PgcApp` then
   `PgcProxy` diagnostics.
 - PGC APP region-limit fallback covers both non-zero gRPC status metadata and recognized PGC
   response-body messages such as `view_info.dialog`.
@@ -82,3 +82,7 @@ superseded_by:
   `view_info`, which made the body-carried fallback path unreliable on real responses. Fixed by
   setting protobuf tag 15 (`is_need_view_info`) for PGC APP requests and adding request-body
   regression tests.
+- Current-head review fix: PGC APP defaults now point both APP gRPC endpoint settings at the gRPC
+  host, proxy fallback no longer forwards TV-specific access keys, APP video codec strings use full
+  MP4 codec identifiers, and body-carried region-limit messages fail even if residual audio tracks
+  are present without video.

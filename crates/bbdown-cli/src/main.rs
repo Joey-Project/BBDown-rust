@@ -67,7 +67,7 @@ struct Cli {
     #[arg(
         long,
         env = "BBDOWN_APP_PGC_GRPC_BASE",
-        default_value = "https://app.bilibili.com"
+        default_value = "https://grpc.biliapi.net"
     )]
     app_pgc_grpc_base: String,
     #[arg(long, env = "BBDOWN_TV_PASSPORT_BASE")]

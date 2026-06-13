@@ -465,6 +465,12 @@ impl PlayViewReply {
         );
         let audios =
             collect_audio_streams(video_info.dash_audio, video_info.flac, video_info.dolby);
+        if videos.is_empty()
+            && flv_segments.is_empty()
+            && let Some(message) = access_limit_message.clone()
+        {
+            return Err(Error::AccessRestricted(message));
+        }
         if videos.is_empty() && audios.is_empty() && flv_segments.is_empty() {
             if let Some(message) = access_limit_message {
                 return Err(Error::AccessRestricted(message));
@@ -738,9 +744,9 @@ impl AudioKind {
 
 fn video_codec(codecid: Option<u32>) -> Option<String> {
     match codecid {
-        Some(7) => Some("avc1".to_owned()),
-        Some(12) => Some("hev1".to_owned()),
-        Some(13) => Some("av01".to_owned()),
+        Some(7) => Some("avc1.640028".to_owned()),
+        Some(12) => Some("hev1.1.6.L120.90".to_owned()),
+        Some(13) => Some("av01.0.08M.08".to_owned()),
         _ => None,
     }
 }
@@ -1003,9 +1009,9 @@ pub(crate) fn test_pgc_region_limit_response_frame(message: &str) -> Result<Vec<
 #[cfg(test)]
 mod tests {
     use super::{
-        Dialog, PlayViewReply, PlayViewReq, ResponseUrl, SegmentVideo, StreamInfo, StreamItem,
-        VideoInfo, ViewInfo, decode_grpc_frame, encode_grpc_frame, play_view_request_body,
-        test_play_view_response_frame,
+        DashItem, Dialog, PlayViewReply, PlayViewReq, ResponseUrl, SegmentVideo, StreamInfo,
+        StreamItem, VideoInfo, ViewInfo, decode_grpc_frame, encode_grpc_frame,
+        play_view_request_body, test_play_view_response_frame,
     };
     use crate::Error;
     use prost::Message as _;
@@ -1053,7 +1059,10 @@ mod tests {
         let frame = test_play_view_response_frame("https://app.example/video.m4s")?;
         let streams = super::decode_play_view_response(&frame)?;
         assert_eq!(streams.videos[0].id, 80);
-        assert_eq!(streams.videos[0].codecs.as_deref(), Some("hev1"));
+        assert_eq!(
+            streams.videos[0].codecs.as_deref(),
+            Some("hev1.1.6.L120.90")
+        );
         assert_eq!(streams.videos[0].width, Some(1920));
         assert_eq!(streams.videos[0].height, Some(1080));
         assert_eq!(streams.videos[0].frame_rate.as_deref(), Some("60"));
@@ -1110,6 +1119,44 @@ mod tests {
         let error = super::decode_play_view_response(&frame)
             .err()
             .ok_or_else(|| anyhow::anyhow!("PGC region-limit response should fail"))?;
+
+        assert!(matches!(error, Error::AccessRestricted(message) if message == "area restricted"));
+        Ok(())
+    }
+
+    #[test]
+    fn pgc_view_info_limit_with_audio_only_maps_to_access_restricted() -> anyhow::Result<()> {
+        let reply = PlayViewReply {
+            video_info: Some(VideoInfo {
+                quality: None,
+                format: None,
+                timelength: Some(60_000),
+                video_codecid: None,
+                stream_list: Vec::new(),
+                dash_audio: vec![DashItem {
+                    id: Some(30280),
+                    base_url: Some("https://app.example/audio.m4s".to_owned()),
+                    backup_url: Vec::new(),
+                    bandwidth: Some(128_000),
+                    codecid: None,
+                    md5: None,
+                    size: Some(2_000_000),
+                }],
+                dolby: None,
+                flac: None,
+            }),
+            view_info: Some(ViewInfo {
+                dialog: Some(Dialog {
+                    code: Some(10001),
+                    msg: Some("area restricted".to_owned()),
+                }),
+                toast: None,
+            }),
+        };
+        let frame = encode_grpc_frame(&reply.encode_to_vec(), false)?;
+        let error = super::decode_play_view_response(&frame)
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("audio-only PGC limit response should fail"))?;
 
         assert!(matches!(error, Error::AccessRestricted(message) if message == "area restricted"));
         Ok(())
