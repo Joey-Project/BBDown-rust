@@ -2171,7 +2171,7 @@ impl BiliClient {
             .error_for_status()
             .map_err(Self::http_error_without_url)?;
         let response = Self::collect_app_grpc_response(response).await?;
-        decode_app_grpc_stream_set(&response)
+        decode_app_grpc_stream_set(&response, is_pgc)
     }
 
     async fn fetch_pgc_tv_stream_set(
@@ -3619,7 +3619,7 @@ fn app_grpc_error_from_headers(headers: &HeaderMap) -> Option<Error> {
     Some(Error::Api { code, message })
 }
 
-fn decode_app_grpc_stream_set(response: &AppGrpcResponse) -> Result<StreamSet> {
+fn decode_app_grpc_stream_set(response: &AppGrpcResponse, is_pgc: bool) -> Result<StreamSet> {
     if let Some(error) = app_grpc_error_from_headers(&response.headers) {
         return Err(error);
     }
@@ -3628,7 +3628,7 @@ fn decode_app_grpc_stream_set(response: &AppGrpcResponse) -> Result<StreamSet> {
     {
         return Err(error);
     }
-    app_playurl::decode_play_view_response(&response.body)
+    app_playurl::decode_play_view_response(&response.body, is_pgc)
 }
 
 fn decode_grpc_message(raw: &str) -> String {
@@ -5381,7 +5381,7 @@ mod tests {
             .body(reqwest::Body::wrap(body))?;
         let response: reqwest::Response = response.into();
         let response = BiliClient::collect_app_grpc_response(response).await?;
-        let error = decode_app_grpc_stream_set(&response)
+        let error = decode_app_grpc_stream_set(&response, false)
             .err()
             .ok_or_else(|| anyhow::anyhow!("APP trailing gRPC status error should fail"))?;
 

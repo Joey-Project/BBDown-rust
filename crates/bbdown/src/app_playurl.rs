@@ -145,12 +145,12 @@ pub(crate) fn play_view_headers(access_key: Option<&str>) -> Result<HeaderMap> {
     Ok(headers)
 }
 
-pub(crate) fn decode_play_view_response(frame: &[u8]) -> Result<StreamSet> {
+pub(crate) fn decode_play_view_response(frame: &[u8], is_pgc: bool) -> Result<StreamSet> {
     let payload = decode_grpc_frame(frame)?;
     let reply = PlayViewReply::decode(payload.as_slice()).map_err(|error| {
         Error::InvalidInput(format!("invalid APP playurl protobuf response: {error}"))
     })?;
-    reply.into_stream_set()
+    reply.into_stream_set(is_pgc)
 }
 
 fn app_user_agent() -> String {
@@ -459,9 +459,9 @@ struct TextInfo {
 }
 
 impl PlayViewReply {
-    fn into_stream_set(self) -> Result<StreamSet> {
+    fn into_stream_set(self, is_pgc: bool) -> Result<StreamSet> {
         let access_limit_message = self.access_limit_message();
-        if self.is_preview_only() {
+        if self.is_preview_only(is_pgc) {
             let message = access_limit_message.map_or_else(
                 || APP_PREVIEW_ONLY_RESTRICTION_MESSAGE.to_owned(),
                 |message| format!("{APP_PREVIEW_ONLY_RESTRICTION_MESSAGE}: {message}"),
@@ -535,11 +535,13 @@ impl PlayViewReply {
             })
     }
 
-    fn is_preview_only(&self) -> bool {
-        self.business
-            .as_ref()
-            .and_then(|business| business.is_preview)
-            .unwrap_or(false)
+    fn is_preview_only(&self, is_pgc: bool) -> bool {
+        is_pgc
+            && self
+                .business
+                .as_ref()
+                .and_then(|business| business.is_preview)
+                .unwrap_or(false)
     }
 }
 
@@ -1120,8 +1122,8 @@ pub(crate) fn test_pgc_preview_only_response_frame_with_message(
 #[cfg(test)]
 mod tests {
     use super::{
-        DashItem, Dialog, PlayViewReply, PlayViewReq, ResponseUrl, SegmentVideo, StreamInfo,
-        StreamItem, VideoInfo, ViewInfo, decode_grpc_frame, encode_grpc_frame,
+        BusinessInfo, DashItem, Dialog, PlayViewReply, PlayViewReq, ResponseUrl, SegmentVideo,
+        StreamInfo, StreamItem, VideoInfo, ViewInfo, decode_grpc_frame, encode_grpc_frame,
         play_view_request_body, test_play_view_response_frame,
     };
     use crate::{CodecFamily, Error};
@@ -1182,7 +1184,7 @@ mod tests {
     #[test]
     fn play_view_reply_maps_to_stream_set() -> anyhow::Result<()> {
         let frame = test_play_view_response_frame("https://app.example/video.m4s")?;
-        let streams = super::decode_play_view_response(&frame)?;
+        let streams = super::decode_play_view_response(&frame, false)?;
         assert_eq!(streams.videos[0].id, 80);
         assert_eq!(streams.videos[0].codecs, None);
         assert_eq!(streams.videos[0].codec_family, Some(CodecFamily::Hevc));
@@ -1223,12 +1225,35 @@ mod tests {
             pgc_view_info: None,
         };
         let frame = encode_grpc_frame(&reply.encode_to_vec(), false)?;
-        let streams = super::decode_play_view_response(&frame)?;
+        let streams = super::decode_play_view_response(&frame, false)?;
 
         assert_eq!(streams.flv_segments.len(), 1);
         assert_eq!(streams.flv_segments[0].url, "https://app.example/720.flv");
         assert_eq!(streams.accept_quality, vec![64]);
         assert_eq!(streams.qualities[0].description.as_deref(), Some("720P"));
+        Ok(())
+    }
+
+    #[test]
+    fn normal_app_field_3_does_not_trigger_preview_only() -> anyhow::Result<()> {
+        let reply_payload = decode_grpc_frame(&test_play_view_response_frame(
+            "https://app.example/video.m4s",
+        )?)?;
+        let mut reply = PlayViewReply::decode(reply_payload.as_slice())?;
+        reply.business = Some(BusinessInfo {
+            is_preview: Some(true),
+        });
+        let frame = encode_grpc_frame(&reply.encode_to_vec(), false)?;
+
+        let streams = super::decode_play_view_response(&frame, false)?;
+        assert_eq!(streams.videos[0].base_url, "https://app.example/video.m4s");
+
+        let error = super::decode_play_view_response(&frame, true)
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("PGC preview-only response should fail"))?;
+        assert!(
+            matches!(error, Error::AccessRestricted(message) if message == super::APP_PREVIEW_ONLY_RESTRICTION_MESSAGE)
+        );
         Ok(())
     }
 
@@ -1247,7 +1272,7 @@ mod tests {
             pgc_view_info: None,
         };
         let frame = encode_grpc_frame(&reply.encode_to_vec(), false)?;
-        let error = super::decode_play_view_response(&frame)
+        let error = super::decode_play_view_response(&frame, true)
             .err()
             .ok_or_else(|| anyhow::anyhow!("PGC region-limit response should fail"))?;
 
@@ -1270,7 +1295,7 @@ mod tests {
             }),
         };
         let frame = encode_grpc_frame(&reply.encode_to_vec(), false)?;
-        let error = super::decode_play_view_response(&frame)
+        let error = super::decode_play_view_response(&frame, true)
             .err()
             .ok_or_else(|| anyhow::anyhow!("PGC field-9 region-limit response should fail"))?;
 
@@ -1310,7 +1335,7 @@ mod tests {
             pgc_view_info: None,
         };
         let frame = encode_grpc_frame(&reply.encode_to_vec(), false)?;
-        let error = super::decode_play_view_response(&frame)
+        let error = super::decode_play_view_response(&frame, true)
             .err()
             .ok_or_else(|| anyhow::anyhow!("audio-only PGC limit response should fail"))?;
 
@@ -1321,7 +1346,7 @@ mod tests {
     #[test]
     fn pgc_preview_only_streams_map_to_access_restricted() -> anyhow::Result<()> {
         let frame = super::test_pgc_preview_only_response_frame()?;
-        let error = super::decode_play_view_response(&frame)
+        let error = super::decode_play_view_response(&frame, true)
             .err()
             .ok_or_else(|| anyhow::anyhow!("PGC preview-only response should fail"))?;
 
@@ -1335,7 +1360,7 @@ mod tests {
     fn pgc_preview_only_streams_keep_stable_prefix_with_access_message() -> anyhow::Result<()> {
         let frame =
             super::test_pgc_preview_only_response_frame_with_message(Some("preview ended"))?;
-        let error = super::decode_play_view_response(&frame)
+        let error = super::decode_play_view_response(&frame, true)
             .err()
             .ok_or_else(|| anyhow::anyhow!("PGC preview-only response should fail"))?;
 

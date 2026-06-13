@@ -50,6 +50,8 @@ superseded_by:
 - PGC APP region-limit decoding accepts `view_info` from both field 5 and the PGC field 9 shape,
   and preview-only APP business responses are rejected as access-restricted instead of being
   treated as complete media.
+- APP business preview metadata is interpreted only for PGC replies, so normal APP field 3
+  metadata such as upgrade-limit state cannot reject usable UGC streams.
 
 ## Next Steps
 - Continue feed/list resolver work for history, following/UP pages, recommendation pages, and
@@ -135,6 +137,15 @@ superseded_by:
   `cargo test -p bbdown-core app_playurl --lib` and
   `cargo test -p bbdown-core pgc_app --lib`.
 - Final validation after independent review fix:
+  `cargo fmt --all -- --check`,
+  `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/29f61f3e579e2a4166436b963eab301ac5d80d94/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`,
+  and `just ci`.
+- GitHub Codex review fix: APP field 3 preview/business decoding is now gated to PGC responses so
+  normal UGC upgrade-limit metadata cannot trigger preview-only fallback.
+- Validation after APP field-3 gating fix:
+  `cargo test -p bbdown-core app_playurl --lib`,
+  `cargo test -p bbdown-core pgc_app --lib`,
+  `cargo test -p bbdown-core app_grpc_trailing_status_error_is_reported --lib`,
   `cargo fmt --all -- --check`,
   `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/29f61f3e579e2a4166436b963eab301ac5d80d94/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`,
   and `just ci`.
