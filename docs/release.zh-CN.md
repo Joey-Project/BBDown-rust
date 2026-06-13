@@ -4,8 +4,8 @@
 
 本项目使用两阶段发布：
 
-1. 先手动批准一个 GitHub Actions 运行，对 repository default branch 做验证、构建 release
-   artifacts，并创建 `v0.1.0-rc.1` 这样的 release candidate tag。
+1. 先手动批准一个 GitHub Actions 运行；它从 repository default branch 启动，验证所选 release
+   source、构建 release artifacts，并创建 `v0.1.0-rc.1` 这样的 release candidate tag。
 2. 再从该 RC tag 手动启动第二个受保护 workflow。它会重新构建正式 artifacts、创建
    `v0.1.0` 这样的正式 tag、发布 GitHub Release，并把 `bbdown-core` crate 发布到
    crates.io。
@@ -45,16 +45,19 @@ rulesets 应只允许这个 App 作为非人工 actor 写 tag。
 1. 确认 `crates/bbdown/Cargo.toml` 和 `crates/bbdown-cli/Cargo.toml` 都已经是最终版本，
    例如 `0.1.0`。如果当前开发线包含破坏性的公开 crate API 变更，请选择下一个 pre-`1.0`
    breaking 版本，例如已发布 `0.2.x` 线之后使用 `0.3.0`。
-2. 确认要发布的分支已经合入 repository default branch，目前是 `master`。
+2. 确认要发布的 source 要么已经合入 repository default branch，目前是 `master`，要么已经
+   作为显式 release branch 存在，例如 `release/0.2.0`。
 3. 在 GitHub Actions 里，从 repository default branch 运行 `Create Release Candidate`。
-4. 输入不带前导 `v` 的 `version`，例如 `0.1.0`。workflow 会自动选择下一个可用 RC 编号。
+4. 输入不带前导 `v` 的 `version`，例如 `0.1.0`。如果发布 release branch，把 `source_ref`
+   设为对应的 `release/*` 分支名，例如 `release/0.2.0`；如果发布 workflow ref，就留空。
+   workflow 会自动选择下一个可用 RC 编号。
 5. 批准 `release-candidate` environment deployment。
 
 该 workflow 会检查它是否从 repository default branch 运行，验证 `bbdown-core` 和
-`bbdown-cli` Cargo version，按同一 release version 串行化所有 RC 创建和 promotion 运行，
-计算下一个 RC 编号，调用共享 release verification workflow，构建所有 release archives，并拒
-绝已经存在 final tag 或 GitHub Release 的 version，然后创建 annotated RC tag；真正写入前
-还会再次检查 final tag 和 GitHub Release 状态。
+`bbdown-cli` 在所选 source ref 上的 Cargo version，按同一 release version 串行化所有 RC
+创建和 promotion 运行，计算下一个 RC 编号，调用共享 release verification workflow，构建所
+有 release archives，并拒绝已经存在 final tag 或 GitHub Release 的 version，然后创建
+annotated RC tag；真正写入前还会再次检查 final tag 和 GitHub Release 状态。
 
 ## 晋升 RC
 
