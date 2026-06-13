@@ -129,6 +129,7 @@ Use `playback` when another service needs selected media request specs for strea
 
 ```bash
 bbdown playback av170001 --json
+bbdown --playurl-mode tv playback av170001 --json
 bbdown playback ss26801 --select latest --json
 bbdown playback fav456 --select 1,3-5 --json
 ```
@@ -142,6 +143,10 @@ to its group and low-to-high level index so a downstream cache/player service ca
 levels without losing already cached media objects. This is a read-only planning surface: it does
 not download media, start a player, create HLS playlists, serve segments, or register completed
 artifacts. Downstream cache/player services own those runtime concerns.
+Use `--playurl-mode tv` or `BBDOWN_PLAYURL_MODE=tv` when a downstream integration needs media
+request specs from BBDown-compatible TV HTTP playurl endpoints. TV mode applies to normal videos and
+PGC episodes, uses the TV-specific access key saved by `auth login-tv`, and can be pointed at a mock
+or proxy with `--tv-api-base` / `BBDOWN_TV_API_BASE`.
 
 ## Downloads
 
@@ -287,6 +292,8 @@ playurl endpoint with the configured access key when present. Danmaku XML downlo
 configurable comment endpoint. WEB QR login uses `--passport-base`; TV QR login uses TV-specific
 passport overrides. TV QR polling follows `--tv-passport-base` when that override is supplied; set
 `--tv-passport-poll-base` for split-host mocks or proxies.
+TV playurl mode uses `--tv-api-base`; it is separate from the TV passport host used only for QR
+login.
 
 ## Live E2E Samples
 

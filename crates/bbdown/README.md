@@ -77,6 +77,10 @@ state, HLS playlist generation, or HTTP segment serving. Each `PlaybackVariant` 
 `selection_hints.avplayer` with exact codec strings, codec-family metadata, a `format_key`, and
 ranking signals. Use `PlaybackCodecPreference` when an embedding client wants to prefer H.264,
 HEVC, AV1, or another codec order.
+Set `ClientConfig::with_playurl_mode(PlayurlMode::Tv)` and `EndpointConfig::with_tv_api_base` when
+an embedding application needs BBDown-compatible TV HTTP playurl resolution for normal videos or
+PGC episodes. TV mode uses `Credentials::tv_access_key` and does not reuse the generic intl access
+key.
 Set `DownloadPathTemplates` when an embedding application needs BBDown-style or application-specific
 output names. Templates render sanitized filename components for the output root, entry directory,
 and muxed file stem while media and sidecar filenames remain stable for resume and archive records.

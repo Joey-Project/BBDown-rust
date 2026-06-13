@@ -88,6 +88,11 @@ playlist 生成、segment serving、retention、cleanup、AVPlayer event/VOD pla
 library 注册。下游播放器和缓存服务器负责这些部分，并可把 `PlaybackPlan` 作为稳定的 HTTP
 request contract。
 
+如需 BBDown-compatible TV HTTP playurl 解析，可设置
+`ClientConfig::with_playurl_mode(PlayurlMode::Tv)`；需要 mock 或代理时配置
+`EndpointConfig::with_tv_api_base`；TV 端点需要账号访问时提供 `Credentials::tv_access_key`。
+TV mode 当前适用于普通视频和 PGC 分集；APP/gRPC playurl mode 仍是后续独立 transport 切片。
+
 ## 批量和集合输入
 
 `BiliClient::resolve_input` 接受 CLI 风格原始输入，例如 B23 短链接、`fav...`、`mid...`、

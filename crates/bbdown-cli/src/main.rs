@@ -6,7 +6,7 @@ use bbdown_core::{
     BiliClient, ClientConfig, CredentialStore, Credentials, DanmakuFormat, DownloadArchive,
     DownloadMode, DownloadOptions, DownloadPathTemplates, DownloadPreflight, DownloadReport,
     DuplicateDecision, EndpointConfig, MediaHostOptions, MediaStream, MuxOptions, PlaybackPlan,
-    QrLoginKind, QrLoginState, QrLoginTicket, ResolvedContent, RestrictedArea,
+    PlayurlMode, QrLoginKind, QrLoginState, QrLoginTicket, ResolvedContent, RestrictedArea,
     RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection,
     StreamQuality, StreamSelection, StreamSet,
 };
@@ -52,10 +52,18 @@ struct Cli {
         default_value = "https://passport.bilibili.com"
     )]
     passport_base: String,
+    #[arg(
+        long,
+        env = "BBDOWN_TV_API_BASE",
+        default_value = "https://api.snm0516.aisee.tv"
+    )]
+    tv_api_base: String,
     #[arg(long, env = "BBDOWN_TV_PASSPORT_BASE")]
     tv_passport_base: Option<String>,
     #[arg(long, env = "BBDOWN_TV_PASSPORT_POLL_BASE")]
     tv_passport_poll_base: Option<String>,
+    #[arg(long, env = "BBDOWN_PLAYURL_MODE", default_value = "web")]
+    playurl_mode: PlayurlModeArg,
     #[arg(long, env = "BBDOWN_RESTRICTED_AREA")]
     restricted_area: Option<String>,
     #[arg(
@@ -221,6 +229,22 @@ impl From<DanmakuFormatArg> for DanmakuFormat {
         match value {
             DanmakuFormatArg::Xml => Self::Xml,
             DanmakuFormatArg::Ass => Self::Ass,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+enum PlayurlModeArg {
+    Web,
+    Tv,
+}
+
+impl From<PlayurlModeArg> for PlayurlMode {
+    fn from(value: PlayurlModeArg) -> Self {
+        match value {
+            PlayurlModeArg::Web => Self::Web,
+            PlayurlModeArg::Tv => Self::Tv,
         }
     }
 }
@@ -439,50 +463,26 @@ async fn main() -> anyhow::Result<()> {
     );
     let endpoints = endpoints_from_cli(&cli);
     let restricted_area = restricted_area_from_cli_with_args(&cli, raw_args)?;
+    let playurl_mode = cli.playurl_mode.into();
     let request_timeout = Duration::from_secs(cli.request_timeout_seconds);
+    let client_runtime =
+        ClientRuntimeConfig::new(endpoints, restricted_area, playurl_mode, request_timeout);
     let store = CredentialStore::new(credential_path(cli.credential_file)?);
     match cli.command {
         Command::Info { url, select, json } => {
-            handle_info(
-                &store,
-                endpoints.clone(),
-                restricted_area.clone(),
-                request_timeout,
-                url,
-                select,
-                json,
-            )
-            .await?;
+            handle_info(&store, &client_runtime, url, select, json).await?;
         }
         Command::Plan { url, select, json } => {
-            handle_plan(
-                &store,
-                endpoints.clone(),
-                restricted_area.clone(),
-                request_timeout,
-                url,
-                select,
-                json,
-            )
-            .await?;
+            handle_plan(&store, &client_runtime, url, select, json).await?;
         }
         Command::Playback { url, select, json } => {
-            handle_playback(
-                &store,
-                endpoints.clone(),
-                restricted_area.clone(),
-                request_timeout,
-                url,
-                select,
-                json,
-            )
-            .await?;
+            handle_playback(&store, &client_runtime, url, select, json).await?;
         }
         Command::Download(args) => {
-            handle_download_cli(&store, endpoints, restricted_area, request_timeout, *args).await?;
+            handle_download_cli(&store, &client_runtime, *args).await?;
         }
         Command::Auth { command } => {
-            handle_auth(command, &store, endpoints, restricted_area, request_timeout).await?;
+            handle_auth(command, &store, &client_runtime).await?;
         }
     }
     Ok(())
@@ -490,9 +490,7 @@ async fn main() -> anyhow::Result<()> {
 
 async fn handle_download_cli(
     store: &CredentialStore,
-    endpoints: EndpointConfig,
-    restricted_area: RestrictedAreaConfig,
-    request_timeout: Duration,
+    client_runtime: &ClientRuntimeConfig,
     args: DownloadCliArgs,
 ) -> anyhow::Result<()> {
     ensure!(
@@ -537,14 +535,7 @@ async fn handle_download_cli(
         archive_file: args.archive_file,
         on_duplicate: args.on_duplicate.map(Into::into),
     };
-    handle_download(
-        store,
-        endpoints,
-        restricted_area,
-        request_timeout,
-        command_args,
-    )
-    .await
+    handle_download(store, client_runtime, command_args).await
 }
 
 struct DownloadCommandArgs {
@@ -556,22 +547,47 @@ struct DownloadCommandArgs {
     on_duplicate: Option<DuplicateDecision>,
 }
 
-async fn handle_info(
-    store: &CredentialStore,
+#[derive(Clone, Debug)]
+struct ClientRuntimeConfig {
     endpoints: EndpointConfig,
     restricted_area: RestrictedAreaConfig,
+    playurl_mode: PlayurlMode,
     request_timeout: Duration,
+}
+
+impl ClientRuntimeConfig {
+    fn new(
+        endpoints: EndpointConfig,
+        restricted_area: RestrictedAreaConfig,
+        playurl_mode: PlayurlMode,
+        request_timeout: Duration,
+    ) -> Self {
+        Self {
+            endpoints,
+            restricted_area,
+            playurl_mode,
+            request_timeout,
+        }
+    }
+
+    fn client_config(&self, credentials: Credentials) -> ClientConfig {
+        ClientConfig::new(self.endpoints.clone(), credentials)
+            .with_restricted_area(self.restricted_area.clone())
+            .with_playurl_mode(self.playurl_mode)
+            .with_user_agent("bbdown-rs/0.1")
+            .with_request_timeout(self.request_timeout)
+    }
+}
+
+async fn handle_info(
+    store: &CredentialStore,
+    client_runtime: &ClientRuntimeConfig,
     url: String,
     select: Option<Selection>,
     json: bool,
 ) -> anyhow::Result<()> {
     let credentials = store.load().context("failed to load credentials")?;
-    let client = BiliClient::new(client_config(
-        endpoints,
-        restricted_area,
-        request_timeout,
-        credentials,
-    ));
+    let client = BiliClient::new(client_runtime.client_config(credentials));
     let resolved = client.resolve_input(&url, select).await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&resolved)?);
@@ -583,20 +599,13 @@ async fn handle_info(
 
 async fn handle_plan(
     store: &CredentialStore,
-    endpoints: EndpointConfig,
-    restricted_area: RestrictedAreaConfig,
-    request_timeout: Duration,
+    client_runtime: &ClientRuntimeConfig,
     url: String,
     select: Option<Selection>,
     json: bool,
 ) -> anyhow::Result<()> {
     let credentials = store.load().context("failed to load credentials")?;
-    let client = BiliClient::new(client_config(
-        endpoints,
-        restricted_area,
-        request_timeout,
-        credentials,
-    ));
+    let client = BiliClient::new(client_runtime.client_config(credentials));
     let plan = client.plan_download(&url, select).await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&plan)?);
@@ -608,20 +617,13 @@ async fn handle_plan(
 
 async fn handle_playback(
     store: &CredentialStore,
-    endpoints: EndpointConfig,
-    restricted_area: RestrictedAreaConfig,
-    request_timeout: Duration,
+    client_runtime: &ClientRuntimeConfig,
     url: String,
     select: Option<Selection>,
     json: bool,
 ) -> anyhow::Result<()> {
     let credentials = store.load().context("failed to load credentials")?;
-    let client = BiliClient::new(client_config(
-        endpoints,
-        restricted_area,
-        request_timeout,
-        credentials,
-    ));
+    let client = BiliClient::new(client_runtime.client_config(credentials));
     let plan = client.plan_playback(&url, select).await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&plan)?);
@@ -739,18 +741,11 @@ fn media_stream_summary(label: &str, stream: &MediaStream) -> String {
 
 async fn handle_download(
     store: &CredentialStore,
-    endpoints: EndpointConfig,
-    restricted_area: RestrictedAreaConfig,
-    request_timeout: Duration,
+    client_runtime: &ClientRuntimeConfig,
     args: DownloadCommandArgs,
 ) -> anyhow::Result<()> {
     let credentials = store.load().context("failed to load credentials")?;
-    let client = BiliClient::new(client_config(
-        endpoints,
-        restricted_area,
-        request_timeout,
-        credentials,
-    ));
+    let client = BiliClient::new(client_runtime.client_config(credentials));
     let report = if let Some(archive_file) = args.archive_file {
         let plan = client
             .plan_download_with_mode(&args.url, args.select, args.options.mode)
@@ -1031,24 +1026,10 @@ fn print_duplicate_preflight(preflight: &DownloadPreflight) {
     }
 }
 
-fn client_config(
-    endpoints: EndpointConfig,
-    restricted_area: RestrictedAreaConfig,
-    request_timeout: Duration,
-    credentials: Credentials,
-) -> ClientConfig {
-    ClientConfig::new(endpoints, credentials)
-        .with_restricted_area(restricted_area)
-        .with_user_agent("bbdown-rs/0.1")
-        .with_request_timeout(request_timeout)
-}
-
 async fn handle_auth(
     command: AuthCommand,
     store: &CredentialStore,
-    endpoints: EndpointConfig,
-    restricted_area: RestrictedAreaConfig,
-    request_timeout: Duration,
+    client_runtime: &ClientRuntimeConfig,
 ) -> anyhow::Result<()> {
     match command {
         AuthCommand::Status => {
@@ -1077,26 +1058,10 @@ async fn handle_auth(
             println!("access key imported");
         }
         AuthCommand::LoginWeb(args) => {
-            handle_qr_login(
-                QrLoginKind::Web,
-                args,
-                store,
-                endpoints,
-                restricted_area,
-                request_timeout,
-            )
-            .await?;
+            handle_qr_login(QrLoginKind::Web, args, store, client_runtime).await?;
         }
         AuthCommand::LoginTv(args) => {
-            handle_qr_login(
-                QrLoginKind::Tv,
-                args,
-                store,
-                endpoints,
-                restricted_area,
-                request_timeout,
-            )
-            .await?;
+            handle_qr_login(QrLoginKind::Tv, args, store, client_runtime).await?;
         }
         AuthCommand::Logout => {
             store.clear().context("failed to clear credentials")?;
@@ -1110,9 +1075,7 @@ async fn handle_qr_login(
     kind: QrLoginKind,
     args: QrLoginArgs,
     store: &CredentialStore,
-    endpoints: EndpointConfig,
-    restricted_area: RestrictedAreaConfig,
-    request_timeout: Duration,
+    client_runtime: &ClientRuntimeConfig,
 ) -> anyhow::Result<()> {
     ensure!(
         args.timeout_seconds > 0,
@@ -1122,12 +1085,7 @@ async fn handle_qr_login(
         args.poll_interval_seconds > 0,
         "--poll-interval-seconds must be greater than 0"
     );
-    let client = BiliClient::new(client_config(
-        endpoints,
-        restricted_area,
-        request_timeout,
-        Credentials::default(),
-    ));
+    let client = BiliClient::new(client_runtime.client_config(Credentials::default()));
     let ticket = match kind {
         QrLoginKind::Web => client.create_web_qr_login().await?,
         QrLoginKind::Tv => client.create_tv_qr_login().await?,
@@ -1286,6 +1244,7 @@ fn endpoints_from_cli(cli: &Cli) -> EndpointConfig {
         .with_intl_base(cli.intl_base.clone())
         .with_comment_base(cli.comment_base.clone())
         .with_passport_base(cli.passport_base.clone())
+        .with_tv_api_base(cli.tv_api_base.clone())
         .with_tv_passport_base(tv_passport_base)
         .with_tv_passport_poll_base(tv_passport_poll_base)
 }

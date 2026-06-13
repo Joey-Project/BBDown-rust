@@ -58,6 +58,7 @@ URL。PGC 和 intl 规划仍可能需要符合条件的账号或区域访问。P
 
 ```bash
 bbdown playback av170001 --json
+bbdown --playurl-mode tv playback av170001 --json
 bbdown playback ss26801 --select latest --json
 bbdown playback fav456 --select 1,3-5 --json
 ```
@@ -69,6 +70,9 @@ metadata：exact codec 字符串、codec family、`format_key` 和面向 AVPlaye
 下游可以用 `PlaybackCodecPreference` 自定义 H.264、HEVC、AV1 或其它 codec 的优先级，
 再用 `PlaybackVariant.abr` 和 `PlaybackEntry.abr` 在切换 level 时保留已经缓存的
 codec/mime-compatible variants。它不会下载文件、创建 HLS playlist 或运行播放器。
+设置 `--playurl-mode tv` 或 `BBDOWN_PLAYURL_MODE=tv` 后，普通视频和 PGC 分集会通过
+BBDown-compatible TV HTTP playurl 端点解析。TV mode 使用 `auth login-tv` 保存的 TV 专用
+access key，并可用 `--tv-api-base` / `BBDOWN_TV_API_BASE` 覆盖端点。
 
 下载所选媒体文件：
 
@@ -148,6 +152,8 @@ Bilibili 二维码状态机，并只保存最终得到的凭据。WEB 二维码�
 `--tv-passport-poll-base` 可配置 TV 二维码登录 mock 或代理。只有在提供 TV 专用覆盖时，
 TV 二维码轮询才会跟随 `--tv-passport-base`；否则除非显式设置 `--tv-passport-poll-base`，
 它会使用上游 TV 轮询默认值。
+当 `plan`、`playback` 或 `download` 需要使用 TV playurl host 而不是默认 web playurl host
+时，可同时使用 `--playurl-mode tv` 和 `--tv-api-base`。
 
 通过显式代理主机配置受限区域 PGC playurl 回退。只有官方 PGC playurl 响应报告区域限制时
 才会回退：

@@ -144,7 +144,9 @@ pub struct DownloadEntry {
 #[serde(rename_all = "snake_case")]
 pub enum StreamSource {
     NormalWeb,
+    NormalTv,
     PgcWeb,
+    PgcTv,
     PgcProxy,
     PugvWeb,
     IntlWeb,

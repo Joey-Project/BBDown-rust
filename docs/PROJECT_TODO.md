@@ -35,7 +35,8 @@
   helpers that expose exact codec strings for downstream validation.
 - [completed] Add ABR policy metadata and cache identity helpers so downstream cache servers can
   retain already fetched variants and segments while switching bitrate levels.
-- [pending] Add additional app/TV playurl modes after the playback request-spec surface is stable.
+- [completed] Add BBDown-compatible TV HTTP playurl mode for normal videos and PGC episodes.
+- [pending] Add APP/gRPC playurl mode after the TV HTTP mode and request-spec surface are stable.
 - [pending] Add a feed/list resolver abstraction for richer Bilibili page families.
 - [pending] Add history record parsing on top of the feed/list resolver abstraction.
 - [pending] Add following/UP page parsing on top of the feed/list resolver abstraction.
