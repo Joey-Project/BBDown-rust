@@ -46,7 +46,7 @@ impl Default for EndpointConfig {
             passport_base: "https://passport.bilibili.com".to_owned(),
             tv_api_base: "https://api.snm0516.aisee.tv".to_owned(),
             app_grpc_base: "https://grpc.biliapi.net".to_owned(),
-            app_pgc_grpc_base: "https://app.bilibili.com".to_owned(),
+            app_pgc_grpc_base: "https://grpc.biliapi.net".to_owned(),
             tv_passport_base: "https://passport.snm0516.aisee.tv".to_owned(),
             tv_passport_poll_base: "https://passport.bilibili.com".to_owned(),
         }
@@ -2159,6 +2159,7 @@ impl BiliClient {
             .post(url)
             .headers(app_playurl::play_view_headers(
                 self.app_playurl_access_key(),
+                self.config.request_timeout,
             )?)
             .body(app_playurl::play_view_request_body(
                 content_id, cid, is_pgc,
@@ -7616,11 +7617,11 @@ mod tests {
     }
 
     #[test]
-    fn endpoint_defaults_use_reference_app_playurl_hosts() {
+    fn endpoint_defaults_use_app_grpc_playurl_host() {
         let endpoints = EndpointConfig::default();
 
         assert_eq!(endpoints.app_grpc_base, "https://grpc.biliapi.net");
-        assert_eq!(endpoints.app_pgc_grpc_base, "https://app.bilibili.com");
+        assert_eq!(endpoints.app_pgc_grpc_base, "https://grpc.biliapi.net");
     }
 
     #[test]

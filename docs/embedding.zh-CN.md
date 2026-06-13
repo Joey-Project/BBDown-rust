@@ -96,8 +96,8 @@ TV mode 当前适用于普通视频和 PGC 分集。
 如需 BBDown-compatible APP gRPC playurl 解析，可设置
 `ClientConfig::with_playurl_mode(PlayurlMode::App)`。普通视频 mock 或代理使用
 `EndpointConfig::with_app_grpc_base`，PGC mock 或代理使用
-`EndpointConfig::with_app_pgc_grpc_base`；普通视频默认使用 `https://grpc.biliapi.net`，PGC
-默认跟随 BBDown reference host `https://app.bilibili.com`。APP mode 优先使用
+`EndpointConfig::with_app_pgc_grpc_base`；普通视频和 PGC 默认都使用
+`https://grpc.biliapi.net`。APP mode 优先使用
 `Credentials::tv_access_key`，再回退到 `Credentials::access_key`；输出
 `StreamSource::NormalApp` 或 `StreamSource::PgcApp`，并把 protobuf DASH/FLV 媒体规范化到与
 HTTP modes 相同的 `StreamSet` 和 `PlaybackPlan` 表面。PGC APP gRPC 失败如果带有可识别的

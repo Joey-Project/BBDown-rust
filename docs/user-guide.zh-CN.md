@@ -141,9 +141,9 @@ TV mode 适用于普通视频和 PGC 分集，使用 `auth login-tv` 保存的 T
 `--playurl-mode app` 或 `BBDOWN_PLAYURL_MODE=app`。APP mode 适用于普通视频和 PGC 分集，
 会优先使用已保存的 TV access key，再回退到通用导入 access key；mock 或代理可通过
 `--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` 和 `--app-pgc-grpc-base` /
-`BBDOWN_APP_PGC_GRPC_BASE` 配置；普通视频 APP 默认使用 `https://grpc.biliapi.net`，PGC APP
-默认跟随 BBDown reference host `https://app.bilibili.com`。PGC APP
-gRPC restricted 或 preview-only 信号仍会回退到已配置的 restricted-area HTTP playurl proxy；
+`BBDOWN_APP_PGC_GRPC_BASE` 配置；普通视频和 PGC APP 默认都使用
+`https://grpc.biliapi.net`。PGC APP gRPC restricted 或 preview-only
+信号仍会回退到已配置的 restricted-area HTTP playurl proxy；
 信号可以来自区域限制消息、APP permission-denied gRPC status 或 PGC response-body metadata。
 proxy fallback URL 只会使用通用导入 access
 key，不会转发 TV 专用 token。解析器会同时检查 initial headers 和 trailing metadata 里的非零
@@ -280,8 +280,8 @@ OGV playurl 端点。弹幕 XML 下载使用可配置的 comment 端点。WEB �
 TV 二维码轮询会跟随该覆盖；对 split-host mock 或代理，请设置 `--tv-passport-poll-base`。
 TV playurl mode 使用 `--tv-api-base`，它独立于只服务二维码登录的 TV passport host。
 APP gRPC playurl mode 使用 `--app-grpc-base` 处理普通视频，使用 `--app-pgc-grpc-base` 处理
-PGC 分集；普通视频默认使用 `https://grpc.biliapi.net`，PGC 默认使用
-`https://app.bilibili.com`，两者独立于 WEB、TV 和 intl HTTP endpoint 覆盖。
+PGC 分集；两个 APP gRPC 默认值都使用 `https://grpc.biliapi.net`，并且独立于 WEB、TV 和
+intl HTTP endpoint 覆盖。
 
 ## Live E2E 样例
 

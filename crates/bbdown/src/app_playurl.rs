@@ -7,6 +7,7 @@ use reqwest::header::{
     AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, USER_AGENT,
 };
 use std::io::{Read, Write};
+use std::time::Duration;
 
 pub(crate) const NORMAL_PLAYURL_PATH: &str = "/bilibili.app.playurl.v1.PlayURL/PlayView";
 pub(crate) const PGC_PLAYURL_PATH: &str = "/bilibili.pgc.gateway.player.v2.PlayURL/PlayView";
@@ -56,7 +57,10 @@ pub(crate) fn play_view_request_body(content_id: u64, cid: u64, is_pgc: bool) ->
     encode_grpc_frame(&request.encode_to_vec(), true)
 }
 
-pub(crate) fn play_view_headers(access_key: Option<&str>) -> Result<HeaderMap> {
+pub(crate) fn play_view_headers(
+    access_key: Option<&str>,
+    request_timeout: Duration,
+) -> Result<HeaderMap> {
     let access_key = access_key.map(str::trim).filter(|value| !value.is_empty());
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/grpc"));
@@ -141,7 +145,9 @@ pub(crate) fn play_view_headers(access_key: Option<&str>) -> Result<HeaderMap> {
     insert_header(&mut headers, "x-bili-exps-bin", "")?;
     insert_header(&mut headers, "grpc-encoding", "gzip")?;
     insert_header(&mut headers, "grpc-accept-encoding", "identity,gzip")?;
-    insert_header(&mut headers, "grpc-timeout", "17996161u")?;
+    if let Some(timeout) = grpc_timeout_header_value(request_timeout) {
+        insert_header(&mut headers, "grpc-timeout", &timeout)?;
+    }
     Ok(headers)
 }
 
@@ -170,6 +176,28 @@ fn insert_header(headers: &mut HeaderMap, name: &'static str, value: &str) -> Re
 
 fn base64_protobuf(message: &impl Message) -> String {
     STANDARD.encode(message.encode_to_vec())
+}
+
+fn grpc_timeout_header_value(timeout: Duration) -> Option<String> {
+    const MAX_GRPC_TIMEOUT_VALUE: u128 = 99_999_999;
+
+    if timeout.is_zero() {
+        return None;
+    }
+
+    let nanos = timeout.as_nanos();
+    for (denominator, unit) in [
+        (1_000_000_u128, "m"),
+        (1_000_000_000_u128, "S"),
+        (60_000_000_000_u128, "M"),
+        (3_600_000_000_000_u128, "H"),
+    ] {
+        let value = nanos.div_ceil(denominator);
+        if value <= MAX_GRPC_TIMEOUT_VALUE {
+            return Some(format!("{value}{unit}"));
+        }
+    }
+    Some(format!("{MAX_GRPC_TIMEOUT_VALUE}H"))
 }
 
 fn encode_grpc_frame(payload: &[u8], compressed: bool) -> Result<Vec<u8>> {
@@ -296,8 +324,8 @@ struct VideoInfo {
 struct DolbyItem {
     #[prost(int32, optional, tag = "1")]
     r#type: Option<i32>,
-    #[prost(message, optional, tag = "2")]
-    audio: Option<DashItem>,
+    #[prost(message, repeated, tag = "2")]
+    audio: Vec<DashItem>,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -622,17 +650,20 @@ fn collect_audio_streams(
         .into_iter()
         .filter_map(|audio| audio.into_audio_stream(AudioKind::Aac))
         .collect::<Vec<_>>();
-    if let Some(flac) = flac
-        && let Some(audio) = flac.audio
-        && let Some(stream) = audio.into_audio_stream(AudioKind::Flac)
-    {
-        audios.push(stream);
+    if let Some(flac) = flac {
+        audios.extend(
+            flac.audio
+                .into_iter()
+                .filter_map(|audio| audio.into_audio_stream(AudioKind::Flac)),
+        );
     }
-    if let Some(dolby) = dolby
-        && let Some(audio) = dolby.audio
-        && let Some(stream) = audio.into_audio_stream(AudioKind::Dolby)
-    {
-        audios.push(stream);
+    if let Some(dolby) = dolby {
+        audios.extend(
+            dolby
+                .audio
+                .into_iter()
+                .filter_map(|audio| audio.into_audio_stream(AudioKind::Dolby)),
+        );
     }
     audios
 }
@@ -1010,7 +1041,7 @@ pub(crate) fn test_play_view_response_frame(video_url: &str) -> Result<Vec<u8>> 
             }],
             dolby: Some(DolbyItem {
                 r#type: Some(1),
-                audio: Some(DashItem {
+                audio: vec![DashItem {
                     id: Some(30250),
                     base_url: Some("https://app.example/dolby.m4s".to_owned()),
                     backup_url: Vec::new(),
@@ -1018,11 +1049,11 @@ pub(crate) fn test_play_view_response_frame(video_url: &str) -> Result<Vec<u8>> 
                     codecid: None,
                     md5: None,
                     size: Some(4_000_000),
-                }),
+                }],
             }),
             flac: Some(DolbyItem {
                 r#type: Some(2),
-                audio: Some(DashItem {
+                audio: vec![DashItem {
                     id: Some(30251),
                     base_url: Some("https://app.example/flac.m4s".to_owned()),
                     backup_url: Vec::new(),
@@ -1030,7 +1061,7 @@ pub(crate) fn test_play_view_response_frame(video_url: &str) -> Result<Vec<u8>> 
                     codecid: None,
                     md5: None,
                     size: Some(12_000_000),
-                }),
+                }],
             }),
         }),
         business: None,
@@ -1122,12 +1153,13 @@ pub(crate) fn test_pgc_preview_only_response_frame_with_message(
 #[cfg(test)]
 mod tests {
     use super::{
-        BusinessInfo, DashItem, Dialog, PlayViewReply, PlayViewReq, ResponseUrl, SegmentVideo,
-        StreamInfo, StreamItem, VideoInfo, ViewInfo, decode_grpc_frame, encode_grpc_frame,
-        play_view_request_body, test_play_view_response_frame,
+        BusinessInfo, DashItem, Dialog, DolbyItem, PlayViewReply, PlayViewReq, ResponseUrl,
+        SegmentVideo, StreamInfo, StreamItem, VideoInfo, ViewInfo, decode_grpc_frame,
+        encode_grpc_frame, play_view_request_body, test_play_view_response_frame,
     };
     use crate::{CodecFamily, Error};
     use prost::Message as _;
+    use std::time::Duration;
 
     #[test]
     fn grpc_frame_decodes_uncompressed_payload() -> anyhow::Result<()> {
@@ -1182,6 +1214,29 @@ mod tests {
     }
 
     #[test]
+    fn play_view_headers_use_configured_grpc_timeout() -> anyhow::Result<()> {
+        let headers = super::play_view_headers(None, Duration::from_secs(30))?;
+        assert_eq!(
+            headers
+                .get("grpc-timeout")
+                .and_then(|value| value.to_str().ok()),
+            Some("30000m")
+        );
+
+        let headers = super::play_view_headers(None, Duration::from_secs(7))?;
+        assert_eq!(
+            headers
+                .get("grpc-timeout")
+                .and_then(|value| value.to_str().ok()),
+            Some("7000m")
+        );
+
+        let headers = super::play_view_headers(None, Duration::ZERO)?;
+        assert!(headers.get("grpc-timeout").is_none());
+        Ok(())
+    }
+
+    #[test]
     fn play_view_reply_maps_to_stream_set() -> anyhow::Result<()> {
         let frame = test_play_view_response_frame("https://app.example/video.m4s")?;
         let streams = super::decode_play_view_response(&frame, false)?;
@@ -1201,6 +1256,61 @@ mod tests {
         assert_eq!(streams.flv_segments[0].order, 1);
         assert_eq!(streams.duration_seconds, Some(123));
         assert_eq!(streams.qualities[0].description.as_deref(), Some("1080P"));
+        Ok(())
+    }
+
+    #[test]
+    fn play_view_reply_preserves_repeated_dolby_audio() -> anyhow::Result<()> {
+        let reply = PlayViewReply {
+            video_info: Some(VideoInfo {
+                quality: None,
+                format: None,
+                timelength: Some(60_000),
+                video_codecid: None,
+                stream_list: Vec::new(),
+                dash_audio: Vec::new(),
+                dolby: Some(DolbyItem {
+                    r#type: Some(1),
+                    audio: vec![
+                        DashItem {
+                            id: Some(30250),
+                            base_url: Some("https://app.example/dolby-low.m4s".to_owned()),
+                            backup_url: Vec::new(),
+                            bandwidth: Some(256_000),
+                            codecid: None,
+                            md5: None,
+                            size: Some(4_000_000),
+                        },
+                        DashItem {
+                            id: Some(30251),
+                            base_url: Some("https://app.example/dolby-high.m4s".to_owned()),
+                            backup_url: Vec::new(),
+                            bandwidth: Some(768_000),
+                            codecid: None,
+                            md5: None,
+                            size: Some(8_000_000),
+                        },
+                    ],
+                }),
+                flac: None,
+            }),
+            business: None,
+            view_info: None,
+            pgc_view_info: None,
+        };
+        let frame = encode_grpc_frame(&reply.encode_to_vec(), false)?;
+        let streams = super::decode_play_view_response(&frame, false)?;
+        let dolby = streams
+            .audios
+            .iter()
+            .filter(|stream| stream.codec_family == Some(CodecFamily::Dolby))
+            .collect::<Vec<_>>();
+
+        assert_eq!(dolby.len(), 2);
+        assert_eq!(dolby[0].id, 30250);
+        assert_eq!(dolby[0].base_url, "https://app.example/dolby-low.m4s");
+        assert_eq!(dolby[1].id, 30251);
+        assert_eq!(dolby[1].base_url, "https://app.example/dolby-high.m4s");
         Ok(())
     }
 

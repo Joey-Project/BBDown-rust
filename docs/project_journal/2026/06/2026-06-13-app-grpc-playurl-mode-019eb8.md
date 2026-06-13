@@ -24,6 +24,7 @@ superseded_by:
   proxies, or the upstream default.
 - `EndpointConfig::with_app_pgc_grpc_base` configures the PGC APP gRPC host for mocks, proxies, or
   the upstream default.
+- Both APP gRPC endpoint defaults use `https://grpc.biliapi.net`.
 - Normal video planning can now emit `StreamSource::NormalApp`.
 - PGC episode planning can now emit `StreamSource::PgcApp`.
 - CLI callers can use `--playurl-mode app`, `--app-grpc-base`, and `--app-pgc-grpc-base`;
@@ -33,6 +34,8 @@ superseded_by:
   `Credentials::access_key`; WEB cookies are not sent to APP gRPC endpoints.
 - APP gRPC non-zero `grpc-status` responses are surfaced as API errors with decoded
   `grpc-message` text from initial headers or trailing metadata.
+- APP gRPC requests derive their `grpc-timeout` header from `ClientConfig::request_timeout` instead
+  of sending a shorter hard-coded timeout.
 - APP legacy FLV responses with multiple segment qualities are normalized to one highest-quality
   segment set instead of concatenating incompatible qualities into `StreamSet::flv_segments`.
 - PGC APP restricted and preview-only signals can fall back to the existing restricted-area HTTP
@@ -47,6 +50,8 @@ superseded_by:
   fabricated exact MP4 codec strings; exact `codecs` remains unset when APP does not provide it.
 - APP FLAC DASH audio exposes `codec_family=Flac` with `audio/mp4` MIME and leaves exact `codecs`
   unset instead of describing the fMP4 track as raw FLAC.
+- APP repeated Dolby/FLAC audio entries are preserved as separate audio streams instead of merging
+  repeated protobuf field values into one track.
 - PGC APP region-limit decoding accepts `view_info` from both field 5 and the PGC field 9 shape,
   and preview-only APP business responses are rejected as access-restricted instead of being
   treated as complete media.
@@ -103,8 +108,8 @@ superseded_by:
 - GitHub Codex review fix: PGC APP `view_info` can be encoded on field 9, and business preview
   metadata can mark returned streams as preview-only. Fixed by decoding the alternate field and
   rejecting preview-only responses with `AccessRestricted` so restricted-area fallback can still run.
-- Reference parity fix: normal APP playurl defaults to `https://grpc.biliapi.net`, while PGC APP
-  playurl defaults to the BBDown reference host `https://app.bilibili.com`.
+- GitHub Codex review fix: PGC APP playurl now defaults to the same gRPC host as normal APP
+  playurl, `https://grpc.biliapi.net`, instead of posting the PGC gRPC path to a REST host.
 - Independent review fix: PGC APP restricted-area fallback now also accepts APP permission-denied
   gRPC status code 7 and the preview-only business signal. This keeps status-only gRPC denials and
   preview-only PGC response bodies from bypassing the configured proxy chain.
@@ -118,8 +123,8 @@ superseded_by:
   `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/29f61f3e579e2a4166436b963eab301ac5d80d94/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`,
   and `just ci`.
 - Current-head independent review fix: the Simplified Chinese user guide now matches the APP
-  playurl default hosts used by CLI/core, documenting normal-video
-  `https://grpc.biliapi.net` and PGC `https://app.bilibili.com` separately.
+  playurl default hosts used by CLI/core, documenting that both normal-video and PGC APP gRPC
+  defaults use `https://grpc.biliapi.net`.
 - Targeted validation after codec-family fix:
   `cargo test -p bbdown-core app_playurl --lib`.
 - Targeted validation after codec-family fix:
@@ -128,7 +133,7 @@ superseded_by:
   `cargo test -p bbdown-core app_playurl --lib`.
 - Validation after PGC APP host parity fix:
   `cargo fmt --all -- --check`,
-  `cargo test -p bbdown-core endpoint_defaults_use_reference_app_playurl_hosts --lib`,
+  `cargo test -p bbdown-core endpoint_defaults_use_app_grpc_playurl_host --lib`,
   `cargo test -p bbdown-core app_playurl --lib`,
   `cargo test -p bbdown-core pgc_app --lib`,
   `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/29f61f3e579e2a4166436b963eab301ac5d80d94/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`,
@@ -145,6 +150,17 @@ superseded_by:
 - Validation after APP field-3 gating fix:
   `cargo test -p bbdown-core app_playurl --lib`,
   `cargo test -p bbdown-core pgc_app --lib`,
+  `cargo test -p bbdown-core app_grpc_trailing_status_error_is_reported --lib`,
+  `cargo fmt --all -- --check`,
+  `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/29f61f3e579e2a4166436b963eab301ac5d80d94/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`,
+  and `just ci`.
+- GitHub Codex review fix: PGC APP gRPC now defaults to `https://grpc.biliapi.net`, repeated
+  Dolby/FLAC audio field values are preserved as separate streams, and the APP gRPC
+  `grpc-timeout` header is derived from `ClientConfig::request_timeout`.
+- Validation after current-head GitHub Codex review fixes:
+  `cargo test -p bbdown-core app_playurl --lib`,
+  `cargo test -p bbdown-core pgc_app --lib`,
+  `cargo test -p bbdown-core endpoint_defaults_use_app_grpc_playurl_host --lib`,
   `cargo test -p bbdown-core app_grpc_trailing_status_error_is_reported --lib`,
   `cargo fmt --all -- --check`,
   `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/29f61f3e579e2a4166436b963eab301ac5d80d94/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`,
