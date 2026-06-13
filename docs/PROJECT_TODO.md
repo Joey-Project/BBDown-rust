@@ -19,8 +19,8 @@
 - [completed] Add protected release candidate creation and RC promotion workflows for GitHub
   Release and crates.io publication.
 - [completed] Add cover download support to the crate and CLI.
-- [completed] Bump the current post-`0.2.0` development line to the next breaking crate release
-  version `0.3.0` before publication.
+- [completed] Keep `master` on the next `0.3.0` development line while publishing `0.2.0` from the
+  `release/0.2.0` branch.
 - [completed] Add single-download modes for video-only, audio-only, subtitle-only, danmaku-only, and
   cover-only workflows.
 - [completed] Add ASS-format danmaku sidecar generation.

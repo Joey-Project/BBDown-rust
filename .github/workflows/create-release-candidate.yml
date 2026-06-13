@@ -7,6 +7,10 @@ on:
         description: "Final SemVer version without the leading v, for example 0.1.0."
         required: true
         type: string
+      source_ref:
+        description: "Optional release/* branch to release. Leave empty to release the workflow ref."
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -38,6 +42,7 @@ jobs:
         shell: bash
         env:
           VERSION: ${{ inputs.version }}
+          SOURCE_REF: ${{ inputs.source_ref }}
           GH_TOKEN: ${{ github.token }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
@@ -56,6 +61,18 @@ jobs:
             echo "::error::version must be MAJOR.MINOR.PATCH without a leading v: ${VERSION}"
             exit 2
           fi
+          if [[ -n "${SOURCE_REF}" && "${SOURCE_REF}" != release/* ]]; then
+            echo "::error::source_ref must be empty or a release/* branch name: ${SOURCE_REF}"
+            exit 2
+          fi
+          if [[ -n "${SOURCE_REF}" ]]; then
+            git check-ref-format --branch "${SOURCE_REF}" >/dev/null
+            git fetch --no-tags origin "refs/heads/${SOURCE_REF}:refs/remotes/origin/${SOURCE_REF}"
+            target_sha=$(git rev-parse --verify "refs/remotes/origin/${SOURCE_REF}^{commit}")
+            git checkout --detach "${target_sha}"
+          else
+            target_sha=$(git rev-parse HEAD)
+          fi
           cargo_versions=$(release_workspace_versions)
           core_version=$(printf '%s\n' "${cargo_versions}" | sed -n '1p')
           cli_version=$(printf '%s\n' "${cargo_versions}" | sed -n '2p')
@@ -72,7 +89,6 @@ jobs:
           release_ensure_tag_absent "${repo}" "${final_tag}" "final tag ${final_tag} already exists; create a new version instead"
           max_rc=$(release_max_rc_number "${repo}" "${VERSION}")
           rc_number=$((max_rc + 1))
-          target_sha=$(git rev-parse HEAD)
           rc_tag="v${VERSION}-rc.${rc_number}"
           {
             echo "rc_tag=${rc_tag}"
@@ -112,7 +128,7 @@ jobs:
       # actions/checkout@v4
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: ${{ needs.validate.outputs.target_sha }}
+          ref: ${{ github.sha }}
 
       # actions/create-github-app-token@v2
       - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349

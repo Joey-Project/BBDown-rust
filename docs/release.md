@@ -4,8 +4,9 @@
 
 This project releases in two phases:
 
-1. A manually approved GitHub Actions run validates the repository default branch, builds release
-   artifacts, and creates a release candidate tag such as `v0.1.0-rc.1`.
+1. A manually approved GitHub Actions run starts from the repository default branch, validates the
+   selected release source, builds release artifacts, and creates a release candidate tag such as
+   `v0.1.0-rc.1`.
 2. A second manually approved run is started from that RC tag. It rebuilds final artifacts, creates
    the final tag such as `v0.1.0`, publishes the GitHub Release, and publishes the `bbdown-core`
    crate to crates.io.
@@ -48,18 +49,21 @@ Recommended rulesets:
 1. Ensure `crates/bbdown/Cargo.toml` and `crates/bbdown-cli/Cargo.toml` have the final version,
    for example `0.1.0`. If the development line contains breaking public crate API changes, choose
    the next breaking pre-`1.0` version, for example `0.3.0` after a published `0.2.x` line.
-2. Ensure the intended branch is merged to the repository default branch, currently `master`.
+2. Ensure the intended source is either merged to the repository default branch, currently `master`,
+   or available as an explicit release branch such as `release/0.2.0`.
 3. In GitHub Actions, run `Create Release Candidate` from the repository default branch.
-4. Enter `version` without a leading `v`, for example `0.1.0`. The workflow chooses the next
+4. Enter `version` without a leading `v`, for example `0.1.0`. For a release branch, set
+   `source_ref` to that `release/*` branch name, for example `release/0.2.0`; leave it empty to
+   release the workflow ref. The workflow chooses the next
    available RC number automatically.
 5. Approve the `release-candidate` environment deployment.
 
 The workflow checks that it is running from the repository default branch, validates the
-`bbdown-core` and `bbdown-cli` Cargo versions, serializes all RC creation and promotion runs for the
-same release version, computes the next RC number, calls the shared release verification workflow,
-rejects versions that already have a final tag or GitHub Release, builds all release archives, then
-rechecks the final tag and GitHub Release state immediately before writing, and creates the
-annotated RC tag.
+`bbdown-core` and `bbdown-cli` Cargo versions from the selected source ref, serializes all RC
+creation and promotion runs for the same release version, computes the next RC number, calls the
+shared release verification workflow, rejects versions that already have a final tag or GitHub
+Release, builds all release archives, then rechecks the final tag and GitHub Release state
+immediately before writing, and creates the annotated RC tag.
 
 ## Promote An RC
 

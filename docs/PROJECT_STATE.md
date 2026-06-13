@@ -22,6 +22,7 @@
   - `docs/project_journal/2026/06/2026-06-09-release-0-1-0-019ead.md`.
   - `docs/project_journal/2026/06/2026-06-13-app-grpc-playurl-mode-019eb8.md`.
   - `docs/project_journal/2026/06/2026-06-13-version-0-3-0-bump-019eb8.md`.
+  - `docs/project_journal/2026/06/2026-06-13-release-0-2-0-branch-rc2-019ec2.md`.
 - The originally planned rewrite continuation slices are complete through download archive and
   duplicate decision handling.
 - Human-facing docs now have English and Simplified Chinese versions, and the latest real live e2e
@@ -31,8 +32,11 @@
   Release and crates.io.
 - Version `0.1.0` has shipped through that flow as GitHub Release `v0.1.0` and crates.io package
   `bbdown-core` `0.1.0`.
-- Current post-release development is on version `0.3.0` after the completed batch collection,
-  cover/sidecar-only, playback request/ABR, TV playurl, and APP gRPC playurl API work.
+- Current `0.2.0` release source is `release/0.2.0` at
+  `a1c6062561f3902ea31394151b50a57764f521e0`; use `Create Release Candidate` from `master` with
+  `source_ref=release/0.2.0` to create the next `v0.2.0-rc.*` tag.
+- `v0.3.0-rc.1` is abandoned; its promotion run was cancelled before final tag, GitHub Release, or
+  crates.io publication.
 
 ## Recovery Pointers
 
