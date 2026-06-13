@@ -145,8 +145,10 @@ pub struct DownloadEntry {
 pub enum StreamSource {
     NormalWeb,
     NormalTv,
+    NormalApp,
     PgcWeb,
     PgcTv,
+    PgcApp,
     PgcProxy,
     PugvWeb,
     IntlWeb,

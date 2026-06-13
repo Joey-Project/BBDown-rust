@@ -61,6 +61,7 @@ Build a playback request spec as JSON:
 ```bash
 bbdown playback av170001 --json
 bbdown --playurl-mode tv playback av170001 --json
+bbdown --playurl-mode app playback av170001 --json
 bbdown playback ss26801 --select latest --json
 bbdown playback fav456 --select 1,3-5 --json
 ```
@@ -76,6 +77,11 @@ download files, create HLS playlists, or run a player.
 Set `--playurl-mode tv` or `BBDOWN_PLAYURL_MODE=tv` to resolve normal videos and PGC episodes
 through BBDown-compatible TV HTTP playurl endpoints. TV mode uses the TV-specific access key saved
 by `auth login-tv` and `--tv-api-base` / `BBDOWN_TV_API_BASE` for endpoint overrides.
+Set `--playurl-mode app` or `BBDOWN_PLAYURL_MODE=app` to use BBDown-compatible APP gRPC playurl
+endpoints for normal videos and PGC episodes. APP mode uses `Credentials::tv_access_key` first and
+falls back to the generic `Credentials::access_key`; use `--app-grpc-base` /
+`BBDOWN_APP_GRPC_BASE` and `--app-pgc-grpc-base` / `BBDOWN_APP_PGC_GRPC_BASE` for mock or proxy
+endpoint overrides.
 
 Download selected media files:
 
@@ -164,6 +170,8 @@ endpoint. Use `--passport-base` for WEB QR login mocks or proxies, and use `--tv
 TV poll default unless `--tv-passport-poll-base` is set explicitly.
 Use `--playurl-mode tv` with `--tv-api-base` when a plan, playback request, or download should use
 the TV playurl host instead of the default web playurl host.
+Use `--playurl-mode app` with `--app-grpc-base` and `--app-pgc-grpc-base` when a plan, playback
+request, or download should use APP gRPC playurl hosts.
 
 Configure restricted-area PGC playurl fallback with explicit proxy hosts. Fallback runs only when the
 official PGC playurl response reports a region/area restriction:

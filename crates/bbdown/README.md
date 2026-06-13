@@ -81,6 +81,11 @@ Set `ClientConfig::with_playurl_mode(PlayurlMode::Tv)` and `EndpointConfig::with
 an embedding application needs BBDown-compatible TV HTTP playurl resolution for normal videos or
 PGC episodes. TV mode uses `Credentials::tv_access_key` and does not reuse the generic intl access
 key.
+Set `ClientConfig::with_playurl_mode(PlayurlMode::App)`,
+`EndpointConfig::with_app_grpc_base`, and `EndpointConfig::with_app_pgc_grpc_base` when an
+embedding application needs BBDown-compatible APP gRPC playurl resolution. APP mode applies to
+normal videos and PGC episodes, uses `Credentials::tv_access_key` before falling back to
+`Credentials::access_key`, and emits normalized `StreamSet` / `PlaybackPlan` media specs.
 Set `DownloadPathTemplates` when an embedding application needs BBDown-style or application-specific
 output names. Templates render sanitized filename components for the output root, entry directory,
 and muxed file stem while media and sidecar filenames remain stable for resume and archive records.

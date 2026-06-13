@@ -682,6 +682,8 @@ mod tests {
                 comment_base: server.base_url(),
                 passport_base: server.base_url(),
                 tv_api_base: server.base_url(),
+                app_grpc_base: server.base_url(),
+                app_pgc_grpc_base: server.base_url(),
                 tv_passport_base: server.base_url(),
                 tv_passport_poll_base: server.base_url(),
             },

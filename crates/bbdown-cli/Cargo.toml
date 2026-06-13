@@ -26,6 +26,7 @@ url.workspace = true
 assert_cmd.workspace = true
 httpmock.workspace = true
 predicates.workspace = true
+prost.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true

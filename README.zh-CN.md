@@ -59,6 +59,7 @@ URL。PGC 和 intl 规划仍可能需要符合条件的账号或区域访问。P
 ```bash
 bbdown playback av170001 --json
 bbdown --playurl-mode tv playback av170001 --json
+bbdown --playurl-mode app playback av170001 --json
 bbdown playback ss26801 --select latest --json
 bbdown playback fav456 --select 1,3-5 --json
 ```
@@ -73,6 +74,11 @@ codec/mime-compatible variants。它不会下载文件、创建 HLS playlist 或
 设置 `--playurl-mode tv` 或 `BBDOWN_PLAYURL_MODE=tv` 后，普通视频和 PGC 分集会通过
 BBDown-compatible TV HTTP playurl 端点解析。TV mode 使用 `auth login-tv` 保存的 TV 专用
 access key，并可用 `--tv-api-base` / `BBDOWN_TV_API_BASE` 覆盖端点。
+设置 `--playurl-mode app` 或 `BBDOWN_PLAYURL_MODE=app` 后，普通视频和 PGC 分集会通过
+BBDown-compatible APP gRPC playurl 端点解析。APP mode 优先使用
+`Credentials::tv_access_key`，没有 TV token 时回退到通用 `Credentials::access_key`；mock
+或代理端点可用 `--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` 和 `--app-pgc-grpc-base` /
+`BBDOWN_APP_PGC_GRPC_BASE` 覆盖。
 
 下载所选媒体文件：
 
@@ -154,6 +160,8 @@ TV 二维码轮询才会跟随 `--tv-passport-base`；否则除非显式设置 `
 它会使用上游 TV 轮询默认值。
 当 `plan`、`playback` 或 `download` 需要使用 TV playurl host 而不是默认 web playurl host
 时，可同时使用 `--playurl-mode tv` 和 `--tv-api-base`。
+当 `plan`、`playback` 或 `download` 需要使用 APP gRPC playurl host 时，可同时使用
+`--playurl-mode app`、`--app-grpc-base` 和 `--app-pgc-grpc-base`。
 
 通过显式代理主机配置受限区域 PGC playurl 回退。只有官方 PGC playurl 响应报告区域限制时
 才会回退：

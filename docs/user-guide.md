@@ -130,6 +130,7 @@ Use `playback` when another service needs selected media request specs for strea
 ```bash
 bbdown playback av170001 --json
 bbdown --playurl-mode tv playback av170001 --json
+bbdown --playurl-mode app playback av170001 --json
 bbdown playback ss26801 --select latest --json
 bbdown playback fav456 --select 1,3-5 --json
 ```
@@ -147,6 +148,11 @@ Use `--playurl-mode tv` or `BBDOWN_PLAYURL_MODE=tv` when a downstream integratio
 request specs from BBDown-compatible TV HTTP playurl endpoints. TV mode applies to normal videos and
 PGC episodes, uses the TV-specific access key saved by `auth login-tv`, and can be pointed at a mock
 or proxy with `--tv-api-base` / `BBDOWN_TV_API_BASE`.
+Use `--playurl-mode app` or `BBDOWN_PLAYURL_MODE=app` when a downstream integration needs media
+request specs from BBDown-compatible APP gRPC playurl endpoints. APP mode applies to normal videos
+and PGC episodes, uses the saved TV access key first and then the generic imported access key, and
+can be pointed at mocks or proxies with `--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` and
+`--app-pgc-grpc-base` / `BBDOWN_APP_PGC_GRPC_BASE`.
 
 ## Downloads
 
@@ -294,6 +300,8 @@ passport overrides. TV QR polling follows `--tv-passport-base` when that overrid
 `--tv-passport-poll-base` for split-host mocks or proxies.
 TV playurl mode uses `--tv-api-base`; it is separate from the TV passport host used only for QR
 login.
+APP gRPC playurl mode uses `--app-grpc-base` for normal videos and `--app-pgc-grpc-base` for PGC
+episodes; these hosts are separate from WEB, TV, and intl HTTP endpoint overrides.
 
 ## Live E2E Samples
 

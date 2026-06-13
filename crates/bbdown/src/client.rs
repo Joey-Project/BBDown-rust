@@ -1,3 +1,4 @@
+use crate::app_playurl;
 use crate::download::DownloadMode;
 use crate::models::{
     DanmakuTrack, DownloadEntry, DownloadPlan, EpisodeMetadata, FlvSegment, MediaStream, Owner,
@@ -28,6 +29,8 @@ pub struct EndpointConfig {
     pub comment_base: String,
     pub passport_base: String,
     pub tv_api_base: String,
+    pub app_grpc_base: String,
+    pub app_pgc_grpc_base: String,
     pub tv_passport_base: String,
     pub tv_passport_poll_base: String,
 }
@@ -41,6 +44,8 @@ impl Default for EndpointConfig {
             comment_base: "https://comment.bilibili.com".to_owned(),
             passport_base: "https://passport.bilibili.com".to_owned(),
             tv_api_base: "https://api.snm0516.aisee.tv".to_owned(),
+            app_grpc_base: "https://grpc.biliapi.net".to_owned(),
+            app_pgc_grpc_base: "https://app.bilibili.com".to_owned(),
             tv_passport_base: "https://passport.snm0516.aisee.tv".to_owned(),
             tv_passport_poll_base: "https://passport.bilibili.com".to_owned(),
         }
@@ -85,6 +90,18 @@ impl EndpointConfig {
     }
 
     #[must_use]
+    pub fn with_app_grpc_base(mut self, app_grpc_base: impl Into<String>) -> Self {
+        self.app_grpc_base = app_grpc_base.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_app_pgc_grpc_base(mut self, app_pgc_grpc_base: impl Into<String>) -> Self {
+        self.app_pgc_grpc_base = app_pgc_grpc_base.into();
+        self
+    }
+
+    #[must_use]
     pub fn with_tv_passport_base(mut self, tv_passport_base: impl Into<String>) -> Self {
         self.tv_passport_base = tv_passport_base.into();
         self
@@ -103,6 +120,7 @@ pub enum PlayurlMode {
     #[default]
     Web,
     Tv,
+    App,
 }
 
 #[non_exhaustive]
@@ -1985,6 +2003,14 @@ impl BiliClient {
         if source == StreamSource::PgcTv {
             return self.fetch_pgc_tv_stream_set(aid, cid, epid).await;
         }
+        if source == StreamSource::PgcApp {
+            return self.fetch_pgc_app_stream_set(cid, epid).await;
+        }
+        if source == StreamSource::NormalApp {
+            return self
+                .fetch_app_stream_set(StreamSource::NormalApp, aid, cid, false)
+                .await;
+        }
         let mut url = match source {
             StreamSource::NormalWeb => {
                 Self::endpoint_url(&self.config.endpoints.api_base, "/x/player/playurl")?
@@ -1992,10 +2018,16 @@ impl BiliClient {
             StreamSource::NormalTv => {
                 Self::endpoint_url(&self.config.endpoints.tv_api_base, "/x/tv/playurl")?
             }
+            StreamSource::NormalApp => unreachable!(),
             StreamSource::PugvWeb => {
                 Self::endpoint_url(&self.config.endpoints.api_base, "/pugv/player/web/playurl")?
             }
-            StreamSource::PgcWeb | StreamSource::PgcTv | StreamSource::PgcProxy => unreachable!(),
+            StreamSource::PgcWeb
+            | StreamSource::PgcTv
+            | StreamSource::PgcApp
+            | StreamSource::PgcProxy => {
+                unreachable!()
+            }
             StreamSource::IntlWeb => Self::endpoint_url(
                 &self.config.endpoints.intl_base,
                 "/intl/gateway/v2/ogv/playurl",
@@ -2035,7 +2067,11 @@ impl BiliClient {
                     .append_pair("fourk", "1")
                     .append_pair("otype", "json");
             }
-            StreamSource::PgcWeb | StreamSource::PgcTv | StreamSource::PgcProxy => unreachable!(),
+            StreamSource::NormalApp
+            | StreamSource::PgcWeb
+            | StreamSource::PgcTv
+            | StreamSource::PgcApp
+            | StreamSource::PgcProxy => unreachable!(),
             StreamSource::IntlWeb => {
                 let epid = epid.ok_or(Error::MissingField("epid"))?;
                 let mut query = url.query_pairs_mut();
@@ -2054,6 +2090,70 @@ impl BiliClient {
             _ => self.fetch_playurl_stream_set(url).await?,
         };
         Ok(ResolvedStreamSet::official(source, streams))
+    }
+
+    async fn fetch_pgc_app_stream_set(
+        &self,
+        cid: u64,
+        epid: Option<u64>,
+    ) -> Result<ResolvedStreamSet> {
+        let epid = epid.ok_or(Error::MissingField("epid"))?;
+        self.fetch_app_stream_set(StreamSource::PgcApp, epid, cid, true)
+            .await
+    }
+
+    async fn fetch_app_stream_set(
+        &self,
+        source: StreamSource,
+        content_id: u64,
+        cid: u64,
+        is_pgc: bool,
+    ) -> Result<ResolvedStreamSet> {
+        let base = if is_pgc {
+            &self.config.endpoints.app_pgc_grpc_base
+        } else {
+            &self.config.endpoints.app_grpc_base
+        };
+        let path = if is_pgc {
+            app_playurl::PGC_PLAYURL_PATH
+        } else {
+            app_playurl::NORMAL_PLAYURL_PATH
+        };
+        let url = Self::endpoint_url(base, path)?;
+        let streams = self
+            .post_app_playurl_stream_set(url, content_id, cid, is_pgc)
+            .await?;
+        Ok(ResolvedStreamSet::official(source, streams))
+    }
+
+    async fn post_app_playurl_stream_set(
+        &self,
+        url: Url,
+        content_id: u64,
+        cid: u64,
+        is_pgc: bool,
+    ) -> Result<StreamSet> {
+        let response = self
+            .http
+            .post(url)
+            .headers(app_playurl::play_view_headers(
+                self.app_playurl_access_key(),
+            )?)
+            .body(app_playurl::play_view_request_body(
+                content_id, cid, is_pgc,
+            )?)
+            .timeout(self.config.request_timeout)
+            .send()
+            .await
+            .map_err(Self::http_error_without_url)?;
+        let response = response
+            .error_for_status()
+            .map_err(Self::http_error_without_url)?;
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(Self::http_error_without_url)?;
+        app_playurl::decode_play_view_response(&bytes)
     }
 
     async fn fetch_pgc_tv_stream_set(
@@ -2206,8 +2306,10 @@ impl BiliClient {
         match source {
             StreamSource::NormalWeb
             | StreamSource::NormalTv
+            | StreamSource::NormalApp
             | StreamSource::PgcWeb
             | StreamSource::PgcTv
+            | StreamSource::PgcApp
             | StreamSource::PgcProxy
             | StreamSource::PugvWeb => {
                 let mut url = Self::endpoint_url(&self.config.endpoints.api_base, "/x/player/v2")?;
@@ -2243,6 +2345,7 @@ impl BiliClient {
         match self.config.playurl_mode {
             PlayurlMode::Web => StreamSource::NormalWeb,
             PlayurlMode::Tv => StreamSource::NormalTv,
+            PlayurlMode::App => StreamSource::NormalApp,
         }
     }
 
@@ -2250,7 +2353,23 @@ impl BiliClient {
         match self.config.playurl_mode {
             PlayurlMode::Web => StreamSource::PgcWeb,
             PlayurlMode::Tv => StreamSource::PgcTv,
+            PlayurlMode::App => StreamSource::PgcApp,
         }
+    }
+
+    fn app_playurl_access_key(&self) -> Option<&str> {
+        self.config
+            .credentials
+            .tv_access_key
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                self.config
+                    .credentials
+                    .access_key
+                    .as_deref()
+                    .filter(|value| !value.is_empty())
+            })
     }
 
     async fn get_json<T>(&self, url: Url) -> Result<T>
@@ -4299,6 +4418,7 @@ mod tests {
         Credentials, EpisodeMetadata, Error, IndexSelection, IndexSelector, Input, PageMetadata,
         ResolvedContent, SeasonMetadata, Selection, StreamSource, SubtitleFormat,
         VideoCollectionItem, VideoCollectionKind, VideoCollectionMetadata, VideoMetadata,
+        app_playurl,
     };
     use httpmock::MockServer;
     use httpmock::prelude::*;
@@ -4990,6 +5110,77 @@ mod tests {
             entry.streams.videos[0].base_url,
             "https://tv.example/80.m4s"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn plans_video_download_with_app_playurl_mode() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("aid", "170001");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "aid": 170_001,
+                    "bvid": "BV1xx411c7mD",
+                    "title": "APP video",
+                    "pages": [{"page": 1, "cid": 9988, "part": "P1"}]
+                }
+            }));
+        });
+        let app_response =
+            app_playurl::test_play_view_response_frame("https://app.example/80.m4s")?;
+        let app_playurl = server.mock(|when, then| {
+            when.method(POST)
+                .path(app_playurl::NORMAL_PLAYURL_PATH)
+                .header("content-type", "application/grpc")
+                .header("authorization", "identify_v1 TV_ACCESS")
+                .header_exists("x-bili-metadata-bin")
+                .header_exists("x-bili-device-bin")
+                .header_exists("x-bili-network-bin")
+                .header_missing("cookie");
+            then.status(200).body(app_response.clone());
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/player/v2")
+                .query_param("aid", "170001")
+                .query_param("cid", "9988");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {"subtitle": {"subtitles": []}}
+            }));
+        });
+
+        let client = BiliClient::new(
+            ClientConfig::default()
+                .with_endpoints(
+                    EndpointConfig::default()
+                        .with_api_base(server.base_url())
+                        .with_comment_base(server.base_url())
+                        .with_app_grpc_base(server.base_url()),
+                )
+                .with_credentials(
+                    Credentials::default()
+                        .with_cookie("SESSDATA=WEB_COOKIE")
+                        .with_tv_access_key("TV_ACCESS"),
+                )
+                .with_playurl_mode(PlayurlMode::App),
+        );
+        let plan = client.plan_download("av170001", None).await?;
+
+        app_playurl.assert();
+        let entry = &plan.entries[0];
+        assert_eq!(entry.source, StreamSource::NormalApp);
+        assert_eq!(
+            entry.streams.videos[0].base_url,
+            "https://app.example/80.m4s"
+        );
+        assert_eq!(entry.streams.videos[0].codecs.as_deref(), Some("hev1"));
+        assert_eq!(entry.streams.audios[0].codecs.as_deref(), Some("mp4a.40.2"));
+        assert_eq!(entry.streams.flv_segments[0].order, 1);
         Ok(())
     }
 
@@ -6393,6 +6584,8 @@ mod tests {
                 comment_base: server.base_url(),
                 passport_base: server.base_url(),
                 tv_api_base: server.base_url(),
+                app_grpc_base: server.base_url(),
+                app_pgc_grpc_base: server.base_url(),
                 tv_passport_base: server.base_url(),
                 tv_passport_poll_base: server.base_url(),
             },
@@ -6599,6 +6792,8 @@ mod tests {
                 comment_base: server.base_url(),
                 passport_base: server.base_url(),
                 tv_api_base: server.base_url(),
+                app_grpc_base: server.base_url(),
+                app_pgc_grpc_base: server.base_url(),
                 tv_passport_base: server.base_url(),
                 tv_passport_poll_base: server.base_url(),
             },
@@ -6776,6 +6971,75 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn plans_pgc_download_with_app_playurl_mode() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/pgc/view/web/season")
+                .query_param("ep_id", "1000");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "result": {
+                    "season_id": 123,
+                    "title": "A Season",
+                    "episodes": [
+                        {"aid": 10, "bvid": "BV1aa", "cid": 100, "id": 1000, "ep_id": 1000, "title": "1", "long_title": "Start"}
+                    ]
+                }
+            }));
+        });
+        let app_response =
+            app_playurl::test_play_view_response_frame("https://app.example/pgc-80.m4s")?;
+        let app_playurl = server.mock(|when, then| {
+            when.method(POST)
+                .path(app_playurl::PGC_PLAYURL_PATH)
+                .header("content-type", "application/grpc")
+                .header("authorization", "identify_v1 APP_ACCESS")
+                .header_exists("x-bili-metadata-bin")
+                .header_missing("cookie");
+            then.status(200).body(app_response.clone());
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/player/v2")
+                .query_param("aid", "10")
+                .query_param("cid", "100");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {"subtitle": {"subtitles": []}}
+            }));
+        });
+
+        let client = BiliClient::new(
+            ClientConfig::default()
+                .with_endpoints(
+                    EndpointConfig::default()
+                        .with_api_base(server.base_url())
+                        .with_pgc_base(server.base_url())
+                        .with_app_pgc_grpc_base(server.base_url()),
+                )
+                .with_credentials(
+                    Credentials::default()
+                        .with_cookie("SESSDATA=WEB_COOKIE")
+                        .with_access_key("APP_ACCESS"),
+                )
+                .with_playurl_mode(PlayurlMode::App),
+        );
+        let plan = client.plan_download("ep1000", None).await?;
+
+        app_playurl.assert();
+        let entry = &plan.entries[0];
+        assert_eq!(entry.source, StreamSource::PgcApp);
+        assert_eq!(entry.epid, Some(1000));
+        assert_eq!(
+            entry.streams.videos[0].base_url,
+            "https://app.example/pgc-80.m4s"
+        );
+        assert_eq!(entry.streams.videos[0].codecs.as_deref(), Some("hev1"));
+        Ok(())
+    }
+
     #[test]
     fn endpoint_client_and_restricted_area_builders_configure_embedding_inputs() {
         let endpoints = EndpointConfig::default()
@@ -6785,6 +7049,8 @@ mod tests {
             .with_comment_base("https://comment.test")
             .with_passport_base("https://passport.test")
             .with_tv_api_base("https://tv-api.test")
+            .with_app_grpc_base("https://app-grpc.test")
+            .with_app_pgc_grpc_base("https://app-pgc-grpc.test")
             .with_tv_passport_base("https://tv-passport.test")
             .with_tv_passport_poll_base("https://tv-poll.test");
         let restricted_area = RestrictedAreaConfig::default()
@@ -6805,12 +7071,17 @@ mod tests {
             .with_endpoints(endpoints)
             .with_credentials(credentials)
             .with_restricted_area(restricted_area)
-            .with_playurl_mode(PlayurlMode::Tv)
+            .with_playurl_mode(PlayurlMode::App)
             .with_user_agent("embedding-test/1.0")
             .with_request_timeout(Duration::from_secs(7));
 
         assert_eq!(config.endpoints.api_base, "https://api.test");
         assert_eq!(config.endpoints.tv_api_base, "https://tv-api.test");
+        assert_eq!(config.endpoints.app_grpc_base, "https://app-grpc.test");
+        assert_eq!(
+            config.endpoints.app_pgc_grpc_base,
+            "https://app-pgc-grpc.test"
+        );
         assert_eq!(
             config.endpoints.tv_passport_poll_base,
             "https://tv-poll.test"
@@ -6818,7 +7089,7 @@ mod tests {
         assert_eq!(config.credentials.access_key.as_deref(), Some("access-key"));
         assert_eq!(config.restricted_area.area_hint, Some(RestrictedArea::Tw));
         assert_eq!(config.restricted_area.proxies.len(), 2);
-        assert_eq!(config.playurl_mode, PlayurlMode::Tv);
+        assert_eq!(config.playurl_mode, PlayurlMode::App);
         assert_eq!(config.user_agent, "embedding-test/1.0");
         assert_eq!(config.request_timeout, Duration::from_secs(7));
     }
@@ -6920,6 +7191,8 @@ mod tests {
                 comment_base: server.base_url(),
                 passport_base: server.base_url(),
                 tv_api_base: server.base_url(),
+                app_grpc_base: server.base_url(),
+                app_pgc_grpc_base: server.base_url(),
                 tv_passport_base: server.base_url(),
                 tv_passport_poll_base: server.base_url(),
             },
@@ -7019,6 +7292,8 @@ mod tests {
                 comment_base: server.base_url(),
                 passport_base: server.base_url(),
                 tv_api_base: server.base_url(),
+                app_grpc_base: server.base_url(),
+                app_pgc_grpc_base: server.base_url(),
                 tv_passport_base: server.base_url(),
                 tv_passport_poll_base: server.base_url(),
             },
@@ -7109,6 +7384,8 @@ mod tests {
                     comment_base: server.base_url(),
                     passport_base: server.base_url(),
                     tv_api_base: server.base_url(),
+                    app_grpc_base: server.base_url(),
+                    app_pgc_grpc_base: server.base_url(),
                     tv_passport_base: server.base_url(),
                     tv_passport_poll_base: server.base_url(),
                 },
@@ -7184,6 +7461,8 @@ mod tests {
                 comment_base: server.base_url(),
                 passport_base: server.base_url(),
                 tv_api_base: server.base_url(),
+                app_grpc_base: server.base_url(),
+                app_pgc_grpc_base: server.base_url(),
                 tv_passport_base: server.base_url(),
                 tv_passport_poll_base: server.base_url(),
             },
@@ -7330,6 +7609,8 @@ mod tests {
                 comment_base: server.base_url(),
                 passport_base: server.base_url(),
                 tv_api_base: server.base_url(),
+                app_grpc_base: server.base_url(),
+                app_pgc_grpc_base: server.base_url(),
                 tv_passport_base: server.base_url(),
                 tv_passport_poll_base: server.base_url(),
             },
@@ -7421,6 +7702,8 @@ mod tests {
                 comment_base: "http://127.0.0.1:1".to_owned(),
                 passport_base: "http://127.0.0.1:1".to_owned(),
                 tv_api_base: "http://127.0.0.1:1".to_owned(),
+                app_grpc_base: "http://127.0.0.1:1".to_owned(),
+                app_pgc_grpc_base: "http://127.0.0.1:1".to_owned(),
                 tv_passport_base: "http://127.0.0.1:1".to_owned(),
                 tv_passport_poll_base: "http://127.0.0.1:1".to_owned(),
             },
@@ -7646,6 +7929,8 @@ mod tests {
                 comment_base: server.base_url(),
                 passport_base: server.base_url(),
                 tv_api_base: server.base_url(),
+                app_grpc_base: server.base_url(),
+                app_pgc_grpc_base: server.base_url(),
                 tv_passport_base: server.base_url(),
                 tv_passport_poll_base: server.base_url(),
             },

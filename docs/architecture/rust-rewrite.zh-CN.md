@@ -86,9 +86,13 @@ wrapper。规划当前支持这些官方来源模式：
 - `NormalWeb` 用普通 web playurl 端点处理 `aid` / `bvid` 输入。
 - `NormalTv` 在 `ClientConfig.playurl_mode` 为 `PlayurlMode::Tv` 时，用 BBDown-compatible
   TV HTTP playurl 端点处理 `aid` / `bvid` 输入。
+- `NormalApp` 在 `ClientConfig.playurl_mode` 为 `PlayurlMode::App` 时，用 BBDown-compatible
+  APP gRPC playurl 端点处理 `aid` / `bvid` 输入。
 - `PgcWeb` 用 PGC web playurl 端点处理 `ep`、`ss` 和 `md` 输入。
 - `PgcTv` 在 `ClientConfig.playurl_mode` 为 `PlayurlMode::Tv` 时，用 BBDown-compatible
   TV HTTP playurl 端点处理 PGC 输入。
+- `PgcApp` 在 `ClientConfig.playurl_mode` 为 `PlayurlMode::App` 时，用 BBDown-compatible
+  APP PGC gRPC playurl 端点处理 PGC 输入。
 - `PugvWeb` 用 PUGV/cheese playurl 端点处理 `cheese/ep` 和选中的 `cheese/ss` 输入。
   PUGV metadata 会通过 episode-list 端点跟进 `episode_page` 分页，再应用 season
   selection。
@@ -125,18 +129,19 @@ codec/mime-compatible switching group，避免重新获取已经缓存过的 lev
 字符串、codec family、`format_key`、score/preferred 信号和机器可读 reason。公开的
 `PlaybackCodecPreference` helper 允许下游按自己的 H.264、HEVC、AV1 或其它 codec 顺序给
 variants 排名，而不是接受写死的 H.264-first 策略。
-同一 planning 路径会遵守 `PlayurlMode::Tv`，因此 `DownloadPlan` 和 `PlaybackPlan` 可以从
-TV HTTP 端点暴露 `NormalTv` 或 `PgcTv` source，同时不改变下游 request-spec shape。TV mode
-使用 `Credentials::tv_access_key`；APP/gRPC playurl transport 因为需要 protobuf
-request/response framing，保留为后续独立切片。
+同一 planning 路径会遵守 `PlayurlMode::Tv` 和 `PlayurlMode::App`，因此 `DownloadPlan` 和
+`PlaybackPlan` 可以暴露 `NormalTv`、`PgcTv`、`NormalApp` 或 `PgcApp` source，同时不改变下
+游 request-spec shape。TV mode 使用 `Credentials::tv_access_key`。APP/gRPC mode 优先使用
+`Credentials::tv_access_key`，再回退到 `Credentials::access_key`，发送 BBDown-compatible
+protobuf gRPC frame，并把 APP DASH/FLV 响应规范化为 `StreamSet`。
 
 本仓库不实现播放器运行时职责。下游 cache/player service 负责 `preparing`、
 `playback_ready`、`downloading`、`completed`、`failed` 等 task state；HLS session 目录、
 playlist、segment 文件、retention、cleanup 和 finalization；例如
 `/tasks/{id}/hls/master.m3u8` 的 HTTP serving；下载中的 AVPlayer-compatible event playlist
 和完成后的 VOD playlist；以及把完成的 HLS 或 remux 后 MP4 artifact 注册为 library item。
-后续 crate 工作应增加 APP/gRPC playurl mode 和更丰富的 device policy profiles，但不应把
-这些运行时职责移入 `bbdown-core`。
+后续 crate 工作可以增加更丰富的 device policy profiles，但不应把这些运行时职责移入
+`bbdown-core`。
 
 ## 下载执行
 

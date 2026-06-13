@@ -1,6 +1,7 @@
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::module_name_repetitions)]
 
+mod app_playurl;
 mod bv;
 mod client;
 mod credentials;

@@ -88,9 +88,13 @@ wrapper for CLI-style callers. Planning currently supports these official source
 - `NormalWeb` uses the normal web playurl endpoint for `aid`/`bvid` inputs.
 - `NormalTv` uses the BBDown-compatible TV HTTP playurl endpoint for `aid`/`bvid` inputs when
   `ClientConfig.playurl_mode` is `PlayurlMode::Tv`.
+- `NormalApp` uses the BBDown-compatible APP gRPC playurl endpoint for `aid`/`bvid` inputs when
+  `ClientConfig.playurl_mode` is `PlayurlMode::App`.
 - `PgcWeb` uses the PGC web playurl endpoint for `ep`, `ss`, and `md` inputs.
 - `PgcTv` uses the BBDown-compatible TV HTTP playurl endpoint for PGC inputs when
   `ClientConfig.playurl_mode` is `PlayurlMode::Tv`.
+- `PgcApp` uses the BBDown-compatible APP PGC gRPC playurl endpoint for PGC inputs when
+  `ClientConfig.playurl_mode` is `PlayurlMode::App`.
 - `PugvWeb` uses the PUGV/cheese playurl endpoint for `cheese/ep` and selected `cheese/ss` inputs.
   PUGV metadata follows `episode_page` pagination through the episode-list endpoint before applying
   season selection.
@@ -132,18 +136,19 @@ codec/mime-compatible switching group without refetching already cached levels.
 strings, codec families, a `format_key`, score/preferred signals, and machine-readable reasons. The
 public `PlaybackCodecPreference` helper lets downstream clients rank variants with their own H.264,
 HEVC, AV1, or other codec order instead of accepting a hard-coded H.264-first policy.
-The same planning path honors `PlayurlMode::Tv`, so `DownloadPlan` and `PlaybackPlan` can expose
-`NormalTv` or `PgcTv` sources from TV HTTP endpoints without changing the downstream request-spec
-shape. TV mode uses `Credentials::tv_access_key`; APP/gRPC playurl transport is intentionally left
-as a later slice because it requires protobuf request/response framing.
+The same planning path honors `PlayurlMode::Tv` and `PlayurlMode::App`, so `DownloadPlan` and
+`PlaybackPlan` can expose `NormalTv`, `PgcTv`, `NormalApp`, or `PgcApp` sources without changing the
+downstream request-spec shape. TV mode uses `Credentials::tv_access_key`. APP/gRPC mode uses
+`Credentials::tv_access_key` first, falls back to `Credentials::access_key`, sends BBDown-compatible
+protobuf gRPC frames, and normalizes APP DASH/FLV replies into `StreamSet`.
 
 This repository does not implement player runtime responsibilities. A downstream cache/player
 service owns task state such as `preparing`, `playback_ready`, `downloading`, `completed`, and
 `failed`; HLS session directories, playlists, segment files, retention, cleanup, and finalization;
 HTTP serving such as `/tasks/{id}/hls/master.m3u8`; AVPlayer-compatible event playlists during
 download and VOD playlists after completion; and registering completed HLS or remuxed MP4 artifacts
-as library items. Future crate work should add APP/gRPC playurl mode and richer device policy
-profiles without moving those runtime responsibilities into `bbdown-core`.
+as library items. Future crate work may add richer device policy profiles without moving those
+runtime responsibilities into `bbdown-core`.
 
 ## Download Execution
 
