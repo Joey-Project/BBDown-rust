@@ -67,7 +67,7 @@ struct Cli {
     #[arg(
         long,
         env = "BBDOWN_APP_PGC_GRPC_BASE",
-        default_value = "https://app.bilibili.com"
+        default_value = "https://grpc.biliapi.net"
     )]
     app_pgc_grpc_base: String,
     #[arg(long, env = "BBDOWN_TV_PASSPORT_BASE")]
@@ -1860,6 +1860,16 @@ mod tests {
             endpoints.tv_passport_poll_base,
             defaults.tv_passport_poll_base
         );
+    }
+
+    #[test]
+    fn app_grpc_cli_defaults_match_core_defaults() {
+        let cli = Cli::parse_from(["bbdown", "auth", "status"]);
+        let endpoints = endpoints_from_cli(&cli);
+        let defaults = EndpointConfig::default();
+
+        assert_eq!(endpoints.app_grpc_base, defaults.app_grpc_base);
+        assert_eq!(endpoints.app_pgc_grpc_base, defaults.app_pgc_grpc_base);
     }
 
     #[test]

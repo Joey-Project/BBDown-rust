@@ -165,3 +165,13 @@ superseded_by:
   `cargo fmt --all -- --check`,
   `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/29f61f3e579e2a4166436b963eab301ac5d80d94/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`,
   and `just ci`.
+- GitHub Codex review fix: the CLI `--app-pgc-grpc-base` default now matches the core
+  `EndpointConfig` PGC APP gRPC default, so `--playurl-mode app` PGC planning does not override
+  the corrected gRPC host with `https://app.bilibili.com`.
+- Validation after CLI default fix:
+  `cargo test -p bbdown-cli app_grpc_cli_defaults_match_core_defaults`,
+  `cargo test -p bbdown-core endpoint_defaults_use_app_grpc_playurl_host --lib`,
+  `cargo test -p bbdown-cli --test cli_e2e playback_json_uses_app_playurl_mode`,
+  `cargo fmt --all -- --check`,
+  `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/29f61f3e579e2a4166436b963eab301ac5d80d94/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`,
+  and `just ci`.
