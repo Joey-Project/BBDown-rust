@@ -115,6 +115,9 @@ superseded_by:
   `cargo fmt --all -- --check`,
   `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/29f61f3e579e2a4166436b963eab301ac5d80d94/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`,
   and `just ci`.
+- Current-head independent review fix: the Simplified Chinese user guide now matches the APP
+  playurl default hosts used by CLI/core, documenting normal-video
+  `https://grpc.biliapi.net` and PGC `https://app.bilibili.com` separately.
 - Targeted validation after codec-family fix:
   `cargo test -p bbdown-core app_playurl --lib`.
 - Targeted validation after codec-family fix:

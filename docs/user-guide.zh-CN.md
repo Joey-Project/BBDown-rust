@@ -280,7 +280,8 @@ OGV playurl 端点。弹幕 XML 下载使用可配置的 comment 端点。WEB �
 TV 二维码轮询会跟随该覆盖；对 split-host mock 或代理，请设置 `--tv-passport-poll-base`。
 TV playurl mode 使用 `--tv-api-base`，它独立于只服务二维码登录的 TV passport host。
 APP gRPC playurl mode 使用 `--app-grpc-base` 处理普通视频，使用 `--app-pgc-grpc-base` 处理
-PGC 分集；这两个端点默认使用同一个 gRPC host，并独立于 WEB、TV 和 intl HTTP endpoint 覆盖。
+PGC 分集；普通视频默认使用 `https://grpc.biliapi.net`，PGC 默认使用
+`https://app.bilibili.com`，两者独立于 WEB、TV 和 intl HTTP endpoint 覆盖。
 
 ## Live E2E 样例
 
