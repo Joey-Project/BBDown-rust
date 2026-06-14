@@ -61,10 +61,12 @@ bbdown info mid123 --select 1,3-5 --json
 bbdown info collection456 --json
 bbdown info series456 --select latest --json
 bbdown info history --select latest --json
+bbdown info following --select latest --json
 bbdown info https://www.bilibili.com/medialist/detail/ml1103407912 --json
 bbdown info https://www.bilibili.com/list/ml1103407912 --json
 bbdown info 'https://www.bilibili.com/list/1958703906?sid=547718' --json
 bbdown info 'https://space.bilibili.com/123/favlist?fid=456' --json
+bbdown info 'https://space.bilibili.com/123/dynamic' --select latest --json
 bbdown info 'https://space.bilibili.com/123/lists/456?type=series' --json
 bbdown info https://www.bilibili.com/account/history --select latest --json
 ```
@@ -79,11 +81,11 @@ indexes. Use `--select 2`, `--select page:2`, `--select 1,3-5`, or `--select pag
 ranges preserve the requested order and deduplicate repeated indexes. `episode:<epid>` still selects
 an exact PGC episode id rather than an episode index.
 
-Favorite lists, space videos, collections, series, and watch history are batch inputs; without
-`--select`, they resolve all parsed items. Use `--select latest` for the first parsed item in the
-upstream list order. JSON metadata keeps the full parsed collection item list under
-`collection.collection.items` and reports the active subset under `collection.selected_items`; empty
-collections are valid empty lists.
+Favorite lists, space videos, collections, series, watch history, following feeds, and space dynamic
+feeds are batch inputs; without `--select`, they resolve all parsed items. Use `--select latest` for
+the first parsed item in the upstream list order. JSON metadata keeps the full parsed collection
+item list under `collection.collection.items` and reports the active subset under
+`collection.selected_items`; empty collections are valid empty lists.
 
 Favorite list URLs are accepted from shorthand ids, space favlist pages, canonical
 `/list/ml...` pages, and `/medialist/.../ml...` pages. Space collection and series URLs retain the
@@ -93,6 +95,10 @@ Watch-history input accepts `history` and `https://www.bilibili.com/account/hist
 authenticated web cookie and currently emits normal-video `archive` records; other history business
 types such as PGC, live, or article records are skipped until those item shapes have dedicated
 collection planning support.
+Following feed input accepts `following`, `https://t.bilibili.com/`, and
+`https://www.bilibili.com/account/dynamic`. Space dynamic feed input accepts
+`https://space.bilibili.com/<mid>/dynamic`. These dynamic feed inputs require an authenticated web
+cookie and currently emit normal-video archive cards; non-video dynamic cards are skipped.
 
 ## Download Plans
 
@@ -106,6 +112,7 @@ bbdown plan https://www.bilibili.tv/en/play/34613/341736 --json
 bbdown plan cheese/ep101 --json
 bbdown plan fav456 --select 1,3-5 --json
 bbdown plan history --select latest --json
+bbdown plan following --select latest --json
 bbdown plan 'https://space.bilibili.com/123/channel/collectiondetail?sid=456' --select all --json
 ```
 

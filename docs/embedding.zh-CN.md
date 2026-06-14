@@ -113,10 +113,10 @@ MP4 codec 字符串。多个 APP legacy FLV 分段清晰度会压缩为最高质
 ## 批量和集合输入
 
 `BiliClient::resolve_input` 接受 CLI 风格原始输入，例如 B23 短链接、`fav...`、`mid...`、
-`collection...`、`series...`、`history`、canonical 收藏夹 `/list/ml...` URL、path-based
-`/medialist/.../ml...` URL、空间合集 URL、空间系列 URL，以及需要登录态的
-`/account/history` 页面。批量输入会解析为 `ResolvedContent::Collection`，其中包含完整
-collection metadata 和选中的条目。
+`collection...`、`series...`、`history`、`following`、canonical 收藏夹 `/list/ml...` URL、
+path-based `/medialist/.../ml...` URL、空间合集 URL、空间系列 URL、需要登录态的
+`/account/history` 页面，以及动态 feed 页面。批量输入会解析为
+`ResolvedContent::Collection`，其中包含完整 collection metadata 和选中的条目。
 owner-scoped 空间列表 URL 会保留 uploader mid，让解析器可以使用较新的空间合集和系列
 API。不带 selector 时，集合类输入会选择全部解析条目；传入 `Selection::Page(index)` 可
 选择一个条目，传入 `Selection::Indices(...)` 可选择 index 列表和范围，传入
@@ -128,10 +128,15 @@ cookie。当前 history collection 只输出普通视频 `archive` 记录，这�
 频 planning 路径；PGC、直播或专栏等其它 history business 类型会被跳过，直到这些条目形态
 有专门的 collection planning 支持。
 
+关注输入使用 WEB dynamic feed 端点，因此同样需要在 `ClientConfig::credentials` 中提供
+cookie。它支持 `following` shorthand 和动态首页 URL。空间动态输入支持
+`https://space.bilibili.com/<mid>/dynamic`。动态 feed 输入目前只输出普通视频 archive 卡
+片，并跳过非视频卡片。
+
 当前 collection 输入保留既有的 `ResolvedContent::Collection` JSON 和 Rust surface。内部现
-在使用 shared feed/list selection 层；后续 following/UP 页面、recommendation 和稍后再看
-输入会基于这一层实现，因此嵌入方可以预期这些未来 list-like 输入会沿用相同的 index、
-range、latest 和空列表语义。
+在使用 shared feed/list selection 层；后续 recommendation 和稍后再看输入会基于这一层实
+现，因此嵌入方可以预期这些未来 list-like 输入会沿用相同的 index、range、latest 和空列
+表语义。
 
 ```rust,no_run
 use bbdown_core::{

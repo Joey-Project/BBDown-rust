@@ -40,11 +40,16 @@
   `0.3.0` feature slice.
 - [completed] Add history record parsing on top of the feed/list resolver abstraction as the second
   `0.3.0` feature slice.
-- [pending] Add following/UP page parsing on top of the feed/list resolver abstraction as the third
+- [completed] Add following/UP page parsing on top of the feed/list resolver abstraction as the third
   `0.3.0` feature slice.
 - [pending] Add recommendation page parsing on top of the feed/list resolver abstraction as the
   fourth `0.3.0` feature slice.
 - [pending] Add watch-later parsing after the other feed/list inputs are in place as the final
   `0.3.0` feed/list slice.
+- [pending] Add credential health checks, renewal/re-login guidance, and multi-account profile
+  management for WEB cookie, generic `access_key`, and TV `tv_access_key` credentials.
+- [pending] Investigate in-project `access_key` acquisition by studying the prior
+  `JoeyTeng/bilibili-helper` approach, including the historical biliplus.com-based flow, before
+  adding any automated login or token retrieval path.
 - [pending] Continue the remaining BBDown parity backlog after the current playback/list slices:
   aria2 or multi-thread download integration, MP4Box muxing, and subtitle-to-SRT conversion.

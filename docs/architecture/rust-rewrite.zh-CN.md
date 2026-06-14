@@ -43,21 +43,23 @@ metadata，以及 TV/APP playurl modes；调用方应读取字段或序列化输
   `SpaceSeriesList` 用于批量内容。owner-scoped 空间合集 / 系列 variant 会保留 canonical
   URL 中的 uploader mid，以便直接调用较新的空间 API。
 - `History` 用于 `history` shorthand 或 `/account/history` 页面上的登录态观看历史输入。
+- `FollowingFeed` 和 `SpaceDynamic` 用于登录态关注动态视频 feed，或单个 UP 主的动态页面。
 - `ShortLink` 用于 B23 链接，会先通过 HTTP redirect 解析，再进入普通输入分发。
 
 library 会把元数据解析为 `ResolvedContent`：
 
 - `VideoMetadata` 包含标题、描述、owner、tag、封面、发布时间和页面。
 - `SeasonResolution` 包含 season metadata 和选中的分集集合。
-- `VideoCollectionResolution` 包含 collection metadata，以及收藏夹、空间投稿、合集和系
-  列、观看历史中选中的条目集合。收藏夹解析支持 shorthand id、path-based medialist 页面和
-  canonical `/list/ml...` 页面。即使 selector 缩小了 `selected_items`，`resolve_input` 也
-  会保留完整解析到的 collection metadata。
+- `VideoCollectionResolution` 包含 collection metadata，以及收藏夹、空间投稿、合集、系
+  列、观看历史、关注 feed 和空间动态 feed 中选中的条目集合。收藏夹解析支持 shorthand
+  id、path-based medialist 页面和 canonical `/list/ml...` 页面。即使 selector 缩小了
+  `selected_items`，`resolve_input` 也会保留完整解析到的 collection metadata。
 
 collection-like 页面族共享的 feed/list 行为位于内部 `feed_list` resolver 层。它负责
 selection 校验、page/range fetch-mode 计算、按 identity 去重，以及一基 item 重编号。现有
 public collection 输出形状保持不变；history、following/UP 页面、recommendation 和稍后再看
-等页面族会在这一层之上增加各自的页面 fetcher，而不是重新实现 selection 和分页规则。
+等页面族会在这一层之上增加各自的页面 fetcher，而不是重新实现 selection 和分页规则。当前
+history 和 dynamic feed 页面族已经接入；recommendation 和稍后再看仍是后续切片。
 
 library 会把媒体可用性解析为 `DownloadPlan`：
 
@@ -77,8 +79,9 @@ library 会把媒体可用性解析为 `DownloadPlan`：
 episode id。空批量集合在默认/all selection 下会解析为空 selected item 列表。因为
 `DownloadPlan` 不暴露 collection metadata，`plan_download` 可以只抓取覆盖所选最大 index
 所需的批量条目。观看历史输入使用 WEB history cursor 端点，需要已认证 cookie，且当前只
-保留可以通过普通视频 pipeline 规划的普通视频 `archive` 记录。CLI 未来会增加交互式提示，
-但 library 保持 season-like 契约显式，避免集成方意外下载整季。
+保留可以通过普通视频 pipeline 规划的普通视频 `archive` 记录。关注和空间动态输入使用
+WEB dynamic feed 端点，也需要已认证 cookie，且当前只输出普通视频 archive 卡片。CLI 未来
+会增加交互式提示，但 library 保持 season-like 契约显式，避免集成方意外下载整季。
 
 Mode-aware planning 使用同一套 resolver 分发，但 sidecar-only mode 会跳过媒体 stream 解
 析。当调用方需要为 archive preflight 或 UI 决策生成非默认 `DownloadMode` 的 plan 时，使
@@ -291,10 +294,10 @@ business state 等 PGC response-body metadata。非区域类官方失败会保�
 误消息也会在通过 JSON 或最终错误暴露前脱敏 URL token 和常见敏感 key-value 模式。
 
 当前实现支持端点覆盖、B23 redirect 解析、PUGV/cheese metadata 和 stream planning、收藏
-夹/空间投稿/合集/系列的批量 metadata planning、intl metadata 形态、官方 PGC stream
-planning、官方 intl OGV 签名 stream planning、配置化 PGC proxy fallback、顶层 helper
-playurl 响应解析、typed source reporting、resolver diagnostics 和下载执行。浏览器专用
-mobile response rewriting 有意不在范围内。
+夹/空间投稿/合集/系列/观看历史/动态 feed 的批量 metadata planning、intl metadata 形态、
+官方 PGC stream planning、官方 intl OGV 签名 stream planning、配置化 PGC proxy fallback、
+顶层 helper playurl 响应解析、typed source reporting、resolver diagnostics 和下载执行。浏
+览器专用 mobile response rewriting 有意不在范围内。
 
 ## 凭据
 
