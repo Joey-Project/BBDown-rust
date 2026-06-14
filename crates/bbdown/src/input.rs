@@ -150,6 +150,12 @@ fn parse_url(raw: &str) -> Result<Input> {
     if parse_following_url(&url) {
         return Ok(Input::FollowingFeed);
     }
+    if let Some(value) = query_number(&url, "ep_id")? {
+        return Ok(Input::Episode(value));
+    }
+    if let Some(value) = query_number(&url, "season_id")? {
+        return Ok(Input::Season(value));
+    }
     if parse_recommendation_url(&url) {
         return Ok(Input::RecommendationFeed);
     }
@@ -174,13 +180,6 @@ fn parse_url(raw: &str) -> Result<Input> {
     }
     if let Some(input) = parse_list_url(&url)? {
         return Ok(input);
-    }
-
-    if let Some(value) = query_number(&url, "ep_id")? {
-        return Ok(Input::Episode(value));
-    }
-    if let Some(value) = query_number(&url, "season_id")? {
-        return Ok(Input::Season(value));
     }
 
     for segment in path.split('/').filter(|segment| !segment.is_empty()) {
@@ -507,6 +506,14 @@ mod tests {
         assert_eq!(
             Input::parse("https://bilibili.com/?spm_id_from=333.1007")?,
             Input::RecommendationFeed
+        );
+        assert_eq!(
+            Input::parse("https://www.bilibili.com/?ep_id=123")?,
+            Input::Episode(123)
+        );
+        assert_eq!(
+            Input::parse("https://www.bilibili.com/?season_id=456")?,
+            Input::Season(456)
         );
         assert_eq!(Input::parse("history")?, Input::History);
         assert_eq!(Input::parse("following")?, Input::FollowingFeed);

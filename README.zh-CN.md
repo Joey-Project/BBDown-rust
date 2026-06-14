@@ -149,8 +149,8 @@ bbdown info ss26801 --select page:1
 `cheese/ss...` 输入遵循相同的显式选择规则。收藏夹、空间投稿、合集、系列、首页推荐、观
 看历史、关注 feed 和空间动态 feed 都是批量输入。推荐输入可使用 `recommendations`、
 `recommendation`、`recommend` 或 B 站首页 URL；它会解析首页推荐批次，目前只包含普通视
-频 `av` 卡片，并在显式 index selection 需要时在端点支持的批量范围内扩大请求来覆盖过滤
-后的条目。
+频 `av` 卡片，并在显式 index selection 需要时在安全上限内继续请求后续 `fresh_idx` 刷新
+批次来覆盖过滤后的条目。
 观看历史输入可使用 `history` 或 `https://www.bilibili.com/account/history`，需要已认证的
 WEB cookie，目前只包含普通视频 `archive` 历史记录。关注输入可使用 `following`、
 `https://t.bilibili.com/` 或 `https://www.bilibili.com/account/dynamic`；空间动态输入使用

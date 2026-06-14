@@ -26,9 +26,10 @@ superseded_by:
   - `recommend`
   - `https://www.bilibili.com/`
   - `https://bilibili.com/`
-- Recommendation fetch uses `/x/web-interface/index/top/feed/rcmd`.
-- The resolver skips non-video recommendation cards and requests up to the endpoint-supported
-  batch size when explicit index selection needs enough filtered normal-video cards.
+- Recommendation fetch uses `/x/web-interface/wbi/index/top/feed/rcmd`.
+- The resolver skips non-video recommendation cards and walks additional `fresh_idx` refresh
+  batches within a safety cap when explicit index selection needs enough filtered normal-video
+  cards.
 - Selected recommendation items plan through the normal video stream, subtitle, danmaku, cover,
   playback, and download surfaces.
 
@@ -39,7 +40,10 @@ superseded_by:
 
 ## Evidence
 - Live endpoint shape check:
-  `curl -sS 'https://api.bilibili.com/x/web-interface/index/top/feed/rcmd?ps=3'`.
+  `curl -sS 'https://api.bilibili.com/x/web-interface/wbi/index/top/feed/rcmd?ps=3'`.
+- Live endpoint limit check: WBI and non-WBI `ps=30&fresh_idx=1` returned `code:0`, while
+  non-WBI `ps=31&fresh_idx=1` returned `code:-400`; WBI/non-WBI `fresh_idx=2` also returned
+  `code:0`.
 - Targeted input test: `cargo test -p bbdown-core input::tests::parses_feed_inputs --locked`.
 - Targeted recommendation resolver test:
   `cargo test -p bbdown-core resolves_recommendation_feed_items --locked`.

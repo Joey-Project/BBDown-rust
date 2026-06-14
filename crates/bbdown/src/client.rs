@@ -26,6 +26,7 @@ const TV_PLAYURL_APP_SECRET: &str = "59b43e04ad6965f34319062b478f83dd";
 const DYNAMIC_FEED_FEATURES: &str = "itemOpusStyle,listOnlyfans,opusBigCover,onlyfansVote,forwardListHidden,decorationCard,commentsNewVersion,onlyfansAssetsV2,ugcDelete,onlyfansQaCard";
 const RECOMMENDATION_MIN_PAGE_SIZE: u32 = 20;
 const RECOMMENDATION_MAX_PAGE_SIZE: u32 = 30;
+const RECOMMENDATION_MAX_REFRESH_PAGES: u32 = 10;
 
 #[non_exhaustive]
 #[derive(Clone, Debug)]
@@ -1758,21 +1759,31 @@ impl BiliClient {
         stop_when_satisfied: bool,
     ) -> Result<VideoCollectionMetadata> {
         let mut page_size = recommendation_initial_page_size(fetch_mode);
-        let mut items;
+        let mut fresh_idx = 1;
+        let mut items = Vec::new();
         loop {
-            let page = self.fetch_recommendation_page(page_size).await?;
+            let page = self.fetch_recommendation_page(page_size, fresh_idx).await?;
             let raw_count = page.items.len();
-            items = Vec::new();
             for item in page.items {
                 push_recommendation_item(&mut items, item);
                 if stop_when_satisfied && fetch_mode.is_satisfied_by(items.len()) {
                     break;
                 }
             }
-            if !recommendation_should_retry(fetch_mode, items.len(), raw_count, page_size) {
+            if !recommendation_should_retry(
+                fetch_mode,
+                items.len(),
+                raw_count,
+                page_size,
+                fresh_idx,
+            ) {
                 break;
             }
-            page_size = recommendation_next_page_size(page_size);
+            if page_size < RECOMMENDATION_MAX_PAGE_SIZE {
+                page_size = RECOMMENDATION_MAX_PAGE_SIZE;
+            } else {
+                fresh_idx += 1;
+            }
         }
         renumber_collection_items(&mut items);
         Ok(VideoCollectionMetadata {
@@ -1787,14 +1798,18 @@ impl BiliClient {
         })
     }
 
-    async fn fetch_recommendation_page(&self, page_size: u32) -> Result<RecommendationFeedData> {
+    async fn fetch_recommendation_page(
+        &self,
+        page_size: u32,
+        fresh_idx: u32,
+    ) -> Result<RecommendationFeedData> {
         let mut url = Self::endpoint_url(
             &self.config.endpoints.api_base,
-            "/x/web-interface/index/top/feed/rcmd",
+            "/x/web-interface/wbi/index/top/feed/rcmd",
         )?;
         url.query_pairs_mut()
             .append_pair("ps", &page_size.to_string())
-            .append_pair("fresh_idx", "1");
+            .append_pair("fresh_idx", &fresh_idx.to_string());
         let response: ApiData<RecommendationFeedData> = self.get_json(url).await?;
         response.into_data()
     }
@@ -3860,24 +3875,23 @@ fn recommendation_initial_page_size(fetch_mode: FeedListFetchMode) -> u32 {
     }
 }
 
-fn recommendation_next_page_size(page_size: u32) -> u32 {
-    page_size
-        .saturating_mul(2)
-        .min(RECOMMENDATION_MAX_PAGE_SIZE)
-}
-
 fn recommendation_should_retry(
     fetch_mode: FeedListFetchMode,
     item_count: usize,
     raw_count: usize,
     page_size: u32,
+    fresh_idx: u32,
 ) -> bool {
     let Some(target) = recommendation_target_item_count(fetch_mode) else {
         return false;
     };
-    item_count < target
-        && page_size < RECOMMENDATION_MAX_PAGE_SIZE
-        && usize::try_from(page_size).is_ok_and(|requested| raw_count >= requested)
+    if item_count >= target || raw_count == 0 {
+        return false;
+    }
+    if page_size < RECOMMENDATION_MAX_PAGE_SIZE {
+        return usize::try_from(page_size).is_ok_and(|requested| raw_count >= requested);
+    }
+    fresh_idx < RECOMMENDATION_MAX_REFRESH_PAGES
 }
 
 fn recommendation_target_item_count(fetch_mode: FeedListFetchMode) -> Option<usize> {
@@ -6846,7 +6860,7 @@ mod tests {
         let server = MockServer::start();
         server.mock(|when, then| {
             when.method(GET)
-                .path("/x/web-interface/index/top/feed/rcmd")
+                .path("/x/web-interface/wbi/index/top/feed/rcmd")
                 .query_param("ps", "20")
                 .query_param("fresh_idx", "1");
             then.status(200).json_body_obj(&serde_json::json!({
@@ -6912,7 +6926,7 @@ mod tests {
                 })
             }));
             when.method(GET)
-                .path("/x/web-interface/index/top/feed/rcmd")
+                .path("/x/web-interface/wbi/index/top/feed/rcmd")
                 .query_param("ps", "30")
                 .query_param("fresh_idx", "1");
             then.status(200).json_body_obj(&serde_json::json!({
@@ -6943,11 +6957,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn resolves_recommendation_page_selection_across_refresh_batches() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            let items: Vec<_> = (1..=30)
+                .map(|index| {
+                    serde_json::json!({
+                        "goto": "av",
+                        "id": 170_000 + index,
+                        "bvid": format!("BV1xx411c{index:03}"),
+                        "cid": 9900 + index,
+                        "title": format!("Recommended video {index}")
+                    })
+                })
+                .collect();
+            when.method(GET)
+                .path("/x/web-interface/wbi/index/top/feed/rcmd")
+                .query_param("ps", "30")
+                .query_param("fresh_idx", "1");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "item": items
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/wbi/index/top/feed/rcmd")
+                .query_param("ps", "30")
+                .query_param("fresh_idx", "2");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "item": [{
+                        "goto": "av",
+                        "id": 170_031,
+                        "bvid": "BV1xx411c031",
+                        "cid": 9931,
+                        "title": "Recommended video 31"
+                    }]
+                }
+            }));
+        });
+
+        let resolved = test_client(&server)
+            .resolve_input("recommendations", Some(Selection::Page(31)))
+            .await?;
+
+        match resolved {
+            ResolvedContent::Collection(collection) => {
+                assert_eq!(collection.collection.items.len(), 31);
+                assert_eq!(collection.selected_items.len(), 1);
+                assert_eq!(collection.selected_items[0].index, 31);
+                assert_eq!(collection.selected_items[0].title, "Recommended video 31");
+            }
+            ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
+                return Err(anyhow::anyhow!("expected collection"));
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn resolves_recommendation_latest_keeps_batch_metadata() -> anyhow::Result<()> {
         let server = MockServer::start();
         server.mock(|when, then| {
             when.method(GET)
-                .path("/x/web-interface/index/top/feed/rcmd")
+                .path("/x/web-interface/wbi/index/top/feed/rcmd")
                 .query_param("ps", "20")
                 .query_param("fresh_idx", "1");
             then.status(200).json_body_obj(&serde_json::json!({
@@ -7004,7 +7081,7 @@ mod tests {
                 })
                 .collect();
             when.method(GET)
-                .path("/x/web-interface/index/top/feed/rcmd")
+                .path("/x/web-interface/wbi/index/top/feed/rcmd")
                 .query_param("ps", "20")
                 .query_param("fresh_idx", "1");
             then.status(200).json_body_obj(&serde_json::json!({
@@ -7032,7 +7109,7 @@ mod tests {
                 "title": "Retried recommended video"
             }));
             when.method(GET)
-                .path("/x/web-interface/index/top/feed/rcmd")
+                .path("/x/web-interface/wbi/index/top/feed/rcmd")
                 .query_param("ps", "30")
                 .query_param("fresh_idx", "1");
             then.status(200).json_body_obj(&serde_json::json!({
@@ -7068,7 +7145,7 @@ mod tests {
         let server = MockServer::start();
         server.mock(|when, then| {
             when.method(GET)
-                .path("/x/web-interface/index/top/feed/rcmd")
+                .path("/x/web-interface/wbi/index/top/feed/rcmd")
                 .query_param("ps", "20")
                 .query_param("fresh_idx", "1");
             then.status(200).json_body_obj(&serde_json::json!({

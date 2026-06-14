@@ -125,8 +125,8 @@ API。不带 selector 时，集合类输入会选择全部解析条目；传入 
 
 推荐输入使用 WEB 首页推荐端点。它支持 `recommendations`、`recommendation`、`recommend`
 shorthand 和 B 站首页 URL。当前实现会输出普通视频 `av` 卡片；非视频推荐卡片会被跳过，
-显式 index selection 需要时会在端点支持的批量范围内扩大首页推荐请求来覆盖过滤后的普通视
-频卡片。
+显式 index selection 需要时会在安全上限内继续请求后续 `fresh_idx` 刷新批次来覆盖过滤后
+的普通视频卡片。
 
 观看历史输入使用 WEB history cursor 端点，因此需要在 `ClientConfig::credentials` 中提供
 cookie。当前 history collection 只输出普通视频 `archive` 记录，这些记录可以映射回普通视

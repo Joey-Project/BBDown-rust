@@ -94,8 +94,8 @@ owner mid from `/space.bilibili.com/<mid>/...` or `/list/<mid>?sid=...` so the r
 newer owner-scoped space APIs.
 Recommendation input accepts `recommendations`, `recommendation`, `recommend`, and the Bilibili
 homepage URL. It fetches homepage recommendation batches and currently emits normal-video `av`
-cards; non-video recommendation cards are skipped, and explicit index selection may request up to
-the endpoint-supported batch size to cover the filtered video cards.
+cards; non-video recommendation cards are skipped, and explicit index selection may walk additional
+`fresh_idx` refresh batches within a safety cap to cover the filtered video cards.
 Watch-history input accepts `history` and `https://www.bilibili.com/account/history`. It requires an
 authenticated web cookie and currently emits normal-video `archive` records; other history business
 types such as PGC, live, or article records are skipped until those item shapes have dedicated

@@ -88,7 +88,8 @@ Season、media 和 `cheese/ss...` 输入在非交互模式下需要 `--select`�
 新的 owner-scoped 空间 API。
 推荐输入支持 `recommendations`、`recommendation`、`recommend` 和 B 站首页 URL。它会拉取
 首页推荐批次，目前只输出普通视频 `av` 卡片；非视频推荐卡片会被跳过，显式 index
-selection 需要时会在端点支持的批量范围内扩大请求来覆盖过滤后的普通视频卡片。
+selection 需要时会在安全上限内继续请求后续 `fresh_idx` 刷新批次来覆盖过滤后的普通视频卡
+片。
 观看历史输入支持 `history` 和 `https://www.bilibili.com/account/history`。它需要已认证的
 WEB cookie，目前只输出普通视频 `archive` 记录；PGC、直播或专栏等其它历史记录 business
 类型会被跳过，直到这些条目形态有专门的 collection planning 支持。

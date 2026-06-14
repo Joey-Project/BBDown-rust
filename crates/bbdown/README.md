@@ -68,9 +68,10 @@ subset. Selected items then plan and download through the normal video pipeline.
 `Selection::Page(index)` for one item or `Selection::Indices(...)` with `IndexSelection` /
 `IndexSelector` when an embedding application needs list and range selection such as `1,3-5`.
 Recommendation input fetches homepage recommendation batches and currently emits normal-video `av`
-cards, requesting up to the endpoint-supported batch size when needed to cover explicit index
-selection. History and dynamic feed inputs require a cookie in client credentials; history
-currently emits normal-video `archive` records, while dynamic feeds emit normal-video archive cards.
+cards, walking additional `fresh_idx` refresh batches within a safety cap when needed to cover
+explicit index selection. History and dynamic feed inputs require a cookie in client credentials;
+history currently emits normal-video `archive` records, while dynamic feeds emit normal-video
+archive cards.
 
 The library default preserves planned media URLs. Set `MediaHostOptions` explicitly when an
 embedding application wants a custom UPOS host, force-replace behavior, or CLI-compatible PCDN

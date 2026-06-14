@@ -1192,7 +1192,7 @@ fn mock_following_collection(server: &MockServer) {
 fn mock_recommendation_collection(server: &MockServer) {
     server.mock(|when, then| {
         when.method(GET)
-            .path("/x/web-interface/index/top/feed/rcmd")
+            .path("/x/web-interface/wbi/index/top/feed/rcmd")
             .query_param("ps", "20")
             .query_param("fresh_idx", "1");
         then.status(200).json_body_obj(&serde_json::json!({

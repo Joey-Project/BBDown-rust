@@ -158,8 +158,8 @@ bbdown info ss26801 --select page:1
 collections, series, homepage recommendations, watch history, following feeds, and space dynamic
 feeds are batch inputs. Recommendation input uses `recommendations`, `recommendation`, `recommend`,
 or the Bilibili homepage URL; it resolves homepage recommendation batches and currently includes
-normal-video `av` cards, requesting up to the endpoint-supported batch size when needed to cover
-explicit index selection. History input uses `history` or
+normal-video `av` cards, walking additional `fresh_idx` refresh batches within a safety cap when
+needed to cover explicit index selection. History input uses `history` or
 `https://www.bilibili.com/account/history`, requires an authenticated web cookie, and currently
 includes normal-video `archive` history records. Following
 input uses `following`, `https://t.bilibili.com/`, or

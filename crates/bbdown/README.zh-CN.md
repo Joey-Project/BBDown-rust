@@ -65,10 +65,10 @@ async fn main() -> bbdown_core::Result<()> {
 集。选中的条目随后通过普通视频 pipeline 规划和下载。嵌入应用可以用
 `Selection::Page(index)` 选择单个条目，或用 `Selection::Indices(...)` 配合
 `IndexSelection` / `IndexSelector` 表示类似 `1,3-5` 的列表和范围选择。推荐输入会拉取首
-页推荐批次，目前只输出普通视频 `av` 卡片，并在显式 index selection 需要时在端点支持的批
-量范围内扩大请求来覆盖过滤后的条目。观看历史和动态 feed 输入需要在 client credentials
-中提供 cookie；观看历史目前只输出普通视频 `archive` 记录，动态 feed 目前只输出普通视频
-archive 卡片。
+页推荐批次，目前只输出普通视频 `av` 卡片，并在显式 index selection 需要时在安全上限内继
+续请求后续 `fresh_idx` 刷新批次来覆盖过滤后的条目。观看历史和动态 feed 输入需要在
+client credentials 中提供 cookie；观看历史目前只输出普通视频 `archive` 记录，动态 feed 目
+前只输出普通视频 archive 卡片。
 
 library 默认保留 plan 中的媒体 URL。嵌入应用需要自定义 UPOS host、强制替换，或
 CLI-compatible PCDN fallback 处理时，应显式设置 `MediaHostOptions`。

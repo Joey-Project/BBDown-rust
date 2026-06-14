@@ -80,11 +80,11 @@ library 会把媒体可用性解析为 `DownloadPlan`：
 episode id。空批量集合在默认/all selection 下会解析为空 selected item 列表。因为
 `DownloadPlan` 不暴露 collection metadata，`plan_download` 可以只抓取覆盖所选最大 index
 所需的批量条目。推荐输入使用 WEB 首页推荐端点，当前只输出普通视频 `av` 卡片，并在非视频
-卡片被跳过后为显式 index selection 在端点支持的批量范围内扩大请求。观看历史输入使用 WEB
-history cursor 端点，需要已认证 cookie，且当前只保留可以通过普通视频 pipeline 规划的普通
-视频 `archive` 记录。关注和空间动态输入使用 WEB dynamic feed 端点，也需要已认证 cookie，
-且当前只输出普通视频 archive 卡片。CLI 未来会增加交互式提示，但 library 保持 season-like
-契约显式，避免集成方意外下载整季。
+卡片被跳过后为显式 index selection 在安全上限内继续请求后续 `fresh_idx` 刷新批次。观看历
+史输入使用 WEB history cursor 端点，需要已认证 cookie，且当前只保留可以通过普通视频
+pipeline 规划的普通视频 `archive` 记录。关注和空间动态输入使用 WEB dynamic feed 端点，也
+需要已认证 cookie，且当前只输出普通视频 archive 卡片。CLI 未来会增加交互式提示，但
+library 保持 season-like 契约显式，避免集成方意外下载整季。
 
 Mode-aware planning 使用同一套 resolver 分发，但 sidecar-only mode 会跳过媒体 stream 解
 析。当调用方需要为 archive preflight 或 UI 决策生成非默认 `DownloadMode` 的 plan 时，使

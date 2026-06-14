@@ -87,8 +87,8 @@ continues to mean an exact PGC episode id. Empty batch collections resolve as em
 lists for the default/all selection. `plan_download` may fetch only enough batch items to cover the
 selected maximum index because `DownloadPlan` does not expose collection metadata. Recommendation
 input uses the web homepage recommendation endpoint and currently emits normal-video `av` cards,
-requesting up to the endpoint-supported batch size when explicit index selection needs more cards
-after non-video cards are skipped.
+walking additional `fresh_idx` refresh batches within a safety cap when explicit index selection
+needs more cards after non-video cards are skipped.
 History input uses the web history cursor endpoint, requires an authenticated cookie, and currently
 filters to normal-video `archive` records that can plan through the normal video pipeline.
 Following and space dynamic inputs use the web dynamic feed endpoints, also require an
