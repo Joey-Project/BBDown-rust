@@ -26,9 +26,10 @@
 项目在普通集成代码中不需要结构体字面量。CLI 使用相同 public builder，这让它成为 crate
 API 的仓库内集成测试表面。
 
-输出模型保持为 typed data surfaces。当前 crate 版本是 `0.2.0`，属于已发布 `0.1.0` 之后
-的开发线，并增加了 `ResolvedContent::Collection`；调用方应读取字段或序列化输出值，而
-不是把输出结构体视为稳定的构造目标。
+输出模型保持为 typed data surfaces。当前 release branch 发布的 crate 版本是 `0.2.0`，并包
+含批量 collection metadata、封面与 sidecar-only 下载表面、播放请求/ABR metadata，以及
+TV/APP playurl modes；调用方应读取字段或序列化输出值，而不是把输出结构体视为稳定的构造
+目标。
 
 ## 解析器模型
 
@@ -329,9 +330,10 @@ Release packaging 是单独的 GitHub Actions workflow stack。`Release Artifact
 x86_64 CLI 归档，但不发布 tag、GitHub Release 或 crate。`Release Verification` 也是可复用
 workflow：RC 创建和 RC promotion 都会调用它，对选中 commit 运行 formatter、clippy、
 declared MSRV、测试和 crates.io dry-run validation。`Create Release Candidate` 会验证
-repository default branch、构建这些归档，并通过 release GitHub App 创建 annotated
-`vX.Y.Z-rc.N` tag，但会先拒绝已经存在 final tag 或 GitHub Release 的 version。Create
-workflow 也会在真正写入 RC tag 前重复 final tag 和 GitHub Release 检查。`Promote Release
+repository default branch 或 `release/*` source branch、构建这些归档，并通过 release GitHub
+App 在 workflow ref commit 上创建 annotated `vX.Y.Z-rc.N` tag，但会先拒绝已经存在 final tag
+或 GitHub Release 的 version。Create workflow 也会在真正写入 RC tag 前重复 final tag 和
+GitHub Release 检查。`Promote Release
 Candidate` 必须从请求版本的最新 RC tag 运行；它会重新验证、重新构建正式归档，在
 发布前再次确认选中的 RC 仍然最新，创建正式 annotated `vX.Y.Z` tag，发布 GitHub Release，
 然后通过受保护的 `crates-io` environment 发布 `bbdown-core` 到 crates.io。它也会在创建
@@ -371,7 +373,7 @@ Plan output 现在暴露结构化 stream quality data。library 保留原始 `St
 stream 摘要旁打印相同 id，而 JSON 调用方可以通过 `DownloadOptions::stream_selection` 选
 择精确 DASH stream。
 
-可复用 crate 当前处于已发布 `0.1.0` 之后的 `0.2` 开发线，因此 public configuration
+可复用 crate 当前处于已发布 `0.1.0` 之后的 `0.3` 开发线，因此 public configuration
 structs 会通过 constructor 和 builder API 刻意加固，而不是保留本地 struct-literal 实验。
 嵌入者应通过这些 API 创建配置，包括
 `ClientConfig::default().with_*`、`EndpointConfig::default().with_*`、

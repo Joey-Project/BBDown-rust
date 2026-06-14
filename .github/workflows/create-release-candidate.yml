@@ -48,14 +48,15 @@ jobs:
             echo "::error::repository default branch is not available"
             exit 2
           fi
-          if [[ "${GITHUB_REF}" != "refs/heads/${DEFAULT_BRANCH}" ]]; then
-            echo "::error::release candidates must be created from the default branch ${DEFAULT_BRANCH}; current ref is ${GITHUB_REF}"
+          if [[ "${GITHUB_REF}" != "refs/heads/${DEFAULT_BRANCH}" && "${GITHUB_REF}" != refs/heads/release/* ]]; then
+            echo "::error::release candidates must be created from ${DEFAULT_BRANCH} or a release/* branch; current ref is ${GITHUB_REF}"
             exit 2
           fi
           if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::version must be MAJOR.MINOR.PATCH without a leading v: ${VERSION}"
             exit 2
           fi
+          target_sha=$(git rev-parse HEAD)
           cargo_versions=$(release_workspace_versions)
           core_version=$(printf '%s\n' "${cargo_versions}" | sed -n '1p')
           cli_version=$(printf '%s\n' "${cargo_versions}" | sed -n '2p')
@@ -72,7 +73,6 @@ jobs:
           release_ensure_tag_absent "${repo}" "${final_tag}" "final tag ${final_tag} already exists; create a new version instead"
           max_rc=$(release_max_rc_number "${repo}" "${VERSION}")
           rc_number=$((max_rc + 1))
-          target_sha=$(git rev-parse HEAD)
           rc_tag="v${VERSION}-rc.${rc_number}"
           {
             echo "rc_tag=${rc_tag}"
@@ -112,7 +112,7 @@ jobs:
       # actions/checkout@v4
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: ${{ needs.validate.outputs.target_sha }}
+          ref: ${{ github.sha }}
 
       # actions/create-github-app-token@v2
       - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
