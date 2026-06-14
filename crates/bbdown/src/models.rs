@@ -43,6 +43,7 @@ pub enum VideoCollectionKind {
     Following,
     SpaceDynamic,
     History,
+    WatchLater,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

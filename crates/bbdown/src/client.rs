@@ -465,6 +465,7 @@ impl BiliClient {
                     .await
             }
             Input::History => self.resolve_history(selection).await,
+            Input::WatchLater => self.resolve_watch_later(selection).await,
             Input::IntlEpisode(epid) => self
                 .fetch_intl_season_by_ep(epid, selection.or(Some(Selection::Current)))
                 .await
@@ -535,6 +536,13 @@ impl BiliClient {
     async fn resolve_history(&self, selection: Option<Selection>) -> Result<ResolvedContent> {
         let fetch_mode = Self::collection_info_fetch_mode(selection.as_ref())?;
         self.fetch_history_collection(selection, fetch_mode)
+            .await
+            .map(ResolvedContent::Collection)
+    }
+
+    async fn resolve_watch_later(&self, selection: Option<Selection>) -> Result<ResolvedContent> {
+        let fetch_mode = Self::collection_info_fetch_mode(selection.as_ref())?;
+        self.fetch_watch_later_collection(selection, fetch_mode)
             .await
             .map(ResolvedContent::Collection)
     }
@@ -667,7 +675,8 @@ impl BiliClient {
             | Input::RecommendationFeed
             | Input::FollowingFeed
             | Input::SpaceDynamic(_)
-            | Input::History) => {
+            | Input::History
+            | Input::WatchLater) => {
                 self.plan_collection_input(collection_input, selection, planning_mode)
                     .await
             }
@@ -804,6 +813,13 @@ impl BiliClient {
             Input::History => {
                 let fetch_mode = Self::collection_fetch_mode(selection.as_ref())?;
                 let collection = self.fetch_history_collection(selection, fetch_mode).await?;
+                self.plan_collection(collection, planning_mode).await
+            }
+            Input::WatchLater => {
+                let fetch_mode = Self::collection_fetch_mode(selection.as_ref())?;
+                let collection = self
+                    .fetch_watch_later_collection(selection, fetch_mode)
+                    .await?;
                 self.plan_collection(collection, planning_mode).await
             }
             _ => unreachable!("non-collection input routed to collection planner"),
@@ -1891,6 +1907,144 @@ impl BiliClient {
             .append_pair("ps", &page_size.to_string());
         let response: ApiData<HistoryCursorData> = self.get_json(url).await?;
         response.into_data()
+    }
+
+    async fn fetch_watch_later_collection(
+        &self,
+        selection: Option<Selection>,
+        fetch_mode: FeedListFetchMode,
+    ) -> Result<VideoCollectionResolution> {
+        let collection = self.fetch_watch_later_collection_all(fetch_mode).await?;
+        Self::resolve_collection_selection(collection, selection.as_ref())
+    }
+
+    async fn fetch_watch_later_collection_all(
+        &self,
+        fetch_mode: FeedListFetchMode,
+    ) -> Result<VideoCollectionMetadata> {
+        let page = self.fetch_watch_later_collection_page().await?;
+        let mut items = Vec::new();
+        for item in page.list {
+            self.push_watch_later_item(&mut items, item).await?;
+            if fetch_mode.is_satisfied_by(items.len()) {
+                break;
+            }
+        }
+        renumber_collection_items(&mut items);
+        Ok(VideoCollectionMetadata {
+            id: None,
+            kind: VideoCollectionKind::WatchLater,
+            title: "Watch later".to_owned(),
+            description: "Bilibili watch-later list".to_owned(),
+            cover_url: items.first().and_then(|item| item.cover_url.clone()),
+            pub_time: items.first().and_then(|item| item.pub_time),
+            owner: None,
+            items,
+        })
+    }
+
+    async fn fetch_watch_later_collection_page(&self) -> Result<WatchLaterData> {
+        let url = Self::endpoint_url(&self.config.endpoints.api_base, "/x/v2/history/toview")?;
+        let response: ApiData<WatchLaterData> = self.get_json(url).await?;
+        response.into_data()
+    }
+
+    async fn push_watch_later_item(
+        &self,
+        items: &mut Vec<VideoCollectionItem>,
+        item: WatchLaterItem,
+    ) -> Result<()> {
+        let Some(item) = self.watch_later_item(item).await? else {
+            return Ok(());
+        };
+        push_unique_collection_item(items, item);
+        Ok(())
+    }
+
+    async fn watch_later_item(&self, item: WatchLaterItem) -> Result<Option<VideoCollectionItem>> {
+        let WatchLaterItem {
+            aid,
+            bvid,
+            cid,
+            title,
+            desc,
+            pic,
+            cover43,
+            pubdate,
+            add_at,
+            duration,
+            page,
+            videos,
+            index_title,
+            long_title,
+            owner,
+        } = item;
+        let Some(aid) = aid.and_then(FlexibleU64::into_u64) else {
+            return Ok(None);
+        };
+        let page_index = page
+            .as_ref()
+            .and_then(WatchLaterPageField::page_index)
+            .filter(|page| *page > 0)
+            .unwrap_or(1);
+        let page_cid = page.as_ref().and_then(WatchLaterPageField::cid);
+        let top_level_cid = cid.and_then(FlexibleU64::into_u64).filter(|cid| *cid > 0);
+
+        let mut fallback = None;
+        let cid = if let Some(cid) = page_cid.or(top_level_cid) {
+            cid
+        } else {
+            let detail = match self
+                .fetch_watch_later_item_fallback(aid, bvid.as_deref(), page_index)
+                .await
+            {
+                Ok(detail) => detail,
+                Err(error) if is_skippable_watch_later_fallback_error(&error) => return Ok(None),
+                Err(error) => return Err(error),
+            };
+            let cid = detail.page.cid;
+            fallback = Some(detail);
+            cid
+        };
+
+        Ok(Some(build_watch_later_item(WatchLaterItemBuild {
+            aid,
+            bvid,
+            cid,
+            title,
+            desc,
+            pic,
+            cover43,
+            pubdate,
+            add_at,
+            duration,
+            page,
+            page_index,
+            videos,
+            index_title,
+            long_title,
+            owner,
+            fallback,
+        })))
+    }
+
+    async fn fetch_watch_later_item_fallback(
+        &self,
+        aid: u64,
+        bvid: Option<&str>,
+        page_index: u32,
+    ) -> Result<WatchLaterItemFallback> {
+        let metadata = match bvid {
+            Some(bvid) => self.fetch_video_by_bvid(bvid, TagPolicy::Skip).await?,
+            None => self.fetch_video_by_aid(aid, TagPolicy::Skip).await?,
+        };
+        let page = metadata
+            .pages
+            .iter()
+            .find(|page| page.index == page_index)
+            .cloned()
+            .ok_or(Error::MissingField("data.pages[]"))?;
+        Ok(WatchLaterItemFallback { metadata, page })
     }
 
     async fn fetch_dynamic_video_collection(
@@ -3609,6 +3763,13 @@ impl FlexibleU64 {
             Self::Text(value) => value.parse().ok(),
         }
     }
+
+    fn as_u64(&self) -> Option<u64> {
+        match self {
+            Self::Number(value) => Some(*value),
+            Self::Text(value) => value.parse().ok(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -3681,6 +3842,107 @@ struct HistoryEntryKey {
     page: Option<u32>,
     part: Option<String>,
     business: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WatchLaterData {
+    #[serde(default, deserialize_with = "deserialize_default_vec")]
+    list: Vec<WatchLaterItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WatchLaterItem {
+    aid: Option<FlexibleU64>,
+    bvid: Option<String>,
+    cid: Option<FlexibleU64>,
+    title: Option<String>,
+    desc: Option<String>,
+    pic: Option<String>,
+    cover43: Option<String>,
+    pubdate: Option<i64>,
+    add_at: Option<i64>,
+    duration: Option<u32>,
+    page: Option<WatchLaterPageField>,
+    videos: Option<u32>,
+    index_title: Option<String>,
+    long_title: Option<String>,
+    owner: Option<FavoriteUpper>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum WatchLaterPageField {
+    Number(u32),
+    Object(WatchLaterPage),
+}
+
+impl WatchLaterPageField {
+    fn page_index(&self) -> Option<u32> {
+        match self {
+            Self::Number(page) => Some(*page),
+            Self::Object(page) => page.page,
+        }
+    }
+
+    fn cid(&self) -> Option<u64> {
+        match self {
+            Self::Number(_) => None,
+            Self::Object(page) => page
+                .cid
+                .as_ref()
+                .and_then(FlexibleU64::as_u64)
+                .filter(|cid| *cid > 0),
+        }
+    }
+
+    fn part(&self) -> Option<String> {
+        match self {
+            Self::Number(_) => None,
+            Self::Object(page) => page.part.clone(),
+        }
+    }
+
+    fn duration(&self) -> Option<u32> {
+        match self {
+            Self::Number(_) => None,
+            Self::Object(page) => page.duration,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct WatchLaterPage {
+    cid: Option<FlexibleU64>,
+    page: Option<u32>,
+    part: Option<String>,
+    duration: Option<u32>,
+}
+
+#[derive(Debug)]
+struct WatchLaterItemFallback {
+    metadata: VideoMetadata,
+    page: PageMetadata,
+}
+
+#[derive(Debug)]
+struct WatchLaterItemBuild {
+    aid: u64,
+    bvid: Option<String>,
+    cid: u64,
+    title: Option<String>,
+    desc: Option<String>,
+    pic: Option<String>,
+    cover43: Option<String>,
+    pubdate: Option<i64>,
+    add_at: Option<i64>,
+    duration: Option<u32>,
+    page: Option<WatchLaterPageField>,
+    page_index: u32,
+    videos: Option<u32>,
+    index_title: Option<String>,
+    long_title: Option<String>,
+    owner: Option<FavoriteUpper>,
+    fallback: Option<WatchLaterItemFallback>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -4090,6 +4352,80 @@ fn history_entry_item(entry: HistoryEntry) -> Option<VideoCollectionItem> {
     })
 }
 
+fn build_watch_later_item(build: WatchLaterItemBuild) -> VideoCollectionItem {
+    let WatchLaterItemBuild {
+        aid,
+        bvid,
+        cid,
+        title,
+        desc,
+        pic,
+        cover43,
+        pubdate,
+        add_at,
+        duration,
+        page,
+        page_index,
+        videos,
+        index_title,
+        long_title,
+        owner,
+        fallback,
+    } = build;
+    let fallback_ref = fallback.as_ref();
+    let base_title = title
+        .or_else(|| fallback_ref.map(|fallback| fallback.metadata.title.clone()))
+        .unwrap_or_else(|| aid.to_string());
+    let page_count = videos
+        .filter(|count| *count > 0)
+        .or_else(|| {
+            fallback_ref.and_then(|fallback| {
+                u32::try_from(fallback.metadata.pages.len())
+                    .ok()
+                    .filter(|count| *count > 0)
+            })
+        })
+        .unwrap_or_else(|| page_index.max(1));
+    let page_title = first_non_empty([
+        index_title,
+        long_title,
+        page.as_ref().and_then(WatchLaterPageField::part),
+        fallback_ref.map(|fallback| fallback.page.title.clone()),
+    ]);
+    let title = if page_count == 1 {
+        base_title
+    } else {
+        format_collection_page_title(&base_title, page_index, page_title.as_deref().unwrap_or(""))
+    };
+    VideoCollectionItem {
+        index: 0,
+        aid,
+        bvid: bvid.or_else(|| fallback_ref.and_then(|fallback| fallback.metadata.bvid.clone())),
+        cid,
+        title,
+        cover_url: first_non_empty([
+            pic,
+            cover43,
+            fallback_ref.and_then(|fallback| fallback.metadata.cover_url.clone()),
+        ]),
+        description: desc
+            .filter(|desc| !desc.is_empty())
+            .or_else(|| fallback_ref.map(|fallback| fallback.metadata.description.clone()))
+            .unwrap_or_default(),
+        pub_time: pubdate
+            .or(add_at)
+            .or_else(|| fallback_ref.and_then(|fallback| fallback.metadata.pub_time)),
+        owner: owner
+            .and_then(FavoriteUpper::into_owner)
+            .or_else(|| fallback_ref.and_then(|fallback| fallback.metadata.owner.clone())),
+        duration_seconds: page
+            .as_ref()
+            .and_then(WatchLaterPageField::duration)
+            .or_else(|| fallback_ref.and_then(|fallback| fallback.page.duration_seconds))
+            .or(duration),
+    }
+}
+
 fn push_unique_collection_item(items: &mut Vec<VideoCollectionItem>, item: VideoCollectionItem) {
     push_unique_feed_list_item(items, item, |existing, candidate| {
         existing.aid == candidate.aid && existing.cid == candidate.cid
@@ -4239,6 +4575,26 @@ fn is_restricted_area_fallback_error(source: &StreamSource, error: &Error) -> bo
         }
         _ => false,
     }
+}
+
+fn is_skippable_watch_later_fallback_error(error: &Error) -> bool {
+    match error {
+        Error::Api { code, message } => {
+            matches!(*code, -404 | 62002 | 62004) || is_watch_later_unavailable_message(message)
+        }
+        Error::MissingField("data.pages[]") => true,
+        _ => false,
+    }
+}
+
+fn is_watch_later_unavailable_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("not found")
+        || lower.contains("deleted")
+        || message.contains("不存在")
+        || message.contains("已删除")
+        || message.contains("已失效")
+        || message.contains("稿件不可见")
 }
 
 fn app_grpc_error_from_headers(headers: &HeaderMap) -> Option<Error> {
@@ -6769,6 +7125,327 @@ mod tests {
             .await?;
 
         assert_eq!(plan.title, "History");
+        assert_eq!(plan.entries.len(), 1);
+        assert_eq!(plan.entries[0].aid, 170_001);
+        assert_eq!(plan.entries[0].cid, 9988);
+        assert_eq!(plan.entries[0].source, StreamSource::NormalWeb);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolves_watch_later_items() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/v2/history/toview")
+                .header("cookie", "SESSDATA=WEB_COOKIE");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "count": 3,
+                    "list": [{
+                        "aid": "170001",
+                        "bvid": "BV1xx411c7mD",
+                        "cid": 1111,
+                        "title": "Watch later video",
+                        "desc": "Watch later description",
+                        "pic": "https://example.invalid/watch-later.jpg",
+                        "pubdate": 1_699_999_999_i64,
+                        "duration": 999,
+                        "page": {
+                            "cid": "9988",
+                            "page": 2,
+                            "part": "Second",
+                            "duration": 3
+                        },
+                        "videos": 2,
+                        "owner": {"mid": 1, "name": "Tester"}
+                    }, {
+                        "aid": 170_002,
+                        "bvid": "BV1xx411c7mE",
+                        "cid": 9989,
+                        "title": "Second watch later video",
+                        "duration": 4,
+                        "page": 1,
+                        "videos": 1,
+                        "owner": {"mid": 2, "name": "Uploader"}
+                    }, {
+                        "title": "Skipped missing aid"
+                    }]
+                }
+            }));
+        });
+        let mut client = test_client(&server);
+        client.config.credentials = Credentials::default().with_cookie("SESSDATA=WEB_COOKIE");
+
+        let resolved = client
+            .resolve_input("watchlater", Some(Selection::Page(2)))
+            .await?;
+
+        match resolved {
+            ResolvedContent::Collection(collection) => {
+                assert_eq!(collection.collection.kind, VideoCollectionKind::WatchLater);
+                assert_eq!(collection.collection.title, "Watch later");
+                assert_eq!(collection.collection.items.len(), 2);
+                assert_eq!(collection.selected_items.len(), 1);
+                assert_eq!(
+                    collection.collection.items[0].title,
+                    "Watch later video_P2_Second"
+                );
+                assert_eq!(collection.collection.items[0].duration_seconds, Some(3));
+                assert_eq!(collection.collection.items[0].cid, 9988);
+                assert_eq!(
+                    collection.selected_items[0].title,
+                    "Second watch later video"
+                );
+                assert_eq!(collection.selected_items[0].cid, 9989);
+                assert_eq!(
+                    collection.selected_items[0]
+                        .owner
+                        .as_ref()
+                        .map(|owner| owner.name.as_str()),
+                    Some("Uploader")
+                );
+            }
+            ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
+                return Err(anyhow::anyhow!("expected collection"));
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolves_watch_later_item_cid_from_video_metadata() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/x/v2/history/toview");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "count": 1,
+                    "list": [{
+                        "aid": 170_003,
+                        "bvid": "BV1xx411c7mF",
+                        "cid": 0,
+                        "title": "Fallback watch later video",
+                        "duration": 999,
+                        "page": {"page": 1, "part": "Fallback page"},
+                        "videos": 1
+                    }]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("bvid", "BV1xx411c7mF");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "aid": 170_003,
+                    "bvid": "BV1xx411c7mF",
+                    "title": "Fallback detail title",
+                    "pages": [{
+                        "page": 1,
+                        "cid": 9990,
+                        "part": "Fallback detail page",
+                        "duration": 5
+                    }]
+                }
+            }));
+        });
+
+        let resolved = test_client(&server)
+            .resolve_input("watchlater", None)
+            .await?;
+
+        match resolved {
+            ResolvedContent::Collection(collection) => {
+                assert_eq!(collection.collection.items.len(), 1);
+                assert_eq!(collection.collection.items[0].cid, 9990);
+                assert_eq!(collection.collection.items[0].duration_seconds, Some(5));
+            }
+            ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
+                return Err(anyhow::anyhow!("expected collection"));
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn skips_watch_later_item_when_cid_fallback_fails() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/x/v2/history/toview");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "count": 2,
+                    "list": [{
+                        "aid": 170_003,
+                        "bvid": "BV1xx411c7mF",
+                        "cid": 0,
+                        "title": "Deleted watch later video"
+                    }, {
+                        "aid": 170_004,
+                        "bvid": "BV1xx411c7mG",
+                        "cid": 9991,
+                        "title": "Usable watch later video"
+                    }]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("bvid", "BV1xx411c7mF");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": -404,
+                "message": "not found"
+            }));
+        });
+
+        let resolved = test_client(&server)
+            .resolve_input("watchlater", None)
+            .await?;
+
+        match resolved {
+            ResolvedContent::Collection(collection) => {
+                assert_eq!(collection.collection.items.len(), 1);
+                assert_eq!(collection.collection.items[0].cid, 9991);
+                assert_eq!(
+                    collection.collection.items[0].title,
+                    "Usable watch later video"
+                );
+            }
+            ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
+                return Err(anyhow::anyhow!("expected collection"));
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn skips_watch_later_item_when_fallback_page_is_missing() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/x/v2/history/toview");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "count": 2,
+                    "list": [{
+                        "aid": 170_003,
+                        "bvid": "BV1xx411c7mF",
+                        "cid": 0,
+                        "title": "Missing page watch later video",
+                        "page": {"page": 2, "part": "Missing page"}
+                    }, {
+                        "aid": 170_004,
+                        "bvid": "BV1xx411c7mG",
+                        "cid": 9991,
+                        "title": "Usable watch later video"
+                    }]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("bvid", "BV1xx411c7mF");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "aid": 170_003,
+                    "bvid": "BV1xx411c7mF",
+                    "title": "Fallback detail title",
+                    "pages": [{"page": 1, "cid": 9990, "part": "Only page"}]
+                }
+            }));
+        });
+
+        let resolved = test_client(&server)
+            .resolve_input("watchlater", None)
+            .await?;
+
+        match resolved {
+            ResolvedContent::Collection(collection) => {
+                assert_eq!(collection.collection.items.len(), 1);
+                assert_eq!(collection.collection.items[0].cid, 9991);
+                assert_eq!(
+                    collection.collection.items[0].title,
+                    "Usable watch later video"
+                );
+            }
+            ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
+                return Err(anyhow::anyhow!("expected collection"));
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn propagates_watch_later_item_fallback_auth_error() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/x/v2/history/toview");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "count": 1,
+                    "list": [{
+                        "aid": 170_003,
+                        "bvid": "BV1xx411c7mF",
+                        "cid": 0,
+                        "title": "Auth-sensitive watch later video"
+                    }]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("bvid", "BV1xx411c7mF");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": -101,
+                "message": "login required"
+            }));
+        });
+
+        let Err(error) = test_client(&server).resolve_input("watchlater", None).await else {
+            return Err(anyhow::anyhow!("fallback auth error should propagate"));
+        };
+        assert!(matches!(error, Error::Api { code: -101, .. }));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn plans_watch_later_latest_as_normal_video_entry() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/x/v2/history/toview");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "count": 1,
+                    "list": [{
+                        "aid": 170_001,
+                        "bvid": "BV1xx411c7mD",
+                        "cid": 9988,
+                        "title": "Watch later video",
+                        "duration": 3
+                    }]
+                }
+            }));
+        });
+        server_mock_playurl(&server, 170_001, 9988, "watch-later");
+        server_mock_player_v2(&server, 170_001, 9988);
+
+        let plan = test_client(&server)
+            .plan_download("watch-later", Some(Selection::Latest))
+            .await?;
+
+        assert_eq!(plan.title, "Watch later");
         assert_eq!(plan.entries.len(), 1);
         assert_eq!(plan.entries[0].aid, 170_001);
         assert_eq!(plan.entries[0].cid, 9988);

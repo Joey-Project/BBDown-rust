@@ -27,6 +27,7 @@
   - `docs/project_journal/2026/06/2026-06-14-history-feed-list-parsing-019ec7.md`.
   - `docs/project_journal/2026/06/2026-06-14-following-dynamic-feed-parsing-019ec8.md`.
   - `docs/project_journal/2026/06/2026-06-14-recommendation-feed-parsing-019ec9.md`.
+  - `docs/project_journal/2026/06/2026-06-14-watch-later-feed-parsing-019eca.md`.
 - The originally planned rewrite continuation slices are complete through download archive and
   duplicate decision handling.
 - Human-facing docs now have English and Simplified Chinese versions, and the latest real live e2e
@@ -37,8 +38,8 @@
 - Versions `0.1.0` and `0.2.0` have shipped through that flow as GitHub Releases `v0.1.0` /
   `v0.2.0` and crates.io package versions `bbdown-core` `0.1.0` / `0.2.0`.
 - `master` is now the `0.3.0` development line. The richer feed/list sequence has completed the
-  shared resolver abstraction, history parsing, following/UP dynamic feed parsing, and homepage
-  recommendation parsing; the next planned slice is watch-later.
+  shared resolver abstraction, history parsing, following/UP dynamic feed parsing, homepage
+  recommendation parsing, and watch-later parsing.
 - `v0.3.0-rc.1` is abandoned; its promotion run was cancelled before final tag, GitHub Release, or
   crates.io publication. Use the next automatically selected RC number when the `0.3.0` line is
   ready for release.

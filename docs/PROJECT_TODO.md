@@ -44,7 +44,7 @@
   `0.3.0` feature slice.
 - [completed] Add recommendation page parsing on top of the feed/list resolver abstraction as the
   fourth `0.3.0` feature slice.
-- [pending] Add watch-later parsing after the other feed/list inputs are in place as the final
+- [completed] Add watch-later parsing after the other feed/list inputs are in place as the final
   `0.3.0` feed/list slice.
 - [pending] Add credential health checks, renewal/re-login guidance, and multi-account profile
   management for WEB cookie, generic `access_key`, and TV `tv_access_key` credentials.

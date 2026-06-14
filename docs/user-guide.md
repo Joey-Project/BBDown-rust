@@ -7,8 +7,8 @@
 BBDown Rust currently exposes a reusable `bbdown-core` package / `bbdown_core` crate and a CLI for
 deterministic metadata, download-plan resolution, media download execution, sidecar downloads, and
 optional ffmpeg muxing. Supported input families include normal videos, PGC and intl episodes,
-PUGV/cheese courses, B23 short links, favorite lists, space videos, collections, series, and watch
-history.
+PUGV/cheese courses, B23 short links, favorite lists, space videos, collections, series, homepage
+recommendations, watch history, watch-later lists, following feeds, and space dynamic feeds.
 
 ## Release Archives
 
@@ -62,6 +62,7 @@ bbdown info collection456 --json
 bbdown info series456 --select latest --json
 bbdown info recommendations --select latest --json
 bbdown info history --select latest --json
+bbdown info watch-later --select latest --json
 bbdown info following --select latest --json
 bbdown info https://www.bilibili.com/medialist/detail/ml1103407912 --json
 bbdown info https://www.bilibili.com/list/ml1103407912 --json
@@ -83,7 +84,7 @@ ranges preserve the requested order and deduplicate repeated indexes. `episode:<
 an exact PGC episode id rather than an episode index.
 
 Favorite lists, space videos, collections, series, homepage recommendations, watch history,
-following feeds, and space dynamic feeds are batch inputs. Use `--select latest` for the first
+watch-later lists, following feeds, and space dynamic feeds are batch inputs. Use `--select latest` for the first
 parsed item in the upstream list order. JSON metadata keeps the full parsed collection item list
 under `collection.collection.items` and reports the active subset under `collection.selected_items`;
 empty collections are valid empty lists.
@@ -100,6 +101,10 @@ Watch-history input accepts `history` and `https://www.bilibili.com/account/hist
 authenticated web cookie and currently emits normal-video `archive` records; other history business
 types such as PGC, live, or article records are skipped until those item shapes have dedicated
 collection planning support.
+Watch-later input accepts `watchlater`, `watch-later`, `watch_later`, `later`, `toview`,
+`https://www.bilibili.com/watchlater`, and `https://www.bilibili.com/list/watchlater`. It requires
+an authenticated web cookie and emits normal videos from the authenticated account's watch-later
+list.
 Following feed input accepts `following`, `https://t.bilibili.com/`, and
 `https://www.bilibili.com/account/dynamic`. Space dynamic feed input accepts
 `https://space.bilibili.com/<mid>/dynamic`. These dynamic feed inputs require an authenticated web
@@ -118,6 +123,7 @@ bbdown plan cheese/ep101 --json
 bbdown plan fav456 --select 1,3-5 --json
 bbdown plan recommendations --select latest --json
 bbdown plan history --select latest --json
+bbdown plan watch-later --select latest --json
 bbdown plan following --select latest --json
 bbdown plan 'https://space.bilibili.com/123/channel/collectiondetail?sid=456' --select all --json
 ```

@@ -44,6 +44,7 @@ metadata，以及 TV/APP playurl modes；调用方应读取字段或序列化输
   URL 中的 uploader mid，以便直接调用较新的空间 API。
 - `RecommendationFeed` 用于 `recommendations` shorthand 或 B 站首页 URL 的首页推荐批次。
 - `History` 用于 `history` shorthand 或 `/account/history` 页面上的登录态观看历史输入。
+- `WatchLater` 用于稍后再看 shorthand、`/watchlater` 或 `/list/watchlater` 页面上的登录态稍后再看输入。
 - `FollowingFeed` 和 `SpaceDynamic` 用于登录态关注动态视频 feed，或单个 UP 主的动态页面。
 - `ShortLink` 用于 B23 链接，会先通过 HTTP redirect 解析，再进入普通输入分发。
 
@@ -52,15 +53,15 @@ library 会把元数据解析为 `ResolvedContent`：
 - `VideoMetadata` 包含标题、描述、owner、tag、封面、发布时间和页面。
 - `SeasonResolution` 包含 season metadata 和选中的分集集合。
 - `VideoCollectionResolution` 包含 collection metadata，以及收藏夹、空间投稿、合集、系
-  列、首页推荐、观看历史、关注 feed 和空间动态 feed 中选中的条目集合。收藏夹解析支持
+  列、首页推荐、观看历史、稍后再看、关注 feed 和空间动态 feed 中选中的条目集合。收藏夹解析支持
   shorthand id、path-based medialist 页面和 canonical `/list/ml...` 页面。即使 selector 缩
   小了 `selected_items`，`resolve_input` 也会保留完整解析到的 collection metadata。
 
 collection-like 页面族共享的 feed/list 行为位于内部 `feed_list` resolver 层。它负责
 selection 校验、page/range fetch-mode 计算、按 identity 去重，以及一基 item 重编号。现有
-public collection 输出形状保持不变；history、recommendation、following/UP 页面和稍后再
-看等页面族会在这一层之上增加各自的页面 fetcher，而不是重新实现 selection 和分页规则。当前
-history、recommendation 和 dynamic feed 页面族已经接入；稍后再看仍是后续切片。
+public collection 输出形状保持不变；history、recommendation、watch-later、following/UP
+页面等页面族会在这一层之上增加各自的页面 fetcher，而不是重新实现 selection 和分页规则。
+当前 history、recommendation、watch-later 和 dynamic feed 页面族已经接入。
 
 library 会把媒体可用性解析为 `DownloadPlan`：
 
@@ -82,7 +83,8 @@ episode id。空批量集合在默认/all selection 下会解析为空 selected 
 所需的批量条目。推荐输入使用 WEB 首页推荐端点，当前只输出普通视频 `av` 卡片，并在非视频
 卡片被跳过后为显式 index selection 在安全上限内继续请求后续 `fresh_idx` 刷新批次。观看历
 史输入使用 WEB history cursor 端点，需要已认证 cookie，且当前只保留可以通过普通视频
-pipeline 规划的普通视频 `archive` 记录。关注和空间动态输入使用 WEB dynamic feed 端点，也
+pipeline 规划的普通视频 `archive` 记录。稍后再看输入使用 WEB toview 端点，需要已认证
+cookie，并输出该账号稍后再看列表中的普通视频。关注和空间动态输入使用 WEB dynamic feed 端点，也
 需要已认证 cookie，且当前只输出普通视频 archive 卡片。CLI 未来会增加交互式提示，但
 library 保持 season-like 契约显式，避免集成方意外下载整季。
 
