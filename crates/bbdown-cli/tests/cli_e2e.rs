@@ -1179,10 +1179,15 @@ fn mock_watch_later_collection(server: &MockServer) {
                 "list": [{
                     "aid": 170_001,
                     "bvid": "BV1xx411c7mD",
-                    "cid": 9988,
+                    "cid": 0,
                     "title": "Watch later video",
                     "pic": "https://example.invalid/watch-later.jpg",
-                    "duration": 3,
+                    "page": {
+                        "cid": 9988,
+                        "page": 1,
+                        "part": "Watch later video",
+                        "duration": 3
+                    },
                     "owner": {"mid": 1, "name": "Tester"}
                 }]
             }

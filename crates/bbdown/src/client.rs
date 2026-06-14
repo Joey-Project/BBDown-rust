@@ -3665,6 +3665,13 @@ impl FlexibleU64 {
             Self::Text(value) => value.parse().ok(),
         }
     }
+
+    fn as_u64(&self) -> Option<u64> {
+        match self {
+            Self::Number(value) => Some(*value),
+            Self::Text(value) => value.parse().ok(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -3757,11 +3764,60 @@ struct WatchLaterItem {
     pubdate: Option<i64>,
     add_at: Option<i64>,
     duration: Option<u32>,
-    page: Option<u32>,
+    page: Option<WatchLaterPageField>,
     videos: Option<u32>,
     index_title: Option<String>,
     long_title: Option<String>,
     owner: Option<FavoriteUpper>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum WatchLaterPageField {
+    Number(u32),
+    Object(WatchLaterPage),
+}
+
+impl WatchLaterPageField {
+    fn page_index(&self) -> Option<u32> {
+        match self {
+            Self::Number(page) => Some(*page),
+            Self::Object(page) => page.page,
+        }
+    }
+
+    fn cid(&self) -> Option<u64> {
+        match self {
+            Self::Number(_) => None,
+            Self::Object(page) => page
+                .cid
+                .as_ref()
+                .and_then(FlexibleU64::as_u64)
+                .filter(|cid| *cid > 0),
+        }
+    }
+
+    fn part(&self) -> Option<String> {
+        match self {
+            Self::Number(_) => None,
+            Self::Object(page) => page.part.clone(),
+        }
+    }
+
+    fn duration(&self) -> Option<u32> {
+        match self {
+            Self::Number(_) => None,
+            Self::Object(page) => page.duration,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct WatchLaterPage {
+    cid: Option<FlexibleU64>,
+    page: Option<u32>,
+    part: Option<String>,
+    duration: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -4197,13 +4253,25 @@ fn watch_later_item(item: WatchLaterItem) -> Option<VideoCollectionItem> {
         owner,
     } = item;
     let aid = aid.and_then(FlexibleU64::into_u64)?;
-    let cid = cid.and_then(FlexibleU64::into_u64)?;
+    let page_cid = page.as_ref().and_then(WatchLaterPageField::cid);
+    let cid = cid
+        .and_then(FlexibleU64::into_u64)
+        .filter(|cid| *cid > 0)
+        .or(page_cid)?;
     let base_title = title.unwrap_or_else(|| aid.to_string());
-    let page_index = page.filter(|page| *page > 0).unwrap_or(1);
+    let page_index = page
+        .as_ref()
+        .and_then(WatchLaterPageField::page_index)
+        .filter(|page| *page > 0)
+        .unwrap_or(1);
     let page_count = videos
         .filter(|count| *count > 0)
         .unwrap_or_else(|| page_index.max(1));
-    let page_title = first_non_empty([index_title, long_title]);
+    let page_title = first_non_empty([
+        index_title,
+        long_title,
+        page.as_ref().and_then(WatchLaterPageField::part),
+    ]);
     let title = if page_count == 1 {
         base_title
     } else {
@@ -4219,7 +4287,8 @@ fn watch_later_item(item: WatchLaterItem) -> Option<VideoCollectionItem> {
         description: desc.unwrap_or_default(),
         pub_time: pubdate.or(add_at),
         owner: owner.and_then(FavoriteUpper::into_owner),
-        duration_seconds: duration,
+        duration_seconds: duration
+            .or_else(|| page.as_ref().and_then(WatchLaterPageField::duration)),
     })
 }
 
@@ -6923,15 +6992,18 @@ mod tests {
                     "list": [{
                         "aid": "170001",
                         "bvid": "BV1xx411c7mD",
-                        "cid": "9988",
+                        "cid": 0,
                         "title": "Watch later video",
                         "desc": "Watch later description",
                         "pic": "https://example.invalid/watch-later.jpg",
                         "pubdate": 1_699_999_999_i64,
-                        "duration": 3,
-                        "page": 2,
+                        "page": {
+                            "cid": "9988",
+                            "page": 2,
+                            "part": "Second",
+                            "duration": 3
+                        },
                         "videos": 2,
-                        "index_title": "Second",
                         "owner": {"mid": 1, "name": "Tester"}
                     }, {
                         "aid": 170_002,

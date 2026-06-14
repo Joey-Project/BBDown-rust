@@ -44,3 +44,6 @@ superseded_by:
   - `cargo test -p bbdown-cli --test cli_e2e info_json_resolves_mock_watch_later_collection --locked`.
 - Independent PR review found that modern `/list/watchlater?bvid=...` URLs were missing from the
   URL parser; the parser and docs now cover that URL family.
+- GitHub Codex review found that watch-later `page` may be an object and top-level `cid` may be
+  `0`; the resolver now accepts object-shaped page details and recovers the selectable `cid` from
+  `page.cid`.
