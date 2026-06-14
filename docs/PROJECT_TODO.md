@@ -36,10 +36,15 @@
   retain already fetched variants and segments while switching bitrate levels.
 - [completed] Add BBDown-compatible TV HTTP playurl mode for normal videos and PGC episodes.
 - [completed] Add APP/gRPC playurl mode after the TV HTTP mode and request-spec surface is stable.
-- [pending] Add a feed/list resolver abstraction for richer Bilibili page families.
-- [pending] Add history record parsing on top of the feed/list resolver abstraction.
-- [pending] Add following/UP page parsing on top of the feed/list resolver abstraction.
-- [pending] Add recommendation page parsing on top of the feed/list resolver abstraction.
-- [pending] Add watch-later parsing after the other feed/list inputs are in place.
+- [pending] Add a feed/list resolver abstraction for richer Bilibili page families as the first
+  `0.3.0` feature slice.
+- [pending] Add history record parsing on top of the feed/list resolver abstraction as the second
+  `0.3.0` feature slice.
+- [pending] Add following/UP page parsing on top of the feed/list resolver abstraction as the third
+  `0.3.0` feature slice.
+- [pending] Add recommendation page parsing on top of the feed/list resolver abstraction as the
+  fourth `0.3.0` feature slice.
+- [pending] Add watch-later parsing after the other feed/list inputs are in place as the final
+  `0.3.0` feed/list slice.
 - [pending] Continue the remaining BBDown parity backlog after the current playback/list slices:
   aria2 or multi-thread download integration, MP4Box muxing, and subtitle-to-SRT conversion.

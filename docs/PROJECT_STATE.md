@@ -30,18 +30,20 @@
 - The publishable library package is named `bbdown-core`; Rust code imports it as `bbdown_core`.
 - First-release automation now uses a protected RC tag workflow followed by RC promotion to GitHub
   Release and crates.io.
-- Version `0.1.0` has shipped through that flow as GitHub Release `v0.1.0` and crates.io package
-  `bbdown-core` `0.1.0`.
-- Current `0.2.0` release source is the `release/0.2.0` branch; use `Create Release Candidate`
-  from that branch to create the next `v0.2.0-rc.*` tag after the RC workflow provenance fix lands
-  there, then verify the RC tag points at the release branch HEAD used by the workflow run.
+- Versions `0.1.0` and `0.2.0` have shipped through that flow as GitHub Releases `v0.1.0` /
+  `v0.2.0` and crates.io package versions `bbdown-core` `0.1.0` / `0.2.0`.
+- `master` is now the `0.3.0` development line. The next planned workstream is richer feed/list
+  parsing: shared resolver abstraction, history, following/UP pages, recommendations, and
+  watch-later in that order.
 - `v0.3.0-rc.1` is abandoned; its promotion run was cancelled before final tag, GitHub Release, or
-  crates.io publication.
+  crates.io publication. Use the next automatically selected RC number when the `0.3.0` line is
+  ready for release.
 
 ## Recovery Pointers
 
 - Run `just ci` for the local default gate after dependencies are restored.
 - Workstream detail and PR-local state should live under `docs/project_journal/`.
+- Active v0.3.0 roadmap: `docs/project_journal/2026/06/2026-06-14-v0-3-feed-list-roadmap-019ec5.md`.
 - User-facing CLI behavior is documented in `docs/user-guide.md`.
 - Crate embedding guidance is documented in `docs/embedding.md`.
 - Simplified Chinese companion docs use `*.zh-CN.md` next to the English originals.
