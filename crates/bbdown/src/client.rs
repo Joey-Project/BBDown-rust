@@ -1725,6 +1725,7 @@ impl BiliClient {
             .append_pair("max", &cursor.max.to_string())
             .append_pair("view_at", &cursor.view_at.to_string())
             .append_pair("business", &cursor.business)
+            .append_pair("type", "archive")
             .append_pair("ps", &page_size.to_string());
         let response: ApiData<HistoryCursorData> = self.get_json(url).await?;
         response.into_data()
@@ -3214,21 +3215,11 @@ struct SpaceArchivePage {
     _size: Option<u32>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct HistoryCursorQuery {
     max: u64,
     view_at: u64,
     business: String,
-}
-
-impl Default for HistoryCursorQuery {
-    fn default() -> Self {
-        Self {
-            max: 0,
-            view_at: 0,
-            business: "archive".to_owned(),
-        }
-    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -3268,6 +3259,7 @@ struct HistoryEntry {
     desc: Option<String>,
     pubdate: Option<i64>,
     duration: Option<u32>,
+    videos: Option<u32>,
     author_mid: Option<u64>,
     author_name: Option<String>,
     owner: Option<FavoriteUpper>,
@@ -3504,6 +3496,7 @@ fn history_entry_item(entry: HistoryEntry) -> Option<VideoCollectionItem> {
         desc,
         pubdate,
         duration,
+        videos,
         author_mid,
         author_name,
         owner,
@@ -3520,14 +3513,17 @@ fn history_entry_item(entry: HistoryEntry) -> Option<VideoCollectionItem> {
     let cid = history.cid?;
     let base_title = title.unwrap_or_else(|| aid.to_string());
     let page_index = history.page.unwrap_or(1);
-    let title = if page_index > 1 {
+    let page_count = videos
+        .filter(|count| *count > 0)
+        .unwrap_or_else(|| page_index.max(1));
+    let title = if page_count == 1 {
+        base_title
+    } else {
         format_collection_page_title(
             &base_title,
             page_index,
             history.part.as_deref().unwrap_or(""),
         )
-    } else {
-        base_title
     };
     Some(VideoCollectionItem {
         index: 0,
@@ -6105,6 +6101,7 @@ mod tests {
             &server,
             0,
             0,
+            "",
             &serde_json::json!({
                 "max": 170_002,
                 "view_at": 1_700_000_000_i64,
@@ -6119,6 +6116,7 @@ mod tests {
                     "desc": "History description",
                     "pubdate": 1_699_999_999_i64,
                     "duration": 3,
+                    "videos": 2,
                     "author_mid": 1,
                     "author_name": "Tester",
                     "history": {
@@ -6126,6 +6124,20 @@ mod tests {
                         "cid": 9988,
                         "page": 2,
                         "part": "Second",
+                        "business": "archive"
+                    }
+                }),
+                serde_json::json!({
+                    "aid": 170_003,
+                    "bvid": "BV1xx411c7mE",
+                    "title": "Multi-page history",
+                    "duration": 4,
+                    "videos": 2,
+                    "history": {
+                        "oid": 170_003,
+                        "cid": 9990,
+                        "page": 1,
+                        "part": "First",
                         "business": "archive"
                     }
                 }),
@@ -6143,6 +6155,7 @@ mod tests {
             &server,
             170_002,
             1_700_000_000,
+            "archive",
             &serde_json::json!({
                 "max": 170_002,
                 "view_at": 1_700_000_000_i64,
@@ -6157,13 +6170,17 @@ mod tests {
             ResolvedContent::Collection(collection) => {
                 assert_eq!(collection.collection.kind, VideoCollectionKind::History);
                 assert_eq!(collection.collection.title, "History");
-                assert_eq!(collection.collection.items.len(), 1);
-                assert_eq!(collection.selected_items.len(), 1);
+                assert_eq!(collection.collection.items.len(), 2);
+                assert_eq!(collection.selected_items.len(), 2);
                 let item = &collection.selected_items[0];
                 assert_eq!(item.aid, 170_001);
                 assert_eq!(item.cid, 9988);
                 assert_eq!(item.title, "History video_P2_Second");
                 assert_eq!(item.owner.as_ref().map(|owner| owner.mid), Some(1));
+                assert_eq!(
+                    collection.selected_items[1].title,
+                    "Multi-page history_P1_First"
+                );
             }
             ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
                 return Err(anyhow::anyhow!("expected collection"));
@@ -6179,6 +6196,7 @@ mod tests {
             &server,
             0,
             0,
+            "",
             &serde_json::json!({
                 "max": 170_002,
                 "view_at": 1_700_000_000_i64,
@@ -8777,6 +8795,7 @@ mod tests {
         server: &MockServer,
         max: u64,
         view_at: u64,
+        business: &str,
         cursor: &serde_json::Value,
         list: &[serde_json::Value],
     ) {
@@ -8785,7 +8804,8 @@ mod tests {
                 .path("/x/web-interface/history/cursor")
                 .query_param("max", max.to_string())
                 .query_param("view_at", view_at.to_string())
-                .query_param("business", "archive")
+                .query_param("business", business)
+                .query_param("type", "archive")
                 .query_param("ps", "20");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,

@@ -25,9 +25,9 @@ superseded_by:
 ## Current State
 - `Input::History` resolves through the shared feed/list selection behavior introduced by the
   previous slice.
-- The history fetcher calls `/x/web-interface/history/cursor` with `business=archive`, follows the
-  cursor until the requested fetch mode is satisfied, deduplicates by `aid/cid`, and renumbers the
-  resulting collection items.
+- The history fetcher calls `/x/web-interface/history/cursor` with `type=archive`, keeps `business`
+  as the returned pagination cursor value, follows the cursor until the requested fetch mode is
+  satisfied, deduplicates by `aid/cid`, and renumbers the resulting collection items.
 - CLI mock e2e coverage verifies `bbdown info history --json` against a local history cursor
   response.
 - English and Simplified Chinese user-facing docs describe history input examples, credential
@@ -48,3 +48,6 @@ superseded_by:
 - Local readonly review: helper-backed `codex-readonly` on the history slice returned `LGTM`.
 - Independent PR review found that `/account/history/` with a trailing slash should parse as
   history; the parser now filters empty path segments and the input parsing test covers that form.
+- GitHub Codex review found that history filtering should use `type=archive` while keeping
+  `business` as the cursor value, and that multi-page history records should preserve first-page
+  part titles. The resolver and mock tests now cover both behaviors.
