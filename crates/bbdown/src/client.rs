@@ -1758,11 +1758,14 @@ impl BiliClient {
         fetch_mode: FeedListFetchMode,
         stop_when_satisfied: bool,
     ) -> Result<VideoCollectionMetadata> {
+        let mixin_key = self.fetch_wbi_mixin_key().await?;
         let mut page_size = recommendation_initial_page_size(fetch_mode);
         let mut fresh_idx = 1;
         let mut items = Vec::new();
         loop {
-            let page = self.fetch_recommendation_page(page_size, fresh_idx).await?;
+            let page = self
+                .fetch_recommendation_page(page_size, fresh_idx, &mixin_key)
+                .await?;
             let raw_count = page.items.len();
             for item in page.items {
                 push_recommendation_item(&mut items, item);
@@ -1802,14 +1805,18 @@ impl BiliClient {
         &self,
         page_size: u32,
         fresh_idx: u32,
+        mixin_key: &str,
     ) -> Result<RecommendationFeedData> {
         let mut url = Self::endpoint_url(
             &self.config.endpoints.api_base,
             "/x/web-interface/wbi/index/top/feed/rcmd",
         )?;
-        url.query_pairs_mut()
-            .append_pair("ps", &page_size.to_string())
-            .append_pair("fresh_idx", &fresh_idx.to_string());
+        let params = vec![
+            ("fresh_idx", fresh_idx.to_string()),
+            ("ps", page_size.to_string()),
+            ("wts", current_unix_timestamp().to_string()),
+        ];
+        url.set_query(Some(&wbi_signed_query(params, mixin_key)));
         let response: ApiData<RecommendationFeedData> = self.get_json(url).await?;
         response.into_data()
     }
@@ -6858,11 +6865,14 @@ mod tests {
     #[tokio::test]
     async fn resolves_recommendation_feed_items() -> anyhow::Result<()> {
         let server = MockServer::start();
+        mock_wbi_nav(&server);
         server.mock(|when, then| {
             when.method(GET)
                 .path("/x/web-interface/wbi/index/top/feed/rcmd")
                 .query_param("ps", "20")
-                .query_param("fresh_idx", "1");
+                .query_param("fresh_idx", "1")
+                .query_param_exists("wts")
+                .query_param_exists("w_rid");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {
@@ -6910,6 +6920,7 @@ mod tests {
     #[tokio::test]
     async fn resolves_recommendation_page_selection_after_filtered_cards() -> anyhow::Result<()> {
         let server = MockServer::start();
+        mock_wbi_nav(&server);
         server.mock(|when, then| {
             let mut items = vec![serde_json::json!({
                 "goto": "live",
@@ -6928,7 +6939,9 @@ mod tests {
             when.method(GET)
                 .path("/x/web-interface/wbi/index/top/feed/rcmd")
                 .query_param("ps", "30")
-                .query_param("fresh_idx", "1");
+                .query_param("fresh_idx", "1")
+                .query_param_exists("wts")
+                .query_param_exists("w_rid");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {
@@ -6959,6 +6972,7 @@ mod tests {
     #[tokio::test]
     async fn resolves_recommendation_page_selection_across_refresh_batches() -> anyhow::Result<()> {
         let server = MockServer::start();
+        mock_wbi_nav(&server);
         server.mock(|when, then| {
             let items: Vec<_> = (1..=30)
                 .map(|index| {
@@ -6974,7 +6988,9 @@ mod tests {
             when.method(GET)
                 .path("/x/web-interface/wbi/index/top/feed/rcmd")
                 .query_param("ps", "30")
-                .query_param("fresh_idx", "1");
+                .query_param("fresh_idx", "1")
+                .query_param_exists("wts")
+                .query_param_exists("w_rid");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {
@@ -6986,7 +7002,9 @@ mod tests {
             when.method(GET)
                 .path("/x/web-interface/wbi/index/top/feed/rcmd")
                 .query_param("ps", "30")
-                .query_param("fresh_idx", "2");
+                .query_param("fresh_idx", "2")
+                .query_param_exists("wts")
+                .query_param_exists("w_rid");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {
@@ -7022,11 +7040,14 @@ mod tests {
     #[tokio::test]
     async fn resolves_recommendation_latest_keeps_batch_metadata() -> anyhow::Result<()> {
         let server = MockServer::start();
+        mock_wbi_nav(&server);
         server.mock(|when, then| {
             when.method(GET)
                 .path("/x/web-interface/wbi/index/top/feed/rcmd")
                 .query_param("ps", "20")
-                .query_param("fresh_idx", "1");
+                .query_param("fresh_idx", "1")
+                .query_param_exists("wts")
+                .query_param_exists("w_rid");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {
@@ -7070,6 +7091,7 @@ mod tests {
     #[tokio::test]
     async fn resolves_recommendation_latest_retries_after_filtered_batch() -> anyhow::Result<()> {
         let server = MockServer::start();
+        mock_wbi_nav(&server);
         server.mock(|when, then| {
             let items: Vec<_> = (1..=20)
                 .map(|index| {
@@ -7083,7 +7105,9 @@ mod tests {
             when.method(GET)
                 .path("/x/web-interface/wbi/index/top/feed/rcmd")
                 .query_param("ps", "20")
-                .query_param("fresh_idx", "1");
+                .query_param("fresh_idx", "1")
+                .query_param_exists("wts")
+                .query_param_exists("w_rid");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {
@@ -7111,7 +7135,9 @@ mod tests {
             when.method(GET)
                 .path("/x/web-interface/wbi/index/top/feed/rcmd")
                 .query_param("ps", "30")
-                .query_param("fresh_idx", "1");
+                .query_param("fresh_idx", "1")
+                .query_param_exists("wts")
+                .query_param_exists("w_rid");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {
@@ -7143,11 +7169,14 @@ mod tests {
     #[tokio::test]
     async fn plans_recommendation_latest_as_normal_video_entry() -> anyhow::Result<()> {
         let server = MockServer::start();
+        mock_wbi_nav(&server);
         server.mock(|when, then| {
             when.method(GET)
                 .path("/x/web-interface/wbi/index/top/feed/rcmd")
                 .query_param("ps", "20")
-                .query_param("fresh_idx", "1");
+                .query_param("fresh_idx", "1")
+                .query_param_exists("wts")
+                .query_param_exists("w_rid");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {
@@ -9840,6 +9869,21 @@ mod tests {
             user_agent: "test".to_owned(),
             request_timeout: Duration::from_secs(30),
         })
+    }
+
+    fn mock_wbi_nav(server: &MockServer) {
+        server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/nav");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "wbi_img": {
+                        "img_url": "https://i0.hdslb.com/bfs/wbi/0123456789abcdef0123456789abcdef.png",
+                        "sub_url": "https://i0.hdslb.com/bfs/wbi/fedcba9876543210fedcba9876543210.png"
+                    }
+                }
+            }));
+        });
     }
 
     fn mock_favorite_collection(server: &MockServer) {

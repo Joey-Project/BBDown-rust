@@ -26,7 +26,7 @@ superseded_by:
   - `recommend`
   - `https://www.bilibili.com/`
   - `https://bilibili.com/`
-- Recommendation fetch uses `/x/web-interface/wbi/index/top/feed/rcmd`.
+- Recommendation fetch uses the signed WBI `/x/web-interface/wbi/index/top/feed/rcmd` endpoint.
 - The resolver skips non-video recommendation cards and walks additional `fresh_idx` refresh
   batches within a safety cap when explicit index selection needs enough filtered normal-video
   cards.
