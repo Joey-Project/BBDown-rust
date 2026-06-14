@@ -472,6 +472,12 @@ impl BiliClient {
                 self.resolve_space_list(owner_mid, list_id, SpaceListKind::Series, selection)
                     .await
             }
+            Input::History => {
+                let fetch_mode = Self::collection_info_fetch_mode(selection.as_ref())?;
+                self.fetch_history_collection(selection, fetch_mode)
+                    .await
+                    .map(ResolvedContent::Collection)
+            }
             Input::IntlEpisode(epid) => self
                 .fetch_intl_season_by_ep(epid, selection.or(Some(Selection::Current)))
                 .await
@@ -607,7 +613,8 @@ impl BiliClient {
             | Input::CollectionList(_)
             | Input::SeriesList(_)
             | Input::SpaceCollectionList { .. }
-            | Input::SpaceSeriesList { .. }) => {
+            | Input::SpaceSeriesList { .. }
+            | Input::History) => {
                 self.plan_collection_input(collection_input, selection, planning_mode)
                     .await
             }
@@ -711,6 +718,11 @@ impl BiliClient {
                     planning_mode,
                 )
                 .await
+            }
+            Input::History => {
+                let fetch_mode = Self::collection_fetch_mode(selection.as_ref())?;
+                let collection = self.fetch_history_collection(selection, fetch_mode).await?;
+                self.plan_collection(collection, planning_mode).await
             }
             _ => unreachable!("non-collection input routed to collection planner"),
         }
@@ -1645,6 +1657,77 @@ impl BiliClient {
             videos: data.list.videos,
             page: data.page,
         })
+    }
+
+    async fn fetch_history_collection(
+        &self,
+        selection: Option<Selection>,
+        fetch_mode: FeedListFetchMode,
+    ) -> Result<VideoCollectionResolution> {
+        let collection = self.fetch_history_collection_all(fetch_mode).await?;
+        Self::resolve_collection_selection(collection, selection.as_ref())
+    }
+
+    async fn fetch_history_collection_all(
+        &self,
+        fetch_mode: FeedListFetchMode,
+    ) -> Result<VideoCollectionMetadata> {
+        let page_size = 20_u32;
+        let mut cursor = HistoryCursorQuery::default();
+        let mut items = Vec::new();
+        loop {
+            let page = self
+                .fetch_history_collection_page(&cursor, page_size)
+                .await?;
+            if page.list.is_empty() {
+                break;
+            }
+            for entry in page.list {
+                push_history_entry_item(&mut items, entry);
+                if fetch_mode.is_satisfied_by(items.len()) {
+                    break;
+                }
+            }
+            if fetch_mode.is_satisfied_by(items.len()) {
+                break;
+            }
+            let next_cursor = page
+                .cursor
+                .map_or_else(|| cursor.clone(), |next| next.into_query(&cursor));
+            if next_cursor == cursor {
+                break;
+            }
+            cursor = next_cursor;
+        }
+        renumber_collection_items(&mut items);
+        Ok(VideoCollectionMetadata {
+            id: None,
+            kind: VideoCollectionKind::History,
+            title: "History".to_owned(),
+            description: "Bilibili watch history".to_owned(),
+            cover_url: items.first().and_then(|item| item.cover_url.clone()),
+            pub_time: items.first().and_then(|item| item.pub_time),
+            owner: None,
+            items,
+        })
+    }
+
+    async fn fetch_history_collection_page(
+        &self,
+        cursor: &HistoryCursorQuery,
+        page_size: u32,
+    ) -> Result<HistoryCursorData> {
+        let mut url = Self::endpoint_url(
+            &self.config.endpoints.api_base,
+            "/x/web-interface/history/cursor",
+        )?;
+        url.query_pairs_mut()
+            .append_pair("max", &cursor.max.to_string())
+            .append_pair("view_at", &cursor.view_at.to_string())
+            .append_pair("business", &cursor.business)
+            .append_pair("ps", &page_size.to_string());
+        let response: ApiData<HistoryCursorData> = self.get_json(url).await?;
+        response.into_data()
     }
 
     async fn fetch_wbi_mixin_key(&self) -> Result<String> {
@@ -3131,6 +3214,78 @@ struct SpaceArchivePage {
     _size: Option<u32>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct HistoryCursorQuery {
+    max: u64,
+    view_at: u64,
+    business: String,
+}
+
+impl Default for HistoryCursorQuery {
+    fn default() -> Self {
+        Self {
+            max: 0,
+            view_at: 0,
+            business: "archive".to_owned(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct HistoryCursorData {
+    cursor: Option<HistoryCursor>,
+    #[serde(default, deserialize_with = "deserialize_default_vec")]
+    list: Vec<HistoryEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct HistoryCursor {
+    max: Option<u64>,
+    view_at: Option<u64>,
+    business: Option<String>,
+}
+
+impl HistoryCursor {
+    fn into_query(self, current: &HistoryCursorQuery) -> HistoryCursorQuery {
+        HistoryCursorQuery {
+            max: self.max.unwrap_or(current.max),
+            view_at: self.view_at.unwrap_or(current.view_at),
+            business: self
+                .business
+                .filter(|business| !business.is_empty())
+                .unwrap_or_else(|| current.business.clone()),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct HistoryEntry {
+    aid: Option<u64>,
+    title: Option<String>,
+    bvid: Option<String>,
+    pic: Option<String>,
+    cover: Option<String>,
+    desc: Option<String>,
+    pubdate: Option<i64>,
+    duration: Option<u32>,
+    author_mid: Option<u64>,
+    author_name: Option<String>,
+    owner: Option<FavoriteUpper>,
+    view_at: Option<i64>,
+    business: Option<String>,
+    history: Option<HistoryEntryKey>,
+}
+
+#[derive(Debug, Deserialize)]
+struct HistoryEntryKey {
+    oid: Option<u64>,
+    cid: Option<u64>,
+    bvid: Option<String>,
+    page: Option<u32>,
+    part: Option<String>,
+    business: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 struct NavData {
     wbi_img: WbiImage,
@@ -3330,6 +3485,67 @@ fn push_medialist_media_pages(
         );
     }
     Ok(())
+}
+
+fn push_history_entry_item(items: &mut Vec<VideoCollectionItem>, entry: HistoryEntry) {
+    let Some(item) = history_entry_item(entry) else {
+        return;
+    };
+    push_unique_collection_item(items, item);
+}
+
+fn history_entry_item(entry: HistoryEntry) -> Option<VideoCollectionItem> {
+    let HistoryEntry {
+        aid,
+        title,
+        bvid,
+        pic,
+        cover,
+        desc,
+        pubdate,
+        duration,
+        author_mid,
+        author_name,
+        owner,
+        view_at,
+        business,
+        history,
+    } = entry;
+    let history = history?;
+    let business = history.business.as_deref().or(business.as_deref());
+    if business.is_some_and(|business| business != "archive") {
+        return None;
+    }
+    let aid = aid.or(history.oid)?;
+    let cid = history.cid?;
+    let base_title = title.unwrap_or_else(|| aid.to_string());
+    let page_index = history.page.unwrap_or(1);
+    let title = if page_index > 1 {
+        format_collection_page_title(
+            &base_title,
+            page_index,
+            history.part.as_deref().unwrap_or(""),
+        )
+    } else {
+        base_title
+    };
+    Some(VideoCollectionItem {
+        index: 0,
+        aid,
+        bvid: bvid.or(history.bvid),
+        cid,
+        title,
+        cover_url: first_non_empty([pic, cover]),
+        description: desc.unwrap_or_default(),
+        pub_time: pubdate.or(view_at),
+        owner: owner.and_then(FavoriteUpper::into_owner).or_else(|| {
+            Some(Owner {
+                mid: author_mid?,
+                name: author_name.unwrap_or_default(),
+            })
+        }),
+        duration_seconds: duration,
+    })
 }
 
 fn push_unique_collection_item(items: &mut Vec<VideoCollectionItem>, item: VideoCollectionItem) {
@@ -5879,6 +6095,120 @@ mod tests {
                 return Err(anyhow::anyhow!("expected collection"));
             }
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolves_history_archive_items_from_cursor() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        mock_history_page(
+            &server,
+            0,
+            0,
+            &serde_json::json!({
+                "max": 170_002,
+                "view_at": 1_700_000_000_i64,
+                "business": "archive"
+            }),
+            &[
+                serde_json::json!({
+                    "aid": 170_001,
+                    "bvid": "BV1xx411c7mD",
+                    "title": "History video",
+                    "pic": "https://example.invalid/history.jpg",
+                    "desc": "History description",
+                    "pubdate": 1_699_999_999_i64,
+                    "duration": 3,
+                    "author_mid": 1,
+                    "author_name": "Tester",
+                    "history": {
+                        "oid": 170_001,
+                        "cid": 9988,
+                        "page": 2,
+                        "part": "Second",
+                        "business": "archive"
+                    }
+                }),
+                serde_json::json!({
+                    "title": "Skipped PGC record",
+                    "history": {
+                        "oid": 170_002,
+                        "cid": 9989,
+                        "business": "pgc"
+                    }
+                }),
+            ],
+        );
+        mock_history_page(
+            &server,
+            170_002,
+            1_700_000_000,
+            &serde_json::json!({
+                "max": 170_002,
+                "view_at": 1_700_000_000_i64,
+                "business": "archive"
+            }),
+            &[],
+        );
+
+        let resolved = test_client(&server).resolve_input("history", None).await?;
+
+        match resolved {
+            ResolvedContent::Collection(collection) => {
+                assert_eq!(collection.collection.kind, VideoCollectionKind::History);
+                assert_eq!(collection.collection.title, "History");
+                assert_eq!(collection.collection.items.len(), 1);
+                assert_eq!(collection.selected_items.len(), 1);
+                let item = &collection.selected_items[0];
+                assert_eq!(item.aid, 170_001);
+                assert_eq!(item.cid, 9988);
+                assert_eq!(item.title, "History video_P2_Second");
+                assert_eq!(item.owner.as_ref().map(|owner| owner.mid), Some(1));
+            }
+            ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
+                return Err(anyhow::anyhow!("expected collection"));
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn plans_history_latest_as_normal_video_entry() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        mock_history_page(
+            &server,
+            0,
+            0,
+            &serde_json::json!({
+                "max": 170_002,
+                "view_at": 1_700_000_000_i64,
+                "business": "archive"
+            }),
+            &[serde_json::json!({
+                "aid": 170_001,
+                "bvid": "BV1xx411c7mD",
+                "title": "History video",
+                "duration": 3,
+                "history": {
+                    "oid": 170_001,
+                    "cid": 9988,
+                    "page": 1,
+                    "business": "archive"
+                }
+            })],
+        );
+        server_mock_playurl(&server, 170_001, 9988, "history");
+        server_mock_player_v2(&server, 170_001, 9988);
+
+        let plan = test_client(&server)
+            .plan_download("history", Some(Selection::Latest))
+            .await?;
+
+        assert_eq!(plan.title, "History");
+        assert_eq!(plan.entries.len(), 1);
+        assert_eq!(plan.entries[0].aid, 170_001);
+        assert_eq!(plan.entries[0].cid, 9988);
+        assert_eq!(plan.entries[0].source, StreamSource::NormalWeb);
         Ok(())
     }
 
@@ -8438,6 +8768,30 @@ mod tests {
                         "upper": {"mid": 1, "name": "Tester"},
                         "ugc": {"first_cid": cid}
                     }]
+                }
+            }));
+        });
+    }
+
+    fn mock_history_page(
+        server: &MockServer,
+        max: u64,
+        view_at: u64,
+        cursor: &serde_json::Value,
+        list: &[serde_json::Value],
+    ) {
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/history/cursor")
+                .query_param("max", max.to_string())
+                .query_param("view_at", view_at.to_string())
+                .query_param("business", "archive")
+                .query_param("ps", "20");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "cursor": cursor,
+                    "list": list
                 }
             }));
         });

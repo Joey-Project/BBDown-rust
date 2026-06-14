@@ -9,7 +9,7 @@ credentials, download archive preflight data, playback request specs, batch coll
 and restricted-area proxy diagnostics. Download execution can also apply explicit UPOS host
 replacement or BBDown-like PCDN avoidance through `MediaHostOptions`. Raw input parsing covers
 normal videos, PGC and intl episodes, PUGV/cheese courses, B23 short links, favorite lists, space
-videos, collections, and series.
+videos, collections, series, and watch history.
 
 Install with `cargo add bbdown-core`, then import with `bbdown_core`.
 
@@ -60,12 +60,13 @@ async fn main() -> bbdown_core::Result<()> {
 }
 ```
 
-Batch inputs such as `fav456`, `mid123`, `collection456`, and `series456` resolve through
+Batch inputs such as `fav456`, `mid123`, `collection456`, `series456`, and `history` resolve through
 `ResolvedContent::Collection`; `resolve_input` keeps full parsed collection metadata while
 `selected_items` carries the active subset. Selected items then plan and download through the normal
 video pipeline. Use `Selection::Page(index)` for one item or `Selection::Indices(...)` with
 `IndexSelection` / `IndexSelector` when an embedding application needs list and range selection such
-as `1,3-5`.
+as `1,3-5`. History input uses the web history cursor endpoint, requires a cookie in client
+credentials, and currently emits normal-video `archive` records.
 
 The library default preserves planned media URLs. Set `MediaHostOptions` explicitly when an
 embedding application wants a custom UPOS host, force-replace behavior, or CLI-compatible PCDN

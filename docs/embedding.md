@@ -118,19 +118,26 @@ represents legacy FLV as a single ordered segment list.
 ## Batch And Collection Inputs
 
 `BiliClient::resolve_input` accepts CLI-style raw inputs such as B23 short links, `fav...`,
-`mid...`, `collection...`, `series...`, canonical favorite `/list/ml...` URLs, path-based
-`/medialist/.../ml...` URLs, space collection URLs, and space series URLs. Batch inputs resolve to
-`ResolvedContent::Collection`, which carries full collection metadata plus the selected items.
+`mid...`, `collection...`, `series...`, `history`, canonical favorite `/list/ml...` URLs,
+path-based `/medialist/.../ml...` URLs, space collection URLs, space series URLs, and the
+authenticated `/account/history` page. Batch inputs resolve to `ResolvedContent::Collection`, which
+carries full collection metadata plus the selected items.
 Owner-scoped space list URLs keep the uploader mid so the resolver can use newer space collection
 and series APIs. Without a selector, collection-like inputs select all parsed items; pass
 `Selection::Page(index)` for one item, `Selection::Indices(...)` for index lists and ranges, or
 `Selection::Latest` for the first parsed item in the upstream list order. Empty collections are
 represented as empty item lists, not as missing-field errors.
 
+History input uses the web history cursor endpoint and therefore requires a cookie on
+`ClientConfig::credentials`. The current history collection emits normal-video `archive` records
+that can be mapped back to the normal video planning path; other history business types such as
+PGC, live, or article records are skipped until those item shapes have dedicated collection planning
+support.
+
 The current collection inputs keep their existing `ResolvedContent::Collection` JSON and Rust
-surface. Internally they now use the shared feed/list selection layer that future history,
-following/UP page, recommendation, and watch-later inputs will build on, so embedders should expect
-those future list-like inputs to follow the same index, range, latest, and empty-list semantics.
+surface. Internally they now use the shared feed/list selection layer that future following/UP page,
+recommendation, and watch-later inputs will build on, so embedders should expect those future
+list-like inputs to follow the same index, range, latest, and empty-list semantics.
 
 ```rust,no_run
 use bbdown_core::{

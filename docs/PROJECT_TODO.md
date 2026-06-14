@@ -38,7 +38,7 @@
 - [completed] Add APP/gRPC playurl mode after the TV HTTP mode and request-spec surface is stable.
 - [completed] Add a feed/list resolver abstraction for richer Bilibili page families as the first
   `0.3.0` feature slice.
-- [pending] Add history record parsing on top of the feed/list resolver abstraction as the second
+- [completed] Add history record parsing on top of the feed/list resolver abstraction as the second
   `0.3.0` feature slice.
 - [pending] Add following/UP page parsing on top of the feed/list resolver abstraction as the third
   `0.3.0` feature slice.

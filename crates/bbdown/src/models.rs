@@ -39,6 +39,7 @@ pub enum VideoCollectionKind {
     Favorite,
     Collection,
     Series,
+    History,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
