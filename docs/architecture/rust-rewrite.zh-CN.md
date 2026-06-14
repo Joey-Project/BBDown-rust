@@ -53,6 +53,11 @@ library 会把元数据解析为 `ResolvedContent`：
   `/list/ml...` 页面。即使 selector 缩小了 `selected_items`，`resolve_input` 也会保留完
   整解析到的 collection metadata。
 
+collection-like 页面族共享的 feed/list 行为位于内部 `feed_list` resolver 层。它负责
+selection 校验、page/range fetch-mode 计算、按 identity 去重，以及一基 item 重编号。现有
+public collection 输出形状保持不变；history、following/UP 页面、recommendation 和稍后再看
+等新页面族应在这一层之上增加各自的页面 fetcher，而不是重新实现 selection 和分页规则。
+
 library 会把媒体可用性解析为 `DownloadPlan`：
 
 - `DownloadEntry` 记录选中的 `aid`、`bvid`、`cid`、可选 `epid`、标题和来源。批量集合条
@@ -426,3 +431,4 @@ credential 和 access-key 文件为每个 case 写入临时 credential store，�
 12. Download archive 和 duplicate decision handling。已在 PR #13 完成。
 13. 更多输入解析和批量集合解析，覆盖短链接、PUGV/cheese、收藏夹、空间投稿、合集和系
     列。已在本切片完成。
+14. collection-like 页面族的 shared feed/list resolver abstraction。已在本切片完成。

@@ -21,8 +21,8 @@ superseded_by:
 
 ## Current State
 - PR 1 records this roadmap and the completed `0.2.0` release state.
-- PR 2 will add a shared feed/list resolver abstraction that can support multiple page families
-  without baking each page type into unrelated collection code paths.
+- PR 2 adds a shared feed/list resolver abstraction that can support multiple page families without
+  baking each page type into unrelated collection code paths.
 - PR 3 will add history record parsing on top of the shared abstraction.
 - PR 4 will add following/UP page parsing on top of the shared abstraction.
 - PR 5 will add recommendation page parsing on top of the shared abstraction.
@@ -31,7 +31,7 @@ superseded_by:
   candidate creation should use the next automatically selected RC number.
 
 ## Next Steps
-- Cut the feed/list abstraction branch from the updated `master` as the next `0.3.0` feature slice.
+- Cut the history parsing branch from the updated `master` as the next `0.3.0` feature slice.
 - Keep the remaining BBDown parity backlog, including aria2 or multi-thread download integration,
   MP4Box muxing, and subtitle-to-SRT conversion, outside this six-PR feed/list sequence unless Joey
   explicitly reprioritizes it.
@@ -52,3 +52,5 @@ superseded_by:
 - Independent Codex PR review found that the roadmap `Next Steps` should not contain the transient
   PR 1 merge step in a squash-only repository. The roadmap now records only the stable post-merge
   next action.
+- Feed/list abstraction slice detail:
+  `docs/project_journal/2026/06/2026-06-14-feed-list-resolver-abstraction-019ec6.md`.

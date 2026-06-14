@@ -53,6 +53,13 @@ The library resolves metadata into `ResolvedContent`:
   path-based medialist pages, and canonical `/list/ml...` pages. `resolve_input` keeps full parsed
   collection metadata even when a selector narrows `selected_items`.
 
+Feed/list behavior that is shared across collection-like page families lives behind an internal
+`feed_list` resolver layer. It owns selection validation, page/range fetch-mode calculation,
+identity-based deduplication, and one-based item renumbering. The existing public collection output
+shape stays unchanged; new page families such as history, following/UP pages, recommendations, and
+watch-later should add page-specific fetchers on top of this layer instead of reimplementing
+selection and pagination rules.
+
 The library resolves media availability into `DownloadPlan`:
 
 - `DownloadEntry` records the selected `aid`, `bvid`, `cid`, optional `epid`, title, and source.
@@ -475,3 +482,5 @@ fixed `cn`, `th`, `hk`, and `tw` ordering. Network requests have a configurable 
 12. Download archive and duplicate decision handling. Completed in PR #13.
 13. More input parsing and batch collection parsing for short links, PUGV/cheese, favorites, space
     uploads, collections, and series. Completed in this slice.
+14. Shared feed/list resolver abstraction for collection-like page families. Completed in this
+    slice.
