@@ -1994,11 +1994,13 @@ impl BiliClient {
         let cid = if let Some(cid) = page_cid.or(top_level_cid) {
             cid
         } else {
-            let Ok(detail) = self
+            let detail = match self
                 .fetch_watch_later_item_fallback(aid, bvid.as_deref(), page_index)
                 .await
-            else {
-                return Ok(None);
+            {
+                Ok(detail) => detail,
+                Err(error) if is_skippable_watch_later_fallback_error(&error) => return Ok(None),
+                Err(error) => return Err(error),
             };
             let cid = detail.page.cid;
             fallback = Some(detail);
@@ -4574,6 +4576,26 @@ fn is_restricted_area_fallback_error(source: &StreamSource, error: &Error) -> bo
         }
         _ => false,
     }
+}
+
+fn is_skippable_watch_later_fallback_error(error: &Error) -> bool {
+    match error {
+        Error::Api { code, message } => {
+            matches!(*code, -404 | 62002 | 62004) || is_watch_later_unavailable_message(message)
+        }
+        Error::MissingField("data.pages[]") => true,
+        _ => false,
+    }
+}
+
+fn is_watch_later_unavailable_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("not found")
+        || lower.contains("deleted")
+        || message.contains("不存在")
+        || message.contains("已删除")
+        || message.contains("已失效")
+        || message.contains("稿件不可见")
 }
 
 fn app_grpc_error_from_headers(headers: &HeaderMap) -> Option<Error> {
@@ -7301,6 +7323,41 @@ mod tests {
                 return Err(anyhow::anyhow!("expected collection"));
             }
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn propagates_watch_later_item_fallback_auth_error() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/x/v2/history/toview");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "count": 1,
+                    "list": [{
+                        "aid": 170_003,
+                        "bvid": "BV1xx411c7mF",
+                        "cid": 0,
+                        "title": "Auth-sensitive watch later video"
+                    }]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("bvid", "BV1xx411c7mF");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": -101,
+                "message": "login required"
+            }));
+        });
+
+        let Err(error) = test_client(&server).resolve_input("watchlater", None).await else {
+            return Err(anyhow::anyhow!("fallback auth error should propagate"));
+        };
+        assert!(matches!(error, Error::Api { code: -101, .. }));
         Ok(())
     }
 
