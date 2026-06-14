@@ -9,7 +9,8 @@ credentials, download archive preflight data, playback request specs, batch coll
 and restricted-area proxy diagnostics. Download execution can also apply explicit UPOS host
 replacement or BBDown-like PCDN avoidance through `MediaHostOptions`. Raw input parsing covers
 normal videos, PGC and intl episodes, PUGV/cheese courses, B23 short links, favorite lists, space
-videos, collections, series, watch history, following video feeds, and space dynamic video feeds.
+videos, collections, series, homepage recommendations, watch history, following video feeds, and
+space dynamic video feeds.
 
 Install with `cargo add bbdown-core`, then import with `bbdown_core`.
 
@@ -60,14 +61,16 @@ async fn main() -> bbdown_core::Result<()> {
 }
 ```
 
-Batch inputs such as `fav456`, `mid123`, `collection456`, `series456`, `history`, `following`, and
-space dynamic URLs resolve through `ResolvedContent::Collection`; `resolve_input` keeps full parsed
-collection metadata while `selected_items` carries the active subset. Selected items then plan and
-download through the normal video pipeline. Use `Selection::Page(index)` for one item or
-`Selection::Indices(...)` with `IndexSelection` / `IndexSelector` when an embedding application
-needs list and range selection such as `1,3-5`. History and dynamic feed inputs require a cookie in
-client credentials; history currently emits normal-video `archive` records, while dynamic feeds emit
-normal-video archive cards.
+Batch inputs such as `fav456`, `mid123`, `collection456`, `series456`, `recommendations`,
+`history`, `following`, and space dynamic URLs resolve through `ResolvedContent::Collection`;
+`resolve_input` keeps full parsed collection metadata while `selected_items` carries the active
+subset. Selected items then plan and download through the normal video pipeline. Use
+`Selection::Page(index)` for one item or `Selection::Indices(...)` with `IndexSelection` /
+`IndexSelector` when an embedding application needs list and range selection such as `1,3-5`.
+Recommendation input fetches homepage recommendation batches and currently emits normal-video `av`
+cards, overfetching when needed to cover explicit index selection. History and dynamic feed inputs
+require a cookie in client credentials; history currently emits normal-video `archive` records,
+while dynamic feeds emit normal-video archive cards.
 
 The library default preserves planned media URLs. Set `MediaHostOptions` explicitly when an
 embedding application wants a custom UPOS host, force-replace behavior, or CLI-compatible PCDN

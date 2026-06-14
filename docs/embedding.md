@@ -118,15 +118,21 @@ represents legacy FLV as a single ordered segment list.
 ## Batch And Collection Inputs
 
 `BiliClient::resolve_input` accepts CLI-style raw inputs such as B23 short links, `fav...`,
-`mid...`, `collection...`, `series...`, `history`, `following`, canonical favorite `/list/ml...`
-URLs, path-based `/medialist/.../ml...` URLs, space collection URLs, space series URLs, the
-authenticated `/account/history` page, and dynamic feed pages. Batch inputs resolve to
+`mid...`, `collection...`, `series...`, `recommendations`, `history`, `following`, canonical
+favorite `/list/ml...` URLs, path-based `/medialist/.../ml...` URLs, space collection URLs, space
+series URLs, the Bilibili homepage, the authenticated `/account/history` page, and dynamic feed
+pages. Batch inputs resolve to
 `ResolvedContent::Collection`, which carries full collection metadata plus the selected items.
 Owner-scoped space list URLs keep the uploader mid so the resolver can use newer space collection
 and series APIs. Without a selector, collection-like inputs select all parsed items; pass
 `Selection::Page(index)` for one item, `Selection::Indices(...)` for index lists and ranges, or
 `Selection::Latest` for the first parsed item in the upstream list order. Empty collections are
 represented as empty item lists, not as missing-field errors.
+
+Recommendation input uses the web homepage recommendation endpoint. It accepts the
+`recommendations`, `recommendation`, and `recommend` shorthands plus the Bilibili homepage URL. The
+current implementation emits normal-video `av` cards; non-video recommendation cards are skipped,
+and explicit index selection may overfetch the homepage batch to cover the filtered video cards.
 
 History input uses the web history cursor endpoint and therefore requires a cookie on
 `ClientConfig::credentials`. The current history collection emits normal-video `archive` records
@@ -140,9 +146,9 @@ Space dynamic input accepts `https://space.bilibili.com/<mid>/dynamic`. Dynamic 
 currently emit normal-video archive cards and skip non-video cards.
 
 The current collection inputs keep their existing `ResolvedContent::Collection` JSON and Rust
-surface. Internally they now use the shared feed/list selection layer; recommendation and
-watch-later inputs will build on the same layer, so embedders should expect those future list-like
-inputs to follow the same index, range, latest, and empty-list semantics.
+surface. Internally they now use the shared feed/list selection layer; watch-later input will build
+on the same layer, so embedders should expect that future list-like input to follow the same index,
+range, latest, and empty-list semantics.
 
 ```rust,no_run
 use bbdown_core::{

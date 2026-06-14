@@ -25,14 +25,14 @@ superseded_by:
   baking each page type into unrelated collection code paths.
 - PR 3 adds history record parsing on top of the shared abstraction.
 - PR 4 adds following/UP dynamic feed parsing on top of the shared abstraction.
-- PR 5 will add recommendation page parsing on top of the shared abstraction.
+- PR 5 adds homepage recommendation page parsing on top of the shared abstraction.
 - PR 6 will add watch-later parsing after the other feed/list inputs are in place.
 - `v0.3.0-rc.1` already exists as an abandoned tag and was never promoted. Future `0.3.0` release
   candidate creation should use the next automatically selected RC number.
 
 ## Next Steps
-- Cut the recommendation page parsing branch from the updated `master` as the next `0.3.0` feature
-  slice after the following/UP dynamic feed PR lands.
+- Cut the watch-later parsing branch from the updated `master` as the final `0.3.0` feed/list
+  feature slice after the recommendation feed PR lands.
 - Keep the remaining BBDown parity backlog, including aria2 or multi-thread download integration,
   MP4Box muxing, and subtitle-to-SRT conversion, outside this six-PR feed/list sequence unless Joey
   explicitly reprioritizes it.
@@ -59,3 +59,5 @@ superseded_by:
   `docs/project_journal/2026/06/2026-06-14-history-feed-list-parsing-019ec7.md`.
 - Following/UP dynamic feed parsing slice detail:
   `docs/project_journal/2026/06/2026-06-14-following-dynamic-feed-parsing-019ec8.md`.
+- Homepage recommendation parsing slice detail:
+  `docs/project_journal/2026/06/2026-06-14-recommendation-feed-parsing-019ec9.md`.

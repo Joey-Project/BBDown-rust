@@ -42,6 +42,8 @@ Inputs normalize into `Input`:
 - `SpaceVideos`, `FavoriteList`, `CollectionList`, `SeriesList`, `SpaceCollectionList`, and
   `SpaceSeriesList` for batch content. Owner-scoped space collection/series variants keep the
   uploader mid from canonical URLs so newer space APIs can be called directly.
+- `RecommendationFeed` for homepage recommendation batches from the `recommendations` shorthand or
+  the Bilibili homepage URL.
 - `History` for authenticated watch-history input from the `history` shorthand or the
   `/account/history` page.
 - `FollowingFeed` and `SpaceDynamic` for authenticated dynamic video feeds from followed uploaders
@@ -53,17 +55,17 @@ The library resolves metadata into `ResolvedContent`:
 - `VideoMetadata` includes title, description, owner, tags, cover, pub time, and pages.
 - `SeasonResolution` includes season metadata plus the selected episode set.
 - `VideoCollectionResolution` includes collection metadata plus the selected item set for
-  favorites, space uploads, collections, series, watch history, following feeds, and space dynamic
-  feeds. Favorite parsing accepts shorthand ids, path-based medialist pages, and canonical
-  `/list/ml...` pages. `resolve_input` keeps full parsed collection metadata even when a selector
-  narrows `selected_items`.
+  favorites, space uploads, collections, series, homepage recommendations, watch history, following
+  feeds, and space dynamic feeds. Favorite parsing accepts shorthand ids, path-based medialist
+  pages, and canonical `/list/ml...` pages. `resolve_input` keeps full parsed collection metadata
+  even when a selector narrows `selected_items`.
 
 Feed/list behavior that is shared across collection-like page families lives behind an internal
 `feed_list` resolver layer. It owns selection validation, page/range fetch-mode calculation,
 identity-based deduplication, and one-based item renumbering. The existing public collection output
-shape stays unchanged; history and dynamic feed page families now add page-specific fetchers on top
-of this layer, while recommendations and watch-later will use the same selection and pagination
-rules.
+shape stays unchanged; history, recommendation, and dynamic feed page families now add
+page-specific fetchers on top of this layer, while watch-later will use the same selection and
+pagination rules.
 
 The library resolves media availability into `DownloadPlan`:
 
@@ -83,13 +85,15 @@ feed/list inputs default to all parsed items; callers can pass `Selection::Page(
 surface applies to normal video pages and season episode indexes, while `Selection::Episode(...)`
 continues to mean an exact PGC episode id. Empty batch collections resolve as empty selected item
 lists for the default/all selection. `plan_download` may fetch only enough batch items to cover the
-selected maximum index because `DownloadPlan` does not expose collection metadata. History input
-uses the web history cursor endpoint, requires an authenticated cookie, and currently filters to
-normal-video `archive` records that can plan through the normal video pipeline. Following and space
-dynamic inputs use the web dynamic feed endpoints, also require an authenticated cookie, and
-currently emit normal-video archive cards. The CLI will later add interactive prompting, but the
-library keeps season-like contracts explicit so integrations cannot accidentally download a full
-season.
+selected maximum index because `DownloadPlan` does not expose collection metadata. Recommendation
+input uses the web homepage recommendation endpoint and currently emits normal-video `av` cards,
+overfetching when needed to cover explicit index selection after non-video cards are skipped.
+History input uses the web history cursor endpoint, requires an authenticated cookie, and currently
+filters to normal-video `archive` records that can plan through the normal video pipeline.
+Following and space dynamic inputs use the web dynamic feed endpoints, also require an
+authenticated cookie, and currently emit normal-video archive cards. The
+CLI will later add interactive prompting, but the library keeps season-like contracts explicit so
+integrations cannot accidentally download a full season.
 
 Mode-aware planning uses the same resolver dispatch but skips media stream resolution for
 sidecar-only modes. Callers that need a plan for archive preflight or UI decisions with a
@@ -334,8 +338,8 @@ also redact URL tokens and common sensitive key-value patterns before they are e
 final errors.
 
 The current implementation supports endpoint override, B23 redirect resolution, PUGV/cheese
-metadata and stream planning, batch favorite/space/collection/series/history/dynamic-feed metadata
-planning, intl metadata shape, official PGC stream planning, official intl OGV signed stream
+metadata and stream planning, batch favorite/space/collection/series/recommendation/history/dynamic-feed
+metadata planning, intl metadata shape, official PGC stream planning, official intl OGV signed stream
 planning, configured PGC proxy fallback, top-level helper playurl response parsing, typed source
 reporting, resolver diagnostics, and download execution. Browser-only mobile response rewriting
 remains intentionally out of scope.

@@ -113,15 +113,19 @@ MP4 codec 字符串。多个 APP legacy FLV 分段清晰度会压缩为最高质
 ## 批量和集合输入
 
 `BiliClient::resolve_input` 接受 CLI 风格原始输入，例如 B23 短链接、`fav...`、`mid...`、
-`collection...`、`series...`、`history`、`following`、canonical 收藏夹 `/list/ml...` URL、
-path-based `/medialist/.../ml...` URL、空间合集 URL、空间系列 URL、需要登录态的
-`/account/history` 页面，以及动态 feed 页面。批量输入会解析为
+`collection...`、`series...`、`recommendations`、`history`、`following`、canonical 收藏夹
+`/list/ml...` URL、path-based `/medialist/.../ml...` URL、空间合集 URL、空间系列 URL、B 站
+首页、需要登录态的 `/account/history` 页面，以及动态 feed 页面。批量输入会解析为
 `ResolvedContent::Collection`，其中包含完整 collection metadata 和选中的条目。
 owner-scoped 空间列表 URL 会保留 uploader mid，让解析器可以使用较新的空间合集和系列
 API。不带 selector 时，集合类输入会选择全部解析条目；传入 `Selection::Page(index)` 可
 选择一个条目，传入 `Selection::Indices(...)` 可选择 index 列表和范围，传入
 `Selection::Latest` 可选择上游列表顺序中的第一个解析条目。空集合会表示为空 item 列表，
 而不是 missing-field 错误。
+
+推荐输入使用 WEB 首页推荐端点。它支持 `recommendations`、`recommendation`、`recommend`
+shorthand 和 B 站首页 URL。当前实现会输出普通视频 `av` 卡片；非视频推荐卡片会被跳过，
+显式 index selection 需要时会扩大首页推荐请求来覆盖过滤后的普通视频卡片。
 
 观看历史输入使用 WEB history cursor 端点，因此需要在 `ClientConfig::credentials` 中提供
 cookie。当前 history collection 只输出普通视频 `archive` 记录，这些记录可以映射回普通视
@@ -134,9 +138,8 @@ cookie。它支持 `following` shorthand 和动态首页 URL。空间动态输�
 片，并跳过非视频卡片。
 
 当前 collection 输入保留既有的 `ResolvedContent::Collection` JSON 和 Rust surface。内部现
-在使用 shared feed/list selection 层；后续 recommendation 和稍后再看输入会基于这一层实
-现，因此嵌入方可以预期这些未来 list-like 输入会沿用相同的 index、range、latest 和空列
-表语义。
+在使用 shared feed/list selection 层；后续稍后再看输入会基于这一层实现，因此嵌入方可以
+预期这个未来 list-like 输入会沿用相同的 index、range、latest 和空列表语义。
 
 ```rust,no_run
 use bbdown_core::{

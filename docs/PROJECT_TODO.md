@@ -42,7 +42,7 @@
   `0.3.0` feature slice.
 - [completed] Add following/UP page parsing on top of the feed/list resolver abstraction as the third
   `0.3.0` feature slice.
-- [pending] Add recommendation page parsing on top of the feed/list resolver abstraction as the
+- [completed] Add recommendation page parsing on top of the feed/list resolver abstraction as the
   fourth `0.3.0` feature slice.
 - [pending] Add watch-later parsing after the other feed/list inputs are in place as the final
   `0.3.0` feed/list slice.
