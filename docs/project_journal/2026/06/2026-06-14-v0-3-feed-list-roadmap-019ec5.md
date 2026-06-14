@@ -31,8 +31,7 @@ superseded_by:
   candidate creation should use the next automatically selected RC number.
 
 ## Next Steps
-- Complete PR 1, merge it, update local `master`, then cut the feed/list abstraction branch from the
-  updated `master`.
+- Cut the feed/list abstraction branch from the updated `master` as the next `0.3.0` feature slice.
 - Keep the remaining BBDown parity backlog, including aria2 or multi-thread download integration,
   MP4Box muxing, and subtitle-to-SRT conversion, outside this six-PR feed/list sequence unless Joey
   explicitly reprioritizes it.
@@ -50,3 +49,6 @@ superseded_by:
 - Local readonly review: helper-backed `codex-readonly` first found that the active roadmap was
   incorrectly listed under completed workstreams; after removing that duplicate state, the rerun
   returned `LGTM`.
+- Independent Codex PR review found that the roadmap `Next Steps` should not contain the transient
+  PR 1 merge step in a squash-only repository. The roadmap now records only the stable post-merge
+  next action.
