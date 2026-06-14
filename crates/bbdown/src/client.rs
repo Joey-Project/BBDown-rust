@@ -2042,7 +2042,6 @@ impl BiliClient {
             .pages
             .iter()
             .find(|page| page.index == page_index)
-            .or_else(|| metadata.pages.first())
             .cloned()
             .ok_or(Error::MissingField("data.pages[]"))?;
         Ok(WatchLaterItemFallback { metadata, page })
@@ -7303,6 +7302,65 @@ mod tests {
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": -404,
                 "message": "not found"
+            }));
+        });
+
+        let resolved = test_client(&server)
+            .resolve_input("watchlater", None)
+            .await?;
+
+        match resolved {
+            ResolvedContent::Collection(collection) => {
+                assert_eq!(collection.collection.items.len(), 1);
+                assert_eq!(collection.collection.items[0].cid, 9991);
+                assert_eq!(
+                    collection.collection.items[0].title,
+                    "Usable watch later video"
+                );
+            }
+            ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
+                return Err(anyhow::anyhow!("expected collection"));
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn skips_watch_later_item_when_fallback_page_is_missing() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/x/v2/history/toview");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "count": 2,
+                    "list": [{
+                        "aid": 170_003,
+                        "bvid": "BV1xx411c7mF",
+                        "cid": 0,
+                        "title": "Missing page watch later video",
+                        "page": {"page": 2, "part": "Missing page"}
+                    }, {
+                        "aid": 170_004,
+                        "bvid": "BV1xx411c7mG",
+                        "cid": 9991,
+                        "title": "Usable watch later video"
+                    }]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("bvid", "BV1xx411c7mF");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "aid": 170_003,
+                    "bvid": "BV1xx411c7mF",
+                    "title": "Fallback detail title",
+                    "pages": [{"page": 1, "cid": 9990, "part": "Only page"}]
+                }
             }));
         });
 
