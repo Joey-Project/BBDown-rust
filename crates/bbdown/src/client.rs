@@ -25,7 +25,7 @@ const TV_PLAYURL_APPKEY: &str = "4409e2ce8ffd12b8";
 const TV_PLAYURL_APP_SECRET: &str = "59b43e04ad6965f34319062b478f83dd";
 const DYNAMIC_FEED_FEATURES: &str = "itemOpusStyle,listOnlyfans,opusBigCover,onlyfansVote,forwardListHidden,decorationCard,commentsNewVersion,onlyfansAssetsV2,ugcDelete,onlyfansQaCard";
 const RECOMMENDATION_MIN_PAGE_SIZE: u32 = 20;
-const RECOMMENDATION_MAX_PAGE_SIZE: u32 = 200;
+const RECOMMENDATION_MAX_PAGE_SIZE: u32 = 30;
 
 #[non_exhaustive]
 #[derive(Clone, Debug)]
@@ -3855,9 +3855,7 @@ impl DynamicFeedKind {
 
 fn recommendation_initial_page_size(fetch_mode: FeedListFetchMode) -> u32 {
     match fetch_mode {
-        FeedListFetchMode::Page(page) => page
-            .saturating_mul(2)
-            .clamp(RECOMMENDATION_MIN_PAGE_SIZE, RECOMMENDATION_MAX_PAGE_SIZE),
+        FeedListFetchMode::Page(_) => RECOMMENDATION_MAX_PAGE_SIZE,
         FeedListFetchMode::All | FeedListFetchMode::Latest => RECOMMENDATION_MIN_PAGE_SIZE,
     }
 }
@@ -6915,7 +6913,7 @@ mod tests {
             }));
             when.method(GET)
                 .path("/x/web-interface/index/top/feed/rcmd")
-                .query_param("ps", "42")
+                .query_param("ps", "30")
                 .query_param("fresh_idx", "1");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
@@ -7035,7 +7033,7 @@ mod tests {
             }));
             when.method(GET)
                 .path("/x/web-interface/index/top/feed/rcmd")
-                .query_param("ps", "40")
+                .query_param("ps", "30")
                 .query_param("fresh_idx", "1");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,

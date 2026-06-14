@@ -27,8 +27,8 @@ superseded_by:
   - `https://www.bilibili.com/`
   - `https://bilibili.com/`
 - Recommendation fetch uses `/x/web-interface/index/top/feed/rcmd`.
-- The resolver skips non-video recommendation cards and overfetches when explicit index selection
-  needs enough filtered normal-video cards.
+- The resolver skips non-video recommendation cards and requests up to the endpoint-supported
+  batch size when explicit index selection needs enough filtered normal-video cards.
 - Selected recommendation items plan through the normal video stream, subtitle, danmaku, cover,
   playback, and download surfaces.
 

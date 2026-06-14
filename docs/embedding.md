@@ -132,7 +132,8 @@ represented as empty item lists, not as missing-field errors.
 Recommendation input uses the web homepage recommendation endpoint. It accepts the
 `recommendations`, `recommendation`, and `recommend` shorthands plus the Bilibili homepage URL. The
 current implementation emits normal-video `av` cards; non-video recommendation cards are skipped,
-and explicit index selection may overfetch the homepage batch to cover the filtered video cards.
+and explicit index selection may request up to the endpoint-supported batch size to cover the
+filtered video cards.
 
 History input uses the web history cursor endpoint and therefore requires a cookie on
 `ClientConfig::credentials`. The current history collection emits normal-video `archive` records
