@@ -7,7 +7,7 @@
 BBDown Rust 当前提供可复用的 `bbdown-core` package / `bbdown_core` crate 和一个 CLI，用
 于确定性的元数据解析、下载计划解析、媒体下载执行、旁路文件下载，以及可选 `ffmpeg` 封装。
 支持的输入家族包括普通视频、PGC 和 intl 分集、PUGV/cheese 课程、B23 短链接、收藏夹、
-空间投稿、合集和系列。
+空间投稿、合集、系列和观看历史。
 
 ## 发布归档
 
@@ -56,11 +56,13 @@ bbdown info fav456 --json
 bbdown info mid123 --select 1,3-5 --json
 bbdown info collection456 --json
 bbdown info series456 --select latest --json
+bbdown info history --select latest --json
 bbdown info https://www.bilibili.com/medialist/detail/ml1103407912 --json
 bbdown info https://www.bilibili.com/list/ml1103407912 --json
 bbdown info 'https://www.bilibili.com/list/1958703906?sid=547718' --json
 bbdown info 'https://space.bilibili.com/123/favlist?fid=456' --json
 bbdown info 'https://space.bilibili.com/123/lists/456?type=series' --json
+bbdown info https://www.bilibili.com/account/history --select latest --json
 ```
 
 Season、media 和 `cheese/ss...` 输入在非交互模式下需要 `--select`。支持的 selector 是
@@ -72,8 +74,8 @@ Season、media 和 `cheese/ss...` 输入在非交互模式下需要 `--select`�
 `--select page:2-4,7`。列表和范围会保留请求顺序，并对重复 index 去重。
 `episode:<epid>` 仍然表示精确 PGC episode id，而不是分集序号。
 
-收藏夹、空间投稿、合集和系列是批量输入；不传 `--select` 时会解析全部条目。使用
-`--select latest` 可选择上游列表顺序中的第一个解析条目。JSON metadata 会在
+收藏夹、空间投稿、合集、系列和观看历史是批量输入；不传 `--select` 时会解析全部条目。
+使用 `--select latest` 可选择上游列表顺序中的第一个解析条目。JSON metadata 会在
 `collection.collection.items` 保留完整解析到的集合条目列表，并在 `collection.selected_items`
 报告当前选中子集；空集合是有效的空列表。
 
@@ -81,6 +83,9 @@ Season、media 和 `cheese/ss...` 输入在非交互模式下需要 `--select`�
 `/medialist/.../ml...` 页面。空间合集和系列 URL 会保留
 `/space.bilibili.com/<mid>/...` 或 `/list/<mid>?sid=...` 中的 owner mid，让解析器可以使用
 新的 owner-scoped 空间 API。
+观看历史输入支持 `history` 和 `https://www.bilibili.com/account/history`。它需要已认证的
+WEB cookie，目前只输出普通视频 `archive` 记录；PGC、直播或专栏等其它历史记录 business
+类型会被跳过，直到这些条目形态有专门的 collection planning 支持。
 
 ## 下载计划
 
@@ -93,6 +98,7 @@ bbdown plan ss26801 --select latest --json
 bbdown plan https://www.bilibili.tv/en/play/34613/341736 --json
 bbdown plan cheese/ep101 --json
 bbdown plan fav456 --select 1,3-5 --json
+bbdown plan history --select latest --json
 bbdown plan 'https://space.bilibili.com/123/channel/collectiondetail?sid=456' --select all --json
 ```
 

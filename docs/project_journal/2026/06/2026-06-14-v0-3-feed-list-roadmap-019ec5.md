@@ -23,7 +23,7 @@ superseded_by:
 - PR 1 records this roadmap and the completed `0.2.0` release state.
 - PR 2 adds a shared feed/list resolver abstraction that can support multiple page families without
   baking each page type into unrelated collection code paths.
-- PR 3 will add history record parsing on top of the shared abstraction.
+- PR 3 adds history record parsing on top of the shared abstraction.
 - PR 4 will add following/UP page parsing on top of the shared abstraction.
 - PR 5 will add recommendation page parsing on top of the shared abstraction.
 - PR 6 will add watch-later parsing after the other feed/list inputs are in place.
@@ -31,7 +31,8 @@ superseded_by:
   candidate creation should use the next automatically selected RC number.
 
 ## Next Steps
-- Cut the history parsing branch from the updated `master` as the next `0.3.0` feature slice.
+- Cut the following/UP page parsing branch from the updated `master` as the next `0.3.0` feature
+  slice.
 - Keep the remaining BBDown parity backlog, including aria2 or multi-thread download integration,
   MP4Box muxing, and subtitle-to-SRT conversion, outside this six-PR feed/list sequence unless Joey
   explicitly reprioritizes it.
@@ -54,3 +55,5 @@ superseded_by:
   next action.
 - Feed/list abstraction slice detail:
   `docs/project_journal/2026/06/2026-06-14-feed-list-resolver-abstraction-019ec6.md`.
+- History parsing slice detail:
+  `docs/project_journal/2026/06/2026-06-14-history-feed-list-parsing-019ec7.md`.

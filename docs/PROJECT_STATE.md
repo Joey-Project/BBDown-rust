@@ -23,6 +23,8 @@
   - `docs/project_journal/2026/06/2026-06-13-app-grpc-playurl-mode-019eb8.md`.
   - `docs/project_journal/2026/06/2026-06-13-version-0-3-0-bump-019eb8.md`.
   - `docs/project_journal/2026/06/2026-06-13-release-0-2-0-branch-rc2-019ec2.md`.
+  - `docs/project_journal/2026/06/2026-06-14-feed-list-resolver-abstraction-019ec6.md`.
+  - `docs/project_journal/2026/06/2026-06-14-history-feed-list-parsing-019ec7.md`.
 - The originally planned rewrite continuation slices are complete through download archive and
   duplicate decision handling.
 - Human-facing docs now have English and Simplified Chinese versions, and the latest real live e2e
@@ -32,9 +34,9 @@
   Release and crates.io.
 - Versions `0.1.0` and `0.2.0` have shipped through that flow as GitHub Releases `v0.1.0` /
   `v0.2.0` and crates.io package versions `bbdown-core` `0.1.0` / `0.2.0`.
-- `master` is now the `0.3.0` development line. The next planned workstream is richer feed/list
-  parsing: shared resolver abstraction, history, following/UP pages, recommendations, and
-  watch-later in that order.
+- `master` is now the `0.3.0` development line. The richer feed/list sequence has completed the
+  shared resolver abstraction and history parsing; the next planned slice is following/UP pages,
+  then recommendations, then watch-later.
 - `v0.3.0-rc.1` is abandoned; its promotion run was cancelled before final tag, GitHub Release, or
   crates.io publication. Use the next automatically selected RC number when the `0.3.0` line is
   ready for release.

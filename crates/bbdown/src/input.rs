@@ -26,6 +26,7 @@ pub enum Input {
         list_id: u64,
         owner_mid: u64,
     },
+    History,
     IntlEpisode(u64),
     ShortLink(String),
 }
@@ -78,6 +79,9 @@ impl Input {
         if let Some(id) = lower.strip_prefix("series") {
             return parse_number(id, "series list").map(Self::SeriesList);
         }
+        if lower == "history" {
+            return Ok(Self::History);
+        }
         if trimmed.chars().all(|ch| ch.is_ascii_digit()) {
             return parse_number(trimmed, "aid").map(Self::Aid);
         }
@@ -100,6 +104,7 @@ impl Input {
             | Self::SeriesList(_)
             | Self::SpaceCollectionList { .. }
             | Self::SpaceSeriesList { .. }
+            | Self::History
             | Self::IntlEpisode(_)
             | Self::ShortLink(_) => Ok(None),
         }
@@ -129,6 +134,9 @@ fn parse_url(raw: &str) -> Result<Input> {
         && let Some(input) = parse_space_url(&url)?
     {
         return Ok(input);
+    }
+    if parse_history_url(&url) {
+        return Ok(Input::History);
     }
 
     if path.contains("/cheese/") {
@@ -177,6 +185,24 @@ fn parse_url(raw: &str) -> Result<Input> {
     }
 
     Err(Error::InvalidInput(raw.to_owned()))
+}
+
+fn parse_history_url(url: &Url) -> bool {
+    let Some(host) = url.host_str().map(str::to_ascii_lowercase) else {
+        return false;
+    };
+    if host != "www.bilibili.com" && host != "bilibili.com" {
+        return false;
+    }
+    let path_segments = url
+        .path_segments()
+        .map(|segments| {
+            segments
+                .filter(|segment| !segment.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    path_segments.as_slice() == ["account", "history"]
 }
 
 fn parse_space_url(url: &Url) -> Result<Option<Input>> {
@@ -397,6 +423,15 @@ mod tests {
                 list_id: 547_718,
                 owner_mid: 1_958_703_906,
             }
+        );
+        assert_eq!(Input::parse("history")?, Input::History);
+        assert_eq!(
+            Input::parse("https://www.bilibili.com/account/history")?,
+            Input::History
+        );
+        assert_eq!(
+            Input::parse("https://www.bilibili.com/account/history/")?,
+            Input::History
         );
         assert_eq!(
             Input::parse("https://space.bilibili.com/123")?,

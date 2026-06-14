@@ -7,8 +7,8 @@
 - Build a Rust crate that other projects can embed without shelling out to a CLI.
 - Keep the CLI as the user-facing tool and e2e test surface.
 - Preserve BBDown's practical Bilibili knowledge while replacing CLI-log parsing with typed data.
-- Support normal videos, `ep`, `ss`, `md`, intl episodes, PUGV/cheese inputs, batch collection
-  inputs, B23 short links, and configured restricted-area resolvers.
+- Support normal videos, `ep`, `ss`, `md`, intl episodes, PUGV/cheese inputs, batch collection and
+  feed/list inputs, B23 short links, and configured restricted-area resolvers.
 
 ## Workspace
 
@@ -42,6 +42,8 @@ Inputs normalize into `Input`:
 - `SpaceVideos`, `FavoriteList`, `CollectionList`, `SeriesList`, `SpaceCollectionList`, and
   `SpaceSeriesList` for batch content. Owner-scoped space collection/series variants keep the
   uploader mid from canonical URLs so newer space APIs can be called directly.
+- `History` for authenticated watch-history input from the `history` shorthand or the
+  `/account/history` page.
 - `ShortLink` for B23 links, resolved through HTTP redirect before normal input dispatch.
 
 The library resolves metadata into `ResolvedContent`:
@@ -49,15 +51,15 @@ The library resolves metadata into `ResolvedContent`:
 - `VideoMetadata` includes title, description, owner, tags, cover, pub time, and pages.
 - `SeasonResolution` includes season metadata plus the selected episode set.
 - `VideoCollectionResolution` includes collection metadata plus the selected item set for
-  favorites, space uploads, collections, and series. Favorite parsing accepts shorthand ids,
-  path-based medialist pages, and canonical `/list/ml...` pages. `resolve_input` keeps full parsed
-  collection metadata even when a selector narrows `selected_items`.
+  favorites, space uploads, collections, series, and watch history. Favorite parsing accepts
+  shorthand ids, path-based medialist pages, and canonical `/list/ml...` pages. `resolve_input`
+  keeps full parsed collection metadata even when a selector narrows `selected_items`.
 
 Feed/list behavior that is shared across collection-like page families lives behind an internal
 `feed_list` resolver layer. It owns selection validation, page/range fetch-mode calculation,
 identity-based deduplication, and one-based item renumbering. The existing public collection output
-shape stays unchanged; new page families such as history, following/UP pages, recommendations, and
-watch-later should add page-specific fetchers on top of this layer instead of reimplementing
+shape stays unchanged; page families such as history, following/UP pages, recommendations, and
+watch-later add page-specific fetchers on top of this layer instead of reimplementing
 selection and pagination rules.
 
 The library resolves media availability into `DownloadPlan`:
@@ -71,16 +73,18 @@ The library resolves media availability into `DownloadPlan`:
 - `DanmakuTrack` records the XML comment endpoint derived from `cid` and the configured comment
   endpoint base.
 
-`ss`, `md`, and `cheese/ss` require a `Selection` in non-interactive contexts. Batch collection
-inputs default to all parsed items; callers can pass `Selection::Page(...)` for one item,
+`ss`, `md`, and `cheese/ss` require a `Selection` in non-interactive contexts. Batch collection and
+feed/list inputs default to all parsed items; callers can pass `Selection::Page(...)` for one item,
 `Selection::Indices(IndexSelection)` for list/range selection over item indexes, or
 `Selection::Latest` for the first parsed item in the upstream list order. The same index-selection
 surface applies to normal video pages and season episode indexes, while `Selection::Episode(...)`
 continues to mean an exact PGC episode id. Empty batch collections resolve as empty selected item
 lists for the default/all selection. `plan_download` may fetch only enough batch items to cover the
-selected maximum index because `DownloadPlan` does not expose collection metadata. The CLI will
-later add interactive prompting, but the library keeps season-like contracts explicit so
-integrations cannot accidentally download a full season.
+selected maximum index because `DownloadPlan` does not expose collection metadata. History input
+uses the web history cursor endpoint, requires an authenticated cookie, and currently filters to
+normal-video `archive` records that can plan through the normal video pipeline. The CLI will later
+add interactive prompting, but the library keeps season-like contracts explicit so integrations
+cannot accidentally download a full season.
 
 Mode-aware planning uses the same resolver dispatch but skips media stream resolution for
 sidecar-only modes. Callers that need a plan for archive preflight or UI decisions with a

@@ -179,6 +179,33 @@ fn info_json_resolves_mock_favorite_collection() -> anyhow::Result<()> {
 }
 
 #[test]
+fn info_json_resolves_mock_history_collection() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    mock_history_collection(&server);
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("info")
+        .arg("history")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    assert_eq!(json["collection"]["collection"]["kind"], "history");
+    assert_eq!(json["collection"]["collection"]["title"], "History");
+    assert_eq!(
+        json["collection"]["selected_items"][0]["title"],
+        "History video"
+    );
+    Ok(())
+}
+
+#[test]
 fn plan_json_resolves_mock_video_streams() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;
@@ -984,6 +1011,63 @@ fn mock_favorite_collection(server: &MockServer) {
                     "upper": {"mid": 1, "name": "Tester"},
                     "ugc": {"first_cid": 9988}
                 }]
+            }
+        }));
+    });
+}
+
+fn mock_history_collection(server: &MockServer) {
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/history/cursor")
+            .query_param("max", "0")
+            .query_param("view_at", "0")
+            .query_param("business", "")
+            .query_param("type", "archive")
+            .query_param("ps", "20");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "cursor": {
+                    "max": 170_001,
+                    "view_at": 1_700_000_000_i64,
+                    "business": "archive"
+                },
+                "list": [{
+                    "aid": 170_001,
+                    "bvid": "BV1xx411c7mD",
+                    "title": "History video",
+                    "pic": "https://example.invalid/history.jpg",
+                    "duration": 3,
+                    "author_mid": 1,
+                    "author_name": "Tester",
+                    "history": {
+                        "oid": 170_001,
+                        "cid": 9988,
+                        "page": 1,
+                        "business": "archive"
+                    }
+                }]
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/history/cursor")
+            .query_param("max", "170001")
+            .query_param("view_at", "1700000000")
+            .query_param("business", "archive")
+            .query_param("type", "archive")
+            .query_param("ps", "20");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "cursor": {
+                    "max": 170_001,
+                    "view_at": 1_700_000_000_i64,
+                    "business": "archive"
+                },
+                "list": []
             }
         }));
     });
