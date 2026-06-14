@@ -44,7 +44,7 @@ metadata，以及 TV/APP playurl modes；调用方应读取字段或序列化输
   URL 中的 uploader mid，以便直接调用较新的空间 API。
 - `RecommendationFeed` 用于 `recommendations` shorthand 或 B 站首页 URL 的首页推荐批次。
 - `History` 用于 `history` shorthand 或 `/account/history` 页面上的登录态观看历史输入。
-- `WatchLater` 用于稍后再看 shorthand 或 `/watchlater` 页面上的登录态稍后再看输入。
+- `WatchLater` 用于稍后再看 shorthand、`/watchlater` 或 `/list/watchlater` 页面上的登录态稍后再看输入。
 - `FollowingFeed` 和 `SpaceDynamic` 用于登录态关注动态视频 feed，或单个 UP 主的动态页面。
 - `ShortLink` 用于 B23 链接，会先通过 HTTP redirect 解析，再进入普通输入分发。
 

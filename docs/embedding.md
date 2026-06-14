@@ -120,8 +120,8 @@ represents legacy FLV as a single ordered segment list.
 `BiliClient::resolve_input` accepts CLI-style raw inputs such as B23 short links, `fav...`,
 `mid...`, `collection...`, `series...`, `recommendations`, `history`, `watch-later`, `following`, canonical
 favorite `/list/ml...` URLs, path-based `/medialist/.../ml...` URLs, space collection URLs, space
-series URLs, the Bilibili homepage, the authenticated `/account/history` and `/watchlater` pages,
-and dynamic feed pages. Batch inputs resolve to
+series URLs, the Bilibili homepage, the authenticated `/account/history`, `/watchlater`, and
+`/list/watchlater` pages, and dynamic feed pages. Batch inputs resolve to
 `ResolvedContent::Collection`, which carries full collection metadata plus the selected items.
 Owner-scoped space list URLs keep the uploader mid so the resolver can use newer space collection
 and series APIs. Without a selector, collection-like inputs select all parsed items; pass
@@ -143,8 +143,8 @@ support.
 
 Watch-later input uses the web toview endpoint and also requires a cookie on
 `ClientConfig::credentials`. It accepts `watchlater`, `watch-later`, `watch_later`, `later`,
-`toview`, and `https://www.bilibili.com/watchlater`, then emits normal videos from the
-authenticated account's watch-later list.
+`toview`, `https://www.bilibili.com/watchlater`, and `https://www.bilibili.com/list/watchlater`,
+then emits normal videos from the authenticated account's watch-later list.
 
 Following input uses the web dynamic feed endpoint and therefore also requires a cookie on
 `ClientConfig::credentials`. It accepts the `following` shorthand plus the dynamic home URLs.

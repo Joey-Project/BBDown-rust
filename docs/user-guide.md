@@ -101,9 +101,10 @@ Watch-history input accepts `history` and `https://www.bilibili.com/account/hist
 authenticated web cookie and currently emits normal-video `archive` records; other history business
 types such as PGC, live, or article records are skipped until those item shapes have dedicated
 collection planning support.
-Watch-later input accepts `watchlater`, `watch-later`, `watch_later`, `later`, `toview`, and
-`https://www.bilibili.com/watchlater`. It requires an authenticated web cookie and emits normal
-videos from the authenticated account's watch-later list.
+Watch-later input accepts `watchlater`, `watch-later`, `watch_later`, `later`, `toview`,
+`https://www.bilibili.com/watchlater`, and `https://www.bilibili.com/list/watchlater`. It requires
+an authenticated web cookie and emits normal videos from the authenticated account's watch-later
+list.
 Following feed input accepts `following`, `https://t.bilibili.com/`, and
 `https://www.bilibili.com/account/dynamic`. Space dynamic feed input accepts
 `https://space.bilibili.com/<mid>/dynamic`. These dynamic feed inputs require an authenticated web

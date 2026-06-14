@@ -20,7 +20,8 @@ host 控制，以及 builder 风格的 crate 集成 API。它还支持显式下�
 `bilibili.com/list/...` 页面、
 path-based medialist 收藏夹 URL，以及带 uploader mid 的空间合集 / 系列 URL，以便使用较
 新的空间 API；同时支持 B 站首页、空间动态页面和需要登录态的
-`bilibili.com/account/history` 观看历史页面以及 `bilibili.com/watchlater` 稍后再看页面。
+`bilibili.com/account/history` 观看历史页面，以及 `bilibili.com/watchlater` 和
+`bilibili.com/list/watchlater` 稍后再看页面。
 
 ## 当前 CLI
 
@@ -158,8 +159,8 @@ bbdown info ss26801 --select page:1
 观看历史输入可使用 `history` 或 `https://www.bilibili.com/account/history`，需要已认证的
 WEB cookie，目前只包含普通视频 `archive` 历史记录。稍后再看输入可使用 `watchlater`、
 `watch-later`、`watch_later`、`later`、`toview` 或
-`https://www.bilibili.com/watchlater`，需要已认证的 WEB cookie，并包含该账号稍后再看列
-表中的普通视频。关注输入可使用 `following`、
+`https://www.bilibili.com/watchlater` 或 `https://www.bilibili.com/list/watchlater`，需要已
+认证的 WEB cookie，并包含该账号稍后再看列表中的普通视频。关注输入可使用 `following`、
 `https://t.bilibili.com/` 或 `https://www.bilibili.com/account/dynamic`；空间动态输入使用
 `https://space.bilibili.com/<mid>/dynamic`。动态 feed 输入需要已认证的 WEB cookie，目前只
 包含普通视频 archive 卡片。

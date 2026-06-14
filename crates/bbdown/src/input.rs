@@ -251,6 +251,7 @@ fn parse_watch_later_url(url: &Url) -> bool {
         })
         .unwrap_or_default();
     path_segments.first() == Some(&"watchlater")
+        || path_segments.as_slice() == ["list", "watchlater"]
 }
 
 fn parse_recommendation_url(url: &Url) -> bool {
@@ -579,6 +580,10 @@ mod tests {
         );
         assert_eq!(
             Input::parse("https://bilibili.com/watchlater/")?,
+            Input::WatchLater
+        );
+        assert_eq!(
+            Input::parse("https://www.bilibili.com/list/watchlater?bvid=BV1xx411c7mD")?,
             Input::WatchLater
         );
         Ok(())

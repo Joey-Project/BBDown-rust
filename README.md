@@ -21,8 +21,8 @@ favorite lists, space videos, collections, series, homepage recommendations, wat
 watch-later lists, following video feeds, and space dynamic video feeds. URL parsing includes canonical
 `bilibili.com/list/...` pages, path-based medialist favorite URLs, space collection/series URLs that
 carry the uploader mid needed by newer space APIs, the Bilibili homepage, space dynamic pages, plus
-the authenticated `bilibili.com/account/history` watch-history page and `bilibili.com/watchlater`
-watch-later page.
+the authenticated `bilibili.com/account/history` watch-history page plus `bilibili.com/watchlater`
+and `bilibili.com/list/watchlater` watch-later pages.
 
 ## Current CLI
 
@@ -165,7 +165,8 @@ normal-video `av` cards, walking additional `fresh_idx` refresh batches within a
 needed to cover explicit index selection. History input uses `history` or
 `https://www.bilibili.com/account/history`, requires an authenticated web cookie, and currently
 includes normal-video `archive` history records. Watch-later input uses `watchlater`,
-`watch-later`, `watch_later`, `later`, `toview`, or `https://www.bilibili.com/watchlater`, requires
+`watch-later`, `watch_later`, `later`, `toview`, `https://www.bilibili.com/watchlater`, or
+`https://www.bilibili.com/list/watchlater`, requires
 an authenticated web cookie, and includes normal videos from the authenticated account's
 watch-later list. Following
 input uses `following`, `https://t.bilibili.com/`, or

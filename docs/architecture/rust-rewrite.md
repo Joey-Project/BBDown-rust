@@ -46,8 +46,8 @@ Inputs normalize into `Input`:
   the Bilibili homepage URL.
 - `History` for authenticated watch-history input from the `history` shorthand or the
   `/account/history` page.
-- `WatchLater` for authenticated watch-later input from the watch-later shorthands or the
-  `/watchlater` page.
+- `WatchLater` for authenticated watch-later input from the watch-later shorthands, `/watchlater`,
+  or `/list/watchlater` pages.
 - `FollowingFeed` and `SpaceDynamic` for authenticated dynamic video feeds from followed uploaders
   or one uploader's dynamic page.
 - `ShortLink` for B23 links, resolved through HTTP redirect before normal input dispatch.

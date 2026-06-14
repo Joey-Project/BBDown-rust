@@ -94,9 +94,9 @@ selection 需要时会在安全上限内继续请求后续 `fresh_idx` 刷新批
 观看历史输入支持 `history` 和 `https://www.bilibili.com/account/history`。它需要已认证的
 WEB cookie，目前只输出普通视频 `archive` 记录；PGC、直播或专栏等其它历史记录 business
 类型会被跳过，直到这些条目形态有专门的 collection planning 支持。
-稍后再看输入支持 `watchlater`、`watch-later`、`watch_later`、`later`、`toview` 和
-`https://www.bilibili.com/watchlater`。它需要已认证的 WEB cookie，并输出该账号稍后再看
-列表中的普通视频。
+稍后再看输入支持 `watchlater`、`watch-later`、`watch_later`、`later`、`toview`、
+`https://www.bilibili.com/watchlater` 和 `https://www.bilibili.com/list/watchlater`。它需要
+已认证的 WEB cookie，并输出该账号稍后再看列表中的普通视频。
 关注 feed 输入支持 `following`、`https://t.bilibili.com/` 和
 `https://www.bilibili.com/account/dynamic`。空间动态 feed 输入支持
 `https://space.bilibili.com/<mid>/dynamic`。这些动态 feed 输入需要已认证的 WEB cookie，目

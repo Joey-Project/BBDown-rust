@@ -115,8 +115,8 @@ MP4 codec 字符串。多个 APP legacy FLV 分段清晰度会压缩为最高质
 `BiliClient::resolve_input` 接受 CLI 风格原始输入，例如 B23 短链接、`fav...`、`mid...`、
 `collection...`、`series...`、`recommendations`、`history`、`watch-later`、`following`、
 canonical 收藏夹 `/list/ml...` URL、path-based `/medialist/.../ml...` URL、空间合集 URL、
-空间系列 URL、B 站首页、需要登录态的 `/account/history` 和 `/watchlater` 页面，以及动态
-feed 页面。批量输入会解析为
+空间系列 URL、B 站首页、需要登录态的 `/account/history`、`/watchlater` 和
+`/list/watchlater` 页面，以及动态 feed 页面。批量输入会解析为
 `ResolvedContent::Collection`，其中包含完整 collection metadata 和选中的条目。
 owner-scoped 空间列表 URL 会保留 uploader mid，让解析器可以使用较新的空间合集和系列
 API。不带 selector 时，集合类输入会选择全部解析条目；传入 `Selection::Page(index)` 可
@@ -136,7 +136,8 @@ cookie。当前 history collection 只输出普通视频 `archive` 记录，这�
 
 稍后再看输入使用 WEB toview 端点，因此也需要在 `ClientConfig::credentials` 中提供
 cookie。它支持 `watchlater`、`watch-later`、`watch_later`、`later`、`toview` 和
-`https://www.bilibili.com/watchlater`，并输出该账号稍后再看列表中的普通视频。
+`https://www.bilibili.com/watchlater`、`https://www.bilibili.com/list/watchlater`，并输出该
+账号稍后再看列表中的普通视频。
 
 关注输入使用 WEB dynamic feed 端点，因此同样需要在 `ClientConfig::credentials` 中提供
 cookie。它支持 `following` shorthand 和动态首页 URL。空间动态输入支持
