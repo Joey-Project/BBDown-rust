@@ -1827,11 +1827,13 @@ impl BiliClient {
             if fetch_mode.is_satisfied_by(items.len()) || !page.has_more.unwrap_or(false) {
                 break;
             }
-            let next_offset = page.offset.filter(|value| !value.is_empty());
-            if next_offset == offset {
+            let Some(next_offset) = page.offset.filter(|value| !value.is_empty()) else {
+                break;
+            };
+            if offset.as_deref() == Some(next_offset.as_str()) {
                 break;
             }
-            offset = next_offset;
+            offset = Some(next_offset);
         }
         renumber_collection_items(&mut items);
         let owner = match kind {
@@ -6665,6 +6667,106 @@ mod tests {
                     .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("expected owner"))?;
                 assert_eq!(owner.name, "Tester");
+            }
+            ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
+                return Err(anyhow::anyhow!("expected collection"));
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn dynamic_feed_stops_when_next_offset_is_missing() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/polymer/web-dynamic/v1/feed/all")
+                .query_param("type", "video")
+                .query_param("platform", "web")
+                .query_param_missing("offset");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "has_more": true,
+                    "offset": "offset-1",
+                    "items": [{
+                        "type": "DYNAMIC_TYPE_AV",
+                        "visible": true,
+                        "modules": {
+                            "module_dynamic": {
+                                "major": {
+                                    "type": "MAJOR_TYPE_ARCHIVE",
+                                    "archive": {"aid": 170_001}
+                                }
+                            }
+                        }
+                    }]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/polymer/web-dynamic/v1/feed/all")
+                .query_param("type", "video")
+                .query_param("platform", "web")
+                .query_param("offset", "offset-1");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "has_more": true,
+                    "items": [{
+                        "type": "DYNAMIC_TYPE_AV",
+                        "visible": true,
+                        "modules": {
+                            "module_dynamic": {
+                                "major": {
+                                    "type": "MAJOR_TYPE_ARCHIVE",
+                                    "archive": {"aid": 170_002}
+                                }
+                            }
+                        }
+                    }]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("aid", "170001");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "aid": 170_001,
+                    "bvid": "BV1xx411c7mD",
+                    "title": "First dynamic video",
+                    "pages": [{"page": 1, "cid": 9988, "part": "Main", "duration": 3}]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("aid", "170002");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "aid": 170_002,
+                    "bvid": "BV1xx411c7mE",
+                    "title": "Second dynamic video",
+                    "pages": [{"page": 1, "cid": 9989, "part": "Main", "duration": 4}]
+                }
+            }));
+        });
+
+        let resolved = test_client(&server)
+            .resolve_input("following", None)
+            .await?;
+
+        match resolved {
+            ResolvedContent::Collection(collection) => {
+                assert_eq!(collection.collection.items.len(), 2);
+                assert_eq!(collection.collection.items[0].title, "First dynamic video");
+                assert_eq!(collection.collection.items[1].title, "Second dynamic video");
             }
             ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
                 return Err(anyhow::anyhow!("expected collection"));
