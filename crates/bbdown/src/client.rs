@@ -24,6 +24,9 @@ use url::Url;
 const TV_PLAYURL_APPKEY: &str = "4409e2ce8ffd12b8";
 const TV_PLAYURL_APP_SECRET: &str = "59b43e04ad6965f34319062b478f83dd";
 const DYNAMIC_FEED_FEATURES: &str = "itemOpusStyle,listOnlyfans,opusBigCover,onlyfansVote,forwardListHidden,decorationCard,commentsNewVersion,onlyfansAssetsV2,ugcDelete,onlyfansQaCard";
+const RECOMMENDATION_MIN_PAGE_SIZE: u32 = 20;
+const RECOMMENDATION_MAX_PAGE_SIZE: u32 = 30;
+const RECOMMENDATION_MAX_REFRESH_PAGES: u32 = 10;
 
 #[non_exhaustive]
 #[derive(Clone, Debug)]
@@ -452,6 +455,7 @@ impl BiliClient {
                 self.resolve_space_list(owner_mid, list_id, SpaceListKind::Series, selection)
                     .await
             }
+            Input::RecommendationFeed => self.resolve_recommendations(selection).await,
             Input::FollowingFeed => {
                 self.resolve_dynamic_feed(DynamicFeedKind::Following, selection)
                     .await
@@ -514,6 +518,16 @@ impl BiliClient {
     ) -> Result<ResolvedContent> {
         let fetch_mode = Self::collection_info_fetch_mode(selection.as_ref())?;
         self.fetch_dynamic_video_collection(kind, selection, fetch_mode)
+            .await
+            .map(ResolvedContent::Collection)
+    }
+
+    async fn resolve_recommendations(
+        &self,
+        selection: Option<Selection>,
+    ) -> Result<ResolvedContent> {
+        let fetch_mode = Self::collection_fetch_mode(selection.as_ref())?;
+        self.fetch_recommendation_collection(selection, fetch_mode, false)
             .await
             .map(ResolvedContent::Collection)
     }
@@ -650,6 +664,7 @@ impl BiliClient {
             | Input::SeriesList(_)
             | Input::SpaceCollectionList { .. }
             | Input::SpaceSeriesList { .. }
+            | Input::RecommendationFeed
             | Input::FollowingFeed
             | Input::SpaceDynamic(_)
             | Input::History) => {
@@ -756,6 +771,13 @@ impl BiliClient {
                     planning_mode,
                 )
                 .await
+            }
+            Input::RecommendationFeed => {
+                let fetch_mode = Self::collection_fetch_mode(selection.as_ref())?;
+                let collection = self
+                    .fetch_recommendation_collection(selection, fetch_mode, true)
+                    .await?;
+                self.plan_collection(collection, planning_mode).await
             }
             Input::FollowingFeed => {
                 let fetch_mode = Self::collection_fetch_mode(selection.as_ref())?;
@@ -1717,6 +1739,86 @@ impl BiliClient {
             videos: data.list.videos,
             page: data.page,
         })
+    }
+
+    async fn fetch_recommendation_collection(
+        &self,
+        selection: Option<Selection>,
+        fetch_mode: FeedListFetchMode,
+        stop_when_satisfied: bool,
+    ) -> Result<VideoCollectionResolution> {
+        let collection = self
+            .fetch_recommendation_collection_all(fetch_mode, stop_when_satisfied)
+            .await?;
+        Self::resolve_collection_selection(collection, selection.as_ref())
+    }
+
+    async fn fetch_recommendation_collection_all(
+        &self,
+        fetch_mode: FeedListFetchMode,
+        stop_when_satisfied: bool,
+    ) -> Result<VideoCollectionMetadata> {
+        let mixin_key = self.fetch_wbi_mixin_key().await?;
+        let mut page_size = recommendation_initial_page_size(fetch_mode);
+        let mut fresh_idx = 1;
+        let mut items = Vec::new();
+        loop {
+            let page = self
+                .fetch_recommendation_page(page_size, fresh_idx, &mixin_key)
+                .await?;
+            let raw_count = page.items.len();
+            for item in page.items {
+                push_recommendation_item(&mut items, item);
+                if stop_when_satisfied && fetch_mode.is_satisfied_by(items.len()) {
+                    break;
+                }
+            }
+            if !recommendation_should_retry(
+                fetch_mode,
+                items.len(),
+                raw_count,
+                page_size,
+                fresh_idx,
+            ) {
+                break;
+            }
+            if page_size < RECOMMENDATION_MAX_PAGE_SIZE {
+                page_size = RECOMMENDATION_MAX_PAGE_SIZE;
+            } else {
+                fresh_idx += 1;
+            }
+        }
+        renumber_collection_items(&mut items);
+        Ok(VideoCollectionMetadata {
+            id: None,
+            kind: VideoCollectionKind::Recommendation,
+            title: "Recommendations".to_owned(),
+            description: "Bilibili homepage recommendations".to_owned(),
+            cover_url: items.first().and_then(|item| item.cover_url.clone()),
+            pub_time: items.first().and_then(|item| item.pub_time),
+            owner: None,
+            items,
+        })
+    }
+
+    async fn fetch_recommendation_page(
+        &self,
+        page_size: u32,
+        fresh_idx: u32,
+        mixin_key: &str,
+    ) -> Result<RecommendationFeedData> {
+        let mut url = Self::endpoint_url(
+            &self.config.endpoints.api_base,
+            "/x/web-interface/wbi/index/top/feed/rcmd",
+        )?;
+        let params = vec![
+            ("fresh_idx", fresh_idx.to_string()),
+            ("ps", page_size.to_string()),
+            ("wts", current_unix_timestamp().to_string()),
+        ];
+        url.set_query(Some(&wbi_signed_query(params, mixin_key)));
+        let response: ApiData<RecommendationFeedData> = self.get_json(url).await?;
+        response.into_data()
     }
 
     async fn fetch_history_collection(
@@ -3417,6 +3519,26 @@ struct SpaceArchivePage {
 }
 
 #[derive(Debug, Deserialize)]
+struct RecommendationFeedData {
+    #[serde(default, rename = "item", deserialize_with = "deserialize_default_vec")]
+    items: Vec<RecommendationItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RecommendationItem {
+    #[serde(rename = "goto")]
+    target_type: Option<String>,
+    id: Option<FlexibleU64>,
+    bvid: Option<String>,
+    cid: Option<FlexibleU64>,
+    pic: Option<String>,
+    title: Option<String>,
+    duration: Option<u32>,
+    pubdate: Option<i64>,
+    owner: Option<FavoriteUpper>,
+}
+
+#[derive(Debug, Deserialize)]
 struct DynamicFeedData {
     has_more: Option<bool>,
     offset: Option<String>,
@@ -3753,6 +3875,40 @@ impl DynamicFeedKind {
     }
 }
 
+fn recommendation_initial_page_size(fetch_mode: FeedListFetchMode) -> u32 {
+    match fetch_mode {
+        FeedListFetchMode::Page(_) => RECOMMENDATION_MAX_PAGE_SIZE,
+        FeedListFetchMode::All | FeedListFetchMode::Latest => RECOMMENDATION_MIN_PAGE_SIZE,
+    }
+}
+
+fn recommendation_should_retry(
+    fetch_mode: FeedListFetchMode,
+    item_count: usize,
+    raw_count: usize,
+    page_size: u32,
+    fresh_idx: u32,
+) -> bool {
+    let Some(target) = recommendation_target_item_count(fetch_mode) else {
+        return false;
+    };
+    if item_count >= target || raw_count == 0 {
+        return false;
+    }
+    if page_size < RECOMMENDATION_MAX_PAGE_SIZE {
+        return usize::try_from(page_size).is_ok_and(|requested| raw_count >= requested);
+    }
+    fresh_idx < RECOMMENDATION_MAX_REFRESH_PAGES
+}
+
+fn recommendation_target_item_count(fetch_mode: FeedListFetchMode) -> Option<usize> {
+    match fetch_mode {
+        FeedListFetchMode::All => None,
+        FeedListFetchMode::Latest => Some(1),
+        FeedListFetchMode::Page(page) => usize::try_from(page).ok(),
+    }
+}
+
 fn episode_display_title(title: &str, long_title: Option<&str>) -> String {
     match long_title.filter(|value| !value.is_empty()) {
         Some(long_title) if title.is_empty() => long_title.to_owned(),
@@ -3803,6 +3959,37 @@ fn push_medialist_media_pages(
         );
     }
     Ok(())
+}
+
+fn push_recommendation_item(items: &mut Vec<VideoCollectionItem>, item: RecommendationItem) {
+    let Some(item) = recommendation_item(item) else {
+        return;
+    };
+    push_unique_collection_item(items, item);
+}
+
+fn recommendation_item(item: RecommendationItem) -> Option<VideoCollectionItem> {
+    if item
+        .target_type
+        .as_deref()
+        .is_some_and(|target_type| target_type != "av")
+    {
+        return None;
+    }
+    let aid = item.id.and_then(FlexibleU64::into_u64)?;
+    let cid = item.cid.and_then(FlexibleU64::into_u64)?;
+    Some(VideoCollectionItem {
+        index: 0,
+        aid,
+        bvid: item.bvid,
+        cid,
+        title: item.title.unwrap_or_else(|| aid.to_string()),
+        cover_url: item.pic,
+        description: String::new(),
+        pub_time: item.pubdate,
+        owner: item.owner.and_then(FavoriteUpper::into_owner),
+        duration_seconds: item.duration,
+    })
 }
 
 fn dynamic_archive_seed(item: DynamicFeedItem) -> Option<DynamicArchiveSeed> {
@@ -6676,6 +6863,357 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn resolves_recommendation_feed_items() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        mock_wbi_nav(&server);
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/wbi/index/top/feed/rcmd")
+                .query_param("ps", "20")
+                .query_param("fresh_idx", "1")
+                .query_param_exists("wts")
+                .query_param_exists("w_rid");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "item": [{
+                        "goto": "av",
+                        "id": 170_001,
+                        "bvid": "BV1xx411c7mD",
+                        "cid": 9988,
+                        "pic": "https://example.invalid/recommendation.jpg",
+                        "title": "Recommended video",
+                        "duration": 3,
+                        "pubdate": 1_700_000_001_i64,
+                        "owner": {"mid": 1, "name": "Tester"}
+                    }, {
+                        "goto": "live",
+                        "id": 170_002,
+                        "title": "Skipped live recommendation"
+                    }]
+                }
+            }));
+        });
+
+        let resolved = test_client(&server)
+            .resolve_input("recommendations", None)
+            .await?;
+
+        match resolved {
+            ResolvedContent::Collection(collection) => {
+                assert_eq!(
+                    collection.collection.kind,
+                    VideoCollectionKind::Recommendation
+                );
+                assert_eq!(collection.collection.title, "Recommendations");
+                assert_eq!(collection.collection.items.len(), 1);
+                assert_eq!(collection.selected_items[0].title, "Recommended video");
+                assert_eq!(collection.selected_items[0].cid, 9988);
+            }
+            ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
+                return Err(anyhow::anyhow!("expected collection"));
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolves_recommendation_page_selection_after_filtered_cards() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        mock_wbi_nav(&server);
+        server.mock(|when, then| {
+            let mut items = vec![serde_json::json!({
+                "goto": "live",
+                "id": 170_000,
+                "title": "Skipped live recommendation"
+            })];
+            items.extend((1..=21).map(|index| {
+                serde_json::json!({
+                    "goto": "av",
+                    "id": 170_000 + index,
+                    "bvid": format!("BV1xx411c{index:03}"),
+                    "cid": 9900 + index,
+                    "title": format!("Recommended video {index}")
+                })
+            }));
+            when.method(GET)
+                .path("/x/web-interface/wbi/index/top/feed/rcmd")
+                .query_param("ps", "30")
+                .query_param("fresh_idx", "1")
+                .query_param_exists("wts")
+                .query_param_exists("w_rid");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "item": items
+                }
+            }));
+        });
+
+        let resolved = test_client(&server)
+            .resolve_input("recommendations", Some(Selection::Page(21)))
+            .await?;
+
+        match resolved {
+            ResolvedContent::Collection(collection) => {
+                assert_eq!(collection.collection.items.len(), 21);
+                assert_eq!(collection.selected_items.len(), 1);
+                assert_eq!(collection.selected_items[0].index, 21);
+                assert_eq!(collection.selected_items[0].title, "Recommended video 21");
+                assert_eq!(collection.selected_items[0].cid, 9921);
+            }
+            ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
+                return Err(anyhow::anyhow!("expected collection"));
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolves_recommendation_page_selection_across_refresh_batches() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        mock_wbi_nav(&server);
+        server.mock(|when, then| {
+            let items: Vec<_> = (1..=30)
+                .map(|index| {
+                    serde_json::json!({
+                        "goto": "av",
+                        "id": 170_000 + index,
+                        "bvid": format!("BV1xx411c{index:03}"),
+                        "cid": 9900 + index,
+                        "title": format!("Recommended video {index}")
+                    })
+                })
+                .collect();
+            when.method(GET)
+                .path("/x/web-interface/wbi/index/top/feed/rcmd")
+                .query_param("ps", "30")
+                .query_param("fresh_idx", "1")
+                .query_param_exists("wts")
+                .query_param_exists("w_rid");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "item": items
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/wbi/index/top/feed/rcmd")
+                .query_param("ps", "30")
+                .query_param("fresh_idx", "2")
+                .query_param_exists("wts")
+                .query_param_exists("w_rid");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "item": [{
+                        "goto": "av",
+                        "id": 170_031,
+                        "bvid": "BV1xx411c031",
+                        "cid": 9931,
+                        "title": "Recommended video 31"
+                    }]
+                }
+            }));
+        });
+
+        let resolved = test_client(&server)
+            .resolve_input("recommendations", Some(Selection::Page(31)))
+            .await?;
+
+        match resolved {
+            ResolvedContent::Collection(collection) => {
+                assert_eq!(collection.collection.items.len(), 31);
+                assert_eq!(collection.selected_items.len(), 1);
+                assert_eq!(collection.selected_items[0].index, 31);
+                assert_eq!(collection.selected_items[0].title, "Recommended video 31");
+            }
+            ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
+                return Err(anyhow::anyhow!("expected collection"));
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolves_recommendation_latest_keeps_batch_metadata() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        mock_wbi_nav(&server);
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/wbi/index/top/feed/rcmd")
+                .query_param("ps", "20")
+                .query_param("fresh_idx", "1")
+                .query_param_exists("wts")
+                .query_param_exists("w_rid");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "item": [{
+                        "goto": "av",
+                        "id": 170_001,
+                        "bvid": "BV1xx411c7mD",
+                        "cid": 9988,
+                        "title": "First recommended video"
+                    }, {
+                        "goto": "av",
+                        "id": 170_002,
+                        "bvid": "BV1xx411c7mE",
+                        "cid": 9989,
+                        "title": "Second recommended video"
+                    }]
+                }
+            }));
+        });
+
+        let resolved = test_client(&server)
+            .resolve_input("recommendations", Some(Selection::Latest))
+            .await?;
+
+        match resolved {
+            ResolvedContent::Collection(collection) => {
+                assert_eq!(collection.collection.items.len(), 2);
+                assert_eq!(collection.selected_items.len(), 1);
+                assert_eq!(
+                    collection.selected_items[0].title,
+                    "First recommended video"
+                );
+            }
+            ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
+                return Err(anyhow::anyhow!("expected collection"));
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolves_recommendation_latest_retries_after_filtered_batch() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        mock_wbi_nav(&server);
+        server.mock(|when, then| {
+            let items: Vec<_> = (1..=20)
+                .map(|index| {
+                    serde_json::json!({
+                        "goto": "live",
+                        "id": 170_000 + index,
+                        "title": format!("Skipped live recommendation {index}")
+                    })
+                })
+                .collect();
+            when.method(GET)
+                .path("/x/web-interface/wbi/index/top/feed/rcmd")
+                .query_param("ps", "20")
+                .query_param("fresh_idx", "1")
+                .query_param_exists("wts")
+                .query_param_exists("w_rid");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "item": items
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            let mut items: Vec<_> = (1..=20)
+                .map(|index| {
+                    serde_json::json!({
+                        "goto": "live",
+                        "id": 170_000 + index,
+                        "title": format!("Skipped live recommendation {index}")
+                    })
+                })
+                .collect();
+            items.push(serde_json::json!({
+                "goto": "av",
+                "id": 170_021,
+                "bvid": "BV1xx411c7mF",
+                "cid": 9921,
+                "title": "Retried recommended video"
+            }));
+            when.method(GET)
+                .path("/x/web-interface/wbi/index/top/feed/rcmd")
+                .query_param("ps", "30")
+                .query_param("fresh_idx", "1")
+                .query_param_exists("wts")
+                .query_param_exists("w_rid");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "item": items
+                }
+            }));
+        });
+
+        let resolved = test_client(&server)
+            .resolve_input("recommendations", Some(Selection::Latest))
+            .await?;
+
+        match resolved {
+            ResolvedContent::Collection(collection) => {
+                assert_eq!(collection.collection.items.len(), 1);
+                assert_eq!(collection.selected_items.len(), 1);
+                assert_eq!(
+                    collection.selected_items[0].title,
+                    "Retried recommended video"
+                );
+            }
+            ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
+                return Err(anyhow::anyhow!("expected collection"));
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn plans_recommendation_latest_as_normal_video_entry() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        mock_wbi_nav(&server);
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/wbi/index/top/feed/rcmd")
+                .query_param("ps", "20")
+                .query_param("fresh_idx", "1")
+                .query_param_exists("wts")
+                .query_param_exists("w_rid");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "item": [{
+                        "goto": "av",
+                        "id": 170_001,
+                        "bvid": "BV1xx411c7mD",
+                        "cid": 9988,
+                        "pic": "https://example.invalid/recommendation.jpg",
+                        "title": "Recommended video",
+                        "duration": 3,
+                        "owner": {"mid": 1, "name": "Tester"}
+                    }, {
+                        "goto": "av",
+                        "id": 170_002,
+                        "bvid": "BV1xx411c7mE",
+                        "cid": 9989,
+                        "title": "Second recommended video"
+                    }]
+                }
+            }));
+        });
+        server_mock_playurl(&server, 170_001, 9988, "recommendation");
+        server_mock_player_v2(&server, 170_001, 9988);
+
+        let plan = test_client(&server)
+            .plan_download("https://www.bilibili.com/", Some(Selection::Latest))
+            .await?;
+
+        assert_eq!(plan.title, "Recommendations");
+        assert_eq!(plan.entries.len(), 1);
+        assert_eq!(plan.entries[0].title, "Recommended video");
+        assert_eq!(plan.entries[0].source, StreamSource::NormalWeb);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn dynamic_feed_stops_when_next_offset_is_missing() -> anyhow::Result<()> {
         let server = MockServer::start();
         server.mock(|when, then| {
@@ -9331,6 +9869,21 @@ mod tests {
             user_agent: "test".to_owned(),
             request_timeout: Duration::from_secs(30),
         })
+    }
+
+    fn mock_wbi_nav(server: &MockServer) {
+        server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/nav");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "wbi_img": {
+                        "img_url": "https://i0.hdslb.com/bfs/wbi/0123456789abcdef0123456789abcdef.png",
+                        "sub_url": "https://i0.hdslb.com/bfs/wbi/fedcba9876543210fedcba9876543210.png"
+                    }
+                }
+            }));
+        });
     }
 
     fn mock_favorite_collection(server: &MockServer) {

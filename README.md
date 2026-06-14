@@ -17,11 +17,11 @@ ordering with diagnostics, playback request specs for downstream streaming/cache
 UPOS/PCDN media host controls, and builder-style crate integration APIs. It also supports an
 explicit download archive for duplicate preflight and CLI replace / keep-both / cancel decisions.
 Input parsing covers normal videos, PGC and intl episodes, PUGV/cheese courses, B23 short links,
-favorite lists, space videos, collections, series, watch history, following video feeds, and space
-dynamic video feeds. URL parsing includes canonical `bilibili.com/list/...` pages, path-based
-medialist favorite URLs, space collection/series URLs that carry the uploader mid needed by newer
-space APIs, space dynamic pages, plus the authenticated `bilibili.com/account/history`
-watch-history page.
+favorite lists, space videos, collections, series, homepage recommendations, watch history,
+following video feeds, and space dynamic video feeds. URL parsing includes canonical
+`bilibili.com/list/...` pages, path-based medialist favorite URLs, space collection/series URLs that
+carry the uploader mid needed by newer space APIs, the Bilibili homepage, space dynamic pages, plus
+the authenticated `bilibili.com/account/history` watch-history page.
 
 ## Current CLI
 
@@ -36,6 +36,7 @@ bbdown info md22718131 --select latest --json
 bbdown info https://b23.tv/example --json
 bbdown info cheese/ep101 --json
 bbdown info fav456 --json
+bbdown info recommendations --select latest --json
 bbdown info history --select latest --json
 bbdown info following --select latest --json
 bbdown info https://www.bilibili.com/list/ml1103407912 --json
@@ -51,6 +52,7 @@ bbdown plan ep267851 --json
 bbdown plan ss26801 --select latest --json
 bbdown plan https://www.bilibili.tv/en/play/34613/341736 --json
 bbdown plan fav456 --select page:1 --json
+bbdown plan recommendations --select latest --json
 bbdown plan history --select latest --json
 bbdown plan following --select latest --json
 bbdown plan cheese/ss202 --select latest --json
@@ -153,11 +155,15 @@ bbdown info ss26801 --select page:1
 ```
 
 `cheese/ss...` inputs follow the same explicit-selection rule. Favorite lists, space videos,
-collections, series, watch history, following feeds, and space dynamic feeds are batch inputs;
-without `--select`, they resolve all parsed items. History input uses `history` or
+collections, series, homepage recommendations, watch history, following feeds, and space dynamic
+feeds are batch inputs. Recommendation input uses `recommendations`, `recommendation`, `recommend`,
+or the Bilibili homepage URL; it resolves homepage recommendation batches and currently includes
+normal-video `av` cards, walking additional `fresh_idx` refresh batches within a safety cap when
+needed to cover explicit index selection. History input uses `history` or
 `https://www.bilibili.com/account/history`, requires an authenticated web cookie, and currently
-includes normal-video `archive` history records. Following input uses `following`,
-`https://t.bilibili.com/`, or `https://www.bilibili.com/account/dynamic`; space dynamic input uses
+includes normal-video `archive` history records. Following
+input uses `following`, `https://t.bilibili.com/`, or
+`https://www.bilibili.com/account/dynamic`; space dynamic input uses
 `https://space.bilibili.com/<mid>/dynamic`. Dynamic feed inputs require an authenticated web cookie
 and currently include normal-video archive cards.
 

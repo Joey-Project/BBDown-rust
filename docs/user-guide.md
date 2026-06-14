@@ -60,6 +60,7 @@ bbdown info fav456 --json
 bbdown info mid123 --select 1,3-5 --json
 bbdown info collection456 --json
 bbdown info series456 --select latest --json
+bbdown info recommendations --select latest --json
 bbdown info history --select latest --json
 bbdown info following --select latest --json
 bbdown info https://www.bilibili.com/medialist/detail/ml1103407912 --json
@@ -81,16 +82,20 @@ indexes. Use `--select 2`, `--select page:2`, `--select 1,3-5`, or `--select pag
 ranges preserve the requested order and deduplicate repeated indexes. `episode:<epid>` still selects
 an exact PGC episode id rather than an episode index.
 
-Favorite lists, space videos, collections, series, watch history, following feeds, and space dynamic
-feeds are batch inputs; without `--select`, they resolve all parsed items. Use `--select latest` for
-the first parsed item in the upstream list order. JSON metadata keeps the full parsed collection
-item list under `collection.collection.items` and reports the active subset under
-`collection.selected_items`; empty collections are valid empty lists.
+Favorite lists, space videos, collections, series, homepage recommendations, watch history,
+following feeds, and space dynamic feeds are batch inputs. Use `--select latest` for the first
+parsed item in the upstream list order. JSON metadata keeps the full parsed collection item list
+under `collection.collection.items` and reports the active subset under `collection.selected_items`;
+empty collections are valid empty lists.
 
 Favorite list URLs are accepted from shorthand ids, space favlist pages, canonical
 `/list/ml...` pages, and `/medialist/.../ml...` pages. Space collection and series URLs retain the
 owner mid from `/space.bilibili.com/<mid>/...` or `/list/<mid>?sid=...` so the resolver can use the
 newer owner-scoped space APIs.
+Recommendation input accepts `recommendations`, `recommendation`, `recommend`, and the Bilibili
+homepage URL. It fetches homepage recommendation batches and currently emits normal-video `av`
+cards; non-video recommendation cards are skipped, and explicit index selection may walk additional
+`fresh_idx` refresh batches within a safety cap to cover the filtered video cards.
 Watch-history input accepts `history` and `https://www.bilibili.com/account/history`. It requires an
 authenticated web cookie and currently emits normal-video `archive` records; other history business
 types such as PGC, live, or article records are skipped until those item shapes have dedicated
@@ -111,6 +116,7 @@ bbdown plan ss26801 --select latest --json
 bbdown plan https://www.bilibili.tv/en/play/34613/341736 --json
 bbdown plan cheese/ep101 --json
 bbdown plan fav456 --select 1,3-5 --json
+bbdown plan recommendations --select latest --json
 bbdown plan history --select latest --json
 bbdown plan following --select latest --json
 bbdown plan 'https://space.bilibili.com/123/channel/collectiondetail?sid=456' --select all --json

@@ -26,6 +26,7 @@ pub enum Input {
         list_id: u64,
         owner_mid: u64,
     },
+    RecommendationFeed,
     FollowingFeed,
     SpaceDynamic(u64),
     History,
@@ -81,6 +82,9 @@ impl Input {
         if let Some(id) = lower.strip_prefix("series") {
             return parse_number(id, "series list").map(Self::SeriesList);
         }
+        if lower == "recommendations" || lower == "recommendation" || lower == "recommend" {
+            return Ok(Self::RecommendationFeed);
+        }
         if lower == "following" {
             return Ok(Self::FollowingFeed);
         }
@@ -109,6 +113,7 @@ impl Input {
             | Self::SeriesList(_)
             | Self::SpaceCollectionList { .. }
             | Self::SpaceSeriesList { .. }
+            | Self::RecommendationFeed
             | Self::FollowingFeed
             | Self::SpaceDynamic(_)
             | Self::History
@@ -145,6 +150,15 @@ fn parse_url(raw: &str) -> Result<Input> {
     if parse_following_url(&url) {
         return Ok(Input::FollowingFeed);
     }
+    if let Some(value) = query_number(&url, "ep_id")? {
+        return Ok(Input::Episode(value));
+    }
+    if let Some(value) = query_number(&url, "season_id")? {
+        return Ok(Input::Season(value));
+    }
+    if parse_recommendation_url(&url) {
+        return Ok(Input::RecommendationFeed);
+    }
     if parse_history_url(&url) {
         return Ok(Input::History);
     }
@@ -166,13 +180,6 @@ fn parse_url(raw: &str) -> Result<Input> {
     }
     if let Some(input) = parse_list_url(&url)? {
         return Ok(input);
-    }
-
-    if let Some(value) = query_number(&url, "ep_id")? {
-        return Ok(Input::Episode(value));
-    }
-    if let Some(value) = query_number(&url, "season_id")? {
-        return Ok(Input::Season(value));
     }
 
     for segment in path.split('/').filter(|segment| !segment.is_empty()) {
@@ -213,6 +220,17 @@ fn parse_history_url(url: &Url) -> bool {
         })
         .unwrap_or_default();
     path_segments.as_slice() == ["account", "history"]
+}
+
+fn parse_recommendation_url(url: &Url) -> bool {
+    let Some(host) = url.host_str().map(str::to_ascii_lowercase) else {
+        return false;
+    };
+    if host != "www.bilibili.com" && host != "bilibili.com" {
+        return false;
+    }
+    url.path_segments()
+        .is_none_or(|mut segments| segments.all(str::is_empty))
 }
 
 fn parse_space_url(url: &Url) -> Result<Option<Input>> {
@@ -478,6 +496,25 @@ mod tests {
 
     #[test]
     fn parses_feed_inputs() -> anyhow::Result<()> {
+        assert_eq!(Input::parse("recommendations")?, Input::RecommendationFeed);
+        assert_eq!(Input::parse("recommendation")?, Input::RecommendationFeed);
+        assert_eq!(Input::parse("recommend")?, Input::RecommendationFeed);
+        assert_eq!(
+            Input::parse("https://www.bilibili.com/")?,
+            Input::RecommendationFeed
+        );
+        assert_eq!(
+            Input::parse("https://bilibili.com/?spm_id_from=333.1007")?,
+            Input::RecommendationFeed
+        );
+        assert_eq!(
+            Input::parse("https://www.bilibili.com/?ep_id=123")?,
+            Input::Episode(123)
+        );
+        assert_eq!(
+            Input::parse("https://www.bilibili.com/?season_id=456")?,
+            Input::Season(456)
+        );
         assert_eq!(Input::parse("history")?, Input::History);
         assert_eq!(Input::parse("following")?, Input::FollowingFeed);
         assert_eq!(

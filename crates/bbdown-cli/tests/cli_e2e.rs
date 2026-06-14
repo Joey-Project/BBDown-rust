@@ -241,6 +241,33 @@ fn info_json_resolves_mock_following_collection() -> anyhow::Result<()> {
 }
 
 #[test]
+fn info_json_resolves_mock_recommendation_collection() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    mock_recommendation_collection(&server);
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("info")
+        .arg("recommendations")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    assert_eq!(json["collection"]["collection"]["kind"], "recommendation");
+    assert_eq!(json["collection"]["collection"]["title"], "Recommendations");
+    assert_eq!(
+        json["collection"]["selected_items"][0]["title"],
+        "Recommended video"
+    );
+    Ok(())
+}
+
+#[test]
 fn plan_json_resolves_mock_video_streams() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;
@@ -1157,6 +1184,48 @@ fn mock_following_collection(server: &MockServer) {
                 "desc": "Following description",
                 "owner": {"mid": 1, "name": "Tester"},
                 "pages": [{"page": 1, "cid": 9988, "part": "Main", "duration": 3}]
+            }
+        }));
+    });
+}
+
+fn mock_recommendation_collection(server: &MockServer) {
+    server.mock(|when, then| {
+        when.method(GET).path("/x/web-interface/nav");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "wbi_img": {
+                    "img_url": "https://i0.hdslb.com/bfs/wbi/0123456789abcdef0123456789abcdef.png",
+                    "sub_url": "https://i0.hdslb.com/bfs/wbi/fedcba9876543210fedcba9876543210.png"
+                }
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/wbi/index/top/feed/rcmd")
+            .query_param("ps", "20")
+            .query_param("fresh_idx", "1")
+            .query_param_exists("wts")
+            .query_param_exists("w_rid");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "item": [{
+                    "goto": "av",
+                    "id": 170_001,
+                    "bvid": "BV1xx411c7mD",
+                    "cid": 9988,
+                    "pic": "https://example.invalid/recommendation.jpg",
+                    "title": "Recommended video",
+                    "duration": 3,
+                    "owner": {"mid": 1, "name": "Tester"}
+                }, {
+                    "goto": "live",
+                    "id": 170_002,
+                    "title": "Skipped live recommendation"
+                }]
             }
         }));
     });
