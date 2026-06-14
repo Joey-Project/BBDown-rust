@@ -1925,7 +1925,7 @@ impl BiliClient {
         let page = self.fetch_watch_later_collection_page().await?;
         let mut items = Vec::new();
         for item in page.list {
-            push_watch_later_item(&mut items, item);
+            self.push_watch_later_item(&mut items, item).await?;
             if fetch_mode.is_satisfied_by(items.len()) {
                 break;
             }
@@ -1947,6 +1947,152 @@ impl BiliClient {
         let url = Self::endpoint_url(&self.config.endpoints.api_base, "/x/v2/history/toview")?;
         let response: ApiData<WatchLaterData> = self.get_json(url).await?;
         response.into_data()
+    }
+
+    async fn push_watch_later_item(
+        &self,
+        items: &mut Vec<VideoCollectionItem>,
+        item: WatchLaterItem,
+    ) -> Result<()> {
+        let Some(item) = self.watch_later_item(item).await? else {
+            return Ok(());
+        };
+        push_unique_collection_item(items, item);
+        Ok(())
+    }
+
+    async fn watch_later_item(&self, item: WatchLaterItem) -> Result<Option<VideoCollectionItem>> {
+        let WatchLaterItem {
+            aid,
+            bvid,
+            cid,
+            title,
+            desc,
+            pic,
+            cover43,
+            pubdate,
+            add_at,
+            duration,
+            page,
+            videos,
+            index_title,
+            long_title,
+            owner,
+        } = item;
+        let Some(aid) = aid.and_then(FlexibleU64::into_u64) else {
+            return Ok(None);
+        };
+        let page_index = page
+            .as_ref()
+            .and_then(WatchLaterPageField::page_index)
+            .filter(|page| *page > 0)
+            .unwrap_or(1);
+
+        let page_cid = page.as_ref().and_then(WatchLaterPageField::cid);
+        let mut fallback_metadata = None;
+        let mut fallback_page = None;
+        let cid = match cid
+            .and_then(FlexibleU64::into_u64)
+            .filter(|cid| *cid > 0)
+            .or(page_cid)
+        {
+            Some(cid) => cid,
+            None => {
+                let metadata = match bvid.as_deref() {
+                    Some(bvid) => self.fetch_video_by_bvid(bvid, TagPolicy::Skip).await?,
+                    None => self.fetch_video_by_aid(aid, TagPolicy::Skip).await?,
+                };
+                let selected_page = metadata
+                    .pages
+                    .iter()
+                    .find(|page| page.index == page_index)
+                    .or_else(|| metadata.pages.first())
+                    .cloned()
+                    .ok_or(Error::MissingField("data.pages[]"))?;
+                let cid = selected_page.cid;
+                fallback_page = Some(selected_page);
+                fallback_metadata = Some(metadata);
+                cid
+            }
+        };
+
+        let base_title = title
+            .or_else(|| {
+                fallback_metadata
+                    .as_ref()
+                    .map(|metadata| metadata.title.clone())
+            })
+            .unwrap_or_else(|| aid.to_string());
+        let page_count = videos
+            .filter(|count| *count > 0)
+            .or_else(|| {
+                fallback_metadata.as_ref().and_then(|metadata| {
+                    u32::try_from(metadata.pages.len())
+                        .ok()
+                        .filter(|count| *count > 0)
+                })
+            })
+            .unwrap_or_else(|| page_index.max(1));
+        let page_title = first_non_empty([
+            index_title,
+            long_title,
+            page.as_ref().and_then(WatchLaterPageField::part),
+            fallback_page.as_ref().map(|page| page.title.clone()),
+        ]);
+        let title = if page_count == 1 {
+            base_title
+        } else {
+            format_collection_page_title(
+                &base_title,
+                page_index,
+                page_title.as_deref().unwrap_or(""),
+            )
+        };
+        Ok(Some(VideoCollectionItem {
+            index: 0,
+            aid,
+            bvid: bvid.or_else(|| {
+                fallback_metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.bvid.clone())
+            }),
+            cid,
+            title,
+            cover_url: first_non_empty([
+                pic,
+                cover43,
+                fallback_metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.cover_url.clone()),
+            ]),
+            description: desc
+                .filter(|desc| !desc.is_empty())
+                .or_else(|| {
+                    fallback_metadata
+                        .as_ref()
+                        .map(|metadata| metadata.description.clone())
+                })
+                .unwrap_or_default(),
+            pub_time: pubdate.or(add_at).or_else(|| {
+                fallback_metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.pub_time)
+            }),
+            owner: owner.and_then(FavoriteUpper::into_owner).or_else(|| {
+                fallback_metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.owner.clone())
+            }),
+            duration_seconds: page
+                .as_ref()
+                .and_then(WatchLaterPageField::duration)
+                .or_else(|| {
+                    fallback_page
+                        .as_ref()
+                        .and_then(|page| page.duration_seconds)
+                })
+                .or(duration),
+        }))
     }
 
     async fn fetch_dynamic_video_collection(
@@ -4224,71 +4370,6 @@ fn history_entry_item(entry: HistoryEntry) -> Option<VideoCollectionItem> {
             })
         }),
         duration_seconds: duration,
-    })
-}
-
-fn push_watch_later_item(items: &mut Vec<VideoCollectionItem>, item: WatchLaterItem) {
-    let Some(item) = watch_later_item(item) else {
-        return;
-    };
-    push_unique_collection_item(items, item);
-}
-
-fn watch_later_item(item: WatchLaterItem) -> Option<VideoCollectionItem> {
-    let WatchLaterItem {
-        aid,
-        bvid,
-        cid,
-        title,
-        desc,
-        pic,
-        cover43,
-        pubdate,
-        add_at,
-        duration,
-        page,
-        videos,
-        index_title,
-        long_title,
-        owner,
-    } = item;
-    let aid = aid.and_then(FlexibleU64::into_u64)?;
-    let page_cid = page.as_ref().and_then(WatchLaterPageField::cid);
-    let cid = cid
-        .and_then(FlexibleU64::into_u64)
-        .filter(|cid| *cid > 0)
-        .or(page_cid)?;
-    let base_title = title.unwrap_or_else(|| aid.to_string());
-    let page_index = page
-        .as_ref()
-        .and_then(WatchLaterPageField::page_index)
-        .filter(|page| *page > 0)
-        .unwrap_or(1);
-    let page_count = videos
-        .filter(|count| *count > 0)
-        .unwrap_or_else(|| page_index.max(1));
-    let page_title = first_non_empty([
-        index_title,
-        long_title,
-        page.as_ref().and_then(WatchLaterPageField::part),
-    ]);
-    let title = if page_count == 1 {
-        base_title
-    } else {
-        format_collection_page_title(&base_title, page_index, page_title.as_deref().unwrap_or(""))
-    };
-    Some(VideoCollectionItem {
-        index: 0,
-        aid,
-        bvid,
-        cid,
-        title,
-        cover_url: first_non_empty([pic, cover43]),
-        description: desc.unwrap_or_default(),
-        pub_time: pubdate.or(add_at),
-        owner: owner.and_then(FavoriteUpper::into_owner),
-        duration_seconds: duration
-            .or_else(|| page.as_ref().and_then(WatchLaterPageField::duration)),
     })
 }
 
@@ -6997,6 +7078,7 @@ mod tests {
                         "desc": "Watch later description",
                         "pic": "https://example.invalid/watch-later.jpg",
                         "pubdate": 1_699_999_999_i64,
+                        "duration": 999,
                         "page": {
                             "cid": "9988",
                             "page": 2,
@@ -7015,8 +7097,41 @@ mod tests {
                         "videos": 1,
                         "owner": {"mid": 2, "name": "Uploader"}
                     }, {
-                        "title": "Skipped missing cid",
-                        "aid": 170_003
+                        "aid": 170_003,
+                        "bvid": "BV1xx411c7mF",
+                        "cid": 0,
+                        "title": "Fallback watch later video",
+                        "duration": 999,
+                        "page": {
+                            "page": 1,
+                            "part": "Fallback page"
+                        },
+                        "videos": 1
+                    }, {
+                        "title": "Skipped missing aid"
+                    }]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("bvid", "BV1xx411c7mF");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "aid": 170_003,
+                    "bvid": "BV1xx411c7mF",
+                    "title": "Fallback detail title",
+                    "desc": "Fallback detail description",
+                    "pic": "https://example.invalid/fallback-detail.jpg",
+                    "pubdate": 1_700_000_003_i64,
+                    "owner": {"mid": 3, "name": "Fallback uploader"},
+                    "pages": [{
+                        "page": 1,
+                        "cid": 9990,
+                        "part": "Fallback detail page",
+                        "duration": 5
                     }]
                 }
             }));
@@ -7032,12 +7147,13 @@ mod tests {
             ResolvedContent::Collection(collection) => {
                 assert_eq!(collection.collection.kind, VideoCollectionKind::WatchLater);
                 assert_eq!(collection.collection.title, "Watch later");
-                assert_eq!(collection.collection.items.len(), 2);
+                assert_eq!(collection.collection.items.len(), 3);
                 assert_eq!(collection.selected_items.len(), 1);
                 assert_eq!(
                     collection.collection.items[0].title,
                     "Watch later video_P2_Second"
                 );
+                assert_eq!(collection.collection.items[0].duration_seconds, Some(3));
                 assert_eq!(
                     collection.selected_items[0].title,
                     "Second watch later video"
@@ -7050,6 +7166,8 @@ mod tests {
                         .map(|owner| owner.name.as_str()),
                     Some("Uploader")
                 );
+                assert_eq!(collection.collection.items[2].cid, 9990);
+                assert_eq!(collection.collection.items[2].duration_seconds, Some(5));
             }
             ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
                 return Err(anyhow::anyhow!("expected collection"));
