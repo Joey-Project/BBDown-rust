@@ -206,6 +206,38 @@ fn info_json_resolves_mock_history_collection() -> anyhow::Result<()> {
 }
 
 #[test]
+fn info_json_resolves_mock_watch_later_collection() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    CredentialStore::new(credential_file.clone()).save(&Credentials {
+        cookie: Some("SESSDATA=WEB_COOKIE".to_owned()),
+        access_key: None,
+        tv_access_key: None,
+    })?;
+    mock_watch_later_collection(&server);
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("info")
+        .arg("watch-later")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    assert_eq!(json["collection"]["collection"]["kind"], "watch_later");
+    assert_eq!(json["collection"]["collection"]["title"], "Watch later");
+    assert_eq!(
+        json["collection"]["selected_items"][0]["title"],
+        "Watch later video"
+    );
+    Ok(())
+}
+
+#[test]
 fn info_json_resolves_mock_following_collection() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;
@@ -1130,6 +1162,29 @@ fn mock_history_collection(server: &MockServer) {
                     "business": "archive"
                 },
                 "list": []
+            }
+        }));
+    });
+}
+
+fn mock_watch_later_collection(server: &MockServer) {
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/v2/history/toview")
+            .header("cookie", "SESSDATA=WEB_COOKIE");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "count": 1,
+                "list": [{
+                    "aid": 170_001,
+                    "bvid": "BV1xx411c7mD",
+                    "cid": 9988,
+                    "title": "Watch later video",
+                    "pic": "https://example.invalid/watch-later.jpg",
+                    "duration": 3,
+                    "owner": {"mid": 1, "name": "Tester"}
+                }]
             }
         }));
     });

@@ -7,7 +7,7 @@
 BBDown Rust 当前提供可复用的 `bbdown-core` package / `bbdown_core` crate 和一个 CLI，用
 于确定性的元数据解析、下载计划解析、媒体下载执行、旁路文件下载，以及可选 `ffmpeg` 封装。
 支持的输入家族包括普通视频、PGC 和 intl 分集、PUGV/cheese 课程、B23 短链接、收藏夹、
-空间投稿、合集、系列和观看历史。
+空间投稿、合集、系列、首页推荐、观看历史、稍后再看列表、关注 feed 和空间动态 feed。
 
 ## 发布归档
 
@@ -58,6 +58,7 @@ bbdown info collection456 --json
 bbdown info series456 --select latest --json
 bbdown info recommendations --select latest --json
 bbdown info history --select latest --json
+bbdown info watch-later --select latest --json
 bbdown info following --select latest --json
 bbdown info https://www.bilibili.com/medialist/detail/ml1103407912 --json
 bbdown info https://www.bilibili.com/list/ml1103407912 --json
@@ -77,7 +78,7 @@ Season、media 和 `cheese/ss...` 输入在非交互模式下需要 `--select`�
 `--select page:2-4,7`。列表和范围会保留请求顺序，并对重复 index 去重。
 `episode:<epid>` 仍然表示精确 PGC episode id，而不是分集序号。
 
-收藏夹、空间投稿、合集、系列、首页推荐、观看历史、关注 feed 和空间动态 feed 都是批量输
+收藏夹、空间投稿、合集、系列、首页推荐、观看历史、稍后再看列表、关注 feed 和空间动态 feed 都是批量输
 入。使用 `--select latest` 可选择上游列表顺序中的第一个解析条目。JSON metadata 会在
 `collection.collection.items` 保留完整解析到的集合条目列表，并在 `collection.selected_items`
 报告当前选中子集；空集合是有效的空列表。
@@ -93,6 +94,9 @@ selection 需要时会在安全上限内继续请求后续 `fresh_idx` 刷新批
 观看历史输入支持 `history` 和 `https://www.bilibili.com/account/history`。它需要已认证的
 WEB cookie，目前只输出普通视频 `archive` 记录；PGC、直播或专栏等其它历史记录 business
 类型会被跳过，直到这些条目形态有专门的 collection planning 支持。
+稍后再看输入支持 `watchlater`、`watch-later`、`watch_later`、`later`、`toview` 和
+`https://www.bilibili.com/watchlater`。它需要已认证的 WEB cookie，并输出该账号稍后再看
+列表中的普通视频。
 关注 feed 输入支持 `following`、`https://t.bilibili.com/` 和
 `https://www.bilibili.com/account/dynamic`。空间动态 feed 输入支持
 `https://space.bilibili.com/<mid>/dynamic`。这些动态 feed 输入需要已认证的 WEB cookie，目
@@ -111,6 +115,7 @@ bbdown plan cheese/ep101 --json
 bbdown plan fav456 --select 1,3-5 --json
 bbdown plan recommendations --select latest --json
 bbdown plan history --select latest --json
+bbdown plan watch-later --select latest --json
 bbdown plan following --select latest --json
 bbdown plan 'https://space.bilibili.com/123/channel/collectiondetail?sid=456' --select all --json
 ```

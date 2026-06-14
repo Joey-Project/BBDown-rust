@@ -46,6 +46,8 @@ Inputs normalize into `Input`:
   the Bilibili homepage URL.
 - `History` for authenticated watch-history input from the `history` shorthand or the
   `/account/history` page.
+- `WatchLater` for authenticated watch-later input from the watch-later shorthands or the
+  `/watchlater` page.
 - `FollowingFeed` and `SpaceDynamic` for authenticated dynamic video feeds from followed uploaders
   or one uploader's dynamic page.
 - `ShortLink` for B23 links, resolved through HTTP redirect before normal input dispatch.
@@ -55,17 +57,16 @@ The library resolves metadata into `ResolvedContent`:
 - `VideoMetadata` includes title, description, owner, tags, cover, pub time, and pages.
 - `SeasonResolution` includes season metadata plus the selected episode set.
 - `VideoCollectionResolution` includes collection metadata plus the selected item set for
-  favorites, space uploads, collections, series, homepage recommendations, watch history, following
-  feeds, and space dynamic feeds. Favorite parsing accepts shorthand ids, path-based medialist
+  favorites, space uploads, collections, series, homepage recommendations, watch history,
+  watch-later lists, following feeds, and space dynamic feeds. Favorite parsing accepts shorthand ids, path-based medialist
   pages, and canonical `/list/ml...` pages. `resolve_input` keeps full parsed collection metadata
   even when a selector narrows `selected_items`.
 
 Feed/list behavior that is shared across collection-like page families lives behind an internal
 `feed_list` resolver layer. It owns selection validation, page/range fetch-mode calculation,
 identity-based deduplication, and one-based item renumbering. The existing public collection output
-shape stays unchanged; history, recommendation, and dynamic feed page families now add
-page-specific fetchers on top of this layer, while watch-later will use the same selection and
-pagination rules.
+shape stays unchanged; history, recommendation, watch-later, and dynamic feed page families now add
+page-specific fetchers on top of this layer.
 
 The library resolves media availability into `DownloadPlan`:
 
@@ -91,6 +92,8 @@ walking additional `fresh_idx` refresh batches within a safety cap when explicit
 needs more cards after non-video cards are skipped.
 History input uses the web history cursor endpoint, requires an authenticated cookie, and currently
 filters to normal-video `archive` records that can plan through the normal video pipeline.
+Watch-later input uses the web toview endpoint, requires an authenticated cookie, and emits normal
+videos from the authenticated account's watch-later list.
 Following and space dynamic inputs use the web dynamic feed endpoints, also require an
 authenticated cookie, and currently emit normal-video archive cards. The
 CLI will later add interactive prompting, but the library keeps season-like contracts explicit so

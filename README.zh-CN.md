@@ -15,11 +15,12 @@
 断信息的受限区域代理排序、面向下游流式播放 / 缓存集成的播放请求规格、UPOS/PCDN 媒体
 host 控制，以及 builder 风格的 crate 集成 API。它还支持显式下载归档，用于重复下载预检
 查，以及 CLI 的 replace / keep-both / cancel 决策。输入解析覆盖普通视频、PGC 和 intl 分
-集、PUGV/cheese 课程、B23 短链接、收藏夹、空间投稿、合集、系列、首页推荐、观看历史、关
-注视频 feed 和空间动态视频 feed。URL 解析包括 canonical `bilibili.com/list/...` 页面、
+集、PUGV/cheese 课程、B23 短链接、收藏夹、空间投稿、合集、系列、首页推荐、观看历史、
+稍后再看列表、关注视频 feed 和空间动态视频 feed。URL 解析包括 canonical
+`bilibili.com/list/...` 页面、
 path-based medialist 收藏夹 URL，以及带 uploader mid 的空间合集 / 系列 URL，以便使用较
 新的空间 API；同时支持 B 站首页、空间动态页面和需要登录态的
-`bilibili.com/account/history` 观看历史页面。
+`bilibili.com/account/history` 观看历史页面以及 `bilibili.com/watchlater` 稍后再看页面。
 
 ## 当前 CLI
 
@@ -36,6 +37,7 @@ bbdown info cheese/ep101 --json
 bbdown info fav456 --json
 bbdown info recommendations --select latest --json
 bbdown info history --select latest --json
+bbdown info watch-later --select latest --json
 bbdown info following --select latest --json
 bbdown info https://www.bilibili.com/list/ml1103407912 --json
 bbdown info https://space.bilibili.com/123/dynamic --select latest --json
@@ -52,6 +54,7 @@ bbdown plan https://www.bilibili.tv/en/play/34613/341736 --json
 bbdown plan fav456 --select page:1 --json
 bbdown plan recommendations --select latest --json
 bbdown plan history --select latest --json
+bbdown plan watch-later --select latest --json
 bbdown plan following --select latest --json
 bbdown plan cheese/ss202 --select latest --json
 ```
@@ -147,12 +150,16 @@ bbdown info ss26801 --select page:1
 ```
 
 `cheese/ss...` 输入遵循相同的显式选择规则。收藏夹、空间投稿、合集、系列、首页推荐、观
-看历史、关注 feed 和空间动态 feed 都是批量输入。推荐输入可使用 `recommendations`、
+看历史、稍后再看列表、关注 feed 和空间动态 feed 都是批量输入。推荐输入可使用
+`recommendations`、
 `recommendation`、`recommend` 或 B 站首页 URL；它会解析首页推荐批次，目前只包含普通视
 频 `av` 卡片，并在显式 index selection 需要时在安全上限内继续请求后续 `fresh_idx` 刷新
 批次来覆盖过滤后的条目。
 观看历史输入可使用 `history` 或 `https://www.bilibili.com/account/history`，需要已认证的
-WEB cookie，目前只包含普通视频 `archive` 历史记录。关注输入可使用 `following`、
+WEB cookie，目前只包含普通视频 `archive` 历史记录。稍后再看输入可使用 `watchlater`、
+`watch-later`、`watch_later`、`later`、`toview` 或
+`https://www.bilibili.com/watchlater`，需要已认证的 WEB cookie，并包含该账号稍后再看列
+表中的普通视频。关注输入可使用 `following`、
 `https://t.bilibili.com/` 或 `https://www.bilibili.com/account/dynamic`；空间动态输入使用
 `https://space.bilibili.com/<mid>/dynamic`。动态 feed 输入需要已认证的 WEB cookie，目前只
 包含普通视频 archive 卡片。

@@ -30,6 +30,7 @@ pub enum Input {
     FollowingFeed,
     SpaceDynamic(u64),
     History,
+    WatchLater,
     IntlEpisode(u64),
     ShortLink(String),
 }
@@ -91,6 +92,14 @@ impl Input {
         if lower == "history" {
             return Ok(Self::History);
         }
+        if lower == "watchlater"
+            || lower == "watch-later"
+            || lower == "watch_later"
+            || lower == "later"
+            || lower == "toview"
+        {
+            return Ok(Self::WatchLater);
+        }
         if trimmed.chars().all(|ch| ch.is_ascii_digit()) {
             return parse_number(trimmed, "aid").map(Self::Aid);
         }
@@ -117,6 +126,7 @@ impl Input {
             | Self::FollowingFeed
             | Self::SpaceDynamic(_)
             | Self::History
+            | Self::WatchLater
             | Self::IntlEpisode(_)
             | Self::ShortLink(_) => Ok(None),
         }
@@ -161,6 +171,9 @@ fn parse_url(raw: &str) -> Result<Input> {
     }
     if parse_history_url(&url) {
         return Ok(Input::History);
+    }
+    if parse_watch_later_url(&url) {
+        return Ok(Input::WatchLater);
     }
 
     if path.contains("/cheese/") {
@@ -220,6 +233,24 @@ fn parse_history_url(url: &Url) -> bool {
         })
         .unwrap_or_default();
     path_segments.as_slice() == ["account", "history"]
+}
+
+fn parse_watch_later_url(url: &Url) -> bool {
+    let Some(host) = url.host_str().map(str::to_ascii_lowercase) else {
+        return false;
+    };
+    if host != "www.bilibili.com" && host != "bilibili.com" {
+        return false;
+    }
+    let path_segments = url
+        .path_segments()
+        .map(|segments| {
+            segments
+                .filter(|segment| !segment.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    path_segments.first() == Some(&"watchlater")
 }
 
 fn parse_recommendation_url(url: &Url) -> bool {
@@ -516,6 +547,11 @@ mod tests {
             Input::Season(456)
         );
         assert_eq!(Input::parse("history")?, Input::History);
+        assert_eq!(Input::parse("watchlater")?, Input::WatchLater);
+        assert_eq!(Input::parse("watch-later")?, Input::WatchLater);
+        assert_eq!(Input::parse("watch_later")?, Input::WatchLater);
+        assert_eq!(Input::parse("later")?, Input::WatchLater);
+        assert_eq!(Input::parse("toview")?, Input::WatchLater);
         assert_eq!(Input::parse("following")?, Input::FollowingFeed);
         assert_eq!(
             Input::parse("https://t.bilibili.com/")?,
@@ -536,6 +572,14 @@ mod tests {
         assert_eq!(
             Input::parse("https://www.bilibili.com/account/history/")?,
             Input::History
+        );
+        assert_eq!(
+            Input::parse("https://www.bilibili.com/watchlater/#/list")?,
+            Input::WatchLater
+        );
+        assert_eq!(
+            Input::parse("https://bilibili.com/watchlater/")?,
+            Input::WatchLater
         );
         Ok(())
     }

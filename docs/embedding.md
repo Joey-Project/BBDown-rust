@@ -118,10 +118,10 @@ represents legacy FLV as a single ordered segment list.
 ## Batch And Collection Inputs
 
 `BiliClient::resolve_input` accepts CLI-style raw inputs such as B23 short links, `fav...`,
-`mid...`, `collection...`, `series...`, `recommendations`, `history`, `following`, canonical
+`mid...`, `collection...`, `series...`, `recommendations`, `history`, `watch-later`, `following`, canonical
 favorite `/list/ml...` URLs, path-based `/medialist/.../ml...` URLs, space collection URLs, space
-series URLs, the Bilibili homepage, the authenticated `/account/history` page, and dynamic feed
-pages. Batch inputs resolve to
+series URLs, the Bilibili homepage, the authenticated `/account/history` and `/watchlater` pages,
+and dynamic feed pages. Batch inputs resolve to
 `ResolvedContent::Collection`, which carries full collection metadata plus the selected items.
 Owner-scoped space list URLs keep the uploader mid so the resolver can use newer space collection
 and series APIs. Without a selector, collection-like inputs select all parsed items; pass
@@ -141,15 +141,20 @@ that can be mapped back to the normal video planning path; other history busines
 PGC, live, or article records are skipped until those item shapes have dedicated collection planning
 support.
 
+Watch-later input uses the web toview endpoint and also requires a cookie on
+`ClientConfig::credentials`. It accepts `watchlater`, `watch-later`, `watch_later`, `later`,
+`toview`, and `https://www.bilibili.com/watchlater`, then emits normal videos from the
+authenticated account's watch-later list.
+
 Following input uses the web dynamic feed endpoint and therefore also requires a cookie on
 `ClientConfig::credentials`. It accepts the `following` shorthand plus the dynamic home URLs.
 Space dynamic input accepts `https://space.bilibili.com/<mid>/dynamic`. Dynamic feed inputs
 currently emit normal-video archive cards and skip non-video cards.
 
 The current collection inputs keep their existing `ResolvedContent::Collection` JSON and Rust
-surface. Internally they now use the shared feed/list selection layer; watch-later input will build
-on the same layer, so embedders should expect that future list-like input to follow the same index,
-range, latest, and empty-list semantics.
+surface. Internally they now use the shared feed/list selection layer, so embedders can use the same
+index, range, latest, and empty-list semantics across favorites, space uploads, collections, series,
+homepage recommendations, history, watch-later, following feeds, and space dynamic feeds.
 
 ```rust,no_run
 use bbdown_core::{

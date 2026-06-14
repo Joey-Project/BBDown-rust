@@ -1,7 +1,7 @@
 ---
 id: 20260614-019ec5-v0-3-feed-list-roadmap
 title: v0.3.0 Feed/List Roadmap
-status: active
+status: completed
 created: 2026-06-14
 updated: 2026-06-14
 branch: wip/v0.3-feed-list-roadmap
@@ -14,7 +14,7 @@ superseded_by:
 
 ## Summary
 - The `0.2.0` line is published from `release/0.2.0`; `master` is the `0.3.0` development line.
-- The next feature set is richer Bilibili feed/list parsing, implemented as six sequential PRs.
+- The richer Bilibili feed/list parsing feature set is implemented as six sequential PRs.
 - Each PR should start from an updated `master`, land one reviewable slice, update relevant docs and
   journals, pass the full test gate, receive the required three-review coverage, clear CI, and have
   all PR conversations resolved before merge.
@@ -26,13 +26,13 @@ superseded_by:
 - PR 3 adds history record parsing on top of the shared abstraction.
 - PR 4 adds following/UP dynamic feed parsing on top of the shared abstraction.
 - PR 5 adds homepage recommendation page parsing on top of the shared abstraction.
-- PR 6 will add watch-later parsing after the other feed/list inputs are in place.
+- PR 6 adds watch-later parsing after the other feed/list inputs are in place.
 - `v0.3.0-rc.1` already exists as an abandoned tag and was never promoted. Future `0.3.0` release
   candidate creation should use the next automatically selected RC number.
 
 ## Next Steps
-- Cut the watch-later parsing branch from the updated `master` as the final `0.3.0` feed/list
-  feature slice after the recommendation feed PR lands.
+- Prepare the `0.3.0` release candidate after the watch-later PR lands and the full release gate is
+  clean.
 - Keep the remaining BBDown parity backlog, including aria2 or multi-thread download integration,
   MP4Box muxing, and subtitle-to-SRT conversion, outside this six-PR feed/list sequence unless Joey
   explicitly reprioritizes it.
@@ -61,3 +61,5 @@ superseded_by:
   `docs/project_journal/2026/06/2026-06-14-following-dynamic-feed-parsing-019ec8.md`.
 - Homepage recommendation parsing slice detail:
   `docs/project_journal/2026/06/2026-06-14-recommendation-feed-parsing-019ec9.md`.
+- Watch-later parsing slice detail:
+  `docs/project_journal/2026/06/2026-06-14-watch-later-feed-parsing-019eca.md`.
