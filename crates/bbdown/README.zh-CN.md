@@ -7,8 +7,8 @@
 媒体下载、单独输出下载模式、封面/字幕/XML 或 ASS 弹幕旁路文件、二维码登录凭据、下载归档预检查数
 据、播放请求规格、批量集合 metadata，以及受限区域代理诊断。下载执行也可以通过
 `MediaHostOptions` 应用显式 UPOS host 替换或 BBDown-like PCDN 规避。原始输入解析覆盖普
-通视频、PGC 和 intl 分集、PUGV/cheese 课程、B23 短链接、收藏夹、空间投稿、合集、系列
-和观看历史。
+通视频、PGC 和 intl 分集、PUGV/cheese 课程、B23 短链接、收藏夹、空间投稿、合集、系列、
+观看历史、关注视频 feed 和空间动态视频 feed。
 
 使用 `cargo add bbdown-core` 安装，然后用 `bbdown_core` 导入。
 
@@ -59,13 +59,13 @@ async fn main() -> bbdown_core::Result<()> {
 }
 ```
 
-`fav456`、`mid123`、`collection456`、`series456` 和 `history` 等批量输入会通过
-`ResolvedContent::Collection` 返回；`resolve_input` 会保留完整解析到的 collection
-metadata，`selected_items` 则携带当前选中子集。选中的条目随后通过普通视频 pipeline 规
-划和下载。嵌入应用可以用 `Selection::Page(index)` 选择单个条目，或用
+`fav456`、`mid123`、`collection456`、`series456`、`history`、`following` 和空间动态 URL
+等批量输入会通过 `ResolvedContent::Collection` 返回；`resolve_input` 会保留完整解析到的
+collection metadata，`selected_items` 则携带当前选中子集。选中的条目随后通过普通视频
+pipeline 规划和下载。嵌入应用可以用 `Selection::Page(index)` 选择单个条目，或用
 `Selection::Indices(...)` 配合 `IndexSelection` / `IndexSelector` 表示类似 `1,3-5` 的列
-表和范围选择。观看历史输入使用 WEB history cursor 端点，需要在 client credentials 中提
-供 cookie，目前只输出普通视频 `archive` 记录。
+表和范围选择。观看历史和动态 feed 输入需要在 client credentials 中提供 cookie；观看历史
+目前只输出普通视频 `archive` 记录，动态 feed 目前只输出普通视频 archive 卡片。
 
 library 默认保留 plan 中的媒体 URL。嵌入应用需要自定义 UPOS host、强制替换，或
 CLI-compatible PCDN fallback 处理时，应显式设置 `MediaHostOptions`。

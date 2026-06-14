@@ -23,6 +23,7 @@ use url::Url;
 
 const TV_PLAYURL_APPKEY: &str = "4409e2ce8ffd12b8";
 const TV_PLAYURL_APP_SECRET: &str = "59b43e04ad6965f34319062b478f83dd";
+const DYNAMIC_FEED_FEATURES: &str = "itemOpusStyle,listOnlyfans,opusBigCover,onlyfansVote,forwardListHidden,decorationCard,commentsNewVersion,onlyfansAssetsV2,ugcDelete,onlyfansQaCard";
 
 #[non_exhaustive]
 #[derive(Clone, Debug)]
@@ -427,42 +428,21 @@ impl BiliClient {
                     .await
                     .map(ResolvedContent::Season)
             }
-            Input::SpaceVideos(mid) => {
-                let fetch_mode = Self::collection_info_fetch_mode(selection.as_ref())?;
-                self.fetch_space_video_collection(mid, selection, fetch_mode)
-                    .await
-                    .map(ResolvedContent::Collection)
-            }
+            Input::SpaceVideos(mid) => self.resolve_space_videos(mid, selection).await,
             Input::FavoriteList {
                 media_id,
                 owner_mid,
             } => {
-                let fetch_mode = Self::collection_info_fetch_mode(selection.as_ref())?;
-                self.fetch_favorite_collection(media_id, owner_mid, selection, fetch_mode)
+                self.resolve_favorite_list(media_id, owner_mid, selection)
                     .await
-                    .map(ResolvedContent::Collection)
             }
             Input::CollectionList(list_id) => {
-                let fetch_mode = Self::collection_info_fetch_mode(selection.as_ref())?;
-                self.fetch_medialist_collection(
-                    list_id,
-                    MediaListKind::Collection,
-                    selection,
-                    fetch_mode,
-                )
-                .await
-                .map(ResolvedContent::Collection)
+                self.resolve_medialist_input(list_id, MediaListKind::Collection, selection)
+                    .await
             }
             Input::SeriesList(list_id) => {
-                let fetch_mode = Self::collection_info_fetch_mode(selection.as_ref())?;
-                self.fetch_medialist_collection(
-                    list_id,
-                    MediaListKind::Series,
-                    selection,
-                    fetch_mode,
-                )
-                .await
-                .map(ResolvedContent::Collection)
+                self.resolve_medialist_input(list_id, MediaListKind::Series, selection)
+                    .await
             }
             Input::SpaceCollectionList { list_id, owner_mid } => {
                 self.resolve_space_list(owner_mid, list_id, SpaceListKind::Collection, selection)
@@ -472,12 +452,15 @@ impl BiliClient {
                 self.resolve_space_list(owner_mid, list_id, SpaceListKind::Series, selection)
                     .await
             }
-            Input::History => {
-                let fetch_mode = Self::collection_info_fetch_mode(selection.as_ref())?;
-                self.fetch_history_collection(selection, fetch_mode)
+            Input::FollowingFeed => {
+                self.resolve_dynamic_feed(DynamicFeedKind::Following, selection)
                     .await
-                    .map(ResolvedContent::Collection)
             }
+            Input::SpaceDynamic(mid) => {
+                self.resolve_dynamic_feed(DynamicFeedKind::Space { mid }, selection)
+                    .await
+            }
+            Input::History => self.resolve_history(selection).await,
             Input::IntlEpisode(epid) => self
                 .fetch_intl_season_by_ep(epid, selection.or(Some(Selection::Current)))
                 .await
@@ -487,6 +470,59 @@ impl BiliClient {
                 Box::pin(self.resolve(input, selection)).await
             }
         }
+    }
+
+    async fn resolve_space_videos(
+        &self,
+        mid: u64,
+        selection: Option<Selection>,
+    ) -> Result<ResolvedContent> {
+        let fetch_mode = Self::collection_info_fetch_mode(selection.as_ref())?;
+        self.fetch_space_video_collection(mid, selection, fetch_mode)
+            .await
+            .map(ResolvedContent::Collection)
+    }
+
+    async fn resolve_favorite_list(
+        &self,
+        media_id: Option<u64>,
+        owner_mid: Option<u64>,
+        selection: Option<Selection>,
+    ) -> Result<ResolvedContent> {
+        let fetch_mode = Self::collection_info_fetch_mode(selection.as_ref())?;
+        self.fetch_favorite_collection(media_id, owner_mid, selection, fetch_mode)
+            .await
+            .map(ResolvedContent::Collection)
+    }
+
+    async fn resolve_medialist_input(
+        &self,
+        list_id: u64,
+        kind: MediaListKind,
+        selection: Option<Selection>,
+    ) -> Result<ResolvedContent> {
+        let fetch_mode = Self::collection_info_fetch_mode(selection.as_ref())?;
+        self.fetch_medialist_collection(list_id, kind, selection, fetch_mode)
+            .await
+            .map(ResolvedContent::Collection)
+    }
+
+    async fn resolve_dynamic_feed(
+        &self,
+        kind: DynamicFeedKind,
+        selection: Option<Selection>,
+    ) -> Result<ResolvedContent> {
+        let fetch_mode = Self::collection_info_fetch_mode(selection.as_ref())?;
+        self.fetch_dynamic_video_collection(kind, selection, fetch_mode)
+            .await
+            .map(ResolvedContent::Collection)
+    }
+
+    async fn resolve_history(&self, selection: Option<Selection>) -> Result<ResolvedContent> {
+        let fetch_mode = Self::collection_info_fetch_mode(selection.as_ref())?;
+        self.fetch_history_collection(selection, fetch_mode)
+            .await
+            .map(ResolvedContent::Collection)
     }
 
     pub async fn plan_download(
@@ -614,6 +650,8 @@ impl BiliClient {
             | Input::SeriesList(_)
             | Input::SpaceCollectionList { .. }
             | Input::SpaceSeriesList { .. }
+            | Input::FollowingFeed
+            | Input::SpaceDynamic(_)
             | Input::History) => {
                 self.plan_collection_input(collection_input, selection, planning_mode)
                     .await
@@ -718,6 +756,28 @@ impl BiliClient {
                     planning_mode,
                 )
                 .await
+            }
+            Input::FollowingFeed => {
+                let fetch_mode = Self::collection_fetch_mode(selection.as_ref())?;
+                let collection = self
+                    .fetch_dynamic_video_collection(
+                        DynamicFeedKind::Following,
+                        selection,
+                        fetch_mode,
+                    )
+                    .await?;
+                self.plan_collection(collection, planning_mode).await
+            }
+            Input::SpaceDynamic(mid) => {
+                let fetch_mode = Self::collection_fetch_mode(selection.as_ref())?;
+                let collection = self
+                    .fetch_dynamic_video_collection(
+                        DynamicFeedKind::Space { mid },
+                        selection,
+                        fetch_mode,
+                    )
+                    .await?;
+                self.plan_collection(collection, planning_mode).await
             }
             Input::History => {
                 let fetch_mode = Self::collection_fetch_mode(selection.as_ref())?;
@@ -1729,6 +1789,147 @@ impl BiliClient {
             .append_pair("ps", &page_size.to_string());
         let response: ApiData<HistoryCursorData> = self.get_json(url).await?;
         response.into_data()
+    }
+
+    async fn fetch_dynamic_video_collection(
+        &self,
+        kind: DynamicFeedKind,
+        selection: Option<Selection>,
+        fetch_mode: FeedListFetchMode,
+    ) -> Result<VideoCollectionResolution> {
+        let collection = self
+            .fetch_dynamic_video_collection_all(kind, fetch_mode)
+            .await?;
+        Self::resolve_collection_selection(collection, selection.as_ref())
+    }
+
+    async fn fetch_dynamic_video_collection_all(
+        &self,
+        kind: DynamicFeedKind,
+        fetch_mode: FeedListFetchMode,
+    ) -> Result<VideoCollectionMetadata> {
+        let mut offset = None;
+        let mut items = Vec::new();
+        loop {
+            let page = self
+                .fetch_dynamic_feed_page(kind, offset.as_deref())
+                .await?;
+            if page.items.is_empty() {
+                break;
+            }
+            for item in page.items {
+                self.push_dynamic_feed_item(&mut items, item, fetch_mode)
+                    .await?;
+                if fetch_mode.is_satisfied_by(items.len()) {
+                    break;
+                }
+            }
+            if fetch_mode.is_satisfied_by(items.len()) || !page.has_more.unwrap_or(false) {
+                break;
+            }
+            let Some(next_offset) = page.offset.filter(|value| !value.is_empty()) else {
+                break;
+            };
+            if offset.as_deref() == Some(next_offset.as_str()) {
+                break;
+            }
+            offset = Some(next_offset);
+        }
+        renumber_collection_items(&mut items);
+        let owner = match kind {
+            DynamicFeedKind::Following => None,
+            DynamicFeedKind::Space { mid } => items
+                .first()
+                .and_then(|item| item.owner.clone())
+                .filter(|owner| owner.mid == mid)
+                .or_else(|| {
+                    Some(Owner {
+                        mid,
+                        name: mid.to_string(),
+                    })
+                }),
+        };
+        Ok(VideoCollectionMetadata {
+            id: kind.collection_id(),
+            kind: kind.collection_kind(),
+            title: kind.collection_title(),
+            description: kind.collection_description(),
+            cover_url: items.first().and_then(|item| item.cover_url.clone()),
+            pub_time: items.first().and_then(|item| item.pub_time),
+            owner,
+            items,
+        })
+    }
+
+    async fn fetch_dynamic_feed_page(
+        &self,
+        kind: DynamicFeedKind,
+        offset: Option<&str>,
+    ) -> Result<DynamicFeedData> {
+        let mut url = Self::endpoint_url(&self.config.endpoints.api_base, kind.endpoint_path())?;
+        {
+            let mut query = url.query_pairs_mut();
+            query
+                .append_pair("platform", "web")
+                .append_pair("features", DYNAMIC_FEED_FEATURES);
+            match kind {
+                DynamicFeedKind::Following => {
+                    query.append_pair("type", "video");
+                }
+                DynamicFeedKind::Space { mid } => {
+                    query.append_pair("host_mid", &mid.to_string());
+                }
+            }
+            if let Some(offset) = offset.filter(|value| !value.is_empty()) {
+                query.append_pair("offset", offset);
+            }
+        }
+        let response: ApiData<DynamicFeedData> = self.get_json(url).await?;
+        response.into_data()
+    }
+
+    async fn push_dynamic_feed_item(
+        &self,
+        items: &mut Vec<VideoCollectionItem>,
+        item: DynamicFeedItem,
+        fetch_mode: FeedListFetchMode,
+    ) -> Result<()> {
+        let Some(seed) = dynamic_archive_seed(item) else {
+            return Ok(());
+        };
+        let metadata = self.fetch_video_by_aid(seed.aid, TagPolicy::Skip).await?;
+        let page_count = u32::try_from(metadata.pages.len())
+            .ok()
+            .filter(|count| *count > 0)
+            .unwrap_or(1);
+        for page in metadata.pages {
+            push_unique_collection_item(
+                items,
+                VideoCollectionItem {
+                    index: 0,
+                    aid: page.aid,
+                    bvid: metadata.bvid.clone().or_else(|| seed.bvid.clone()),
+                    cid: page.cid,
+                    title: if page_count == 1 {
+                        metadata.title.clone()
+                    } else {
+                        format_collection_page_title(&metadata.title, page.index, &page.title)
+                    },
+                    cover_url: metadata
+                        .cover_url
+                        .clone()
+                        .or_else(|| seed.cover_url.clone()),
+                    description: metadata.description.clone(),
+                    pub_time: metadata.pub_time.or(seed.pub_time),
+                    owner: metadata.owner.clone().or_else(|| seed.owner.clone()),
+                    duration_seconds: page.duration_seconds,
+                },
+            );
+            if fetch_mode.is_satisfied_by(items.len()) {
+                break;
+            }
+        }
+        Ok(())
     }
 
     async fn fetch_wbi_mixin_key(&self) -> Result<String> {
@@ -3215,6 +3416,88 @@ struct SpaceArchivePage {
     _size: Option<u32>,
 }
 
+#[derive(Debug, Deserialize)]
+struct DynamicFeedData {
+    has_more: Option<bool>,
+    offset: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_default_vec")]
+    items: Vec<DynamicFeedItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DynamicFeedItem {
+    #[serde(rename = "type")]
+    item_type: Option<String>,
+    visible: Option<bool>,
+    modules: Option<DynamicModules>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DynamicModules {
+    module_author: Option<DynamicAuthor>,
+    module_dynamic: Option<DynamicModule>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct DynamicAuthor {
+    mid: Option<u64>,
+    name: Option<String>,
+    pub_ts: Option<i64>,
+}
+
+impl DynamicAuthor {
+    fn into_owner(self) -> Option<Owner> {
+        Some(Owner {
+            mid: self.mid?,
+            name: self.name.unwrap_or_default(),
+        })
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct DynamicModule {
+    major: Option<DynamicMajor>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DynamicMajor {
+    #[serde(rename = "type")]
+    major_type: Option<String>,
+    archive: Option<DynamicArchive>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DynamicArchive {
+    aid: Option<FlexibleU64>,
+    bvid: Option<String>,
+    cover: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum FlexibleU64 {
+    Number(u64),
+    Text(String),
+}
+
+impl FlexibleU64 {
+    fn into_u64(self) -> Option<u64> {
+        match self {
+            Self::Number(value) => Some(value),
+            Self::Text(value) => value.parse().ok(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct DynamicArchiveSeed {
+    aid: u64,
+    bvid: Option<String>,
+    cover_url: Option<String>,
+    owner: Option<Owner>,
+    pub_time: Option<i64>,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct HistoryCursorQuery {
     max: u64,
@@ -3381,6 +3664,12 @@ enum SpaceListKind {
     Series,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DynamicFeedKind {
+    Following,
+    Space { mid: u64 },
+}
+
 impl MediaListKind {
     const fn type_id(self) -> &'static str {
         match self {
@@ -3423,6 +3712,43 @@ impl SpaceListKind {
         match self {
             Self::Collection => VideoCollectionKind::Collection,
             Self::Series => VideoCollectionKind::Series,
+        }
+    }
+}
+
+impl DynamicFeedKind {
+    const fn endpoint_path(self) -> &'static str {
+        match self {
+            Self::Following => "/x/polymer/web-dynamic/v1/feed/all",
+            Self::Space { .. } => "/x/polymer/web-dynamic/v1/feed/space",
+        }
+    }
+
+    const fn collection_id(self) -> Option<u64> {
+        match self {
+            Self::Following => None,
+            Self::Space { mid } => Some(mid),
+        }
+    }
+
+    const fn collection_kind(self) -> VideoCollectionKind {
+        match self {
+            Self::Following => VideoCollectionKind::Following,
+            Self::Space { .. } => VideoCollectionKind::SpaceDynamic,
+        }
+    }
+
+    fn collection_title(self) -> String {
+        match self {
+            Self::Following => "Following videos".to_owned(),
+            Self::Space { mid } => format!("Space {mid} dynamic videos"),
+        }
+    }
+
+    fn collection_description(self) -> String {
+        match self {
+            Self::Following => "Bilibili following video feed".to_owned(),
+            Self::Space { mid } => format!("Bilibili dynamic video feed for space {mid}"),
         }
     }
 }
@@ -3477,6 +3803,39 @@ fn push_medialist_media_pages(
         );
     }
     Ok(())
+}
+
+fn dynamic_archive_seed(item: DynamicFeedItem) -> Option<DynamicArchiveSeed> {
+    if item.visible == Some(false) {
+        return None;
+    }
+    if item
+        .item_type
+        .as_deref()
+        .is_some_and(|item_type| item_type != "DYNAMIC_TYPE_AV")
+    {
+        return None;
+    }
+    let modules = item.modules?;
+    let author = modules.module_author;
+    let pub_time = author.as_ref().and_then(|author| author.pub_ts);
+    let owner = author.and_then(DynamicAuthor::into_owner);
+    let major = modules.module_dynamic?.major?;
+    if major
+        .major_type
+        .as_deref()
+        .is_some_and(|major_type| major_type != "MAJOR_TYPE_ARCHIVE")
+    {
+        return None;
+    }
+    let archive = major.archive?;
+    Some(DynamicArchiveSeed {
+        aid: archive.aid.and_then(FlexibleU64::into_u64)?,
+        bvid: archive.bvid,
+        cover_url: archive.cover,
+        owner,
+        pub_time,
+    })
 }
 
 fn push_history_entry_item(items: &mut Vec<VideoCollectionItem>, entry: HistoryEntry) {
@@ -6226,6 +6585,273 @@ mod tests {
         assert_eq!(plan.entries.len(), 1);
         assert_eq!(plan.entries[0].aid, 170_001);
         assert_eq!(plan.entries[0].cid, 9988);
+        assert_eq!(plan.entries[0].source, StreamSource::NormalWeb);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolves_following_feed_archive_items() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/polymer/web-dynamic/v1/feed/all")
+                .query_param("type", "video")
+                .query_param("platform", "web")
+                .header("cookie", "SESSDATA=WEB_COOKIE");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "has_more": false,
+                    "offset": "offset-1",
+                    "items": [{
+                        "type": "DYNAMIC_TYPE_AV",
+                        "visible": true,
+                        "modules": {
+                            "module_author": {
+                                "mid": 1,
+                                "name": "Tester",
+                                "pub_ts": 1_700_000_001_i64
+                            },
+                            "module_dynamic": {
+                                "major": {
+                                    "type": "MAJOR_TYPE_ARCHIVE",
+                                    "archive": {
+                                        "aid": "170001",
+                                        "bvid": "BV1xx411c7mD",
+                                        "cover": "https://example.invalid/dynamic.jpg"
+                                    }
+                                }
+                            }
+                        }
+                    }, {
+                        "type": "DYNAMIC_TYPE_ARTICLE",
+                        "visible": true,
+                        "modules": {
+                            "module_dynamic": {
+                                "major": {"type": "MAJOR_TYPE_ARTICLE"}
+                            }
+                        }
+                    }]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("aid", "170001");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "aid": 170_001,
+                    "bvid": "BV1xx411c7mD",
+                    "title": "Following video",
+                    "desc": "Following description",
+                    "owner": {"mid": 1, "name": "Tester"},
+                    "pages": [{"page": 1, "cid": 9988, "part": "Main", "duration": 3}]
+                }
+            }));
+        });
+        let mut client = test_client(&server);
+        client.config.credentials = Credentials::default().with_cookie("SESSDATA=WEB_COOKIE");
+
+        let resolved = client.resolve_input("following", None).await?;
+
+        match resolved {
+            ResolvedContent::Collection(collection) => {
+                assert_eq!(collection.collection.kind, VideoCollectionKind::Following);
+                assert_eq!(collection.collection.title, "Following videos");
+                assert_eq!(collection.collection.items.len(), 1);
+                assert_eq!(collection.selected_items[0].title, "Following video");
+                let owner = collection.selected_items[0]
+                    .owner
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("expected owner"))?;
+                assert_eq!(owner.name, "Tester");
+            }
+            ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
+                return Err(anyhow::anyhow!("expected collection"));
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn dynamic_feed_stops_when_next_offset_is_missing() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/polymer/web-dynamic/v1/feed/all")
+                .query_param("type", "video")
+                .query_param("platform", "web")
+                .query_param_missing("offset");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "has_more": true,
+                    "offset": "offset-1",
+                    "items": [{
+                        "type": "DYNAMIC_TYPE_AV",
+                        "visible": true,
+                        "modules": {
+                            "module_dynamic": {
+                                "major": {
+                                    "type": "MAJOR_TYPE_ARCHIVE",
+                                    "archive": {"aid": 170_001}
+                                }
+                            }
+                        }
+                    }]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/polymer/web-dynamic/v1/feed/all")
+                .query_param("type", "video")
+                .query_param("platform", "web")
+                .query_param("offset", "offset-1");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "has_more": true,
+                    "items": [{
+                        "type": "DYNAMIC_TYPE_AV",
+                        "visible": true,
+                        "modules": {
+                            "module_dynamic": {
+                                "major": {
+                                    "type": "MAJOR_TYPE_ARCHIVE",
+                                    "archive": {"aid": 170_002}
+                                }
+                            }
+                        }
+                    }]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("aid", "170001");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "aid": 170_001,
+                    "bvid": "BV1xx411c7mD",
+                    "title": "First dynamic video",
+                    "pages": [{"page": 1, "cid": 9988, "part": "Main", "duration": 3}]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("aid", "170002");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "aid": 170_002,
+                    "bvid": "BV1xx411c7mE",
+                    "title": "Second dynamic video",
+                    "pages": [{"page": 1, "cid": 9989, "part": "Main", "duration": 4}]
+                }
+            }));
+        });
+
+        let resolved = test_client(&server)
+            .resolve_input("following", None)
+            .await?;
+
+        match resolved {
+            ResolvedContent::Collection(collection) => {
+                assert_eq!(collection.collection.items.len(), 2);
+                assert_eq!(collection.collection.items[0].title, "First dynamic video");
+                assert_eq!(collection.collection.items[1].title, "Second dynamic video");
+            }
+            ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
+                return Err(anyhow::anyhow!("expected collection"));
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn plans_space_dynamic_latest_as_normal_video_entry() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/polymer/web-dynamic/v1/feed/space")
+                .query_param("host_mid", "123")
+                .query_param("platform", "web");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "has_more": true,
+                    "offset": "offset-1",
+                    "items": [{
+                        "type": "DYNAMIC_TYPE_AV",
+                        "visible": true,
+                        "modules": {
+                            "module_author": {
+                                "mid": 123,
+                                "name": "Uploader",
+                                "pub_ts": 1_700_000_001_i64
+                            },
+                            "module_dynamic": {
+                                "major": {
+                                    "type": "MAJOR_TYPE_ARCHIVE",
+                                    "archive": {
+                                        "aid": 170_001,
+                                        "bvid": "BV1xx411c7mD",
+                                        "cover": "https://example.invalid/space-dynamic.jpg"
+                                    }
+                                }
+                            }
+                        }
+                    }, {
+                        "type": "DYNAMIC_TYPE_AV",
+                        "visible": true,
+                        "modules": {
+                            "module_dynamic": {
+                                "major": {
+                                    "type": "MAJOR_TYPE_ARCHIVE",
+                                    "archive": {"aid": 170_002}
+                                }
+                            }
+                        }
+                    }]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("aid", "170001");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "aid": 170_001,
+                    "bvid": "BV1xx411c7mD",
+                    "title": "Space dynamic video",
+                    "desc": "Space dynamic description",
+                    "owner": {"mid": 123, "name": "Uploader"},
+                    "pages": [{"page": 1, "cid": 9988, "part": "Main", "duration": 3}]
+                }
+            }));
+        });
+        server_mock_playurl(&server, 170_001, 9988, "space-dynamic");
+        server_mock_player_v2(&server, 170_001, 9988);
+
+        let plan = test_client(&server)
+            .plan_download(
+                "https://space.bilibili.com/123/dynamic",
+                Some(Selection::Latest),
+            )
+            .await?;
+
+        assert_eq!(plan.title, "Space 123 dynamic videos");
+        assert_eq!(plan.entries.len(), 1);
+        assert_eq!(plan.entries[0].title, "Space dynamic video");
         assert_eq!(plan.entries[0].source, StreamSource::NormalWeb);
         Ok(())
     }

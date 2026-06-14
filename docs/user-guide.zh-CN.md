@@ -57,10 +57,12 @@ bbdown info mid123 --select 1,3-5 --json
 bbdown info collection456 --json
 bbdown info series456 --select latest --json
 bbdown info history --select latest --json
+bbdown info following --select latest --json
 bbdown info https://www.bilibili.com/medialist/detail/ml1103407912 --json
 bbdown info https://www.bilibili.com/list/ml1103407912 --json
 bbdown info 'https://www.bilibili.com/list/1958703906?sid=547718' --json
 bbdown info 'https://space.bilibili.com/123/favlist?fid=456' --json
+bbdown info 'https://space.bilibili.com/123/dynamic' --select latest --json
 bbdown info 'https://space.bilibili.com/123/lists/456?type=series' --json
 bbdown info https://www.bilibili.com/account/history --select latest --json
 ```
@@ -74,10 +76,10 @@ Season、media 和 `cheese/ss...` 输入在非交互模式下需要 `--select`�
 `--select page:2-4,7`。列表和范围会保留请求顺序，并对重复 index 去重。
 `episode:<epid>` 仍然表示精确 PGC episode id，而不是分集序号。
 
-收藏夹、空间投稿、合集、系列和观看历史是批量输入；不传 `--select` 时会解析全部条目。
-使用 `--select latest` 可选择上游列表顺序中的第一个解析条目。JSON metadata 会在
-`collection.collection.items` 保留完整解析到的集合条目列表，并在 `collection.selected_items`
-报告当前选中子集；空集合是有效的空列表。
+收藏夹、空间投稿、合集、系列、观看历史、关注 feed 和空间动态 feed 都是批量输入；不传
+`--select` 时会解析全部条目。使用 `--select latest` 可选择上游列表顺序中的第一个解析条
+目。JSON metadata 会在 `collection.collection.items` 保留完整解析到的集合条目列表，并在
+`collection.selected_items` 报告当前选中子集；空集合是有效的空列表。
 
 收藏夹 URL 可来自 shorthand id、空间 favlist 页面、canonical `/list/ml...` 页面，以及
 `/medialist/.../ml...` 页面。空间合集和系列 URL 会保留
@@ -86,6 +88,10 @@ Season、media 和 `cheese/ss...` 输入在非交互模式下需要 `--select`�
 观看历史输入支持 `history` 和 `https://www.bilibili.com/account/history`。它需要已认证的
 WEB cookie，目前只输出普通视频 `archive` 记录；PGC、直播或专栏等其它历史记录 business
 类型会被跳过，直到这些条目形态有专门的 collection planning 支持。
+关注 feed 输入支持 `following`、`https://t.bilibili.com/` 和
+`https://www.bilibili.com/account/dynamic`。空间动态 feed 输入支持
+`https://space.bilibili.com/<mid>/dynamic`。这些动态 feed 输入需要已认证的 WEB cookie，目
+前只输出普通视频 archive 卡片；非视频动态卡片会被跳过。
 
 ## 下载计划
 
@@ -99,6 +105,7 @@ bbdown plan https://www.bilibili.tv/en/play/34613/341736 --json
 bbdown plan cheese/ep101 --json
 bbdown plan fav456 --select 1,3-5 --json
 bbdown plan history --select latest --json
+bbdown plan following --select latest --json
 bbdown plan 'https://space.bilibili.com/123/channel/collectiondetail?sid=456' --select all --json
 ```
 

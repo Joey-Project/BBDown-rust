@@ -26,6 +26,8 @@ pub enum Input {
         list_id: u64,
         owner_mid: u64,
     },
+    FollowingFeed,
+    SpaceDynamic(u64),
     History,
     IntlEpisode(u64),
     ShortLink(String),
@@ -79,6 +81,9 @@ impl Input {
         if let Some(id) = lower.strip_prefix("series") {
             return parse_number(id, "series list").map(Self::SeriesList);
         }
+        if lower == "following" {
+            return Ok(Self::FollowingFeed);
+        }
         if lower == "history" {
             return Ok(Self::History);
         }
@@ -104,6 +109,8 @@ impl Input {
             | Self::SeriesList(_)
             | Self::SpaceCollectionList { .. }
             | Self::SpaceSeriesList { .. }
+            | Self::FollowingFeed
+            | Self::SpaceDynamic(_)
             | Self::History
             | Self::IntlEpisode(_)
             | Self::ShortLink(_) => Ok(None),
@@ -134,6 +141,9 @@ fn parse_url(raw: &str) -> Result<Input> {
         && let Some(input) = parse_space_url(&url)?
     {
         return Ok(input);
+    }
+    if parse_following_url(&url) {
+        return Ok(Input::FollowingFeed);
     }
     if parse_history_url(&url) {
         return Ok(Input::History);
@@ -223,6 +233,11 @@ fn parse_space_url(url: &Url) -> Result<Option<Input>> {
             owner_mid,
         }));
     }
+    if path_segments.contains(&"dynamic")
+        && let Some(owner_mid) = owner_mid
+    {
+        return Ok(Some(Input::SpaceDynamic(owner_mid)));
+    }
 
     if path_segments.contains(&"channel")
         && path_segments
@@ -263,6 +278,25 @@ fn parse_space_url(url: &Url) -> Result<Option<Input>> {
     }
 
     Ok(owner_mid.map(Input::SpaceVideos))
+}
+
+fn parse_following_url(url: &Url) -> bool {
+    let Some(host) = url.host_str().map(str::to_ascii_lowercase) else {
+        return false;
+    };
+    let path_segments = url
+        .path_segments()
+        .map(|segments| {
+            segments
+                .filter(|segment| !segment.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    match host.as_str() {
+        "t.bilibili.com" => path_segments.is_empty(),
+        "www.bilibili.com" | "bilibili.com" => path_segments.as_slice() == ["account", "dynamic"],
+        _ => false,
+    }
 }
 
 fn parse_medialist_url(url: &Url) -> Result<Option<Input>> {
@@ -376,6 +410,17 @@ mod tests {
         );
         assert_eq!(Input::parse("cheese/ss202")?, Input::CheeseSeason(202));
         assert_eq!(
+            Input::parse("https://b23.tv/example")?,
+            Input::ShortLink("https://b23.tv/example".to_owned())
+        );
+        assert!(Input::parse("bvideo").is_err());
+        assert!(Input::parse("bv1qt4y1X7TW").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn parses_collection_inputs() -> anyhow::Result<()> {
+        assert_eq!(
             Input::parse("https://space.bilibili.com/123/favlist?fid=456")?,
             Input::FavoriteList {
                 media_id: Some(456),
@@ -424,7 +469,29 @@ mod tests {
                 owner_mid: 1_958_703_906,
             }
         );
+        assert_eq!(
+            Input::parse("https://space.bilibili.com/123")?,
+            Input::SpaceVideos(123)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn parses_feed_inputs() -> anyhow::Result<()> {
         assert_eq!(Input::parse("history")?, Input::History);
+        assert_eq!(Input::parse("following")?, Input::FollowingFeed);
+        assert_eq!(
+            Input::parse("https://t.bilibili.com/")?,
+            Input::FollowingFeed
+        );
+        assert_eq!(
+            Input::parse("https://www.bilibili.com/account/dynamic")?,
+            Input::FollowingFeed
+        );
+        assert_eq!(
+            Input::parse("https://space.bilibili.com/123/dynamic")?,
+            Input::SpaceDynamic(123)
+        );
         assert_eq!(
             Input::parse("https://www.bilibili.com/account/history")?,
             Input::History
@@ -433,16 +500,6 @@ mod tests {
             Input::parse("https://www.bilibili.com/account/history/")?,
             Input::History
         );
-        assert_eq!(
-            Input::parse("https://space.bilibili.com/123")?,
-            Input::SpaceVideos(123)
-        );
-        assert_eq!(
-            Input::parse("https://b23.tv/example")?,
-            Input::ShortLink("https://b23.tv/example".to_owned())
-        );
-        assert!(Input::parse("bvideo").is_err());
-        assert!(Input::parse("bv1qt4y1X7TW").is_err());
         Ok(())
     }
 }
