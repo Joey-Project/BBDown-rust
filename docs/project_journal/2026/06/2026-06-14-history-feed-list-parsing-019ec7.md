@@ -39,9 +39,12 @@ superseded_by:
 
 ## Evidence
 - Targeted validation: `cargo test -p bbdown-core history --locked`.
+- Targeted validation: `cargo test -p bbdown-core input::tests::parses_common_inputs --locked`.
 - Targeted validation: `cargo test -p bbdown-cli --test cli_e2e history --locked`.
 - Project journal validation:
   `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/29f61f3e579e2a4166436b963eab301ac5d80d94/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.
 - Full local gate: `just ci`, including formatter, clippy, declared MSRV check, workspace tests,
   CLI mock e2e, live manifest unit tests, and crates.io dry-run packaging.
 - Local readonly review: helper-backed `codex-readonly` on the history slice returned `LGTM`.
+- Independent PR review found that `/account/history/` with a trailing slash should parse as
+  history; the parser now filters empty path segments and the input parsing test covers that form.

@@ -196,7 +196,11 @@ fn parse_history_url(url: &Url) -> bool {
     }
     let path_segments = url
         .path_segments()
-        .map(std::iter::Iterator::collect::<Vec<_>>)
+        .map(|segments| {
+            segments
+                .filter(|segment| !segment.is_empty())
+                .collect::<Vec<_>>()
+        })
         .unwrap_or_default();
     path_segments.as_slice() == ["account", "history"]
 }
@@ -423,6 +427,10 @@ mod tests {
         assert_eq!(Input::parse("history")?, Input::History);
         assert_eq!(
             Input::parse("https://www.bilibili.com/account/history")?,
+            Input::History
+        );
+        assert_eq!(
+            Input::parse("https://www.bilibili.com/account/history/")?,
             Input::History
         );
         assert_eq!(
