@@ -1988,18 +1988,18 @@ impl BiliClient {
             .filter(|page| *page > 0)
             .unwrap_or(1);
         let page_cid = page.as_ref().and_then(WatchLaterPageField::cid);
+        let top_level_cid = cid.and_then(FlexibleU64::into_u64).filter(|cid| *cid > 0);
 
         let mut fallback = None;
-        let cid = if let Some(cid) = cid
-            .and_then(FlexibleU64::into_u64)
-            .filter(|cid| *cid > 0)
-            .or(page_cid)
-        {
+        let cid = if let Some(cid) = page_cid.or(top_level_cid) {
             cid
         } else {
-            let detail = self
+            let Ok(detail) = self
                 .fetch_watch_later_item_fallback(aid, bvid.as_deref(), page_index)
-                .await?;
+                .await
+            else {
+                return Ok(None);
+            };
             let cid = detail.page.cid;
             fallback = Some(detail);
             cid
@@ -7125,7 +7125,7 @@ mod tests {
                     "list": [{
                         "aid": "170001",
                         "bvid": "BV1xx411c7mD",
-                        "cid": 0,
+                        "cid": 1111,
                         "title": "Watch later video",
                         "desc": "Watch later description",
                         "pic": "https://example.invalid/watch-later.jpg",
@@ -7172,6 +7172,7 @@ mod tests {
                     "Watch later video_P2_Second"
                 );
                 assert_eq!(collection.collection.items[0].duration_seconds, Some(3));
+                assert_eq!(collection.collection.items[0].cid, 9988);
                 assert_eq!(
                     collection.selected_items[0].title,
                     "Second watch later video"
@@ -7242,6 +7243,59 @@ mod tests {
                 assert_eq!(collection.collection.items.len(), 1);
                 assert_eq!(collection.collection.items[0].cid, 9990);
                 assert_eq!(collection.collection.items[0].duration_seconds, Some(5));
+            }
+            ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
+                return Err(anyhow::anyhow!("expected collection"));
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn skips_watch_later_item_when_cid_fallback_fails() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/x/v2/history/toview");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "count": 2,
+                    "list": [{
+                        "aid": 170_003,
+                        "bvid": "BV1xx411c7mF",
+                        "cid": 0,
+                        "title": "Deleted watch later video"
+                    }, {
+                        "aid": 170_004,
+                        "bvid": "BV1xx411c7mG",
+                        "cid": 9991,
+                        "title": "Usable watch later video"
+                    }]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("bvid", "BV1xx411c7mF");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": -404,
+                "message": "not found"
+            }));
+        });
+
+        let resolved = test_client(&server)
+            .resolve_input("watchlater", None)
+            .await?;
+
+        match resolved {
+            ResolvedContent::Collection(collection) => {
+                assert_eq!(collection.collection.items.len(), 1);
+                assert_eq!(collection.collection.items[0].cid, 9991);
+                assert_eq!(
+                    collection.collection.items[0].title,
+                    "Usable watch later video"
+                );
             }
             ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
                 return Err(anyhow::anyhow!("expected collection"));
