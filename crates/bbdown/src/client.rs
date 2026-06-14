@@ -1,5 +1,9 @@
 use crate::app_playurl;
 use crate::download::DownloadMode;
+use crate::feed_list::{
+    FeedListFetchMode, feed_list_fetch_mode, feed_list_info_fetch_mode, push_unique_feed_list_item,
+    renumber_feed_list_items, select_feed_list_items, select_items_by_index,
+};
 use crate::models::{
     DanmakuTrack, DownloadEntry, DownloadPlan, EpisodeMetadata, FlvSegment, MediaStream, Owner,
     PageMetadata, ResolvedContent, SeasonMetadata, SeasonResolution, StreamDiagnostics,
@@ -8,12 +12,11 @@ use crate::models::{
     VideoCollectionMetadata, VideoCollectionResolution, VideoMetadata,
 };
 use crate::playback::{PlaybackPlan, header_specs_from_map};
-use crate::{Credentials, Error, IndexSelection, Input, Result, Selection};
+use crate::{Credentials, Error, Input, Result, Selection};
 use http_body_util::BodyExt as _;
 use md5::{Digest, Md5};
 use reqwest::header::{COOKIE, HeaderMap, HeaderValue, REFERER, USER_AGENT};
 use serde::Deserialize;
-use std::collections::HashSet;
 use std::fmt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use url::Url;
@@ -1017,7 +1020,7 @@ impl BiliClient {
         media_id: Option<u64>,
         owner_mid: Option<u64>,
         selection: Option<Selection>,
-        fetch_mode: CollectionFetchMode,
+        fetch_mode: FeedListFetchMode,
     ) -> Result<VideoCollectionResolution> {
         let media_id = match media_id {
             Some(media_id) => media_id,
@@ -1051,7 +1054,7 @@ impl BiliClient {
     async fn fetch_favorite_collection_all(
         &self,
         media_id: u64,
-        fetch_mode: CollectionFetchMode,
+        fetch_mode: FeedListFetchMode,
     ) -> Result<VideoCollectionMetadata> {
         let page_size = 20_u32;
         let mut page_number = 1_u32;
@@ -1191,7 +1194,7 @@ impl BiliClient {
         list_id: u64,
         kind: MediaListKind,
         selection: Option<Selection>,
-        fetch_mode: CollectionFetchMode,
+        fetch_mode: FeedListFetchMode,
     ) -> Result<VideoCollectionResolution> {
         let collection = self
             .fetch_medialist_collection_all(list_id, kind, fetch_mode)
@@ -1203,7 +1206,7 @@ impl BiliClient {
         &self,
         list_id: u64,
         kind: MediaListKind,
-        fetch_mode: CollectionFetchMode,
+        fetch_mode: FeedListFetchMode,
     ) -> Result<VideoCollectionMetadata> {
         let info = self.fetch_medialist_info(list_id, kind).await?;
         let mut items = Vec::new();
@@ -1301,7 +1304,7 @@ impl BiliClient {
         list_id: u64,
         kind: SpaceListKind,
         selection: Option<Selection>,
-        fetch_mode: CollectionFetchMode,
+        fetch_mode: FeedListFetchMode,
     ) -> Result<VideoCollectionResolution> {
         let newest_first = matches!(selection, Some(Selection::Latest));
         let collection = self
@@ -1315,7 +1318,7 @@ impl BiliClient {
         owner_mid: u64,
         list_id: u64,
         kind: SpaceListKind,
-        fetch_mode: CollectionFetchMode,
+        fetch_mode: FeedListFetchMode,
         newest_first: bool,
     ) -> Result<VideoCollectionMetadata> {
         let page_size = 30_u32;
@@ -1536,7 +1539,7 @@ impl BiliClient {
         &self,
         mid: u64,
         selection: Option<Selection>,
-        fetch_mode: CollectionFetchMode,
+        fetch_mode: FeedListFetchMode,
     ) -> Result<VideoCollectionResolution> {
         let collection = self
             .fetch_space_video_collection_all(mid, fetch_mode)
@@ -1547,7 +1550,7 @@ impl BiliClient {
     async fn fetch_space_video_collection_all(
         &self,
         mid: u64,
-        fetch_mode: CollectionFetchMode,
+        fetch_mode: FeedListFetchMode,
     ) -> Result<VideoCollectionMetadata> {
         let page_size = 50_u32;
         let mut page_number = 1_u32;
@@ -1933,62 +1936,24 @@ impl BiliClient {
         collection: VideoCollectionMetadata,
         selection: Option<&Selection>,
     ) -> Result<VideoCollectionResolution> {
-        let selected_items = match selection {
-            Some(Selection::Latest) => collection.items.first().cloned().into_iter().collect(),
-            Some(Selection::Page(page)) => collection
-                .items
-                .iter()
-                .find(|item| item.index == *page)
-                .cloned()
-                .into_iter()
-                .collect(),
-            Some(Selection::Indices(indices)) => select_items_by_index(
-                &collection.items,
-                indices,
-                |item| item.index,
-                "selected collection item",
-            )?,
-            Some(Selection::Episode(_)) => {
-                return Err(Error::InvalidInput(
-                    "episode selection is only valid for PGC inputs".to_owned(),
-                ));
-            }
-            Some(Selection::Current) => {
-                return Err(Error::InvalidInput(
-                    "current selection is only valid for inputs that identify a single current item"
-                        .to_owned(),
-                ));
-            }
-            Some(Selection::All) | None => collection.items.clone(),
-        };
-        let allow_empty_selection = matches!(selection, Some(Selection::All) | None);
-        if selected_items.is_empty() && !allow_empty_selection {
-            return Err(Error::MissingField("selected collection item"));
-        }
+        let selected_items = select_feed_list_items(
+            &collection.items,
+            selection,
+            |item| item.index,
+            "selected collection item",
+        )?;
         Ok(VideoCollectionResolution {
             collection,
             selected_items,
         })
     }
 
-    fn collection_fetch_mode(selection: Option<&Selection>) -> Result<CollectionFetchMode> {
-        match selection {
-            Some(Selection::Current) => Err(Error::InvalidInput(
-                "current selection is only valid for inputs that identify a single current item"
-                    .to_owned(),
-            )),
-            Some(Selection::Episode(_)) => Err(Error::InvalidInput(
-                "episode selection is only valid for PGC inputs".to_owned(),
-            )),
-            Some(Selection::Latest) => Ok(CollectionFetchMode::Latest),
-            Some(Selection::Page(page)) => Ok(CollectionFetchMode::Page(*page)),
-            Some(Selection::Indices(indices)) => Ok(CollectionFetchMode::Page(indices.max_index())),
-            Some(Selection::All) | None => Ok(CollectionFetchMode::All),
-        }
+    fn collection_fetch_mode(selection: Option<&Selection>) -> Result<FeedListFetchMode> {
+        feed_list_fetch_mode(selection)
     }
 
-    fn collection_info_fetch_mode(selection: Option<&Selection>) -> Result<CollectionFetchMode> {
-        Self::collection_fetch_mode(selection).map(|_| CollectionFetchMode::All)
+    fn collection_info_fetch_mode(selection: Option<&Selection>) -> Result<FeedListFetchMode> {
+        feed_list_info_fetch_mode(selection)
     }
 
     async fn fetch_stream_set(
@@ -3241,63 +3206,6 @@ fn empty_stream_set() -> StreamSet {
     }
 }
 
-fn select_items_by_index<T: Clone>(
-    items: &[T],
-    selection: &IndexSelection,
-    index_of: impl Fn(&T) -> u32,
-    missing_field: &'static str,
-) -> Result<Vec<T>> {
-    let indexed_items = items
-        .iter()
-        .map(|item| (index_of(item), item))
-        .collect::<Vec<_>>();
-    let available_indices = indexed_items
-        .iter()
-        .map(|(index, _)| *index)
-        .collect::<HashSet<_>>();
-    for selector in selection.selectors() {
-        validate_index_selector_matches(*selector, &available_indices, missing_field)?;
-    }
-
-    let mut selected = Vec::new();
-    let mut seen = HashSet::new();
-    for selector in selection.selectors() {
-        for (index, item) in &indexed_items {
-            if selector.contains(*index) && seen.insert(*index) {
-                selected.push((*item).clone());
-            }
-        }
-    }
-    Ok(selected)
-}
-
-fn validate_index_selector_matches(
-    selector: crate::IndexSelector,
-    available_indices: &HashSet<u32>,
-    missing_field: &'static str,
-) -> Result<()> {
-    match selector {
-        crate::IndexSelector::Index(index) => {
-            if available_indices.contains(&index) {
-                Ok(())
-            } else {
-                Err(Error::MissingField(missing_field))
-            }
-        }
-        crate::IndexSelector::Range { start, end } => {
-            let requested_count = u64::from(end) - u64::from(start) + 1;
-            if requested_count > available_indices.len() as u64 {
-                return Err(Error::MissingField(missing_field));
-            }
-            if (start..=end).all(|index| available_indices.contains(&index)) {
-                Ok(())
-            } else {
-                Err(Error::MissingField(missing_field))
-            }
-        }
-    }
-}
-
 impl ResolvedStreamSet {
     fn official(source: StreamSource, streams: StreamSet) -> Self {
         Self {
@@ -3324,25 +3232,6 @@ enum MediaListKind {
 enum SpaceListKind {
     Collection,
     Series,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum CollectionFetchMode {
-    All,
-    Latest,
-    Page(u32),
-}
-
-impl CollectionFetchMode {
-    fn is_satisfied_by(self, item_count: usize) -> bool {
-        match self {
-            Self::All => false,
-            Self::Latest => item_count > 0,
-            Self::Page(page) => {
-                page != 0 && usize::try_from(page).is_ok_and(|target| item_count >= target)
-            }
-        }
-    }
 }
 
 impl MediaListKind {
@@ -3444,21 +3333,13 @@ fn push_medialist_media_pages(
 }
 
 fn push_unique_collection_item(items: &mut Vec<VideoCollectionItem>, item: VideoCollectionItem) {
-    if items
-        .iter()
-        .any(|existing| existing.aid == item.aid && existing.cid == item.cid)
-    {
-        return;
-    }
-    items.push(item);
+    push_unique_feed_list_item(items, item, |existing, candidate| {
+        existing.aid == candidate.aid && existing.cid == candidate.cid
+    });
 }
 
 fn renumber_collection_items(items: &mut [VideoCollectionItem]) {
-    for (index, item) in items.iter_mut().enumerate() {
-        if let Ok(next_index) = u32::try_from(index + 1) {
-            item.index = next_index;
-        }
-    }
+    renumber_feed_list_items(items, |item, index| item.index = index);
 }
 
 fn format_collection_page_title(video_title: &str, page_index: u32, page_title: &str) -> String {

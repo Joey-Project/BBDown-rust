@@ -8,6 +8,7 @@ mod credentials;
 mod danmaku;
 mod download;
 mod error;
+mod feed_list;
 mod input;
 mod login;
 mod models;

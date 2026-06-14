@@ -127,6 +127,11 @@ and series APIs. Without a selector, collection-like inputs select all parsed it
 `Selection::Latest` for the first parsed item in the upstream list order. Empty collections are
 represented as empty item lists, not as missing-field errors.
 
+The current collection inputs keep their existing `ResolvedContent::Collection` JSON and Rust
+surface. Internally they now use the shared feed/list selection layer that future history,
+following/UP page, recommendation, and watch-later inputs will build on, so embedders should expect
+those future list-like inputs to follow the same index, range, latest, and empty-list semantics.
+
 ```rust,no_run
 use bbdown_core::{
     BiliClient, ClientConfig, IndexSelection, IndexSelector, ResolvedContent, Selection,

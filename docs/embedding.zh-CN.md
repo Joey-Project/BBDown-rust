@@ -122,6 +122,11 @@ API。不带 selector 时，集合类输入会选择全部解析条目；传入 
 `Selection::Latest` 可选择上游列表顺序中的第一个解析条目。空集合会表示为空 item 列表，
 而不是 missing-field 错误。
 
+当前 collection 输入保留既有的 `ResolvedContent::Collection` JSON 和 Rust surface。内部现
+在使用 shared feed/list selection 层；后续 history、following/UP 页面、recommendation 和
+稍后再看输入会基于这一层实现，因此嵌入方可以预期这些未来 list-like 输入会沿用相同的
+index、range、latest 和空列表语义。
+
 ```rust,no_run
 use bbdown_core::{
     BiliClient, ClientConfig, IndexSelection, IndexSelector, ResolvedContent, Selection,
