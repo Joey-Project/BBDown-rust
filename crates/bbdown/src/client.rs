@@ -560,13 +560,12 @@ impl BiliClient {
         Ok(response.into_data()?.is_login)
     }
 
-    async fn fetch_oauth2_info(&self, access_token: &str) -> Result<()> {
+    async fn fetch_oauth2_info(&self, access_key: &str) -> Result<()> {
         let mut url = Self::endpoint_url(
             &self.config.endpoints.passport_base,
             "/x/passport-login/oauth2/info",
         )?;
-        url.query_pairs_mut()
-            .append_pair("access_token", access_token);
+        url.query_pairs_mut().append_pair("access_key", access_key);
         let response: ApiData<serde_json::Value> = self.get_json_without_cookie(url).await?;
         response.into_data()?;
         Ok(())
@@ -5708,7 +5707,7 @@ mod tests {
         let access_key_mock = server.mock(|when, then| {
             when.method(GET)
                 .path("/x/passport-login/oauth2/info")
-                .query_param("access_token", "ACCESS_SECRET")
+                .query_param("access_key", "ACCESS_SECRET")
                 .header_missing("cookie");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
@@ -5718,11 +5717,11 @@ mod tests {
         let tv_access_key_mock = server.mock(|when, then| {
             when.method(GET)
                 .path("/x/passport-login/oauth2/info")
-                .query_param("access_token", "TV_SECRET")
+                .query_param("access_key", "TV_SECRET")
                 .header_missing("cookie");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": -101,
-                "message": "access_token=TV_SECRET expired"
+                "message": "access_key=TV_SECRET expired"
             }));
         });
         let mut client = test_client(&server);
@@ -5772,7 +5771,7 @@ mod tests {
         let access_key_mock = server.mock(|when, then| {
             when.method(GET)
                 .path("/x/passport-login/oauth2/info")
-                .query_param("access_token", "ACCESS_SECRET ")
+                .query_param("access_key", "ACCESS_SECRET ")
                 .header_missing("cookie");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,

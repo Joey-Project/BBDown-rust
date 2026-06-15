@@ -321,8 +321,9 @@ the QR login key. Token values are not printed by status or the `saved` JSON eve
 
 Use `auth health` to diagnose configured credentials without exposing secret values. The command
 checks the WEB cookie against the web nav endpoint and checks both the generic `access_key` and TV
-`tv_access_key` as OAuth access tokens. JSON output is a typed report with per-credential `missing`,
-`valid`, `rejected`, or `request_failed` statuses plus sanitized API codes/messages.
+`tv_access_key` through the OAuth info endpoint as `access_key` query values. JSON output is a typed
+report with per-credential `missing`, `valid`, `rejected`, or `request_failed` statuses plus
+sanitized API codes/messages.
 
 ## Endpoint Overrides
 

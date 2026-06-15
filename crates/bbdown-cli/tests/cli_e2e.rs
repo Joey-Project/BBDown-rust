@@ -2477,7 +2477,7 @@ fn auth_health_reports_redacted_credential_probe_statuses() -> anyhow::Result<()
     let access_key_mock = server.mock(|when, then| {
         when.method(GET)
             .path("/x/passport-login/oauth2/info")
-            .query_param("access_token", "ACCESS_SECRET")
+            .query_param("access_key", "ACCESS_SECRET")
             .header_missing("cookie");
         then.status(200).json_body_obj(&serde_json::json!({
             "code": 0,
@@ -2487,11 +2487,11 @@ fn auth_health_reports_redacted_credential_probe_statuses() -> anyhow::Result<()
     let tv_access_key_mock = server.mock(|when, then| {
         when.method(GET)
             .path("/x/passport-login/oauth2/info")
-            .query_param("access_token", "TV_SECRET")
+            .query_param("access_key", "TV_SECRET")
             .header_missing("cookie");
         then.status(200).json_body_obj(&serde_json::json!({
             "code": -101,
-            "message": "access_token=TV_SECRET expired"
+            "message": "access_key=TV_SECRET expired"
         }));
     });
 
