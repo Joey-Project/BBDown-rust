@@ -195,7 +195,9 @@ selection、封面、字幕和弹幕旁路文件仍使用与普通视频下载�
 作为 QR payload。
 当嵌入项目需要在决定提示登录、导入 token 或继续匿名请求前做脱敏诊断时，可以调用
 `BiliClient::check_credential_health()`。报告会分别包含 WEB cookie、通用 `access_key` 和
-TV `tv_access_key` 的 probe；probe message 在序列化前会先脱敏。
+TV `tv_access_key` 的 probe；`kind` 表示凭据槽位，`scope` 表示实际检查的消费场景。通用
+`access_key` probe 当前只覆盖 intl/Bstar OAuth-info scope，因此如果下游需要 APP gRPC 或
+proxy-specific assurance，应把它作为单独策略判断。probe message 在序列化前会先脱敏。
 
 ```rust,no_run
 use bbdown_core::{BiliClient, ClientConfig, Credentials};

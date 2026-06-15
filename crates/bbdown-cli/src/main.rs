@@ -3,13 +3,13 @@
 
 use anyhow::{Context, bail, ensure};
 use bbdown_core::{
-    BiliClient, ClientConfig, CredentialHealthReport, CredentialHealthStatus, CredentialKind,
-    CredentialStore, Credentials, DanmakuFormat, DownloadArchive, DownloadMode, DownloadOptions,
-    DownloadPathTemplates, DownloadPreflight, DownloadReport, DuplicateDecision, EndpointConfig,
-    MediaHostOptions, MediaStream, MuxOptions, PlaybackPlan, PlayurlMode, QrLoginKind,
-    QrLoginState, QrLoginTicket, QrLoginTicketOutput, ResolvedContent, RestrictedArea,
-    RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection,
-    StreamQuality, StreamSelection, StreamSet,
+    BiliClient, ClientConfig, CredentialHealthReport, CredentialHealthScope,
+    CredentialHealthStatus, CredentialKind, CredentialStore, Credentials, DanmakuFormat,
+    DownloadArchive, DownloadMode, DownloadOptions, DownloadPathTemplates, DownloadPreflight,
+    DownloadReport, DuplicateDecision, EndpointConfig, MediaHostOptions, MediaStream, MuxOptions,
+    PlaybackPlan, PlayurlMode, QrLoginKind, QrLoginState, QrLoginTicket, QrLoginTicketOutput,
+    ResolvedContent, RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy,
+    RestrictedAreaProxyKind, RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::ffi::{OsStr, OsString};
@@ -1108,8 +1108,9 @@ fn print_credential_health_report(report: &CredentialHealthReport) -> anyhow::Re
 
     for probe in &report.probes {
         let mut line = format!(
-            "{}: {}",
+            "{} ({}): {}",
             credential_kind_label(probe.kind),
+            credential_health_scope_label(probe.scope),
             credential_health_status_label(probe.status)
         );
         if let Some(endpoint) = &probe.endpoint {
@@ -1133,6 +1134,14 @@ fn credential_kind_label(kind: CredentialKind) -> &'static str {
         CredentialKind::Cookie => "cookie",
         CredentialKind::AccessKey => "access_key",
         CredentialKind::TvAccessKey => "tv_access_key",
+    }
+}
+
+fn credential_health_scope_label(scope: CredentialHealthScope) -> &'static str {
+    match scope {
+        CredentialHealthScope::WebCookie => "web",
+        CredentialHealthScope::IntlBstar => "intl/bstar",
+        CredentialHealthScope::Tv => "tv",
     }
 }
 

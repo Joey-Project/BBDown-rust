@@ -188,10 +188,11 @@ Bilibili 二维码状态机，并只保存最终得到的凭据。WEB 二维码�
 请把扫码 URL 和 QR payload 当成临时登录密钥；状态输出和 `saved` 事件只暴露脱敏布尔值。
 `auth health` 会在不打印密钥值的情况下检查已配置凭据：WEB cookie 通过 web nav 端点检查；
 通用 `access_key` 和 TV `tv_access_key` 会通过 OAuth info 端点以 signed `access_key` app
-query 值检查。通用 token probe 使用 `--passport-base`；TV token probe 使用
+query 值检查。通用 token probe 当前覆盖 intl/Bstar scope，并使用 `--passport-base`；它不会
+证明同一 token 对所有 APP gRPC 或 proxy 消费者都可用。TV token probe 使用
 `--tv-passport-poll-base`；如果只提供 `--tv-passport-base`，poll base 会跟随该 TV 覆盖。
-JSON 输出会按凭据报告 `missing`、`valid`、`rejected` 或 `request_failed` 状态，便于嵌入
-调用方和自动化使用。
+JSON 输出会用 `kind` 表示凭据槽位、用 `scope` 表示实际检查的消费场景，并报告
+`missing`、`valid`、`rejected` 或 `request_failed` 状态，便于嵌入调用方和自动化使用。
 
 使用 `--request-timeout-seconds` 或 `BBDOWN_REQUEST_TIMEOUT_SECONDS` 调整 API 请求时限。
 媒体正文读取使用 `--download-idle-timeout-seconds`；传入 `0` 可禁用 idle timeout。使用

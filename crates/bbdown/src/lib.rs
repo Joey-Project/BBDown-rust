@@ -20,8 +20,8 @@ pub use client::{
     RestrictedAreaProxy, RestrictedAreaProxyKind,
 };
 pub use credentials::{
-    CredentialHealthProbe, CredentialHealthReport, CredentialHealthStatus, CredentialKind,
-    CredentialSource, CredentialStore, Credentials,
+    CredentialHealthProbe, CredentialHealthReport, CredentialHealthScope, CredentialHealthStatus,
+    CredentialKind, CredentialSource, CredentialStore, Credentials,
 };
 pub use danmaku::{DanmakuFormat, DanmakuFormats};
 pub use download::{

@@ -356,11 +356,14 @@ inject their own storage or keep credentials in memory.
 Credential health diagnostics are a read-only layer over the same credential model. The crate exposes
 `CredentialHealthReport` and `BiliClient::check_credential_health()` so embedding callers can check
 the WEB cookie, generic `access_key`, and TV `tv_access_key` independently before choosing a login or
-fallback flow. The WEB cookie probe uses `/x/web-interface/nav`; the token probes use
+fallback flow. Each probe records `kind` for the credential storage slot and `scope` for the checked
+consumer. The WEB cookie probe uses `/x/web-interface/nav`; the token probes use
 `/x/passport-login/oauth2/info` with the credential sent as a signed `access_key` app query value and
-without sending cookies. Generic token probes use the configured `passport_base`; TV token probes use
-the configured `tv_passport_poll_base`. Probe failures are contained per credential as `missing`,
-`valid`, `rejected`, or `request_failed` rather than failing the whole report.
+without sending cookies. Generic token probes currently check the intl/Bstar scope through the
+configured `passport_base`; this does not claim APP gRPC or restricted-area proxy validity for the
+same stored `access_key`. TV token probes use the configured `tv_passport_poll_base`. Probe failures
+are contained per credential as `missing`, `valid`, `rejected`, or `request_failed` rather than
+failing the whole report.
 
 QR login is modeled as an explicit state machine in the crate. WEB QR login creates a
 `QrLoginTicket`, which can be converted to `QrLoginTicketOutput` for a stable serialized scan URL and

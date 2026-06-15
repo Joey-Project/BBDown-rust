@@ -2526,10 +2526,13 @@ fn auth_health_reports_redacted_credential_probe_statuses() -> anyhow::Result<()
     assert_eq!(report["credentials"]["has_access_key"], true);
     assert_eq!(report["credentials"]["has_tv_access_key"], true);
     assert_eq!(report["probes"][0]["kind"], "cookie");
+    assert_eq!(report["probes"][0]["scope"], "web_cookie");
     assert_eq!(report["probes"][0]["status"], "valid");
     assert_eq!(report["probes"][1]["kind"], "access_key");
+    assert_eq!(report["probes"][1]["scope"], "intl_bstar");
     assert_eq!(report["probes"][1]["status"], "valid");
     assert_eq!(report["probes"][2]["kind"], "tv_access_key");
+    assert_eq!(report["probes"][2]["scope"], "tv");
     assert_eq!(report["probes"][2]["status"], "rejected");
     assert_eq!(report["probes"][2]["api_code"], -101);
     let output_text = String::from_utf8(output)?;

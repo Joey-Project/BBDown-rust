@@ -322,9 +322,12 @@ the QR login key. Token values are not printed by status or the `saved` JSON eve
 Use `auth health` to diagnose configured credentials without exposing secret values. The command
 checks the WEB cookie against the web nav endpoint and checks both the generic `access_key` and TV
 `tv_access_key` through the OAuth info endpoint as signed `access_key` app query values. JSON output
-is a typed report with per-credential `missing`, `valid`, `rejected`, or `request_failed` statuses plus
-sanitized API codes/messages. Generic token probes use `--passport-base`; TV token probes use
-`--tv-passport-poll-base`, which follows `--tv-passport-base` when only that TV override is supplied.
+is a typed report with `kind` for the credential slot, `scope` for the checked consumer, and
+per-probe `missing`, `valid`, `rejected`, or `request_failed` statuses plus sanitized API
+codes/messages. Generic token probes currently cover the intl/Bstar scope and use
+`--passport-base`; they do not prove the same token is usable for every APP gRPC or proxy consumer.
+TV token probes use `--tv-passport-poll-base`, which follows `--tv-passport-base` when only that TV
+override is supplied.
 
 ## Endpoint Overrides
 

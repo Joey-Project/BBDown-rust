@@ -206,7 +206,10 @@ as the QR payload.
 Call `BiliClient::check_credential_health()` when an embedding project needs a redacted diagnostic
 report before deciding whether to prompt for login, import a token, or continue with anonymous
 requests. The report includes one probe each for the WEB cookie, generic `access_key`, and TV
-`tv_access_key`; probe messages are sanitized before they are serialized.
+`tv_access_key`; `kind` identifies the credential slot and `scope` identifies the checked consumer.
+The generic `access_key` probe currently covers the intl/Bstar OAuth-info scope only, so downstream
+applications that need APP gRPC or proxy-specific assurance should treat that as a separate policy
+decision. Probe messages are sanitized before they are serialized.
 
 ```rust,no_run
 use bbdown_core::{BiliClient, ClientConfig, Credentials};

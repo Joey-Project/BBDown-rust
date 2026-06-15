@@ -13,8 +13,8 @@ use crate::models::{
 };
 use crate::playback::{PlaybackPlan, header_specs_from_map};
 use crate::{
-    CredentialHealthProbe, CredentialHealthReport, CredentialKind, Credentials, Error, Input,
-    Result, Selection,
+    CredentialHealthProbe, CredentialHealthReport, CredentialHealthScope, CredentialKind,
+    Credentials, Error, Input, Result, Selection,
 };
 use http_body_util::BodyExt as _;
 use md5::{Digest, Md5};
@@ -391,9 +391,12 @@ impl BiliClient {
         let credentials = self.config.credentials.redacted_summary();
         let probes = vec![
             self.check_cookie_health().await,
-            self.check_access_token_health(CredentialKind::AccessKey)
-                .await,
-            self.check_access_token_health(CredentialKind::TvAccessKey)
+            self.check_access_token_health(
+                CredentialKind::AccessKey,
+                CredentialHealthScope::IntlBstar,
+            )
+            .await,
+            self.check_access_token_health(CredentialKind::TvAccessKey, CredentialHealthScope::Tv)
                 .await,
         ];
         CredentialHealthReport {
@@ -499,6 +502,7 @@ impl BiliClient {
 
     async fn check_cookie_health(&self) -> CredentialHealthProbe {
         const ENDPOINT: &str = "web_nav";
+        const SCOPE: CredentialHealthScope = CredentialHealthScope::WebCookie;
         let Some(cookie) = self
             .config
             .credentials
@@ -506,34 +510,41 @@ impl BiliClient {
             .as_deref()
             .filter(|value| !value.is_empty())
         else {
-            return CredentialHealthProbe::missing(CredentialKind::Cookie);
+            return CredentialHealthProbe::missing(CredentialKind::Cookie, SCOPE);
         };
         match self.fetch_cookie_login_state(cookie).await {
-            Ok(true) => CredentialHealthProbe::valid(CredentialKind::Cookie, ENDPOINT),
+            Ok(true) => CredentialHealthProbe::valid(CredentialKind::Cookie, SCOPE, ENDPOINT),
             Ok(false) => CredentialHealthProbe::rejected(
                 CredentialKind::Cookie,
+                SCOPE,
                 ENDPOINT,
                 Some(0),
                 "not logged in",
             ),
-            Err(error) => credential_health_error(CredentialKind::Cookie, ENDPOINT, error, cookie),
+            Err(error) => {
+                credential_health_error(CredentialKind::Cookie, SCOPE, ENDPOINT, error, cookie)
+            }
         }
     }
 
-    async fn check_access_token_health(&self, kind: CredentialKind) -> CredentialHealthProbe {
+    async fn check_access_token_health(
+        &self,
+        kind: CredentialKind,
+        scope: CredentialHealthScope,
+    ) -> CredentialHealthProbe {
         const ENDPOINT: &str = "oauth2_info";
         let token = match kind {
-            CredentialKind::Cookie => return CredentialHealthProbe::missing(kind),
+            CredentialKind::Cookie => return CredentialHealthProbe::missing(kind, scope),
             CredentialKind::AccessKey => self.config.credentials.access_key.as_deref(),
             CredentialKind::TvAccessKey => self.config.credentials.tv_access_key.as_deref(),
         }
         .filter(|value| !value.is_empty());
         let Some(token) = token else {
-            return CredentialHealthProbe::missing(kind);
+            return CredentialHealthProbe::missing(kind, scope);
         };
-        match self.fetch_oauth2_info(kind, token).await {
-            Ok(()) => CredentialHealthProbe::valid(kind, ENDPOINT),
-            Err(error) => credential_health_error(kind, ENDPOINT, error, token),
+        match self.fetch_oauth2_info(kind, scope, token).await {
+            Ok(()) => CredentialHealthProbe::valid(kind, scope, ENDPOINT),
+            Err(error) => credential_health_error(kind, scope, ENDPOINT, error, token),
         }
     }
 
@@ -562,7 +573,12 @@ impl BiliClient {
         Ok(response.into_data()?.is_login)
     }
 
-    async fn fetch_oauth2_info(&self, kind: CredentialKind, access_key: &str) -> Result<()> {
+    async fn fetch_oauth2_info(
+        &self,
+        kind: CredentialKind,
+        scope: CredentialHealthScope,
+        access_key: &str,
+    ) -> Result<()> {
         let endpoint_base = match kind {
             CredentialKind::AccessKey => &self.config.endpoints.passport_base,
             CredentialKind::TvAccessKey => &self.config.endpoints.tv_passport_poll_base,
@@ -573,7 +589,7 @@ impl BiliClient {
             }
         };
         let mut url = Self::endpoint_url(endpoint_base, "/x/passport-login/oauth2/info")?;
-        let params = oauth2_info_params(kind, access_key, current_unix_timestamp())?;
+        let params = oauth2_info_params(scope, access_key, current_unix_timestamp())?;
         {
             let mut query = url.query_pairs_mut();
             for (key, value) in params {
@@ -4911,6 +4927,7 @@ fn sanitize_diagnostic_text(raw: &str) -> String {
 
 fn credential_health_error(
     kind: CredentialKind,
+    scope: CredentialHealthScope,
     endpoint: &'static str,
     error: Error,
     raw_secret: &str,
@@ -4918,12 +4935,14 @@ fn credential_health_error(
     match error {
         Error::Api { code, message } => CredentialHealthProbe::rejected(
             kind,
+            scope,
             endpoint,
             Some(code),
             sanitize_diagnostic_text_with_secret(&message, raw_secret),
         ),
         other => CredentialHealthProbe::request_failed(
             kind,
+            scope,
             endpoint,
             sanitize_diagnostic_text_with_secret(&other.to_string(), raw_secret),
         ),
@@ -5674,21 +5693,23 @@ fn intl_ogv_playurl_params(
 }
 
 fn oauth2_info_params(
-    kind: CredentialKind,
+    scope: CredentialHealthScope,
     access_key: &str,
     timestamp: u64,
 ) -> Result<Vec<(&'static str, String)>> {
-    let (appkey, secret, build, mobi_app) = match kind {
-        CredentialKind::AccessKey => (INTL_OGV_APPKEY, INTL_OGV_APP_SECRET, "1001310", "bstar_a"),
-        CredentialKind::TvAccessKey => (
+    let (appkey, secret, build, mobi_app) = match scope {
+        CredentialHealthScope::IntlBstar => {
+            (INTL_OGV_APPKEY, INTL_OGV_APP_SECRET, "1001310", "bstar_a")
+        }
+        CredentialHealthScope::Tv => (
             TV_PLAYURL_APPKEY,
             TV_PLAYURL_APP_SECRET,
             "102801",
             "android_tv_yst",
         ),
-        CredentialKind::Cookie => {
+        CredentialHealthScope::WebCookie => {
             return Err(Error::InvalidInput(
-                "cookie credential cannot use oauth2 info probe".to_owned(),
+                "web cookie health cannot use oauth2 info probe".to_owned(),
             ));
         }
     };
@@ -5728,10 +5749,11 @@ mod tests {
         intl_ogv_playurl_params, oauth2_info_params, sign_ordered_params,
     };
     use crate::{
-        CodecFamily, CredentialHealthStatus, CredentialKind, Credentials, EpisodeMetadata, Error,
-        IndexSelection, IndexSelector, Input, PageMetadata, ResolvedContent, SeasonMetadata,
-        Selection, StreamSource, SubtitleFormat, VideoCollectionItem, VideoCollectionKind,
-        VideoCollectionMetadata, VideoMetadata, app_playurl,
+        CodecFamily, CredentialHealthScope, CredentialHealthStatus, CredentialKind, Credentials,
+        EpisodeMetadata, Error, IndexSelection, IndexSelector, Input, PageMetadata,
+        ResolvedContent, SeasonMetadata, Selection, StreamSource, SubtitleFormat,
+        VideoCollectionItem, VideoCollectionKind, VideoCollectionMetadata, VideoMetadata,
+        app_playurl,
     };
     use http_body_util::BodyExt as _;
     use httpmock::MockServer;
@@ -5821,13 +5843,22 @@ mod tests {
             report
                 .probes
                 .iter()
-                .map(|probe| (probe.kind, probe.status))
+                .map(|probe| (probe.kind, probe.scope, probe.status))
                 .collect::<Vec<_>>(),
             vec![
-                (CredentialKind::Cookie, CredentialHealthStatus::Valid),
-                (CredentialKind::AccessKey, CredentialHealthStatus::Valid),
+                (
+                    CredentialKind::Cookie,
+                    CredentialHealthScope::WebCookie,
+                    CredentialHealthStatus::Valid,
+                ),
+                (
+                    CredentialKind::AccessKey,
+                    CredentialHealthScope::IntlBstar,
+                    CredentialHealthStatus::Valid,
+                ),
                 (
                     CredentialKind::TvAccessKey,
+                    CredentialHealthScope::Tv,
                     CredentialHealthStatus::Rejected,
                 ),
             ]
@@ -5875,13 +5906,15 @@ mod tests {
             .find(|probe| probe.kind == CredentialKind::Cookie)
             .ok_or_else(|| anyhow::anyhow!("missing cookie probe"))?;
         assert_eq!(cookie_probe.status, CredentialHealthStatus::Valid);
+        assert_eq!(cookie_probe.scope, CredentialHealthScope::WebCookie);
         cookie_mock.assert_calls(1);
         Ok(())
     }
 
     #[test]
-    fn credential_health_oauth2_info_params_are_kind_specific_and_signed() -> anyhow::Result<()> {
-        let generic = oauth2_info_params(CredentialKind::AccessKey, "ACCESS", 1_700_000_000)?;
+    fn credential_health_oauth2_info_params_are_scope_specific_and_signed() -> anyhow::Result<()> {
+        let generic =
+            oauth2_info_params(CredentialHealthScope::IntlBstar, "ACCESS", 1_700_000_000)?;
         assert_eq!(
             &generic[..6],
             [
@@ -5901,7 +5934,7 @@ mod tests {
             )
         );
 
-        let tv = oauth2_info_params(CredentialKind::TvAccessKey, "TV", 1_700_000_000)?;
+        let tv = oauth2_info_params(CredentialHealthScope::Tv, "TV", 1_700_000_000)?;
         assert_eq!(tv[1], ("appkey", TV_PLAYURL_APPKEY.to_owned()));
         assert_eq!(tv[3], ("mobi_app", "android_tv_yst".to_owned()));
         assert_eq!(
@@ -5935,6 +5968,7 @@ mod tests {
         let report = client.check_credential_health().await;
 
         assert_eq!(report.probes[1].kind, CredentialKind::AccessKey);
+        assert_eq!(report.probes[1].scope, CredentialHealthScope::IntlBstar);
         assert_eq!(report.probes[1].status, CredentialHealthStatus::Valid);
         access_key_mock.assert_calls(1);
         Ok(())
@@ -5967,6 +6001,7 @@ mod tests {
         let report = client.check_credential_health().await;
 
         assert_eq!(report.probes[2].kind, CredentialKind::TvAccessKey);
+        assert_eq!(report.probes[2].scope, CredentialHealthScope::Tv);
         assert_eq!(report.probes[2].status, CredentialHealthStatus::Valid);
         tv_access_key_mock.assert_calls(1);
         Ok(())

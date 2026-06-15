@@ -289,10 +289,12 @@ JSON 事件不会打印 token 值。
 
 使用 `auth health` 可以在不暴露密钥值的情况下诊断已配置凭据。该命令会用 web nav 端点检
 查 WEB cookie，并通过 OAuth info 端点把通用 `access_key` 与 TV `tv_access_key` 作为
-signed `access_key` app query 值检查。JSON 输出是 typed report，会按凭据报告 `missing`、
-`valid`、`rejected` 或 `request_failed` 状态，并只包含脱敏后的 API code/message。通用
-token probe 使用 `--passport-base`；TV token probe 使用 `--tv-passport-poll-base`；如果只
-提供 `--tv-passport-base`，poll base 会跟随该 TV 覆盖。
+signed `access_key` app query 值检查。JSON 输出是 typed report，会用 `kind` 表示凭据槽
+位、用 `scope` 表示实际检查的消费场景，并按 probe 报告 `missing`、`valid`、`rejected` 或
+`request_failed` 状态，只包含脱敏后的 API code/message。通用 token probe 当前覆盖
+intl/Bstar scope，并使用 `--passport-base`；它不会证明同一 token 对所有 APP gRPC 或 proxy
+消费者都可用。TV token probe 使用 `--tv-passport-poll-base`；如果只提供
+`--tv-passport-base`，poll base 会跟随该 TV 覆盖。
 
 ## 端点覆盖
 
