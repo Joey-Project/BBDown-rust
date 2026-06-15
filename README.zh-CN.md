@@ -187,8 +187,8 @@ Bilibili 二维码状态机，并只保存最终得到的凭据。WEB 二维码�
 据保存后输出 `saved` 事件。当前 WEB 和 TV 登录流程会直接使用扫码 URL 作为 QR payload。
 请把扫码 URL 和 QR payload 当成临时登录密钥；状态输出和 `saved` 事件只暴露脱敏布尔值。
 `auth health` 会在不打印密钥值的情况下检查已配置凭据：WEB cookie 通过 web nav 端点检查；
-通用 `access_key` 和 TV `tv_access_key` 会通过 OAuth info 端点以 `access_key` query 值检查。
-JSON 输出会按凭据报告 `missing`、`valid`、`rejected` 或 `request_failed` 状态，便于嵌入调用方和自动化使用。
+通用 `access_key` 和 TV `tv_access_key` 会通过 OAuth info 端点以 signed `access_key` app
+query 值检查。JSON 输出会按凭据报告 `missing`、`valid`、`rejected` 或 `request_failed` 状态，便于嵌入调用方和自动化使用。
 
 使用 `--request-timeout-seconds` 或 `BBDOWN_REQUEST_TIMEOUT_SECONDS` 调整 API 请求时限。
 媒体正文读取使用 `--download-idle-timeout-seconds`；传入 `0` 可禁用 idle timeout。使用

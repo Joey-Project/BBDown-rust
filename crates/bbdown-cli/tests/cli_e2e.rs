@@ -2478,6 +2478,10 @@ fn auth_health_reports_redacted_credential_probe_statuses() -> anyhow::Result<()
         when.method(GET)
             .path("/x/passport-login/oauth2/info")
             .query_param("access_key", "ACCESS_SECRET")
+            .query_param("appkey", "7d089525d3611b1c")
+            .query_param("mobi_app", "bstar_a")
+            .query_param_exists("ts")
+            .query_param_exists("sign")
             .header_missing("cookie");
         then.status(200).json_body_obj(&serde_json::json!({
             "code": 0,
@@ -2488,6 +2492,10 @@ fn auth_health_reports_redacted_credential_probe_statuses() -> anyhow::Result<()
         when.method(GET)
             .path("/x/passport-login/oauth2/info")
             .query_param("access_key", "TV_SECRET")
+            .query_param("appkey", "4409e2ce8ffd12b8")
+            .query_param("mobi_app", "android_tv_yst")
+            .query_param_exists("ts")
+            .query_param_exists("sign")
             .header_missing("cookie");
         then.status(200).json_body_obj(&serde_json::json!({
             "code": -101,

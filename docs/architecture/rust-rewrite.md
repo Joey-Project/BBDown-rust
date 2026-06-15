@@ -357,9 +357,9 @@ Credential health diagnostics are a read-only layer over the same credential mod
 `CredentialHealthReport` and `BiliClient::check_credential_health()` so embedding callers can check
 the WEB cookie, generic `access_key`, and TV `tv_access_key` independently before choosing a login or
 fallback flow. The WEB cookie probe uses `/x/web-interface/nav`; the token probes use
-`/x/passport-login/oauth2/info` with the credential sent as an `access_key` query value and without
-sending cookies. Probe failures are contained per credential as `missing`, `valid`, `rejected`, or
-`request_failed` rather than failing the whole report.
+`/x/passport-login/oauth2/info` with the credential sent as a signed `access_key` app query value and
+without sending cookies. Probe failures are contained per credential as `missing`, `valid`,
+`rejected`, or `request_failed` rather than failing the whole report.
 
 QR login is modeled as an explicit state machine in the crate. WEB QR login creates a
 `QrLoginTicket`, which can be converted to `QrLoginTicketOutput` for a stable serialized scan URL and

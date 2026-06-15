@@ -26,6 +26,8 @@ use url::Url;
 
 const TV_PLAYURL_APPKEY: &str = "4409e2ce8ffd12b8";
 const TV_PLAYURL_APP_SECRET: &str = "59b43e04ad6965f34319062b478f83dd";
+const INTL_OGV_APPKEY: &str = "7d089525d3611b1c";
+const INTL_OGV_APP_SECRET: &str = "acd495b248ec528c2eed1e862d393126";
 const DYNAMIC_FEED_FEATURES: &str = "itemOpusStyle,listOnlyfans,opusBigCover,onlyfansVote,forwardListHidden,decorationCard,commentsNewVersion,onlyfansAssetsV2,ugcDelete,onlyfansQaCard";
 const RECOMMENDATION_MIN_PAGE_SIZE: u32 = 20;
 const RECOMMENDATION_MAX_PAGE_SIZE: u32 = 30;
@@ -529,7 +531,7 @@ impl BiliClient {
         let Some(token) = token else {
             return CredentialHealthProbe::missing(kind);
         };
-        match self.fetch_oauth2_info(token).await {
+        match self.fetch_oauth2_info(kind, token).await {
             Ok(()) => CredentialHealthProbe::valid(kind, ENDPOINT),
             Err(error) => credential_health_error(kind, ENDPOINT, error),
         }
@@ -560,12 +562,18 @@ impl BiliClient {
         Ok(response.into_data()?.is_login)
     }
 
-    async fn fetch_oauth2_info(&self, access_key: &str) -> Result<()> {
+    async fn fetch_oauth2_info(&self, kind: CredentialKind, access_key: &str) -> Result<()> {
         let mut url = Self::endpoint_url(
             &self.config.endpoints.passport_base,
             "/x/passport-login/oauth2/info",
         )?;
-        url.query_pairs_mut().append_pair("access_key", access_key);
+        let params = oauth2_info_params(kind, access_key, current_unix_timestamp())?;
+        {
+            let mut query = url.query_pairs_mut();
+            for (key, value) in params {
+                query.append_pair(key, &value);
+            }
+        }
         let response: ApiData<serde_json::Value> = self.get_json_without_cookie(url).await?;
         response.into_data()?;
         Ok(())
@@ -5609,7 +5617,7 @@ fn intl_ogv_playurl_params(
         params.push(("access_key", access_key.to_owned()));
     }
     params.extend([
-        ("appkey", "7d089525d3611b1c".to_owned()),
+        ("appkey", INTL_OGV_APPKEY.to_owned()),
         ("area", "th".to_owned()),
         ("build", "1001310".to_owned()),
         ("cid", cid.to_string()),
@@ -5624,9 +5632,41 @@ fn intl_ogv_playurl_params(
         ("s_locale", "zh_SG".to_owned()),
         ("ts", timestamp.to_string()),
     ]);
-    let sign = sign_ordered_params(&params, "acd495b248ec528c2eed1e862d393126");
+    let sign = sign_ordered_params(&params, INTL_OGV_APP_SECRET);
     params.push(("sign", sign));
     params
+}
+
+fn oauth2_info_params(
+    kind: CredentialKind,
+    access_key: &str,
+    timestamp: u64,
+) -> Result<Vec<(&'static str, String)>> {
+    let (appkey, secret, build, mobi_app) = match kind {
+        CredentialKind::AccessKey => (INTL_OGV_APPKEY, INTL_OGV_APP_SECRET, "1001310", "bstar_a"),
+        CredentialKind::TvAccessKey => (
+            TV_PLAYURL_APPKEY,
+            TV_PLAYURL_APP_SECRET,
+            "102801",
+            "android_tv_yst",
+        ),
+        CredentialKind::Cookie => {
+            return Err(Error::InvalidInput(
+                "cookie credential cannot use oauth2 info probe".to_owned(),
+            ));
+        }
+    };
+    let mut params = vec![
+        ("access_key", access_key.to_owned()),
+        ("appkey", appkey.to_owned()),
+        ("build", build.to_owned()),
+        ("mobi_app", mobi_app.to_owned()),
+        ("platform", "android".to_owned()),
+        ("ts", timestamp.to_string()),
+    ];
+    let sign = sign_ordered_params(&params, secret);
+    params.push(("sign", sign));
+    Ok(params)
 }
 
 pub(crate) fn sign_ordered_params(params: &[(&str, String)], secret: &str) -> String {
@@ -5646,9 +5686,10 @@ pub(crate) fn sign_ordered_params(params: &[(&str, String)], secret: &str) -> St
 #[cfg(test)]
 mod tests {
     use super::{
-        BiliClient, ClientConfig, EndpointConfig, MediaListKind, PlayUrlRoot, PlayurlMode,
-        RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy, TV_PLAYURL_APPKEY,
-        decode_app_grpc_stream_set, intl_ogv_playurl_params,
+        BiliClient, ClientConfig, EndpointConfig, INTL_OGV_APP_SECRET, INTL_OGV_APPKEY,
+        MediaListKind, PlayUrlRoot, PlayurlMode, RestrictedArea, RestrictedAreaConfig,
+        RestrictedAreaProxy, TV_PLAYURL_APP_SECRET, TV_PLAYURL_APPKEY, decode_app_grpc_stream_set,
+        intl_ogv_playurl_params, oauth2_info_params, sign_ordered_params,
     };
     use crate::{
         CodecFamily, CredentialHealthStatus, CredentialKind, Credentials, EpisodeMetadata, Error,
@@ -5708,6 +5749,10 @@ mod tests {
             when.method(GET)
                 .path("/x/passport-login/oauth2/info")
                 .query_param("access_key", "ACCESS_SECRET")
+                .query_param("appkey", INTL_OGV_APPKEY)
+                .query_param("mobi_app", "bstar_a")
+                .query_param_exists("ts")
+                .query_param_exists("sign")
                 .header_missing("cookie");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
@@ -5718,6 +5763,10 @@ mod tests {
             when.method(GET)
                 .path("/x/passport-login/oauth2/info")
                 .query_param("access_key", "TV_SECRET")
+                .query_param("appkey", TV_PLAYURL_APPKEY)
+                .query_param("mobi_app", "android_tv_yst")
+                .query_param_exists("ts")
+                .query_param_exists("sign")
                 .header_missing("cookie");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": -101,
@@ -5765,6 +5814,38 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn credential_health_oauth2_info_params_are_kind_specific_and_signed() -> anyhow::Result<()> {
+        let generic = oauth2_info_params(CredentialKind::AccessKey, "ACCESS", 1_700_000_000)?;
+        assert_eq!(
+            &generic[..6],
+            [
+                ("access_key", "ACCESS".to_owned()),
+                ("appkey", INTL_OGV_APPKEY.to_owned()),
+                ("build", "1001310".to_owned()),
+                ("mobi_app", "bstar_a".to_owned()),
+                ("platform", "android".to_owned()),
+                ("ts", "1700000000".to_owned()),
+            ]
+        );
+        assert_eq!(
+            generic[6],
+            (
+                "sign",
+                sign_ordered_params(&generic[..6], INTL_OGV_APP_SECRET)
+            )
+        );
+
+        let tv = oauth2_info_params(CredentialKind::TvAccessKey, "TV", 1_700_000_000)?;
+        assert_eq!(tv[1], ("appkey", TV_PLAYURL_APPKEY.to_owned()));
+        assert_eq!(tv[3], ("mobi_app", "android_tv_yst".to_owned()));
+        assert_eq!(
+            tv[6],
+            ("sign", sign_ordered_params(&tv[..6], TV_PLAYURL_APP_SECRET))
+        );
+        Ok(())
+    }
+
     #[tokio::test]
     async fn credential_health_checks_raw_stored_access_key_value() -> anyhow::Result<()> {
         let server = MockServer::start();
@@ -5772,6 +5853,10 @@ mod tests {
             when.method(GET)
                 .path("/x/passport-login/oauth2/info")
                 .query_param("access_key", "ACCESS_SECRET ")
+                .query_param("appkey", INTL_OGV_APPKEY)
+                .query_param("mobi_app", "bstar_a")
+                .query_param_exists("ts")
+                .query_param_exists("sign")
                 .header_missing("cookie");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
