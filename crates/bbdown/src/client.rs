@@ -4967,7 +4967,7 @@ fn redact_exact_secret_values(raw: &str, raw_secret: &str) -> String {
 }
 
 fn redact_exact_secret_value(raw: &str, value: &str) -> String {
-    if value.len() < 4 {
+    if value.is_empty() {
         raw.to_owned()
     } else {
         raw.replace(value, "<redacted>")
@@ -5907,6 +5907,38 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("missing cookie probe"))?;
         assert_eq!(cookie_probe.status, CredentialHealthStatus::Valid);
         assert_eq!(cookie_probe.scope, CredentialHealthScope::WebCookie);
+        cookie_mock.assert_calls(1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn credential_health_redacts_short_exact_cookie_values() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let cookie_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/nav")
+                .header("cookie", "SESSDATA=abc");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": -101,
+                "message": "abc expired"
+            }));
+        });
+        let mut client = test_client(&server);
+        client.config.credentials = Credentials::default().with_cookie("SESSDATA=abc");
+
+        let report = client.check_credential_health().await;
+
+        let cookie_probe = report
+            .probes
+            .iter()
+            .find(|probe| probe.kind == CredentialKind::Cookie)
+            .ok_or_else(|| anyhow::anyhow!("missing cookie probe"))?;
+        assert_eq!(cookie_probe.status, CredentialHealthStatus::Rejected);
+        assert_eq!(cookie_probe.message.as_deref(), Some("<redacted> expired"));
+        let serialized = serde_json::to_string(&report)?;
+        let debug = format!("{report:?}");
+        assert!(!serialized.contains("abc"));
+        assert!(!debug.contains("abc"));
         cookie_mock.assert_calls(1);
         Ok(())
     }
