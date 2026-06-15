@@ -22,6 +22,8 @@ superseded_by:
 - WEB cookie health is checked through the web nav endpoint.
 - Generic `access_key` and TV `tv_access_key` health are checked through OAuth token info using a
   signed `access_key` app query and without sending cookies.
+- Generic token probes use the configured `passport_base`; TV token probes use the configured
+  `tv_passport_base`.
 - Each probe reports `missing`, `valid`, `rejected`, or `request_failed`; API messages are sanitized
   before serialization.
 

@@ -199,9 +199,9 @@ TV login flows use the scan URL itself as the QR payload. Treat the scan URL and
 temporary login secrets; status output and the `saved` event expose redacted booleans only.
 `auth health` checks configured credentials without printing secret values: the WEB cookie is
 checked through the web nav endpoint, while the generic `access_key` and TV `tv_access_key` are
-checked through the OAuth info endpoint as signed `access_key` app query values. JSON output reports
-per-credential `missing`, `valid`, `rejected`, or `request_failed` states for embedding callers and
-automation.
+checked through the OAuth info endpoint as signed `access_key` app query values. Generic token probes
+use `--passport-base`; TV token probes use `--tv-passport-base`. JSON output reports per-credential
+`missing`, `valid`, `rejected`, or `request_failed` states for embedding callers and automation.
 
 Use `--request-timeout-seconds` or `BBDOWN_REQUEST_TIMEOUT_SECONDS` to tune API request bounds.
 Media body reads use `--download-idle-timeout-seconds`; pass `0` to disable the idle timeout.

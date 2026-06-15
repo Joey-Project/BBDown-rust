@@ -323,7 +323,8 @@ Use `auth health` to diagnose configured credentials without exposing secret val
 checks the WEB cookie against the web nav endpoint and checks both the generic `access_key` and TV
 `tv_access_key` through the OAuth info endpoint as signed `access_key` app query values. JSON output
 is a typed report with per-credential `missing`, `valid`, `rejected`, or `request_failed` statuses plus
-sanitized API codes/messages.
+sanitized API codes/messages. Generic token probes use `--passport-base`; TV token probes use
+`--tv-passport-base`.
 
 ## Endpoint Overrides
 

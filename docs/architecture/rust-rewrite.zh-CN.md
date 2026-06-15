@@ -313,7 +313,9 @@ credential health diagnostics 是同一 credential model 上的只读层。crate
 择登录或 fallback flow 之前，分别检查 WEB cookie、通用 `access_key` 和 TV `tv_access_key`。
 WEB cookie probe 使用 `/x/web-interface/nav`；token probe 使用
 `/x/passport-login/oauth2/info`，把凭据作为 signed `access_key` app query 值发送，且不会发送
-cookie。probe failure 会按凭据独立记录为 `missing`、`valid`、`rejected` 或 `request_failed`，不会让整份报告失败。
+cookie。通用 token probe 使用配置的 `passport_base`；TV token probe 使用配置的
+`tv_passport_base`。probe failure 会按凭据独立记录为 `missing`、`valid`、`rejected` 或
+`request_failed`，不会让整份报告失败。
 
 二维码登录在 crate 中建模为显式状态机。WEB 二维码登录创建 `QrLoginTicket`，它可以转换为
 `QrLoginTicketOutput`，提供稳定的可序列化扫码 URL 和 QR payload 表面；随后轮询

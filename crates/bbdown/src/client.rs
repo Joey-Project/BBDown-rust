@@ -563,10 +563,16 @@ impl BiliClient {
     }
 
     async fn fetch_oauth2_info(&self, kind: CredentialKind, access_key: &str) -> Result<()> {
-        let mut url = Self::endpoint_url(
-            &self.config.endpoints.passport_base,
-            "/x/passport-login/oauth2/info",
-        )?;
+        let endpoint_base = match kind {
+            CredentialKind::AccessKey => &self.config.endpoints.passport_base,
+            CredentialKind::TvAccessKey => &self.config.endpoints.tv_passport_base,
+            CredentialKind::Cookie => {
+                return Err(Error::InvalidInput(
+                    "cookie credential cannot use oauth2 info probe".to_owned(),
+                ));
+            }
+        };
+        let mut url = Self::endpoint_url(endpoint_base, "/x/passport-login/oauth2/info")?;
         let params = oauth2_info_params(kind, access_key, current_unix_timestamp())?;
         {
             let mut query = url.query_pairs_mut();
@@ -5872,6 +5878,36 @@ mod tests {
         assert_eq!(report.probes[1].kind, CredentialKind::AccessKey);
         assert_eq!(report.probes[1].status, CredentialHealthStatus::Valid);
         access_key_mock.assert_calls(1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn credential_health_uses_tv_passport_base_for_tv_access_key() -> anyhow::Result<()> {
+        let passport_server = MockServer::start();
+        let tv_passport_server = MockServer::start();
+        let tv_access_key_mock = tv_passport_server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/passport-login/oauth2/info")
+                .query_param("access_key", "TV_SECRET")
+                .query_param("appkey", TV_PLAYURL_APPKEY)
+                .query_param("mobi_app", "android_tv_yst")
+                .query_param_exists("ts")
+                .query_param_exists("sign")
+                .header_missing("cookie");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {"mid": 1}
+            }));
+        });
+        let mut client = test_client(&passport_server);
+        client.config.endpoints.tv_passport_base = tv_passport_server.base_url();
+        client.config.credentials = Credentials::default().with_tv_access_key("TV_SECRET");
+
+        let report = client.check_credential_health().await;
+
+        assert_eq!(report.probes[2].kind, CredentialKind::TvAccessKey);
+        assert_eq!(report.probes[2].status, CredentialHealthStatus::Valid);
+        tv_access_key_mock.assert_calls(1);
         Ok(())
     }
 
