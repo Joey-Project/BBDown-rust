@@ -400,12 +400,7 @@ fn parse_credential_profiles(raw: &str) -> Result<CredentialProfiles> {
 }
 
 fn is_profile_document(value: &serde_json::Value) -> bool {
-    value.get("profiles").is_some()
-        || value.get("default_profile").is_some()
-        || value
-            .get("version")
-            .and_then(serde_json::Value::as_u64)
-            .is_some_and(|version| version == 1)
+    value.get("profiles").is_some() || value.get("default_profile").is_some()
 }
 
 fn normalize_profile_name(name: &str) -> Result<String> {
@@ -566,6 +561,38 @@ mod tests {
                 .as_deref(),
             Some("access-token")
         );
+        assert_eq!(
+            store.load()?.tv_access_key.as_deref(),
+            Some("tv-access-token")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn version_only_legacy_flat_credentials_are_not_profiles() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        std::fs::write(
+            &path,
+            r#"{
+  "version": 1,
+  "cookie": "SESSDATA=secret",
+  "access_key": "access-token",
+  "tv_access_key": "tv-access-token"
+}"#,
+        )?;
+        let store = CredentialStore::new(path);
+
+        let profiles = store.load_profiles()?;
+
+        assert_eq!(
+            profiles
+                .profile(DEFAULT_CREDENTIAL_PROFILE)?
+                .cookie
+                .as_deref(),
+            Some("SESSDATA=secret")
+        );
+        assert_eq!(store.load()?.access_key.as_deref(), Some("access-token"));
         assert_eq!(
             store.load()?.tv_access_key.as_deref(),
             Some("tv-access-token")
