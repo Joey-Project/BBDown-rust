@@ -3,12 +3,13 @@
 
 use anyhow::{Context, bail, ensure};
 use bbdown_core::{
-    BiliClient, ClientConfig, CredentialStore, Credentials, DanmakuFormat, DownloadArchive,
-    DownloadMode, DownloadOptions, DownloadPathTemplates, DownloadPreflight, DownloadReport,
-    DuplicateDecision, EndpointConfig, MediaHostOptions, MediaStream, MuxOptions, PlaybackPlan,
-    PlayurlMode, QrLoginKind, QrLoginState, QrLoginTicket, QrLoginTicketOutput, ResolvedContent,
-    RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind,
-    RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet,
+    BiliClient, ClientConfig, CredentialHealthReport, CredentialHealthScope,
+    CredentialHealthStatus, CredentialKind, CredentialStore, Credentials, DanmakuFormat,
+    DownloadArchive, DownloadMode, DownloadOptions, DownloadPathTemplates, DownloadPreflight,
+    DownloadReport, DuplicateDecision, EndpointConfig, MediaHostOptions, MediaStream, MuxOptions,
+    PlaybackPlan, PlayurlMode, QrLoginKind, QrLoginState, QrLoginTicket, QrLoginTicketOutput,
+    ResolvedContent, RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy,
+    RestrictedAreaProxyKind, RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::ffi::{OsStr, OsString};
@@ -193,11 +194,18 @@ struct DownloadCliArgs {
 #[derive(Debug, Subcommand)]
 enum AuthCommand {
     Status,
+    Health(AuthHealthArgs),
     ImportCookie(SecretImportArgs),
     ImportAccessKey(SecretImportArgs),
     LoginWeb(QrLoginArgs),
     LoginTv(QrLoginArgs),
     Logout,
+}
+
+#[derive(Debug, Args)]
+struct AuthHealthArgs {
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -1053,6 +1061,16 @@ async fn handle_auth(
                 serde_json::to_string_pretty(&credentials.redacted_summary())?
             );
         }
+        AuthCommand::Health(args) => {
+            let credentials = store.load().context("failed to load credentials")?;
+            let client = BiliClient::new(client_runtime.client_config(credentials));
+            let report = client.check_credential_health().await;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                print_credential_health_report(&report)?;
+            }
+        }
         AuthCommand::ImportCookie(args) => {
             let mut credentials = store.load().context("failed to load credentials")?;
             let cookie = read_secret(args, "BBDOWN_COOKIE", "cookie")?;
@@ -1083,6 +1101,57 @@ async fn handle_auth(
         }
     }
     Ok(())
+}
+
+fn print_credential_health_report(report: &CredentialHealthReport) -> anyhow::Result<()> {
+    use std::fmt::Write as _;
+
+    for probe in &report.probes {
+        let mut line = format!(
+            "{} ({}): {}",
+            credential_kind_label(probe.kind),
+            credential_health_scope_label(probe.scope),
+            credential_health_status_label(probe.status)
+        );
+        if let Some(endpoint) = &probe.endpoint {
+            line.push_str(" via ");
+            line.push_str(endpoint);
+        }
+        if let Some(code) = probe.api_code {
+            let _ = write!(&mut line, " code={code}");
+        }
+        if let Some(message) = &probe.message {
+            line.push_str(" - ");
+            line.push_str(message);
+        }
+        print_human_line(line)?;
+    }
+    Ok(())
+}
+
+fn credential_kind_label(kind: CredentialKind) -> &'static str {
+    match kind {
+        CredentialKind::Cookie => "cookie",
+        CredentialKind::AccessKey => "access_key",
+        CredentialKind::TvAccessKey => "tv_access_key",
+    }
+}
+
+fn credential_health_scope_label(scope: CredentialHealthScope) -> &'static str {
+    match scope {
+        CredentialHealthScope::WebCookie => "web",
+        CredentialHealthScope::IntlBstar => "intl/bstar",
+        CredentialHealthScope::Tv => "tv",
+    }
+}
+
+fn credential_health_status_label(status: CredentialHealthStatus) -> &'static str {
+    match status {
+        CredentialHealthStatus::Missing => "missing",
+        CredentialHealthStatus::Valid => "valid",
+        CredentialHealthStatus::Rejected => "rejected",
+        CredentialHealthStatus::RequestFailed => "request_failed",
+    }
 }
 
 async fn handle_qr_login(

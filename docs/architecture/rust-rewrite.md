@@ -353,6 +353,17 @@ remains intentionally out of scope.
 The CLI stores credentials in a local JSON file under the platform config directory with `0600`
 permissions on Unix. The crate exposes `Credentials` and `CredentialStore` so other projects can
 inject their own storage or keep credentials in memory.
+Credential health diagnostics are a read-only layer over the same credential model. The crate exposes
+`CredentialHealthReport` and `BiliClient::check_credential_health()` so embedding callers can check
+the WEB cookie, generic `access_key`, and TV `tv_access_key` independently before choosing a login or
+fallback flow. Each probe records `kind` for the credential storage slot and `scope` for the checked
+consumer. The WEB cookie probe uses `/x/web-interface/nav`; the token probes use
+`/x/passport-login/oauth2/info` with the credential sent as a signed `access_key` app query value and
+without sending cookies. Generic token probes currently check the intl/Bstar scope through the
+configured `passport_base`; this does not claim APP gRPC or restricted-area proxy validity for the
+same stored `access_key`. TV token probes use the configured `tv_passport_poll_base`. Probe failures
+are contained per credential as `missing`, `valid`, `rejected`, or `request_failed` rather than
+failing the whole report.
 
 QR login is modeled as an explicit state machine in the crate. WEB QR login creates a
 `QrLoginTicket`, which can be converted to `QrLoginTicketOutput` for a stable serialized scan URL and
@@ -375,7 +386,9 @@ QR payload so the user can authenticate, and callers should treat those values a
 secrets. The public QR state enum intentionally does not derive serde traits because the succeeded
 state carries full credentials for embedding callers that handle storage themselves. QR ticket and QR
 ticket-output debug output is redacted because ticket keys and scan URL query strings can act as
-pre-authentication secrets.
+pre-authentication secrets. Credential health reports never include raw credential values, and API
+messages are passed through the same diagnostic sanitizer used for restricted-area diagnostics before
+they are serialized.
 HTTP request errors are converted without retaining full URLs so query secrets such as intl
 `access_key` do not appear in user-facing errors.
 

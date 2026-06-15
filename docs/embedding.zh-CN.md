@@ -193,15 +193,24 @@ selection、封面、字幕和弹幕旁路文件仍使用与普通视频下载�
 对于二维码登录，如果下游应用需要稳定的可序列化扫码 URL 和 `qr_payload`，可以把
 `QrLoginTicket` 转换成 `QrLoginTicketOutput`；当前 WEB 和 TV 登录流程会直接使用扫码 URL
 作为 QR payload。
+当嵌入项目需要在决定提示登录、导入 token 或继续匿名请求前做脱敏诊断时，可以调用
+`BiliClient::check_credential_health()`。报告会分别包含 WEB cookie、通用 `access_key` 和
+TV `tv_access_key` 的 probe；`kind` 表示凭据槽位，`scope` 表示实际检查的消费场景。通用
+`access_key` probe 当前只覆盖 intl/Bstar OAuth-info scope，因此如果下游需要 APP gRPC 或
+proxy-specific assurance，应把它作为单独策略判断。probe message 在序列化前会先脱敏。
 
 ```rust,no_run
-use bbdown_core::{ClientConfig, Credentials};
+use bbdown_core::{BiliClient, ClientConfig, Credentials};
 
-let credentials = Credentials::default()
-    .with_cookie("SESSDATA=...")
-    .with_access_key("...");
+async fn check_credentials() {
+    let credentials = Credentials::default()
+        .with_cookie("SESSDATA=...")
+        .with_access_key("...");
 
-let config = ClientConfig::default().with_credentials(credentials);
+    let config = ClientConfig::default().with_credentials(credentials);
+    let client = BiliClient::new(config);
+    let _health = client.check_credential_health().await;
+}
 ```
 
 ## 受限区域 PGC 规划
@@ -403,5 +412,6 @@ let config = ClientConfig::default().with_endpoints(endpoints);
 - 使用 `Default`、`new` 和 `with_*` 方法构造配置值，而不是结构体字面量。
 - 通过字段访问或 serde 序列化读取输出模型；除非测试确实需要本地 fixture，否则避免在下
   游代码中构造输出结构体。
-- 不要把凭据、二维码登录扫码 URL 和 QR payload 写入日志或 crash report。
+- 不要把凭据、二维码登录扫码 URL、QR payload 和 credential-health 原始请求细节写入日志
+  或 crash report。
 - 把受限区域代理主机视为可信基础设施，因为媒体 URL 和 access key 可能经过这些主机。

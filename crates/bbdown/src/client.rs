@@ -12,7 +12,10 @@ use crate::models::{
     VideoCollectionMetadata, VideoCollectionResolution, VideoMetadata,
 };
 use crate::playback::{PlaybackPlan, header_specs_from_map};
-use crate::{Credentials, Error, Input, Result, Selection};
+use crate::{
+    CredentialHealthProbe, CredentialHealthReport, CredentialHealthScope, CredentialKind,
+    Credentials, Error, Input, Result, Selection,
+};
 use http_body_util::BodyExt as _;
 use md5::{Digest, Md5};
 use reqwest::header::{COOKIE, HeaderMap, HeaderValue, REFERER, USER_AGENT};
@@ -23,6 +26,8 @@ use url::Url;
 
 const TV_PLAYURL_APPKEY: &str = "4409e2ce8ffd12b8";
 const TV_PLAYURL_APP_SECRET: &str = "59b43e04ad6965f34319062b478f83dd";
+const INTL_OGV_APPKEY: &str = "7d089525d3611b1c";
+const INTL_OGV_APP_SECRET: &str = "acd495b248ec528c2eed1e862d393126";
 const DYNAMIC_FEED_FEATURES: &str = "itemOpusStyle,listOnlyfans,opusBigCover,onlyfansVote,forwardListHidden,decorationCard,commentsNewVersion,onlyfansAssetsV2,ugcDelete,onlyfansQaCard";
 const RECOMMENDATION_MIN_PAGE_SIZE: u32 = 20;
 const RECOMMENDATION_MAX_PAGE_SIZE: u32 = 30;
@@ -382,6 +387,24 @@ impl BiliClient {
         }
     }
 
+    pub async fn check_credential_health(&self) -> CredentialHealthReport {
+        let credentials = self.config.credentials.redacted_summary();
+        let probes = vec![
+            self.check_cookie_health().await,
+            self.check_access_token_health(
+                CredentialKind::AccessKey,
+                CredentialHealthScope::IntlBstar,
+            )
+            .await,
+            self.check_access_token_health(CredentialKind::TvAccessKey, CredentialHealthScope::Tv)
+                .await,
+        ];
+        CredentialHealthReport {
+            credentials,
+            probes,
+        }
+    }
+
     pub async fn resolve_input(
         &self,
         raw: &str,
@@ -475,6 +498,107 @@ impl BiliClient {
                 Box::pin(self.resolve(input, selection)).await
             }
         }
+    }
+
+    async fn check_cookie_health(&self) -> CredentialHealthProbe {
+        const ENDPOINT: &str = "web_nav";
+        const SCOPE: CredentialHealthScope = CredentialHealthScope::WebCookie;
+        let Some(cookie) = self
+            .config
+            .credentials
+            .cookie
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        else {
+            return CredentialHealthProbe::missing(CredentialKind::Cookie, SCOPE);
+        };
+        match self.fetch_cookie_login_state(cookie).await {
+            Ok(true) => CredentialHealthProbe::valid(CredentialKind::Cookie, SCOPE, ENDPOINT),
+            Ok(false) => CredentialHealthProbe::rejected(
+                CredentialKind::Cookie,
+                SCOPE,
+                ENDPOINT,
+                Some(0),
+                "not logged in",
+            ),
+            Err(error) => {
+                credential_health_error(CredentialKind::Cookie, SCOPE, ENDPOINT, error, cookie)
+            }
+        }
+    }
+
+    async fn check_access_token_health(
+        &self,
+        kind: CredentialKind,
+        scope: CredentialHealthScope,
+    ) -> CredentialHealthProbe {
+        const ENDPOINT: &str = "oauth2_info";
+        let token = match kind {
+            CredentialKind::Cookie => return CredentialHealthProbe::missing(kind, scope),
+            CredentialKind::AccessKey => self.config.credentials.access_key.as_deref(),
+            CredentialKind::TvAccessKey => self.config.credentials.tv_access_key.as_deref(),
+        }
+        .filter(|value| !value.is_empty());
+        let Some(token) = token else {
+            return CredentialHealthProbe::missing(kind, scope);
+        };
+        match self.fetch_oauth2_info(kind, scope, token).await {
+            Ok(()) => CredentialHealthProbe::valid(kind, scope, ENDPOINT),
+            Err(error) => credential_health_error(kind, scope, ENDPOINT, error, token),
+        }
+    }
+
+    async fn fetch_cookie_login_state(&self, cookie: &str) -> Result<bool> {
+        let url = Self::endpoint_url(&self.config.endpoints.api_base, "/x/web-interface/nav")?;
+        let response = self
+            .http
+            .get(url)
+            .headers(self.headers(false)?)
+            .header(
+                COOKIE,
+                HeaderValue::from_str(cookie)
+                    .map_err(|_| Error::InvalidInput("invalid cookie header".to_owned()))?,
+            )
+            .timeout(self.config.request_timeout)
+            .send()
+            .await
+            .map_err(Self::http_error_without_url)?;
+        let response = response
+            .error_for_status()
+            .map_err(Self::http_error_without_url)?;
+        let response = response
+            .json::<ApiData<NavLoginData>>()
+            .await
+            .map_err(Self::http_error_without_url)?;
+        Ok(response.into_data()?.is_login)
+    }
+
+    async fn fetch_oauth2_info(
+        &self,
+        kind: CredentialKind,
+        scope: CredentialHealthScope,
+        access_key: &str,
+    ) -> Result<()> {
+        let endpoint_base = match kind {
+            CredentialKind::AccessKey => &self.config.endpoints.passport_base,
+            CredentialKind::TvAccessKey => &self.config.endpoints.tv_passport_poll_base,
+            CredentialKind::Cookie => {
+                return Err(Error::InvalidInput(
+                    "cookie credential cannot use oauth2 info probe".to_owned(),
+                ));
+            }
+        };
+        let mut url = Self::endpoint_url(endpoint_base, "/x/passport-login/oauth2/info")?;
+        let params = oauth2_info_params(scope, access_key, current_unix_timestamp())?;
+        {
+            let mut query = url.query_pairs_mut();
+            for (key, value) in params {
+                query.append_pair(key, &value);
+            }
+        }
+        let response: ApiData<serde_json::Value> = self.get_json_without_cookie(url).await?;
+        response.into_data()?;
+        Ok(())
     }
 
     async fn resolve_space_videos(
@@ -3951,6 +4075,12 @@ struct NavData {
 }
 
 #[derive(Debug, Deserialize)]
+struct NavLoginData {
+    #[serde(default, rename = "isLogin")]
+    is_login: bool,
+}
+
+#[derive(Debug, Deserialize)]
 struct WbiImage {
     img_url: Option<String>,
     sub_url: Option<String>,
@@ -4795,6 +4925,55 @@ fn sanitize_diagnostic_text(raw: &str) -> String {
     }
 }
 
+fn credential_health_error(
+    kind: CredentialKind,
+    scope: CredentialHealthScope,
+    endpoint: &'static str,
+    error: Error,
+    raw_secret: &str,
+) -> CredentialHealthProbe {
+    match error {
+        Error::Api { code, message } => CredentialHealthProbe::rejected(
+            kind,
+            scope,
+            endpoint,
+            Some(code),
+            sanitize_diagnostic_text_with_secret(&message, raw_secret),
+        ),
+        other => CredentialHealthProbe::request_failed(
+            kind,
+            scope,
+            endpoint,
+            sanitize_diagnostic_text_with_secret(&other.to_string(), raw_secret),
+        ),
+    }
+}
+
+fn sanitize_diagnostic_text_with_secret(raw: &str, raw_secret: &str) -> String {
+    let sanitized = sanitize_diagnostic_text(raw);
+    redact_exact_secret_values(&sanitized, raw_secret)
+}
+
+fn redact_exact_secret_values(raw: &str, raw_secret: &str) -> String {
+    let mut redacted = redact_exact_secret_value(raw, raw_secret);
+    for part in raw_secret.split(';') {
+        let value = part
+            .trim()
+            .split_once('=')
+            .map_or(part.trim(), |(_, value)| value.trim());
+        redacted = redact_exact_secret_value(&redacted, value);
+    }
+    redacted
+}
+
+fn redact_exact_secret_value(raw: &str, value: &str) -> String {
+    if value.is_empty() {
+        raw.to_owned()
+    } else {
+        raw.replace(value, "<redacted>")
+    }
+}
+
 const SENSITIVE_DIAGNOSTIC_KEYS: &[&str] = &[
     "access_key",
     "access_token",
@@ -5493,7 +5672,7 @@ fn intl_ogv_playurl_params(
         params.push(("access_key", access_key.to_owned()));
     }
     params.extend([
-        ("appkey", "7d089525d3611b1c".to_owned()),
+        ("appkey", INTL_OGV_APPKEY.to_owned()),
         ("area", "th".to_owned()),
         ("build", "1001310".to_owned()),
         ("cid", cid.to_string()),
@@ -5508,9 +5687,43 @@ fn intl_ogv_playurl_params(
         ("s_locale", "zh_SG".to_owned()),
         ("ts", timestamp.to_string()),
     ]);
-    let sign = sign_ordered_params(&params, "acd495b248ec528c2eed1e862d393126");
+    let sign = sign_ordered_params(&params, INTL_OGV_APP_SECRET);
     params.push(("sign", sign));
     params
+}
+
+fn oauth2_info_params(
+    scope: CredentialHealthScope,
+    access_key: &str,
+    timestamp: u64,
+) -> Result<Vec<(&'static str, String)>> {
+    let (appkey, secret, build, mobi_app) = match scope {
+        CredentialHealthScope::IntlBstar => {
+            (INTL_OGV_APPKEY, INTL_OGV_APP_SECRET, "1001310", "bstar_a")
+        }
+        CredentialHealthScope::Tv => (
+            TV_PLAYURL_APPKEY,
+            TV_PLAYURL_APP_SECRET,
+            "102801",
+            "android_tv_yst",
+        ),
+        CredentialHealthScope::WebCookie => {
+            return Err(Error::InvalidInput(
+                "web cookie health cannot use oauth2 info probe".to_owned(),
+            ));
+        }
+    };
+    let mut params = vec![
+        ("access_key", access_key.to_owned()),
+        ("appkey", appkey.to_owned()),
+        ("build", build.to_owned()),
+        ("mobi_app", mobi_app.to_owned()),
+        ("platform", "android".to_owned()),
+        ("ts", timestamp.to_string()),
+    ];
+    let sign = sign_ordered_params(&params, secret);
+    params.push(("sign", sign));
+    Ok(params)
 }
 
 pub(crate) fn sign_ordered_params(params: &[(&str, String)], secret: &str) -> String {
@@ -5530,13 +5743,15 @@ pub(crate) fn sign_ordered_params(params: &[(&str, String)], secret: &str) -> St
 #[cfg(test)]
 mod tests {
     use super::{
-        BiliClient, ClientConfig, EndpointConfig, MediaListKind, PlayUrlRoot, PlayurlMode,
-        RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy, TV_PLAYURL_APPKEY,
-        decode_app_grpc_stream_set, intl_ogv_playurl_params,
+        BiliClient, ClientConfig, EndpointConfig, INTL_OGV_APP_SECRET, INTL_OGV_APPKEY,
+        MediaListKind, PlayUrlRoot, PlayurlMode, RestrictedArea, RestrictedAreaConfig,
+        RestrictedAreaProxy, TV_PLAYURL_APP_SECRET, TV_PLAYURL_APPKEY, decode_app_grpc_stream_set,
+        intl_ogv_playurl_params, oauth2_info_params, sign_ordered_params,
     };
     use crate::{
-        CodecFamily, Credentials, EpisodeMetadata, Error, IndexSelection, IndexSelector, Input,
-        PageMetadata, ResolvedContent, SeasonMetadata, Selection, StreamSource, SubtitleFormat,
+        CodecFamily, CredentialHealthScope, CredentialHealthStatus, CredentialKind, Credentials,
+        EpisodeMetadata, Error, IndexSelection, IndexSelector, Input, PageMetadata,
+        ResolvedContent, SeasonMetadata, Selection, StreamSource, SubtitleFormat,
         VideoCollectionItem, VideoCollectionKind, VideoCollectionMetadata, VideoMetadata,
         app_playurl,
     };
@@ -5546,6 +5761,283 @@ mod tests {
     use reqwest::header::{HeaderMap, HeaderValue};
     use std::convert::Infallible;
     use std::time::{Duration, Instant};
+
+    #[tokio::test]
+    async fn credential_health_reports_missing_credentials() {
+        let server = MockServer::start();
+        let client = test_client(&server);
+
+        let report = client.check_credential_health().await;
+
+        assert_eq!(
+            report.credentials,
+            crate::CredentialSource {
+                has_cookie: false,
+                has_access_key: false,
+                has_tv_access_key: false,
+            }
+        );
+        assert_eq!(report.probes.len(), 3);
+        assert!(report.probes.iter().all(|probe| {
+            probe.status == CredentialHealthStatus::Missing
+                && probe.endpoint.is_none()
+                && probe.api_code.is_none()
+        }));
+    }
+
+    #[tokio::test]
+    async fn credential_health_checks_configured_credentials_redacted() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let cookie_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/nav")
+                .header("cookie", "SESSDATA=COOKIE_SECRET");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "isLogin": true,
+                    "wbi_img": {
+                        "img_url": "https://i0.hdslb.com/bfs/wbi/0123456789abcdef0123456789abcdef.png",
+                        "sub_url": "https://i0.hdslb.com/bfs/wbi/fedcba9876543210fedcba9876543210.png"
+                    }
+                }
+            }));
+        });
+        let access_key_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/passport-login/oauth2/info")
+                .query_param("access_key", "ACCESS_SECRET")
+                .query_param("appkey", INTL_OGV_APPKEY)
+                .query_param("mobi_app", "bstar_a")
+                .query_param_exists("ts")
+                .query_param_exists("sign")
+                .header_missing("cookie");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {"mid": 1}
+            }));
+        });
+        let tv_access_key_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/passport-login/oauth2/info")
+                .query_param("access_key", "TV_SECRET")
+                .query_param("appkey", TV_PLAYURL_APPKEY)
+                .query_param("mobi_app", "android_tv_yst")
+                .query_param_exists("ts")
+                .query_param_exists("sign")
+                .header_missing("cookie");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": -101,
+                "message": "TV_SECRET expired"
+            }));
+        });
+        let mut client = test_client(&server);
+        client.config.credentials = Credentials::default()
+            .with_cookie("SESSDATA=COOKIE_SECRET")
+            .with_access_key("ACCESS_SECRET")
+            .with_tv_access_key("TV_SECRET");
+
+        let report = client.check_credential_health().await;
+
+        assert_eq!(
+            report
+                .probes
+                .iter()
+                .map(|probe| (probe.kind, probe.scope, probe.status))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    CredentialKind::Cookie,
+                    CredentialHealthScope::WebCookie,
+                    CredentialHealthStatus::Valid,
+                ),
+                (
+                    CredentialKind::AccessKey,
+                    CredentialHealthScope::IntlBstar,
+                    CredentialHealthStatus::Valid,
+                ),
+                (
+                    CredentialKind::TvAccessKey,
+                    CredentialHealthScope::Tv,
+                    CredentialHealthStatus::Rejected,
+                ),
+            ]
+        );
+        let tv_probe = report
+            .probes
+            .iter()
+            .find(|probe| probe.kind == CredentialKind::TvAccessKey)
+            .ok_or_else(|| anyhow::anyhow!("missing TV access key probe"))?;
+        assert_eq!(tv_probe.api_code, Some(-101));
+        let serialized = serde_json::to_string(&report)?;
+        let debug = format!("{report:?}");
+        for secret in ["COOKIE_SECRET", "ACCESS_SECRET", "TV_SECRET"] {
+            assert!(!serialized.contains(secret));
+            assert!(!debug.contains(secret));
+        }
+        cookie_mock.assert_calls(1);
+        access_key_mock.assert_calls(1);
+        tv_access_key_mock.assert_calls(1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn credential_health_cookie_probe_does_not_require_wbi_image() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let cookie_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/nav")
+                .header("cookie", "SESSDATA=COOKIE_SECRET");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "isLogin": true
+                }
+            }));
+        });
+        let mut client = test_client(&server);
+        client.config.credentials = Credentials::default().with_cookie("SESSDATA=COOKIE_SECRET");
+
+        let report = client.check_credential_health().await;
+
+        let cookie_probe = report
+            .probes
+            .iter()
+            .find(|probe| probe.kind == CredentialKind::Cookie)
+            .ok_or_else(|| anyhow::anyhow!("missing cookie probe"))?;
+        assert_eq!(cookie_probe.status, CredentialHealthStatus::Valid);
+        assert_eq!(cookie_probe.scope, CredentialHealthScope::WebCookie);
+        cookie_mock.assert_calls(1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn credential_health_redacts_short_exact_cookie_values() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let cookie_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/nav")
+                .header("cookie", "SESSDATA=abc");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": -101,
+                "message": "abc expired"
+            }));
+        });
+        let mut client = test_client(&server);
+        client.config.credentials = Credentials::default().with_cookie("SESSDATA=abc");
+
+        let report = client.check_credential_health().await;
+
+        let cookie_probe = report
+            .probes
+            .iter()
+            .find(|probe| probe.kind == CredentialKind::Cookie)
+            .ok_or_else(|| anyhow::anyhow!("missing cookie probe"))?;
+        assert_eq!(cookie_probe.status, CredentialHealthStatus::Rejected);
+        assert_eq!(cookie_probe.message.as_deref(), Some("<redacted> expired"));
+        let serialized = serde_json::to_string(&report)?;
+        let debug = format!("{report:?}");
+        assert!(!serialized.contains("abc"));
+        assert!(!debug.contains("abc"));
+        cookie_mock.assert_calls(1);
+        Ok(())
+    }
+
+    #[test]
+    fn credential_health_oauth2_info_params_are_scope_specific_and_signed() -> anyhow::Result<()> {
+        let generic =
+            oauth2_info_params(CredentialHealthScope::IntlBstar, "ACCESS", 1_700_000_000)?;
+        assert_eq!(
+            &generic[..6],
+            [
+                ("access_key", "ACCESS".to_owned()),
+                ("appkey", INTL_OGV_APPKEY.to_owned()),
+                ("build", "1001310".to_owned()),
+                ("mobi_app", "bstar_a".to_owned()),
+                ("platform", "android".to_owned()),
+                ("ts", "1700000000".to_owned()),
+            ]
+        );
+        assert_eq!(
+            generic[6],
+            (
+                "sign",
+                sign_ordered_params(&generic[..6], INTL_OGV_APP_SECRET)
+            )
+        );
+
+        let tv = oauth2_info_params(CredentialHealthScope::Tv, "TV", 1_700_000_000)?;
+        assert_eq!(tv[1], ("appkey", TV_PLAYURL_APPKEY.to_owned()));
+        assert_eq!(tv[3], ("mobi_app", "android_tv_yst".to_owned()));
+        assert_eq!(
+            tv[6],
+            ("sign", sign_ordered_params(&tv[..6], TV_PLAYURL_APP_SECRET))
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn credential_health_checks_raw_stored_access_key_value() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let access_key_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/passport-login/oauth2/info")
+                .query_param("access_key", "ACCESS_SECRET ")
+                .query_param("appkey", INTL_OGV_APPKEY)
+                .query_param("mobi_app", "bstar_a")
+                .query_param_exists("ts")
+                .query_param_exists("sign")
+                .header_missing("cookie");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {"mid": 1}
+            }));
+        });
+        let mut client = test_client(&server);
+        client.config.credentials =
+            Credentials::default().with_access_key("ACCESS_SECRET ".to_owned());
+
+        let report = client.check_credential_health().await;
+
+        assert_eq!(report.probes[1].kind, CredentialKind::AccessKey);
+        assert_eq!(report.probes[1].scope, CredentialHealthScope::IntlBstar);
+        assert_eq!(report.probes[1].status, CredentialHealthStatus::Valid);
+        access_key_mock.assert_calls(1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn credential_health_uses_tv_passport_poll_base_for_tv_access_key() -> anyhow::Result<()>
+    {
+        let passport_server = MockServer::start();
+        let tv_passport_poll_server = MockServer::start();
+        let tv_access_key_mock = tv_passport_poll_server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/passport-login/oauth2/info")
+                .query_param("access_key", "TV_SECRET")
+                .query_param("appkey", TV_PLAYURL_APPKEY)
+                .query_param("mobi_app", "android_tv_yst")
+                .query_param_exists("ts")
+                .query_param_exists("sign")
+                .header_missing("cookie");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {"mid": 1}
+            }));
+        });
+        let mut client = test_client(&passport_server);
+        client.config.endpoints.tv_passport_base = "http://127.0.0.1:1".to_owned();
+        client.config.endpoints.tv_passport_poll_base = tv_passport_poll_server.base_url();
+        client.config.credentials = Credentials::default().with_tv_access_key("TV_SECRET");
+
+        let report = client.check_credential_health().await;
+
+        assert_eq!(report.probes[2].kind, CredentialKind::TvAccessKey);
+        assert_eq!(report.probes[2].scope, CredentialHealthScope::Tv);
+        assert_eq!(report.probes[2].status, CredentialHealthStatus::Valid);
+        tv_access_key_mock.assert_calls(1);
+        Ok(())
+    }
 
     #[tokio::test]
     async fn resolves_video_metadata_with_tags() -> anyhow::Result<()> {

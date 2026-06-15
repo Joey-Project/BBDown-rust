@@ -308,6 +308,16 @@ business state 等 PGC response-body metadata。非区域类官方失败会保�
 CLI 会把凭据存储在平台配置目录下的本地 JSON 文件中，并在 Unix 上使用 `0600` 权限。crate
 暴露 `Credentials` 和 `CredentialStore`，让其他项目可以注入自己的存储或把凭据保存在内存
 里。
+credential health diagnostics 是同一 credential model 上的只读层。crate 暴露
+`CredentialHealthReport` 和 `BiliClient::check_credential_health()`，让嵌入调用方可以在选
+择登录或 fallback flow 之前，分别检查 WEB cookie、通用 `access_key` 和 TV `tv_access_key`。
+每个 probe 会用 `kind` 记录 credential storage slot，用 `scope` 记录实际检查的消费场景。
+WEB cookie probe 使用 `/x/web-interface/nav`；token probe 使用
+`/x/passport-login/oauth2/info`，把凭据作为 signed `access_key` app query 值发送，且不会发送
+cookie。通用 token probe 当前通过配置的 `passport_base` 检查 intl/Bstar scope；这不代表同一
+个已存储 `access_key` 对 APP gRPC 或 restricted-area proxy 也一定有效。TV token probe 使用
+配置的 `tv_passport_poll_base`。probe failure 会按凭据独立记录为 `missing`、`valid`、
+`rejected` 或 `request_failed`，不会让整份报告失败。
 
 二维码登录在 crate 中建模为显式状态机。WEB 二维码登录创建 `QrLoginTicket`，它可以转换为
 `QrLoginTicketOutput`，提供稳定的可序列化扫码 URL 和 QR payload 表面；随后轮询
@@ -325,8 +335,9 @@ auth-code 创建和 TV polling 分别可配置，因此测试和受控代理可�
 二维码登录 `ticket` 事件和面向人类的扫码输出会有意暴露扫码 URL 与 QR payload，方便用户认证；调用
 方应把这些值视为临时登录密钥。public QR state enum 有意不 derive serde traits，因为 succeeded
 state 携带完整凭据，供自行处理存储的嵌入调用方使用。QR ticket 和 QR ticket-output debug 输出会脱敏，因为
-ticket key 和扫码 URL query string 可作为预认证密钥。HTTP request error 转换时不会保留完
-整 URL，因此 intl `access_key` 等 query 密钥不会出现在面向用户的错误中。
+ticket key 和扫码 URL query string 可作为预认证密钥。Credential health report 不会包含原始凭据值，
+API message 在序列化前会先经过与 restricted-area diagnostics 相同的 diagnostic sanitizer。HTTP request
+error 转换时不会保留完整 URL，因此 intl `access_key` 等 query 密钥不会出现在面向用户的错误中。
 
 ## 测试和 CI
 

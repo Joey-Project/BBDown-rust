@@ -23,7 +23,7 @@ superseded_by:
 - PR 1 records the shipped `v0.3.0` state, bumps the workspace to the `0.4.0` development line, and
   records this roadmap.
 - PR 2 adds unified QR login ticket/output surfaces for existing WEB and TV login flows.
-- PR 3 will add credential health-check diagnostics for WEB cookie, generic `access_key`, and TV
+- PR 3 adds credential health-check diagnostics for WEB cookie, generic `access_key`, and TV
   `tv_access_key` credentials.
 - PR 4 will add the credential profile storage model while preserving the current default profile.
 - PR 5 will make CLI and embedding credential selection profile-aware.
@@ -34,7 +34,7 @@ superseded_by:
   sidecar merging and regeneration of selected derived formats such as ASS.
 
 ## Next Steps
-- Cut PR 3 from updated `master` and implement credential health diagnostics.
+- Cut PR 4 from updated `master` and implement credential profile storage after PR 3 merges.
 - Continue one slice at a time through PR 8, updating `master` after each merge before cutting the
   next branch.
 - Keep automatic credential refresh and remaining BBDown parity items outside this eight-PR sequence

@@ -183,6 +183,7 @@ bbdown auth import-access-key --stdin
 bbdown auth login-web
 bbdown auth login-tv
 bbdown auth status
+bbdown auth health --json
 bbdown auth logout
 ```
 
@@ -196,12 +197,21 @@ With `--json`, QR login emits newline-delimited JSON events: a `ticket` event wi
 `qr_payload` before polling, then a `saved` event after credentials are stored. The current WEB and
 TV login flows use the scan URL itself as the QR payload. Treat the scan URL and QR payload as
 temporary login secrets; status output and the `saved` event expose redacted booleans only.
+`auth health` checks configured credentials without printing secret values: the WEB cookie is
+checked through the web nav endpoint, while the generic `access_key` and TV `tv_access_key` are
+checked through the OAuth info endpoint as signed `access_key` app query values. Generic token probes
+currently cover the intl/Bstar scope and use `--passport-base`; they do not prove the same token is
+usable for every APP gRPC or proxy consumer. TV token probes use `--tv-passport-poll-base`, which
+follows `--tv-passport-base` when only that TV override is supplied. JSON output reports `kind` for
+the credential slot, `scope` for the checked consumer, and `missing`, `valid`, `rejected`, or
+`request_failed` states for embedding callers and automation.
 
 Use `--request-timeout-seconds` or `BBDOWN_REQUEST_TIMEOUT_SECONDS` to tune API request bounds.
 Media body reads use `--download-idle-timeout-seconds`; pass `0` to disable the idle timeout.
 Use `--comment-base` or `BBDOWN_COMMENT_BASE` to point danmaku XML downloads at a mock or proxy
-endpoint. Use `--passport-base` for WEB QR login mocks or proxies, and use `--tv-passport-base` /
-`--tv-passport-poll-base` for TV QR login mocks or proxies. TV QR polling follows
+endpoint. Use `--passport-base` for WEB QR login and generic token-health mocks or proxies, and use
+`--tv-passport-base` / `--tv-passport-poll-base` for TV QR login and TV token-health mocks or
+proxies. TV QR polling and TV token-health probes follow
 `--tv-passport-base` only when that TV-specific override is supplied; otherwise it uses the upstream
 TV poll default unless `--tv-passport-poll-base` is set explicitly.
 Use `--playurl-mode tv` with `--tv-api-base` when a plan, playback request, or download should use

@@ -19,7 +19,10 @@ pub use client::{
     BiliClient, ClientConfig, EndpointConfig, PlayurlMode, RestrictedArea, RestrictedAreaConfig,
     RestrictedAreaProxy, RestrictedAreaProxyKind,
 };
-pub use credentials::{CredentialSource, CredentialStore, Credentials};
+pub use credentials::{
+    CredentialHealthProbe, CredentialHealthReport, CredentialHealthScope, CredentialHealthStatus,
+    CredentialKind, CredentialSource, CredentialStore, Credentials,
+};
 pub use danmaku::{DanmakuFormat, DanmakuFormats};
 pub use download::{
     DownloadArchive, DownloadArchiveEntryRecord, DownloadArchiveRecord, DownloadFileKind,

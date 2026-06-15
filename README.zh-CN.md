@@ -174,6 +174,7 @@ bbdown auth import-access-key --stdin
 bbdown auth login-web
 bbdown auth login-tv
 bbdown auth status
+bbdown auth health --json
 bbdown auth logout
 ```
 
@@ -185,14 +186,22 @@ Bilibili 二维码状态机，并只保存最终得到的凭据。WEB 二维码�
 码登录输出换行分隔 JSON 事件：先输出带扫码 URL 和 `qr_payload` 的 `ticket` 事件，再在凭
 据保存后输出 `saved` 事件。当前 WEB 和 TV 登录流程会直接使用扫码 URL 作为 QR payload。
 请把扫码 URL 和 QR payload 当成临时登录密钥；状态输出和 `saved` 事件只暴露脱敏布尔值。
+`auth health` 会在不打印密钥值的情况下检查已配置凭据：WEB cookie 通过 web nav 端点检查；
+通用 `access_key` 和 TV `tv_access_key` 会通过 OAuth info 端点以 signed `access_key` app
+query 值检查。通用 token probe 当前覆盖 intl/Bstar scope，并使用 `--passport-base`；它不会
+证明同一 token 对所有 APP gRPC 或 proxy 消费者都可用。TV token probe 使用
+`--tv-passport-poll-base`；如果只提供 `--tv-passport-base`，poll base 会跟随该 TV 覆盖。
+JSON 输出会用 `kind` 表示凭据槽位、用 `scope` 表示实际检查的消费场景，并报告
+`missing`、`valid`、`rejected` 或 `request_failed` 状态，便于嵌入调用方和自动化使用。
 
 使用 `--request-timeout-seconds` 或 `BBDOWN_REQUEST_TIMEOUT_SECONDS` 调整 API 请求时限。
 媒体正文读取使用 `--download-idle-timeout-seconds`；传入 `0` 可禁用 idle timeout。使用
 `--comment-base` 或 `BBDOWN_COMMENT_BASE` 可以把弹幕 XML 下载指向 mock 或代理端点。
-使用 `--passport-base` 可配置 WEB 二维码登录 mock 或代理；使用 `--tv-passport-base` /
-`--tv-passport-poll-base` 可配置 TV 二维码登录 mock 或代理。只有在提供 TV 专用覆盖时，
-TV 二维码轮询才会跟随 `--tv-passport-base`；否则除非显式设置 `--tv-passport-poll-base`，
-它会使用上游 TV 轮询默认值。
+使用 `--passport-base` 可配置 WEB 二维码登录和通用 token health mock 或代理；使用
+`--tv-passport-base` / `--tv-passport-poll-base` 可配置 TV 二维码登录和 TV token health
+mock 或代理。只有在提供 TV 专用覆盖时，TV 二维码轮询和 TV token health probe 才会跟随
+`--tv-passport-base`；否则除非显式设置 `--tv-passport-poll-base`，它会使用上游 TV 轮询
+默认值。
 当 `plan`、`playback` 或 `download` 需要使用 TV playurl host 而不是默认 web playurl host
 时，可同时使用 `--playurl-mode tv` 和 `--tv-api-base`。
 当 `plan`、`playback` 或 `download` 需要使用 APP gRPC playurl host 时，可同时使用

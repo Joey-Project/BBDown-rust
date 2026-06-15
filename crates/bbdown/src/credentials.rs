@@ -77,6 +77,114 @@ pub struct CredentialSource {
     pub has_tv_access_key: bool,
 }
 
+#[non_exhaustive]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CredentialHealthReport {
+    pub credentials: CredentialSource,
+    pub probes: Vec<CredentialHealthProbe>,
+}
+
+#[non_exhaustive]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CredentialHealthProbe {
+    pub kind: CredentialKind,
+    pub scope: CredentialHealthScope,
+    pub status: CredentialHealthStatus,
+    pub endpoint: Option<String>,
+    pub api_code: Option<i64>,
+    pub message: Option<String>,
+}
+
+impl CredentialHealthProbe {
+    #[must_use]
+    pub fn missing(kind: CredentialKind, scope: CredentialHealthScope) -> Self {
+        Self {
+            kind,
+            scope,
+            status: CredentialHealthStatus::Missing,
+            endpoint: None,
+            api_code: None,
+            message: Some("credential is not configured".to_owned()),
+        }
+    }
+
+    #[must_use]
+    pub fn valid(
+        kind: CredentialKind,
+        scope: CredentialHealthScope,
+        endpoint: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind,
+            scope,
+            status: CredentialHealthStatus::Valid,
+            endpoint: Some(endpoint.into()),
+            api_code: Some(0),
+            message: None,
+        }
+    }
+
+    #[must_use]
+    pub fn rejected(
+        kind: CredentialKind,
+        scope: CredentialHealthScope,
+        endpoint: impl Into<String>,
+        api_code: Option<i64>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind,
+            scope,
+            status: CredentialHealthStatus::Rejected,
+            endpoint: Some(endpoint.into()),
+            api_code,
+            message: Some(message.into()),
+        }
+    }
+
+    #[must_use]
+    pub fn request_failed(
+        kind: CredentialKind,
+        scope: CredentialHealthScope,
+        endpoint: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind,
+            scope,
+            status: CredentialHealthStatus::RequestFailed,
+            endpoint: Some(endpoint.into()),
+            api_code: None,
+            message: Some(message.into()),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CredentialKind {
+    Cookie,
+    AccessKey,
+    TvAccessKey,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CredentialHealthScope {
+    WebCookie,
+    IntlBstar,
+    Tv,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CredentialHealthStatus {
+    Missing,
+    Valid,
+    Rejected,
+    RequestFailed,
+}
+
 #[derive(Clone, Debug)]
 pub struct CredentialStore {
     path: PathBuf,

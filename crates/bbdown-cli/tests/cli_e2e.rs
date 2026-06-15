@@ -2449,6 +2449,103 @@ fn auth_import_status_and_logout_use_local_store() -> anyhow::Result<()> {
 }
 
 #[test]
+fn auth_health_reports_redacted_credential_probe_statuses() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    CredentialStore::new(credential_file.clone()).save(
+        &Credentials::default()
+            .with_cookie("SESSDATA=COOKIE_SECRET")
+            .with_access_key("ACCESS_SECRET")
+            .with_tv_access_key("TV_SECRET"),
+    )?;
+    let cookie_mock = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/nav")
+            .header("cookie", "SESSDATA=COOKIE_SECRET");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "isLogin": true,
+                "wbi_img": {
+                    "img_url": "https://i0.hdslb.com/bfs/wbi/0123456789abcdef0123456789abcdef.png",
+                    "sub_url": "https://i0.hdslb.com/bfs/wbi/fedcba9876543210fedcba9876543210.png"
+                }
+            }
+        }));
+    });
+    let access_key_mock = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/passport-login/oauth2/info")
+            .query_param("access_key", "ACCESS_SECRET")
+            .query_param("appkey", "7d089525d3611b1c")
+            .query_param("mobi_app", "bstar_a")
+            .query_param_exists("ts")
+            .query_param_exists("sign")
+            .header_missing("cookie");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {"mid": 1}
+        }));
+    });
+    let tv_access_key_mock = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/passport-login/oauth2/info")
+            .query_param("access_key", "TV_SECRET")
+            .query_param("appkey", "4409e2ce8ffd12b8")
+            .query_param("mobi_app", "android_tv_yst")
+            .query_param_exists("ts")
+            .query_param_exists("sign")
+            .header_missing("cookie");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -101,
+            "message": "TV_SECRET expired"
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--tv-passport-base")
+        .arg(server.base_url())
+        .arg("--tv-passport-poll-base")
+        .arg(server.base_url())
+        .args(["auth", "health", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let report: Value = serde_json::from_slice(&output)?;
+
+    assert_eq!(report["credentials"]["has_cookie"], true);
+    assert_eq!(report["credentials"]["has_access_key"], true);
+    assert_eq!(report["credentials"]["has_tv_access_key"], true);
+    assert_eq!(report["probes"][0]["kind"], "cookie");
+    assert_eq!(report["probes"][0]["scope"], "web_cookie");
+    assert_eq!(report["probes"][0]["status"], "valid");
+    assert_eq!(report["probes"][1]["kind"], "access_key");
+    assert_eq!(report["probes"][1]["scope"], "intl_bstar");
+    assert_eq!(report["probes"][1]["status"], "valid");
+    assert_eq!(report["probes"][2]["kind"], "tv_access_key");
+    assert_eq!(report["probes"][2]["scope"], "tv");
+    assert_eq!(report["probes"][2]["status"], "rejected");
+    assert_eq!(report["probes"][2]["api_code"], -101);
+    let output_text = String::from_utf8(output)?;
+    for secret in ["COOKIE_SECRET", "ACCESS_SECRET", "TV_SECRET"] {
+        assert!(!output_text.contains(secret));
+    }
+    cookie_mock.assert_calls(1);
+    access_key_mock.assert_calls(1);
+    tv_access_key_mock.assert_calls(1);
+    Ok(())
+}
+
+#[test]
 fn auth_qr_login_web_and_tv_use_local_store() -> anyhow::Result<()> {
     let web_server = MockServer::start();
     let tv_server = MockServer::start();

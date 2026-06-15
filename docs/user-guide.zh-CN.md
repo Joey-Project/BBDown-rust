@@ -273,6 +273,7 @@ bbdown auth import-access-key --stdin
 bbdown auth login-web
 bbdown auth login-tv
 bbdown auth status
+bbdown auth health --json
 bbdown auth logout
 ```
 
@@ -285,6 +286,15 @@ bbdown auth logout
 和 TV 登录流程中，`qr_payload` 与扫码 URL 相同，嵌入项目可以直接把它渲染成二维码。请把扫
 码 URL 和 QR payload 当成临时登录密钥，因为它们包含二维码登录 key。状态输出或 `saved`
 JSON 事件不会打印 token 值。
+
+使用 `auth health` 可以在不暴露密钥值的情况下诊断已配置凭据。该命令会用 web nav 端点检
+查 WEB cookie，并通过 OAuth info 端点把通用 `access_key` 与 TV `tv_access_key` 作为
+signed `access_key` app query 值检查。JSON 输出是 typed report，会用 `kind` 表示凭据槽
+位、用 `scope` 表示实际检查的消费场景，并按 probe 报告 `missing`、`valid`、`rejected` 或
+`request_failed` 状态，只包含脱敏后的 API code/message。通用 token probe 当前覆盖
+intl/Bstar scope，并使用 `--passport-base`；它不会证明同一 token 对所有 APP gRPC 或 proxy
+消费者都可用。TV token probe 使用 `--tv-passport-poll-base`；如果只提供
+`--tv-passport-base`，poll base 会跟随该 TV 覆盖。
 
 ## 端点覆盖
 
@@ -301,10 +311,13 @@ bbdown --tv-passport-base http://127.0.0.1:8080 --tv-passport-poll-base http://1
 ```
 
 当前 intl 支持使用官方 intl 元数据/字幕端点，以及在配置 access key 时使用官方签名 intl
-OGV playurl 端点。弹幕 XML 下载使用可配置的 comment 端点。WEB 二维码登录使用
-`--passport-base`；TV 二维码登录使用 TV 专用 passport 覆盖。提供 `--tv-passport-base` 时，
-TV 二维码轮询会跟随该覆盖；对 split-host mock 或代理，请设置 `--tv-passport-poll-base`。
-TV playurl mode 使用 `--tv-api-base`，它独立于只服务二维码登录的 TV passport host。
+OGV playurl 端点。弹幕 XML 下载使用可配置的 comment 端点。WEB 二维码登录和通用 token
+health probe 使用 `--passport-base`。TV 二维码生成使用 `--tv-passport-base`；TV 二维码轮询
+和 TV token health probe 使用 `--tv-passport-poll-base`。如果只提供 `--tv-passport-base`，
+CLI 会让 TV poll base 跟随该覆盖；对 split-host mock 或代理，请显式设置
+`--tv-passport-poll-base`。
+TV playurl mode 使用 `--tv-api-base`，它独立于服务 TV 二维码登录和 TV token health 的 TV
+passport host。
 APP gRPC playurl mode 使用 `--app-grpc-base` 处理普通视频，使用 `--app-pgc-grpc-base` 处理
 PGC 分集；两个 APP gRPC 默认值都使用 `https://grpc.biliapi.net`，并且独立于 WEB、TV 和
 intl HTTP endpoint 覆盖。

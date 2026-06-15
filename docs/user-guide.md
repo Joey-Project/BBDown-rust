@@ -304,6 +304,7 @@ bbdown auth import-access-key --stdin
 bbdown auth login-web
 bbdown auth login-tv
 bbdown auth status
+bbdown auth health --json
 bbdown auth logout
 ```
 
@@ -317,6 +318,16 @@ With `--json`, QR login prints newline-delimited JSON events: `ticket` includes 
 and TV login flows, `qr_payload` is the same URL and can be rendered directly as a QR code by
 embedding projects. Treat the scan URL and QR payload as temporary login secrets because they contain
 the QR login key. Token values are not printed by status or the `saved` JSON event.
+
+Use `auth health` to diagnose configured credentials without exposing secret values. The command
+checks the WEB cookie against the web nav endpoint and checks both the generic `access_key` and TV
+`tv_access_key` through the OAuth info endpoint as signed `access_key` app query values. JSON output
+is a typed report with `kind` for the credential slot, `scope` for the checked consumer, and
+per-probe `missing`, `valid`, `rejected`, or `request_failed` statuses plus sanitized API
+codes/messages. Generic token probes currently cover the intl/Bstar scope and use
+`--passport-base`; they do not prove the same token is usable for every APP gRPC or proxy consumer.
+TV token probes use `--tv-passport-poll-base`, which follows `--tv-passport-base` when only that TV
+override is supplied.
 
 ## Endpoint Overrides
 
@@ -334,11 +345,12 @@ bbdown --tv-passport-base http://127.0.0.1:8080 --tv-passport-poll-base http://1
 
 Current intl support uses official intl metadata/subtitle endpoints and the official signed intl OGV
 playurl endpoint with the configured access key when present. Danmaku XML downloads use the
-configurable comment endpoint. WEB QR login uses `--passport-base`; TV QR login uses TV-specific
-passport overrides. TV QR polling follows `--tv-passport-base` when that override is supplied; set
-`--tv-passport-poll-base` for split-host mocks or proxies.
-TV playurl mode uses `--tv-api-base`; it is separate from the TV passport host used only for QR
-login.
+configurable comment endpoint. WEB QR login and generic token-health probes use `--passport-base`.
+TV QR generation uses `--tv-passport-base`; TV QR polling and TV token-health probes use
+`--tv-passport-poll-base`. The CLI makes the TV poll base follow `--tv-passport-base` when only that
+TV override is supplied; set `--tv-passport-poll-base` explicitly for split-host mocks or proxies.
+TV playurl mode uses `--tv-api-base`; it is separate from the TV passport hosts used for TV QR login
+and TV token health.
 APP gRPC playurl mode uses `--app-grpc-base` for normal videos and `--app-pgc-grpc-base` for PGC
 episodes; both APP gRPC defaults use `https://grpc.biliapi.net`, and both are separate from WEB,
 TV, and intl HTTP endpoint overrides.
