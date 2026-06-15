@@ -7,6 +7,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 pub const DEFAULT_CREDENTIAL_PROFILE: &str = "default";
+const CREDENTIAL_PROFILES_VERSION: u32 = 1;
 
 #[derive(Clone, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Credentials {
@@ -98,7 +99,7 @@ impl fmt::Debug for CredentialProfiles {
 impl Default for CredentialProfiles {
     fn default() -> Self {
         Self {
-            version: 1,
+            version: CREDENTIAL_PROFILES_VERSION,
             default_profile: DEFAULT_CREDENTIAL_PROFILE.to_owned(),
             profiles: BTreeMap::new(),
         }
@@ -153,7 +154,13 @@ impl CredentialProfiles {
     }
 
     fn normalize(mut self) -> Result<Self> {
-        self.version = 1;
+        if self.version != CREDENTIAL_PROFILES_VERSION {
+            return Err(Error::InvalidInput(format!(
+                "unsupported credential profile document version {}; expected {CREDENTIAL_PROFILES_VERSION}",
+                self.version
+            )));
+        }
+        self.version = CREDENTIAL_PROFILES_VERSION;
         self.default_profile = normalize_profile_name(&self.default_profile)
             .unwrap_or_else(|_| DEFAULT_CREDENTIAL_PROFILE.to_owned());
         let mut profiles = BTreeMap::new();
@@ -169,7 +176,7 @@ impl CredentialProfiles {
 }
 
 fn credential_profiles_version() -> u32 {
-    1
+    CREDENTIAL_PROFILES_VERSION
 }
 
 fn default_credential_profile() -> String {
@@ -341,9 +348,12 @@ impl CredentialStore {
     }
 
     pub fn remove_profile(&self, profile: &str) -> Result<Option<Credentials>> {
+        let file_uses_profiles = self.file_uses_profiles()?;
         let mut profiles = self.load_profiles()?;
         let removed = profiles.remove_profile(profile)?;
-        self.save_profiles(&profiles)?;
+        if removed.is_some() || file_uses_profiles {
+            self.save_profiles(&profiles)?;
+        }
         Ok(removed)
     }
 
@@ -755,6 +765,79 @@ mod tests {
             profiles.profile("intl")?.cookie.as_deref(),
             Some("SESSDATA=updated-intl")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn unsupported_profile_document_version_is_rejected() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let raw = r#"{
+  "version": 2,
+  "default_profile": "default",
+  "profiles": {
+    "default": {
+      "cookie": "SESSDATA=secret"
+    }
+  }
+}"#;
+        std::fs::write(&path, raw)?;
+        let store = CredentialStore::new(path.clone());
+
+        let Err(load_error) = store.load_profiles() else {
+            anyhow::bail!("unsupported profile version was accepted");
+        };
+        assert!(
+            load_error
+                .to_string()
+                .contains("unsupported credential profile document version 2")
+        );
+
+        let Err(save_error) = store.save(&Credentials {
+            cookie: Some("SESSDATA=updated".to_owned()),
+            access_key: None,
+            tv_access_key: None,
+        }) else {
+            anyhow::bail!("unsupported profile version was overwritten");
+        };
+        assert!(
+            save_error
+                .to_string()
+                .contains("unsupported credential profile document version 2")
+        );
+        assert_eq!(std::fs::read_to_string(path)?, raw);
+        Ok(())
+    }
+
+    #[test]
+    fn remove_missing_profile_does_not_create_store() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+
+        let removed = store.remove_profile("intl")?;
+
+        assert_eq!(removed, None);
+        assert!(!path.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn remove_missing_profile_keeps_legacy_flat_store() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        store.save(&Credentials {
+            cookie: Some("SESSDATA=secret".to_owned()),
+            access_key: Some("access-token".to_owned()),
+            tv_access_key: None,
+        })?;
+        let before = std::fs::read_to_string(&path)?;
+
+        let removed = store.remove_profile("intl")?;
+
+        assert_eq!(removed, None);
+        assert_eq!(std::fs::read_to_string(path)?, before);
         Ok(())
     }
 
