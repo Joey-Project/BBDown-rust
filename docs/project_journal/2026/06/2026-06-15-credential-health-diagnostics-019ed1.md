@@ -5,7 +5,7 @@ status: completed
 created: 2026-06-15
 updated: 2026-06-15
 branch: wip/credential-health-diagnostics
-pr:
+pr: https://github.com/Joey-Project/BBDown-rust/pull/44
 supersedes: []
 superseded_by:
 ---
