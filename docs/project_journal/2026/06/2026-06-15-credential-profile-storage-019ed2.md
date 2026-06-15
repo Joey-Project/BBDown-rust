@@ -38,4 +38,5 @@ superseded_by:
 ## Evidence
 - Core credential tests cover legacy wrapping, legacy write preservation, named-profile migration,
   default-profile loading, profile-name validation, file permission tightening, bare relative paths,
-  legacy flat files with unrelated `version` fields, and redacted debug output.
+  legacy flat files with unrelated `version` or profile-like unknown fields, and redacted debug
+  output.

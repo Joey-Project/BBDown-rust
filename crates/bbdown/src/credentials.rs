@@ -400,7 +400,19 @@ fn parse_credential_profiles(raw: &str) -> Result<CredentialProfiles> {
 }
 
 fn is_profile_document(value: &serde_json::Value) -> bool {
-    value.get("profiles").is_some() || value.get("default_profile").is_some()
+    !has_flat_credential_fields(value)
+        && (value
+            .get("profiles")
+            .is_some_and(serde_json::Value::is_object)
+            || value
+                .get("default_profile")
+                .is_some_and(serde_json::Value::is_string))
+}
+
+fn has_flat_credential_fields(value: &serde_json::Value) -> bool {
+    value.get("cookie").is_some()
+        || value.get("access_key").is_some()
+        || value.get("tv_access_key").is_some()
 }
 
 fn normalize_profile_name(name: &str) -> Result<String> {
@@ -585,6 +597,45 @@ mod tests {
 
         let profiles = store.load_profiles()?;
 
+        assert_eq!(
+            profiles
+                .profile(DEFAULT_CREDENTIAL_PROFILE)?
+                .cookie
+                .as_deref(),
+            Some("SESSDATA=secret")
+        );
+        assert_eq!(store.load()?.access_key.as_deref(), Some("access-token"));
+        assert_eq!(
+            store.load()?.tv_access_key.as_deref(),
+            Some("tv-access-token")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_flat_credentials_with_profile_like_unknown_fields_are_not_profiles()
+    -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        std::fs::write(
+            &path,
+            r#"{
+  "default_profile": "intl",
+  "profiles": {
+    "intl": {
+      "access_key": "ignored-profile-token"
+    }
+  },
+  "cookie": "SESSDATA=secret",
+  "access_key": "access-token",
+  "tv_access_key": "tv-access-token"
+}"#,
+        )?;
+        let store = CredentialStore::new(path);
+
+        let profiles = store.load_profiles()?;
+
+        assert_eq!(profiles.default_profile, DEFAULT_CREDENTIAL_PROFILE);
         assert_eq!(
             profiles
                 .profile(DEFAULT_CREDENTIAL_PROFILE)?
