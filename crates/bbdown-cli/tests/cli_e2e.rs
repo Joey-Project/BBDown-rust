@@ -2499,7 +2499,7 @@ fn auth_health_reports_redacted_credential_probe_statuses() -> anyhow::Result<()
             .header_missing("cookie");
         then.status(200).json_body_obj(&serde_json::json!({
             "code": -101,
-            "message": "access_key=TV_SECRET expired"
+            "message": "TV_SECRET expired"
         }));
     });
 

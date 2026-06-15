@@ -516,7 +516,7 @@ impl BiliClient {
                 Some(0),
                 "not logged in",
             ),
-            Err(error) => credential_health_error(CredentialKind::Cookie, ENDPOINT, error),
+            Err(error) => credential_health_error(CredentialKind::Cookie, ENDPOINT, error, cookie),
         }
     }
 
@@ -533,7 +533,7 @@ impl BiliClient {
         };
         match self.fetch_oauth2_info(kind, token).await {
             Ok(()) => CredentialHealthProbe::valid(kind, ENDPOINT),
-            Err(error) => credential_health_error(kind, ENDPOINT, error),
+            Err(error) => credential_health_error(kind, ENDPOINT, error, token),
         }
     }
 
@@ -4909,19 +4909,45 @@ fn credential_health_error(
     kind: CredentialKind,
     endpoint: &'static str,
     error: Error,
+    raw_secret: &str,
 ) -> CredentialHealthProbe {
     match error {
         Error::Api { code, message } => CredentialHealthProbe::rejected(
             kind,
             endpoint,
             Some(code),
-            sanitize_diagnostic_text(&message),
+            sanitize_diagnostic_text_with_secret(&message, raw_secret),
         ),
         other => CredentialHealthProbe::request_failed(
             kind,
             endpoint,
-            sanitize_diagnostic_text(&other.to_string()),
+            sanitize_diagnostic_text_with_secret(&other.to_string(), raw_secret),
         ),
+    }
+}
+
+fn sanitize_diagnostic_text_with_secret(raw: &str, raw_secret: &str) -> String {
+    let sanitized = sanitize_diagnostic_text(raw);
+    redact_exact_secret_values(&sanitized, raw_secret)
+}
+
+fn redact_exact_secret_values(raw: &str, raw_secret: &str) -> String {
+    let mut redacted = redact_exact_secret_value(raw, raw_secret);
+    for part in raw_secret.split(';') {
+        let value = part
+            .trim()
+            .split_once('=')
+            .map_or(part.trim(), |(_, value)| value.trim());
+        redacted = redact_exact_secret_value(&redacted, value);
+    }
+    redacted
+}
+
+fn redact_exact_secret_value(raw: &str, value: &str) -> String {
+    if value.len() < 4 {
+        raw.to_owned()
+    } else {
+        raw.replace(value, "<redacted>")
     }
 }
 
@@ -5776,7 +5802,7 @@ mod tests {
                 .header_missing("cookie");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": -101,
-                "message": "access_key=TV_SECRET expired"
+                "message": "TV_SECRET expired"
             }));
         });
         let mut client = test_client(&server);
