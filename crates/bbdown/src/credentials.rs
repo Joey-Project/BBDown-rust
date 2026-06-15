@@ -161,8 +161,7 @@ impl CredentialProfiles {
             )));
         }
         self.version = CREDENTIAL_PROFILES_VERSION;
-        self.default_profile = normalize_profile_name(&self.default_profile)
-            .unwrap_or_else(|_| DEFAULT_CREDENTIAL_PROFILE.to_owned());
+        self.default_profile = normalize_profile_name(&self.default_profile)?;
         let mut profiles = BTreeMap::new();
         for (name, credentials) in self.profiles {
             let name = normalize_profile_name(&name)?;
@@ -411,12 +410,7 @@ fn parse_credential_profiles(raw: &str) -> Result<CredentialProfiles> {
 
 fn is_profile_document(value: &serde_json::Value) -> bool {
     !has_flat_credential_fields(value)
-        && (value
-            .get("profiles")
-            .is_some_and(serde_json::Value::is_object)
-            || value
-                .get("default_profile")
-                .is_some_and(serde_json::Value::is_string))
+        && (value.get("profiles").is_some() || value.get("default_profile").is_some())
 }
 
 fn has_flat_credential_fields(value: &serde_json::Value) -> bool {
@@ -804,6 +798,75 @@ mod tests {
             save_error
                 .to_string()
                 .contains("unsupported credential profile document version 2")
+        );
+        assert_eq!(std::fs::read_to_string(path)?, raw);
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_profile_document_does_not_fall_back_to_flat_credentials() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let raw = r#"{
+  "version": 2,
+  "profiles": []
+}"#;
+        std::fs::write(&path, raw)?;
+        let store = CredentialStore::new(path.clone());
+
+        let Err(load_error) = store.load_profiles() else {
+            anyhow::bail!("malformed profile document was accepted as flat credentials");
+        };
+        assert!(load_error.to_string().contains("invalid type"));
+
+        let Err(save_error) = store.save(&Credentials {
+            cookie: Some("SESSDATA=updated".to_owned()),
+            access_key: None,
+            tv_access_key: None,
+        }) else {
+            anyhow::bail!("malformed profile document was overwritten as flat credentials");
+        };
+        assert!(save_error.to_string().contains("invalid type"));
+        assert_eq!(std::fs::read_to_string(path)?, raw);
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_profile_document_default_profile_is_rejected() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let raw = r#"{
+  "version": 1,
+  "default_profile": " ",
+  "profiles": {
+    "intl": {
+      "access_key": "access-token"
+    }
+  }
+}"#;
+        std::fs::write(&path, raw)?;
+        let store = CredentialStore::new(path.clone());
+
+        let Err(load_error) = store.load() else {
+            anyhow::bail!("invalid default profile was accepted");
+        };
+        assert!(
+            load_error
+                .to_string()
+                .contains("credential profile name must not be empty")
+        );
+
+        let Err(save_error) = store.save(&Credentials {
+            cookie: Some("SESSDATA=updated".to_owned()),
+            access_key: None,
+            tv_access_key: None,
+        }) else {
+            anyhow::bail!("invalid default profile was overwritten");
+        };
+        assert!(
+            save_error
+                .to_string()
+                .contains("credential profile name must not be empty")
         );
         assert_eq!(std::fs::read_to_string(path)?, raw);
         Ok(())
