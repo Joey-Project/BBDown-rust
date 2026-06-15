@@ -46,10 +46,14 @@
   fourth `0.3.0` feature slice.
 - [completed] Add watch-later parsing after the other feed/list inputs are in place as the final
   `0.3.0` feed/list slice.
-- [pending] Add credential health checks, renewal/re-login guidance, and multi-account profile
-  management for WEB cookie, generic `access_key`, and TV `tv_access_key` credentials.
-- [pending] Investigate in-project `access_key` acquisition by studying the prior
-  `JoeyTeng/bilibili-helper` approach, including the historical biliplus.com-based flow, before
-  adding any automated login or token retrieval path.
-- [pending] Continue the remaining BBDown parity backlog after the current playback/list slices:
+- [completed] Publish `v0.3.0` from the completed feed/list line as a GitHub Release and
+  `bbdown-core` crate.
+- [pending] Add unified login QR output and credential health-check diagnostics for WEB cookie,
+  generic `access_key`, and TV `tv_access_key` credentials.
+- [pending] Add multi-account credential profiles and an in-project generic `access_key`
+  acquisition flow after validating the historical BiliPlus QR/URL authorization approach.
+- [pending] Add append-only danmaku update workflows that can update XML sidecars and regenerate
+  selected formats such as ASS for already downloaded archive records.
+- [pending] Continue the remaining BBDown parity backlog after the current `0.4.0` credential and
+  danmaku sequence unless reprioritized:
   aria2 or multi-thread download integration, MP4Box muxing, and subtitle-to-SRT conversion.

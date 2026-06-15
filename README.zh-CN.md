@@ -250,9 +250,9 @@ just ci
 ## 文档
 
 - Crate API 说明：可发布 package 是 `bbdown-core`，导入时使用 `bbdown_core`。此重写处于
-  已发布 `0.1.0` 之后的 `0.3` 开发线。该版本线包含批量 collection metadata、封面与
-  sidecar-only 下载表面、播放请求/ABR metadata，以及 BBDown-compatible TV/APP playurl
-  modes；嵌入项目应优先使用 `Default`、`new` 和
+  已发布 `0.3.0` 之后的 `0.4.0` 开发线。该版本线重点是 credential lifecycle 改进、
+  access-key 获取、统一登录二维码输出，以及 append-only 弹幕更新；嵌入项目应优先使用
+  `Default`、`new` 和
   `with_*` 构造器，例如 `ClientConfig::default().with_*`、`EndpointConfig::default().with_*`、
   `RestrictedAreaConfig::default().with_*`、`DownloadOptions::new(...).with_*` 和
   `RetryPolicy::new(...)`，而不是结构体字面量，这样新增配置字段时破坏性更小。输出模型

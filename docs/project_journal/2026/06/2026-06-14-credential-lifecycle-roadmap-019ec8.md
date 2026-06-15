@@ -1,18 +1,19 @@
 ---
 id: 20260614-019ec8-credential-lifecycle-roadmap
 title: Credential Lifecycle Roadmap
-status: active
+status: completed
 created: 2026-06-14
 updated: 2026-06-14
 branch: wip/following-up-feed-list-parsing
 pr:
 supersedes: []
-superseded_by:
+superseded_by: 20260615-019ecf-v0-4-credential-danmaku-roadmap
 ---
 
 # Credential Lifecycle Roadmap
 
 ## Summary
+- This roadmap has been folded into the `v0.4.0` credential and danmaku roadmap.
 - Current credential storage supports three fields: WEB `cookie`, generic `access_key`, and TV
   `tv_access_key`.
 - Users can obtain WEB cookie through `auth login-web` or `auth import-cookie`, and TV token through

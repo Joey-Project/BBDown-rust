@@ -26,10 +26,10 @@ constructor paths so downstream projects do not need struct literals for ordinar
 The CLI uses the same public builders, which makes it an in-repo integration test surface for the
 crate API.
 
-Output models remain typed data surfaces. The current crate version is `0.3.0`, a post-`0.1.0`
-development line that includes batch collection metadata, cover and sidecar-only download surfaces,
-playback request/ABR metadata, and TV/APP playurl modes; callers should read fields or serialize
-output values rather than treating output structs as stable construction targets.
+Output models remain typed data surfaces. The current crate version is `0.4.0`, a post-`0.3.0`
+development line focused on credential lifecycle improvements, access-key acquisition, unified
+login QR output, and append-only danmaku updates; callers should read fields or serialize output
+values rather than treating output structs as stable construction targets.
 
 ## Resolver Model
 
@@ -443,7 +443,7 @@ DASH video ids plus optional labels derived from `accept_description` and `suppo
 human summary prints the same ids alongside video/audio stream summaries, while JSON callers can
 select exact DASH streams through `DownloadOptions::stream_selection`.
 
-The reusable crate is now on the `0.3` development line after the published `0.1.0` release, so
+The reusable crate is now on the `0.4.0` development line after the published `0.3.0` release, so
 public configuration structs are intentionally hardened through constructor and builder APIs rather
 than preserving local struct-literal experiments. Embedders should create configuration with those APIs, including
 `ClientConfig::default().with_*`, `EndpointConfig::default().with_*`,
