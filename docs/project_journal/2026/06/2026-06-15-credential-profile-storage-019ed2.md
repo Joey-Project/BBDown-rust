@@ -5,7 +5,7 @@ status: completed
 created: 2026-06-15
 updated: 2026-06-15
 branch: wip/credential-profile-storage
-pr:
+pr: https://github.com/Joey-Project/BBDown-rust/pull/45
 supersedes: []
 superseded_by:
 ---
