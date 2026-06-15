@@ -353,6 +353,14 @@ remains intentionally out of scope.
 The CLI stores credentials in a local JSON file under the platform config directory with `0600`
 permissions on Unix. The crate exposes `Credentials` and `CredentialStore` so other projects can
 inject their own storage or keep credentials in memory.
+`CredentialStore::load()` and `CredentialStore::save()` continue to read and write the legacy flat
+JSON credential shape for the default profile, so existing users and test fixtures do not need a
+migration step. Profile-aware callers can use `CredentialProfiles`, `load_profiles`,
+`save_profiles`, `load_profile`, `save_profile`, and `remove_profile` to store multiple named
+credential sets in a versioned profile document. Loading a legacy flat file through the profile API
+wraps it as the `default` profile, and saving a named profile migrates the file to the profile
+document while preserving default credentials. Raw credential values stay redacted in debug output
+for both `Credentials` and `CredentialProfiles`.
 Credential health diagnostics are a read-only layer over the same credential model. The crate exposes
 `CredentialHealthReport` and `BiliClient::check_credential_health()` so embedding callers can check
 the WEB cookie, generic `access_key`, and TV `tv_access_key` independently before choosing a login or

@@ -200,6 +200,11 @@ as seasons, follow paginated episode lists when the API reports additional pages
 Embedding projects can either use `CredentialStore` or inject credentials from their own storage.
 Do not log raw credential values. `Credentials` debug output is redacted, but application logs should
 still treat credentials as secrets.
+The default `CredentialStore::load()` and `CredentialStore::save()` methods preserve the legacy
+single-profile JSON file shape. Use `CredentialProfiles` plus the `load_profiles`/`save_profiles`
+and `load_profile`/`save_profile` helpers when an embedding project needs multiple accounts. A legacy
+flat file loaded through the profile API appears as the `default` profile, and saving a named profile
+migrates the store to the versioned profile document without dropping the default credentials.
 For QR login, convert `QrLoginTicket` to `QrLoginTicketOutput` when a downstream application needs a
 stable serialized scan URL and `qr_payload`; current WEB and TV login flows use the scan URL itself
 as the QR payload.
@@ -212,7 +217,7 @@ applications that need APP gRPC or proxy-specific assurance should treat that as
 decision. Probe messages are sanitized before they are serialized.
 
 ```rust,no_run
-use bbdown_core::{BiliClient, ClientConfig, Credentials};
+use bbdown_core::{BiliClient, ClientConfig, CredentialStore, Credentials};
 
 async fn check_credentials() {
     let credentials = Credentials::default()
@@ -222,6 +227,10 @@ async fn check_credentials() {
     let config = ClientConfig::default().with_credentials(credentials);
     let client = BiliClient::new(config);
     let _health = client.check_credential_health().await;
+}
+
+fn load_named_profile(store: &CredentialStore, profile: &str) -> bbdown_core::Result<Credentials> {
+    store.load_profile(profile)
 }
 ```
 
