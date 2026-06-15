@@ -192,9 +192,10 @@ Secret import commands also read `BBDOWN_COOKIE` or `BBDOWN_ACCESS_KEY` when no 
 provided, so callers can avoid passing credentials through process arguments. QR login commands poll
 the Bilibili QR state machine and save only the resulting credential. WEB QR login saves a cookie;
 TV QR login saves a TV-specific access key without overwriting the generic intl/Bstar access key.
-With `--json`, QR login emits newline-delimited JSON events: a `ticket` event with the scan URL
-before polling, then a `saved` event after credentials are stored. Treat the scan URL as a temporary
-login secret; status output and the `saved` event expose redacted booleans only.
+With `--json`, QR login emits newline-delimited JSON events: a `ticket` event with the scan URL and
+`qr_payload` before polling, then a `saved` event after credentials are stored. The current WEB and
+TV login flows use the scan URL itself as the QR payload. Treat the scan URL and QR payload as
+temporary login secrets; status output and the `saved` event expose redacted booleans only.
 
 Use `--request-timeout-seconds` or `BBDOWN_REQUEST_TIMEOUT_SECONDS` to tune API request bounds.
 Media body reads use `--download-idle-timeout-seconds`; pass `0` to disable the idle timeout.

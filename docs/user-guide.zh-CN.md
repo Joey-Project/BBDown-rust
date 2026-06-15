@@ -281,8 +281,10 @@ bbdown auth logout
 维码登录 URL，轮询到扫码确认，并保存得到的 cookie。`auth login-tv` 使用 TV 二维码流程，
 保存 TV 专用 access key 供未来 TV/app 流程使用，不会覆盖由 `auth import-access-key` 导入
 的通用 intl/Bstar access key。使用 `--json` 时，二维码登录会打印换行分隔 JSON 事件：
-`ticket` 在轮询前包含扫码 URL，`saved` 只包含脱敏后的凭据布尔值。请把扫码 URL 当成临时
-登录密钥，因为它包含二维码登录 key。状态输出或 `saved` JSON 事件不会打印 token 值。
+`ticket` 在轮询前包含扫码 URL 和 `qr_payload`，`saved` 只包含脱敏后的凭据布尔值。当前 WEB
+和 TV 登录流程中，`qr_payload` 与扫码 URL 相同，嵌入项目可以直接把它渲染成二维码。请把扫
+码 URL 和 QR payload 当成临时登录密钥，因为它们包含二维码登录 key。状态输出或 `saved`
+JSON 事件不会打印 token 值。
 
 ## 端点覆盖
 

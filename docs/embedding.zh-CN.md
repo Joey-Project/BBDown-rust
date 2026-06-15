@@ -190,6 +190,9 @@ selection、封面、字幕和弹幕旁路文件仍使用与普通视频下载�
 
 嵌入项目可以使用 `CredentialStore`，也可以从自己的存储注入凭据。不要记录原始凭据值。
 `Credentials` 的 debug 输出会脱敏，但应用日志仍应把凭据视为密钥。
+对于二维码登录，如果下游应用需要稳定的可序列化扫码 URL 和 `qr_payload`，可以把
+`QrLoginTicket` 转换成 `QrLoginTicketOutput`；当前 WEB 和 TV 登录流程会直接使用扫码 URL
+作为 QR payload。
 
 ```rust,no_run
 use bbdown_core::{ClientConfig, Credentials};
@@ -400,5 +403,5 @@ let config = ClientConfig::default().with_endpoints(endpoints);
 - 使用 `Default`、`new` 和 `with_*` 方法构造配置值，而不是结构体字面量。
 - 通过字段访问或 serde 序列化读取输出模型；除非测试确实需要本地 fixture，否则避免在下
   游代码中构造输出结构体。
-- 不要把凭据和二维码登录扫码 URL 写入日志或 crash report。
+- 不要把凭据、二维码登录扫码 URL 和 QR payload 写入日志或 crash report。
 - 把受限区域代理主机视为可信基础设施，因为媒体 URL 和 access key 可能经过这些主机。

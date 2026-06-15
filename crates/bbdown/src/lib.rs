@@ -29,7 +29,7 @@ pub use download::{
 };
 pub use error::{Error, Result};
 pub use input::Input;
-pub use login::{QrLoginKind, QrLoginState, QrLoginTicket};
+pub use login::{QrLoginKind, QrLoginState, QrLoginTicket, QrLoginTicketOutput};
 pub use models::{
     CodecFamily, DanmakuTrack, DownloadEntry, DownloadPlan, EpisodeMetadata, FlvSegment,
     MediaStream, Owner, PageMetadata, ResolvedContent, SeasonMetadata, SeasonResolution,

@@ -6,9 +6,9 @@ use bbdown_core::{
     BiliClient, ClientConfig, CredentialStore, Credentials, DanmakuFormat, DownloadArchive,
     DownloadMode, DownloadOptions, DownloadPathTemplates, DownloadPreflight, DownloadReport,
     DuplicateDecision, EndpointConfig, MediaHostOptions, MediaStream, MuxOptions, PlaybackPlan,
-    PlayurlMode, QrLoginKind, QrLoginState, QrLoginTicket, ResolvedContent, RestrictedArea,
-    RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection,
-    StreamQuality, StreamSelection, StreamSet,
+    PlayurlMode, QrLoginKind, QrLoginState, QrLoginTicket, QrLoginTicketOutput, ResolvedContent,
+    RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind,
+    RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::ffi::{OsStr, OsString};
@@ -1104,14 +1104,11 @@ async fn handle_qr_login(
         QrLoginKind::Web => client.create_web_qr_login().await?,
         QrLoginKind::Tv => client.create_tv_qr_login().await?,
     };
+    let output = ticket.output();
     if args.json {
-        print_json_line(&serde_json::json!({
-            "event": "ticket",
-            "kind": kind,
-            "url": ticket.url,
-        }))?;
+        print_qr_ticket_json(&output)?;
     } else {
-        print_human_line(format_args!("scan: {}", ticket.url))?;
+        print_human_line(format_args!("scan: {}", output.url))?;
     }
     let credentials = wait_for_qr_login(&client, &ticket, &args).await?;
     let summary = save_qr_credentials(store, credentials)?;
@@ -1125,6 +1122,15 @@ async fn handle_qr_login(
         print_human_line("credentials saved")?;
     }
     Ok(())
+}
+
+fn print_qr_ticket_json(output: &QrLoginTicketOutput) -> anyhow::Result<()> {
+    print_json_line(&serde_json::json!({
+        "event": "ticket",
+        "kind": output.kind,
+        "url": output.url,
+        "qr_payload": output.qr_payload,
+    }))
 }
 
 fn save_qr_credentials(

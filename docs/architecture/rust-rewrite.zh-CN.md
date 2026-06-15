@@ -309,22 +309,22 @@ CLI 会把凭据存储在平台配置目录下的本地 JSON 文件中，并在 
 暴露 `Credentials` 和 `CredentialStore`，让其他项目可以注入自己的存储或把凭据保存在内存
 里。
 
-二维码登录在 crate 中建模为显式状态机。WEB 二维码登录创建 `QrLoginTicket`，轮询
-waiting-for-scan、waiting-for-confirmation、expired 和 succeeded 状态，然后返回 cookie 凭
-据。TV 二维码登录使用 BBDown-compatible app signed form flow，并返回 TV 专用 access-key
-凭据。这与通用 intl/Bstar `access_key` 分离，因为 Bilibili app token 绑定 appkey。WEB QR
-成功优先使用响应 `Set-Cookie` headers，并回退到从 cross-domain success URL 提取
-BBDown-compatible cookie。TV auth-code 创建和 TV polling 分别可配置，因此测试和受控代理
-可以镜像上游 split-host 流程或单一本地端点。TV ticket 会保留生成的 device session context，
-使 polling 复用同一 device identity。二维码登录请求即使 client 存有凭据，也使用 anonymous
-headers。CLI `auth login-web` 和 `auth login-tv` 命令会在 succeeded state 后重新加载当前
-本地 credential store，再合并返回凭据，因此长时间二维码等待不会用等待前的陈旧快照覆盖另
-一个命令的凭据更新。
+二维码登录在 crate 中建模为显式状态机。WEB 二维码登录创建 `QrLoginTicket`，它可以转换为
+`QrLoginTicketOutput`，提供稳定的可序列化扫码 URL 和 QR payload 表面；随后轮询
+waiting-for-scan、waiting-for-confirmation、expired 和 succeeded 状态，然后返回 cookie 凭据。TV
+二维码登录使用 BBDown-compatible app signed form flow，并返回 TV 专用 access-key 凭据。这与通用
+intl/Bstar `access_key` 分离，因为 Bilibili app token 绑定 appkey。WEB QR 成功优先使用响应
+`Set-Cookie` headers，并回退到从 cross-domain success URL 提取 BBDown-compatible cookie。TV
+auth-code 创建和 TV polling 分别可配置，因此测试和受控代理可以镜像上游 split-host 流程或单一本地端
+点。TV ticket 会保留生成的 device session context，使 polling 复用同一 device identity。二维码登录
+请求即使 client 存有凭据，也使用 anonymous headers。CLI `auth login-web` 和 `auth login-tv` 命令会
+在 succeeded state 后重新加载当前本地 credential store，再合并返回凭据，因此长时间二维码等待不会用等
+待前的陈旧快照覆盖另一个命令的凭据更新。
 
 密钥永远不会包含在状态输出中；`auth status` 和二维码登录 `saved` JSON 输出只报告布尔值。
-二维码登录 `ticket` 事件和面向人类的扫码输出会有意暴露扫码 URL，方便用户认证；调用方应
-把该 URL 视为临时登录密钥。public QR state enum 有意不 derive serde traits，因为 succeeded
-state 携带完整凭据，供自行处理存储的嵌入调用方使用。QR ticket debug 输出会脱敏，因为
+二维码登录 `ticket` 事件和面向人类的扫码输出会有意暴露扫码 URL 与 QR payload，方便用户认证；调用
+方应把这些值视为临时登录密钥。public QR state enum 有意不 derive serde traits，因为 succeeded
+state 携带完整凭据，供自行处理存储的嵌入调用方使用。QR ticket 和 QR ticket-output debug 输出会脱敏，因为
 ticket key 和扫码 URL query string 可作为预认证密钥。HTTP request error 转换时不会保留完
 整 URL，因此 intl `access_key` 等 query 密钥不会出现在面向用户的错误中。
 
