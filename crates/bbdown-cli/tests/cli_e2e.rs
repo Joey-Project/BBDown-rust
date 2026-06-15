@@ -2465,6 +2465,10 @@ fn auth_qr_login_web_and_tv_use_local_store() -> anyhow::Result<()> {
         events[0]["url"],
         "https://passport.example/scan?qrcode_key=WEBKEY"
     );
+    assert_eq!(
+        events[0]["qr_payload"],
+        "https://passport.example/scan?qrcode_key=WEBKEY"
+    );
     assert_eq!(events[1]["event"], "saved");
     assert_eq!(events[1]["saved"]["has_cookie"], true);
     assert_eq!(events[1]["saved"]["has_access_key"], false);
@@ -2474,6 +2478,7 @@ fn auth_qr_login_web_and_tv_use_local_store() -> anyhow::Result<()> {
     let events = json_lines(&output)?;
     assert_eq!(events[0]["event"], "ticket");
     assert_eq!(events[0]["url"], "https://tv.example/scan");
+    assert_eq!(events[0]["qr_payload"], "https://tv.example/scan");
     assert_eq!(events[1]["event"], "saved");
     assert_eq!(events[1]["saved"]["has_cookie"], true);
     assert_eq!(events[1]["saved"]["has_access_key"], false);

@@ -200,6 +200,9 @@ as seasons, follow paginated episode lists when the API reports additional pages
 Embedding projects can either use `CredentialStore` or inject credentials from their own storage.
 Do not log raw credential values. `Credentials` debug output is redacted, but application logs should
 still treat credentials as secrets.
+For QR login, convert `QrLoginTicket` to `QrLoginTicketOutput` when a downstream application needs a
+stable serialized scan URL and `qr_payload`; current WEB and TV login flows use the scan URL itself
+as the QR payload.
 
 ```rust,no_run
 use bbdown_core::{ClientConfig, Credentials};
@@ -422,6 +425,6 @@ let config = ClientConfig::default().with_endpoints(endpoints);
   literals.
 - Read output models by field access or serde serialization; avoid constructing output structs in
   downstream code unless a test really needs a local fixture.
-- Keep credentials and QR login scan URLs out of logs and crash reports.
+- Keep credentials, QR login scan URLs, and QR payloads out of logs and crash reports.
 - Treat restricted-area proxy hosts as trusted infrastructure because media URLs and access keys may
   pass through them.

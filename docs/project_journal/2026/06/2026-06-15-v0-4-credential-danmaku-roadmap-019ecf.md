@@ -16,26 +16,28 @@ superseded_by:
 - `v0.3.0` shipped as a GitHub Release and crates.io `bbdown-core` package after the feed/list
   sequence landed.
 - `master` moves to the `0.4.0` development line.
-- The `0.4.0` work is split into four sequential PRs, each starting from the latest `master` after
+- The `0.4.0` work is split into eight sequential PRs, each starting from the latest `master` after
   the previous PR merges.
 
 ## Current State
 - PR 1 records the shipped `v0.3.0` state, bumps the workspace to the `0.4.0` development line, and
   records this roadmap.
-- PR 2 will add unified login QR output for existing login flows and credential health-check
-  diagnostics for WEB cookie, generic `access_key`, and TV `tv_access_key` credentials.
-- PR 3 will add credential profiles and an in-project generic `access_key` acquisition flow after
-  validating the BiliPlus URL/QR authorization behavior observed in the prior `bilibili-helper`
-  implementation.
-- PR 4 will add append-only danmaku update support for already downloaded entries, including XML
+- PR 2 adds unified QR login ticket/output surfaces for existing WEB and TV login flows.
+- PR 3 will add credential health-check diagnostics for WEB cookie, generic `access_key`, and TV
+  `tv_access_key` credentials.
+- PR 4 will add the credential profile storage model while preserving the current default profile.
+- PR 5 will make CLI and embedding credential selection profile-aware.
+- PR 6 will add the core generic `access_key` acquisition flow after validating the BiliPlus URL/QR
+  authorization behavior observed in the prior `bilibili-helper` implementation.
+- PR 7 will add CLI/docs integration for generic `access_key` acquisition.
+- PR 8 will add append-only danmaku update support for already downloaded entries, including XML
   sidecar merging and regeneration of selected derived formats such as ASS.
 
 ## Next Steps
-- Cut the PR 2 branch from updated `master` and implement unified login QR output and
-  credential health diagnostics.
-- After PR 2 merges, cut PR 3 for credential profiles and generic `access_key` acquisition.
-- After PR 3 merges, cut PR 4 for append-only danmaku update support.
-- Keep automatic credential refresh and remaining BBDown parity items outside this four-PR sequence
+- Cut PR 3 from updated `master` and implement credential health diagnostics.
+- Continue one slice at a time through PR 8, updating `master` after each merge before cutting the
+  next branch.
+- Keep automatic credential refresh and remaining BBDown parity items outside this eight-PR sequence
   unless explicitly reprioritized.
 
 ## Evidence

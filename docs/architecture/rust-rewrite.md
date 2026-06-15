@@ -355,7 +355,8 @@ permissions on Unix. The crate exposes `Credentials` and `CredentialStore` so ot
 inject their own storage or keep credentials in memory.
 
 QR login is modeled as an explicit state machine in the crate. WEB QR login creates a
-`QrLoginTicket`, polls waiting-for-scan, waiting-for-confirmation, expired, and succeeded states,
+`QrLoginTicket`, which can be converted to `QrLoginTicketOutput` for a stable serialized scan URL and
+QR payload surface, polls waiting-for-scan, waiting-for-confirmation, expired, and succeeded states,
 then returns a cookie credential. TV QR login uses the BBDown-compatible app signed form flow and
 returns a TV-specific access-key credential. This stays separate from the generic intl/Bstar
 `access_key` because Bilibili app tokens are appkey-bound. WEB QR success prefers response
@@ -369,11 +370,12 @@ current store before merging returned credentials, so a long QR wait does not ov
 command's credential update with a stale pre-wait snapshot.
 
 Secrets are never included in status output; `auth status` and QR login `saved` JSON output report
-only booleans. The QR login `ticket` event and human scan output intentionally expose the scan URL so
-the user can authenticate, and callers should treat that URL as a temporary login secret. The public QR
-state enum intentionally does not derive serde traits because the succeeded state carries full
-credentials for embedding callers that handle storage themselves. QR ticket debug output is redacted
-because ticket keys and scan URL query strings can act as pre-authentication secrets.
+only booleans. The QR login `ticket` event and human scan output intentionally expose the scan URL and
+QR payload so the user can authenticate, and callers should treat those values as temporary login
+secrets. The public QR state enum intentionally does not derive serde traits because the succeeded
+state carries full credentials for embedding callers that handle storage themselves. QR ticket and QR
+ticket-output debug output is redacted because ticket keys and scan URL query strings can act as
+pre-authentication secrets.
 HTTP request errors are converted without retaining full URLs so query secrets such as intl
 `access_key` do not appear in user-facing errors.
 

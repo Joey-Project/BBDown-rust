@@ -29,6 +29,17 @@ pub struct QrLoginTicket {
     tv_context: Option<TvLoginContext>,
 }
 
+impl QrLoginTicket {
+    #[must_use]
+    pub fn output(&self) -> QrLoginTicketOutput {
+        QrLoginTicketOutput {
+            kind: self.kind,
+            url: self.url.clone(),
+            qr_payload: self.url.clone(),
+        }
+    }
+}
+
 impl fmt::Debug for QrLoginTicket {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -37,6 +48,25 @@ impl fmt::Debug for QrLoginTicket {
             .field("has_url", &!self.url.is_empty())
             .field("has_key", &!self.key.is_empty())
             .field("has_tv_context", &self.tv_context.is_some())
+            .finish()
+    }
+}
+
+#[non_exhaustive]
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub struct QrLoginTicketOutput {
+    pub kind: QrLoginKind,
+    pub url: String,
+    pub qr_payload: String,
+}
+
+impl fmt::Debug for QrLoginTicketOutput {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("QrLoginTicketOutput")
+            .field("kind", &self.kind)
+            .field("has_url", &!self.url.is_empty())
+            .field("has_qr_payload", &!self.qr_payload.is_empty())
             .finish()
     }
 }
@@ -428,6 +458,30 @@ mod tests {
         assert!(debug.contains("kind: Web"));
         assert!(debug.contains("has_url: true"));
         assert!(debug.contains("has_key: true"));
+        assert!(!debug.contains("SECRET"));
+        assert!(!debug.contains("qrcode_key"));
+    }
+
+    #[test]
+    fn qr_login_ticket_output_exposes_scan_payload_but_redacts_debug() {
+        let ticket = QrLoginTicket {
+            kind: super::QrLoginKind::Web,
+            url: "https://passport.example/scan?qrcode_key=SECRET".to_owned(),
+            key: "SECRET".to_owned(),
+            tv_context: None,
+        };
+        let output = ticket.output();
+
+        assert_eq!(output.kind, super::QrLoginKind::Web);
+        assert_eq!(
+            output.url,
+            "https://passport.example/scan?qrcode_key=SECRET"
+        );
+        assert_eq!(output.qr_payload, output.url);
+        let debug = format!("{output:?}");
+        assert!(debug.contains("kind: Web"));
+        assert!(debug.contains("has_url: true"));
+        assert!(debug.contains("has_qr_payload: true"));
         assert!(!debug.contains("SECRET"));
         assert!(!debug.contains("qrcode_key"));
     }

@@ -48,12 +48,16 @@
   `0.3.0` feed/list slice.
 - [completed] Publish `v0.3.0` from the completed feed/list line as a GitHub Release and
   `bbdown-core` crate.
-- [pending] Add unified login QR output and credential health-check diagnostics for WEB cookie,
-  generic `access_key`, and TV `tv_access_key` credentials.
-- [pending] Add multi-account credential profiles and an in-project generic `access_key`
-  acquisition flow after validating the historical BiliPlus QR/URL authorization approach.
+- [completed] Add unified QR login ticket/output surfaces for existing WEB and TV login flows.
+- [pending] Add credential health-check diagnostics for WEB cookie, generic `access_key`, and TV
+  `tv_access_key` credentials.
+- [pending] Add multi-account credential profile storage while preserving default-profile behavior.
+- [pending] Make CLI and embedding credential selection profile-aware.
+- [pending] Add the core generic `access_key` acquisition flow after validating the historical
+  BiliPlus QR/URL authorization approach.
+- [pending] Add CLI/docs integration for generic `access_key` acquisition.
 - [pending] Add append-only danmaku update workflows that can update XML sidecars and regenerate
   selected formats such as ASS for already downloaded archive records.
-- [pending] Continue the remaining BBDown parity backlog after the current `0.4.0` credential and
-  danmaku sequence unless reprioritized:
+- [pending] Continue the remaining BBDown parity backlog after the current eight-PR `0.4.0`
+  credential and danmaku sequence unless reprioritized:
   aria2 or multi-thread download integration, MP4Box muxing, and subtitle-to-SRT conversion.
