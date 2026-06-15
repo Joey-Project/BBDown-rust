@@ -52,7 +52,8 @@
 - [completed] Add credential health-check diagnostics for WEB cookie, generic `access_key`, and TV
   `tv_access_key` credentials; generic `access_key` health currently covers the intl/Bstar probe
   scope.
-- [pending] Add multi-account credential profile storage while preserving default-profile behavior.
+- [completed] Add multi-account credential profile storage while preserving default-profile
+  behavior.
 - [pending] Make CLI and embedding credential selection profile-aware.
 - [pending] Add the core generic `access_key` acquisition flow after validating the historical
   BiliPlus QR/URL authorization approach.

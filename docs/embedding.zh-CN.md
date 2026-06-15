@@ -190,6 +190,11 @@ selection、封面、字幕和弹幕旁路文件仍使用与普通视频下载�
 
 嵌入项目可以使用 `CredentialStore`，也可以从自己的存储注入凭据。不要记录原始凭据值。
 `Credentials` 的 debug 输出会脱敏，但应用日志仍应把凭据视为密钥。
+默认的 `CredentialStore::load()` 和 `CredentialStore::save()` 会保留旧的单 profile JSON
+文件形态。嵌入项目需要多个账号时，可以使用 `CredentialProfiles` 以及
+`load_profiles`/`save_profiles`、`load_profile`/`save_profile` helper。旧扁平文件通过
+profile API 读取时会表现为 `default` profile；保存命名 profile 时，会把 store 迁移到
+versioned profile document，同时保留默认凭据。
 对于二维码登录，如果下游应用需要稳定的可序列化扫码 URL 和 `qr_payload`，可以把
 `QrLoginTicket` 转换成 `QrLoginTicketOutput`；当前 WEB 和 TV 登录流程会直接使用扫码 URL
 作为 QR payload。
@@ -200,7 +205,7 @@ TV `tv_access_key` 的 probe；`kind` 表示凭据槽位，`scope` 表示实际�
 proxy-specific assurance，应把它作为单独策略判断。probe message 在序列化前会先脱敏。
 
 ```rust,no_run
-use bbdown_core::{BiliClient, ClientConfig, Credentials};
+use bbdown_core::{BiliClient, ClientConfig, CredentialStore, Credentials};
 
 async fn check_credentials() {
     let credentials = Credentials::default()
@@ -210,6 +215,10 @@ async fn check_credentials() {
     let config = ClientConfig::default().with_credentials(credentials);
     let client = BiliClient::new(config);
     let _health = client.check_credential_health().await;
+}
+
+fn load_named_profile(store: &CredentialStore, profile: &str) -> bbdown_core::Result<Credentials> {
+    store.load_profile(profile)
 }
 ```
 

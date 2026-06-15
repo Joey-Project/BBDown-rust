@@ -25,7 +25,7 @@ superseded_by:
 - PR 2 adds unified QR login ticket/output surfaces for existing WEB and TV login flows.
 - PR 3 adds credential health-check diagnostics for WEB cookie, generic `access_key`, and TV
   `tv_access_key` credentials.
-- PR 4 will add the credential profile storage model while preserving the current default profile.
+- PR 4 adds the credential profile storage model while preserving the current default profile.
 - PR 5 will make CLI and embedding credential selection profile-aware.
 - PR 6 will add the core generic `access_key` acquisition flow after validating the BiliPlus URL/QR
   authorization behavior observed in the prior `bilibili-helper` implementation.
@@ -34,7 +34,7 @@ superseded_by:
   sidecar merging and regeneration of selected derived formats such as ASS.
 
 ## Next Steps
-- Cut PR 4 from updated `master` and implement credential profile storage after PR 3 merges.
+- Cut PR 5 from updated `master` and make CLI and embedding credential selection profile-aware.
 - Continue one slice at a time through PR 8, updating `master` after each merge before cutting the
   next branch.
 - Keep automatic credential refresh and remaining BBDown parity items outside this eight-PR sequence

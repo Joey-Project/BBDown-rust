@@ -308,6 +308,13 @@ business state 等 PGC response-body metadata。非区域类官方失败会保�
 CLI 会把凭据存储在平台配置目录下的本地 JSON 文件中，并在 Unix 上使用 `0600` 权限。crate
 暴露 `Credentials` 和 `CredentialStore`，让其他项目可以注入自己的存储或把凭据保存在内存
 里。
+`CredentialStore::load()` 和 `CredentialStore::save()` 会继续为默认 profile 读写旧的扁平
+JSON credential 形态，因此现有用户和测试 fixture 不需要迁移步骤。需要 profile-aware 存储
+的调用方可以使用 `CredentialProfiles`、`load_profiles`、`save_profiles`、`load_profile`、
+`save_profile` 和 `remove_profile`，在 versioned profile document 中保存多个命名凭据集。
+通过 profile API 读取旧扁平文件时，它会被包成 `default` profile；保存命名 profile 时，会把
+文件迁移到 profile document，同时保留默认凭据。`Credentials` 和 `CredentialProfiles` 的
+debug 输出都不会暴露原始凭据值。
 credential health diagnostics 是同一 credential model 上的只读层。crate 暴露
 `CredentialHealthReport` 和 `BiliClient::check_credential_health()`，让嵌入调用方可以在选
 择登录或 fallback flow 之前，分别检查 WEB cookie、通用 `access_key` 和 TV `tv_access_key`。
