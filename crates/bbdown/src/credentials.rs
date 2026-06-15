@@ -376,9 +376,10 @@ impl CredentialStore {
             return Ok(false);
         }
         let raw = fs::read_to_string(&self.path)?;
-        let Ok(value) = serde_json::from_str(&raw) else {
+        if raw.trim().is_empty() {
             return Ok(false);
-        };
+        }
+        let value = serde_json::from_str(&raw)?;
         Ok(is_profile_document(&value))
     }
 
@@ -827,6 +828,33 @@ mod tests {
             anyhow::bail!("malformed profile document was overwritten as flat credentials");
         };
         assert!(save_error.to_string().contains("invalid type"));
+        assert_eq!(std::fs::read_to_string(path)?, raw);
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_existing_store_is_not_overwritten_by_save() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let raw = r#"{
+  "version": 1,
+  "profiles": {
+    "default": {
+      "cookie": "SESSDATA=secret"
+    }
+  }
+"#;
+        std::fs::write(&path, raw)?;
+        let store = CredentialStore::new(path.clone());
+
+        let Err(save_error) = store.save(&Credentials {
+            cookie: Some("SESSDATA=updated".to_owned()),
+            access_key: None,
+            tv_access_key: None,
+        }) else {
+            anyhow::bail!("syntax-invalid credential store was overwritten");
+        };
+        assert!(save_error.to_string().contains("EOF"));
         assert_eq!(std::fs::read_to_string(path)?, raw);
         Ok(())
     }

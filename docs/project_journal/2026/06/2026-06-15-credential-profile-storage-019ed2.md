@@ -39,5 +39,5 @@ superseded_by:
 - Core credential tests cover legacy wrapping, legacy write preservation, named-profile migration,
   default-profile loading, profile-name validation, file permission tightening, bare relative paths,
   legacy flat files with unrelated `version` or profile-like unknown fields, unsupported profile
-  document versions, malformed profile documents, invalid default-profile selectors, no-op profile
-  removal, and redacted debug output.
+  document versions, malformed profile documents, syntax-invalid existing stores, invalid
+  default-profile selectors, no-op profile removal, and redacted debug output.
