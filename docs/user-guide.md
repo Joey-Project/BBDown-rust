@@ -304,6 +304,7 @@ bbdown auth import-access-key --stdin
 bbdown auth login-web
 bbdown auth login-tv
 bbdown auth status
+bbdown auth health --json
 bbdown auth logout
 ```
 
@@ -317,6 +318,11 @@ With `--json`, QR login prints newline-delimited JSON events: `ticket` includes 
 and TV login flows, `qr_payload` is the same URL and can be rendered directly as a QR code by
 embedding projects. Treat the scan URL and QR payload as temporary login secrets because they contain
 the QR login key. Token values are not printed by status or the `saved` JSON event.
+
+Use `auth health` to diagnose configured credentials without exposing secret values. The command
+checks the WEB cookie against the web nav endpoint and checks both the generic `access_key` and TV
+`tv_access_key` as OAuth access tokens. JSON output is a typed report with per-credential `missing`,
+`valid`, `rejected`, or `request_failed` statuses plus sanitized API codes/messages.
 
 ## Endpoint Overrides
 

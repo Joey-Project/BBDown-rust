@@ -12,7 +12,10 @@ use crate::models::{
     VideoCollectionMetadata, VideoCollectionResolution, VideoMetadata,
 };
 use crate::playback::{PlaybackPlan, header_specs_from_map};
-use crate::{Credentials, Error, Input, Result, Selection};
+use crate::{
+    CredentialHealthProbe, CredentialHealthReport, CredentialKind, Credentials, Error, Input,
+    Result, Selection,
+};
 use http_body_util::BodyExt as _;
 use md5::{Digest, Md5};
 use reqwest::header::{COOKIE, HeaderMap, HeaderValue, REFERER, USER_AGENT};
@@ -382,6 +385,21 @@ impl BiliClient {
         }
     }
 
+    pub async fn check_credential_health(&self) -> CredentialHealthReport {
+        let credentials = self.config.credentials.redacted_summary();
+        let probes = vec![
+            self.check_cookie_health().await,
+            self.check_access_token_health(CredentialKind::AccessKey)
+                .await,
+            self.check_access_token_health(CredentialKind::TvAccessKey)
+                .await,
+        ];
+        CredentialHealthReport {
+            credentials,
+            probes,
+        }
+    }
+
     pub async fn resolve_input(
         &self,
         raw: &str,
@@ -475,6 +493,83 @@ impl BiliClient {
                 Box::pin(self.resolve(input, selection)).await
             }
         }
+    }
+
+    async fn check_cookie_health(&self) -> CredentialHealthProbe {
+        const ENDPOINT: &str = "web_nav";
+        let Some(cookie) = self
+            .config
+            .credentials
+            .cookie
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        else {
+            return CredentialHealthProbe::missing(CredentialKind::Cookie);
+        };
+        match self.fetch_cookie_login_state(cookie).await {
+            Ok(true) => CredentialHealthProbe::valid(CredentialKind::Cookie, ENDPOINT),
+            Ok(false) => CredentialHealthProbe::rejected(
+                CredentialKind::Cookie,
+                ENDPOINT,
+                Some(0),
+                "not logged in",
+            ),
+            Err(error) => credential_health_error(CredentialKind::Cookie, ENDPOINT, error),
+        }
+    }
+
+    async fn check_access_token_health(&self, kind: CredentialKind) -> CredentialHealthProbe {
+        const ENDPOINT: &str = "oauth2_info";
+        let token = match kind {
+            CredentialKind::Cookie => return CredentialHealthProbe::missing(kind),
+            CredentialKind::AccessKey => self.config.credentials.access_key.as_deref(),
+            CredentialKind::TvAccessKey => self.config.credentials.tv_access_key.as_deref(),
+        }
+        .filter(|value| !value.is_empty());
+        let Some(token) = token else {
+            return CredentialHealthProbe::missing(kind);
+        };
+        match self.fetch_oauth2_info(token).await {
+            Ok(()) => CredentialHealthProbe::valid(kind, ENDPOINT),
+            Err(error) => credential_health_error(kind, ENDPOINT, error),
+        }
+    }
+
+    async fn fetch_cookie_login_state(&self, cookie: &str) -> Result<bool> {
+        let url = Self::endpoint_url(&self.config.endpoints.api_base, "/x/web-interface/nav")?;
+        let response = self
+            .http
+            .get(url)
+            .headers(self.headers(false)?)
+            .header(
+                COOKIE,
+                HeaderValue::from_str(cookie)
+                    .map_err(|_| Error::InvalidInput("invalid cookie header".to_owned()))?,
+            )
+            .timeout(self.config.request_timeout)
+            .send()
+            .await
+            .map_err(Self::http_error_without_url)?;
+        let response = response
+            .error_for_status()
+            .map_err(Self::http_error_without_url)?;
+        let response = response
+            .json::<ApiData<NavData>>()
+            .await
+            .map_err(Self::http_error_without_url)?;
+        Ok(response.into_data()?.is_login)
+    }
+
+    async fn fetch_oauth2_info(&self, access_token: &str) -> Result<()> {
+        let mut url = Self::endpoint_url(
+            &self.config.endpoints.passport_base,
+            "/x/passport-login/oauth2/info",
+        )?;
+        url.query_pairs_mut()
+            .append_pair("access_token", access_token);
+        let response: ApiData<serde_json::Value> = self.get_json_without_cookie(url).await?;
+        response.into_data()?;
+        Ok(())
     }
 
     async fn resolve_space_videos(
@@ -3947,6 +4042,8 @@ struct WatchLaterItemBuild {
 
 #[derive(Debug, Deserialize)]
 struct NavData {
+    #[serde(default, rename = "isLogin")]
+    is_login: bool,
     wbi_img: WbiImage,
 }
 
@@ -4795,6 +4892,26 @@ fn sanitize_diagnostic_text(raw: &str) -> String {
     }
 }
 
+fn credential_health_error(
+    kind: CredentialKind,
+    endpoint: &'static str,
+    error: Error,
+) -> CredentialHealthProbe {
+    match error {
+        Error::Api { code, message } => CredentialHealthProbe::rejected(
+            kind,
+            endpoint,
+            Some(code),
+            sanitize_diagnostic_text(&message),
+        ),
+        other => CredentialHealthProbe::request_failed(
+            kind,
+            endpoint,
+            sanitize_diagnostic_text(&other.to_string()),
+        ),
+    }
+}
+
 const SENSITIVE_DIAGNOSTIC_KEYS: &[&str] = &[
     "access_key",
     "access_token",
@@ -5535,10 +5652,10 @@ mod tests {
         decode_app_grpc_stream_set, intl_ogv_playurl_params,
     };
     use crate::{
-        CodecFamily, Credentials, EpisodeMetadata, Error, IndexSelection, IndexSelector, Input,
-        PageMetadata, ResolvedContent, SeasonMetadata, Selection, StreamSource, SubtitleFormat,
-        VideoCollectionItem, VideoCollectionKind, VideoCollectionMetadata, VideoMetadata,
-        app_playurl,
+        CodecFamily, CredentialHealthStatus, CredentialKind, Credentials, EpisodeMetadata, Error,
+        IndexSelection, IndexSelector, Input, PageMetadata, ResolvedContent, SeasonMetadata,
+        Selection, StreamSource, SubtitleFormat, VideoCollectionItem, VideoCollectionKind,
+        VideoCollectionMetadata, VideoMetadata, app_playurl,
     };
     use http_body_util::BodyExt as _;
     use httpmock::MockServer;
@@ -5546,6 +5663,133 @@ mod tests {
     use reqwest::header::{HeaderMap, HeaderValue};
     use std::convert::Infallible;
     use std::time::{Duration, Instant};
+
+    #[tokio::test]
+    async fn credential_health_reports_missing_credentials() {
+        let server = MockServer::start();
+        let client = test_client(&server);
+
+        let report = client.check_credential_health().await;
+
+        assert_eq!(
+            report.credentials,
+            crate::CredentialSource {
+                has_cookie: false,
+                has_access_key: false,
+                has_tv_access_key: false,
+            }
+        );
+        assert_eq!(report.probes.len(), 3);
+        assert!(report.probes.iter().all(|probe| {
+            probe.status == CredentialHealthStatus::Missing
+                && probe.endpoint.is_none()
+                && probe.api_code.is_none()
+        }));
+    }
+
+    #[tokio::test]
+    async fn credential_health_checks_configured_credentials_redacted() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let cookie_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/nav")
+                .header("cookie", "SESSDATA=COOKIE_SECRET");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "isLogin": true,
+                    "wbi_img": {
+                        "img_url": "https://i0.hdslb.com/bfs/wbi/0123456789abcdef0123456789abcdef.png",
+                        "sub_url": "https://i0.hdslb.com/bfs/wbi/fedcba9876543210fedcba9876543210.png"
+                    }
+                }
+            }));
+        });
+        let access_key_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/passport-login/oauth2/info")
+                .query_param("access_token", "ACCESS_SECRET")
+                .header_missing("cookie");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {"mid": 1}
+            }));
+        });
+        let tv_access_key_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/passport-login/oauth2/info")
+                .query_param("access_token", "TV_SECRET")
+                .header_missing("cookie");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": -101,
+                "message": "access_token=TV_SECRET expired"
+            }));
+        });
+        let mut client = test_client(&server);
+        client.config.credentials = Credentials::default()
+            .with_cookie("SESSDATA=COOKIE_SECRET")
+            .with_access_key("ACCESS_SECRET")
+            .with_tv_access_key("TV_SECRET");
+
+        let report = client.check_credential_health().await;
+
+        assert_eq!(
+            report
+                .probes
+                .iter()
+                .map(|probe| (probe.kind, probe.status))
+                .collect::<Vec<_>>(),
+            vec![
+                (CredentialKind::Cookie, CredentialHealthStatus::Valid),
+                (CredentialKind::AccessKey, CredentialHealthStatus::Valid),
+                (
+                    CredentialKind::TvAccessKey,
+                    CredentialHealthStatus::Rejected,
+                ),
+            ]
+        );
+        let tv_probe = report
+            .probes
+            .iter()
+            .find(|probe| probe.kind == CredentialKind::TvAccessKey)
+            .ok_or_else(|| anyhow::anyhow!("missing TV access key probe"))?;
+        assert_eq!(tv_probe.api_code, Some(-101));
+        let serialized = serde_json::to_string(&report)?;
+        let debug = format!("{report:?}");
+        for secret in ["COOKIE_SECRET", "ACCESS_SECRET", "TV_SECRET"] {
+            assert!(!serialized.contains(secret));
+            assert!(!debug.contains(secret));
+        }
+        cookie_mock.assert_calls(1);
+        access_key_mock.assert_calls(1);
+        tv_access_key_mock.assert_calls(1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn credential_health_checks_raw_stored_access_key_value() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let access_key_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/passport-login/oauth2/info")
+                .query_param("access_token", "ACCESS_SECRET ")
+                .header_missing("cookie");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {"mid": 1}
+            }));
+        });
+        let mut client = test_client(&server);
+        client.config.credentials =
+            Credentials::default().with_access_key("ACCESS_SECRET ".to_owned());
+
+        let report = client.check_credential_health().await;
+
+        assert_eq!(report.probes[1].kind, CredentialKind::AccessKey);
+        assert_eq!(report.probes[1].status, CredentialHealthStatus::Valid);
+        access_key_mock.assert_calls(1);
+        Ok(())
+    }
 
     #[tokio::test]
     async fn resolves_video_metadata_with_tags() -> anyhow::Result<()> {

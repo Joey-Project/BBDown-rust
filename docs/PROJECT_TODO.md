@@ -49,7 +49,7 @@
 - [completed] Publish `v0.3.0` from the completed feed/list line as a GitHub Release and
   `bbdown-core` crate.
 - [completed] Add unified QR login ticket/output surfaces for existing WEB and TV login flows.
-- [pending] Add credential health-check diagnostics for WEB cookie, generic `access_key`, and TV
+- [completed] Add credential health-check diagnostics for WEB cookie, generic `access_key`, and TV
   `tv_access_key` credentials.
 - [pending] Add multi-account credential profile storage while preserving default-profile behavior.
 - [pending] Make CLI and embedding credential selection profile-aware.

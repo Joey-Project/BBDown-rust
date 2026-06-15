@@ -203,15 +203,21 @@ still treat credentials as secrets.
 For QR login, convert `QrLoginTicket` to `QrLoginTicketOutput` when a downstream application needs a
 stable serialized scan URL and `qr_payload`; current WEB and TV login flows use the scan URL itself
 as the QR payload.
+Call `BiliClient::check_credential_health()` when an embedding project needs a redacted diagnostic
+report before deciding whether to prompt for login, import a token, or continue with anonymous
+requests. The report includes one probe each for the WEB cookie, generic `access_key`, and TV
+`tv_access_key`; probe messages are sanitized before they are serialized.
 
 ```rust,no_run
-use bbdown_core::{ClientConfig, Credentials};
+use bbdown_core::{BiliClient, ClientConfig, Credentials};
 
 let credentials = Credentials::default()
     .with_cookie("SESSDATA=...")
     .with_access_key("...");
 
 let config = ClientConfig::default().with_credentials(credentials);
+let client = BiliClient::new(config);
+let health = client.check_credential_health().await;
 ```
 
 ## Restricted-Area PGC Planning
@@ -425,6 +431,7 @@ let config = ClientConfig::default().with_endpoints(endpoints);
   literals.
 - Read output models by field access or serde serialization; avoid constructing output structs in
   downstream code unless a test really needs a local fixture.
-- Keep credentials, QR login scan URLs, and QR payloads out of logs and crash reports.
+- Keep credentials, QR login scan URLs, QR payloads, and credential-health raw request details out
+  of logs and crash reports.
 - Treat restricted-area proxy hosts as trusted infrastructure because media URLs and access keys may
   pass through them.

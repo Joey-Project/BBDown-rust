@@ -183,6 +183,7 @@ bbdown auth import-access-key --stdin
 bbdown auth login-web
 bbdown auth login-tv
 bbdown auth status
+bbdown auth health --json
 bbdown auth logout
 ```
 
@@ -196,6 +197,10 @@ With `--json`, QR login emits newline-delimited JSON events: a `ticket` event wi
 `qr_payload` before polling, then a `saved` event after credentials are stored. The current WEB and
 TV login flows use the scan URL itself as the QR payload. Treat the scan URL and QR payload as
 temporary login secrets; status output and the `saved` event expose redacted booleans only.
+`auth health` checks configured credentials without printing secret values: the WEB cookie is
+checked through the web nav endpoint, while the generic `access_key` and TV `tv_access_key` are
+checked as OAuth access tokens. JSON output reports per-credential `missing`, `valid`, `rejected`,
+or `request_failed` states for embedding callers and automation.
 
 Use `--request-timeout-seconds` or `BBDOWN_REQUEST_TIMEOUT_SECONDS` to tune API request bounds.
 Media body reads use `--download-idle-timeout-seconds`; pass `0` to disable the idle timeout.

@@ -273,6 +273,7 @@ bbdown auth import-access-key --stdin
 bbdown auth login-web
 bbdown auth login-tv
 bbdown auth status
+bbdown auth health --json
 bbdown auth logout
 ```
 
@@ -285,6 +286,11 @@ bbdown auth logout
 和 TV 登录流程中，`qr_payload` 与扫码 URL 相同，嵌入项目可以直接把它渲染成二维码。请把扫
 码 URL 和 QR payload 当成临时登录密钥，因为它们包含二维码登录 key。状态输出或 `saved`
 JSON 事件不会打印 token 值。
+
+使用 `auth health` 可以在不暴露密钥值的情况下诊断已配置凭据。该命令会用 web nav 端点检
+查 WEB cookie，并把通用 `access_key` 与 TV `tv_access_key` 作为 OAuth access token 检查。
+JSON 输出是 typed report，会按凭据报告 `missing`、`valid`、`rejected` 或
+`request_failed` 状态，并只包含脱敏后的 API code/message。
 
 ## 端点覆盖
 
