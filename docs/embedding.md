@@ -211,13 +211,15 @@ requests. The report includes one probe each for the WEB cookie, generic `access
 ```rust,no_run
 use bbdown_core::{BiliClient, ClientConfig, Credentials};
 
-let credentials = Credentials::default()
-    .with_cookie("SESSDATA=...")
-    .with_access_key("...");
+async fn check_credentials() {
+    let credentials = Credentials::default()
+        .with_cookie("SESSDATA=...")
+        .with_access_key("...");
 
-let config = ClientConfig::default().with_credentials(credentials);
-let client = BiliClient::new(config);
-let health = client.check_credential_health().await;
+    let config = ClientConfig::default().with_credentials(credentials);
+    let client = BiliClient::new(config);
+    let _health = client.check_credential_health().await;
+}
 ```
 
 ## Restricted-Area PGC Planning

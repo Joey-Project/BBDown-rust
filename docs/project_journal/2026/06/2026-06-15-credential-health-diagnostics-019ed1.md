@@ -23,7 +23,7 @@ superseded_by:
 - Generic `access_key` and TV `tv_access_key` health are checked through OAuth token info using a
   signed `access_key` app query and without sending cookies.
 - Generic token probes use the configured `passport_base`; TV token probes use the configured
-  `tv_passport_base`.
+  `tv_passport_poll_base`.
 - Each probe reports `missing`, `valid`, `rejected`, or `request_failed`; API messages are sanitized
   before serialization.
 

@@ -291,7 +291,8 @@ JSON 事件不会打印 token 值。
 查 WEB cookie，并通过 OAuth info 端点把通用 `access_key` 与 TV `tv_access_key` 作为
 signed `access_key` app query 值检查。JSON 输出是 typed report，会按凭据报告 `missing`、
 `valid`、`rejected` 或 `request_failed` 状态，并只包含脱敏后的 API code/message。通用
-token probe 使用 `--passport-base`；TV token probe 使用 `--tv-passport-base`。
+token probe 使用 `--passport-base`；TV token probe 使用 `--tv-passport-poll-base`；如果只
+提供 `--tv-passport-base`，poll base 会跟随该 TV 覆盖。
 
 ## 端点覆盖
 
@@ -308,10 +309,13 @@ bbdown --tv-passport-base http://127.0.0.1:8080 --tv-passport-poll-base http://1
 ```
 
 当前 intl 支持使用官方 intl 元数据/字幕端点，以及在配置 access key 时使用官方签名 intl
-OGV playurl 端点。弹幕 XML 下载使用可配置的 comment 端点。WEB 二维码登录使用
-`--passport-base`；TV 二维码登录使用 TV 专用 passport 覆盖。提供 `--tv-passport-base` 时，
-TV 二维码轮询会跟随该覆盖；对 split-host mock 或代理，请设置 `--tv-passport-poll-base`。
-TV playurl mode 使用 `--tv-api-base`，它独立于只服务二维码登录的 TV passport host。
+OGV playurl 端点。弹幕 XML 下载使用可配置的 comment 端点。WEB 二维码登录和通用 token
+health probe 使用 `--passport-base`。TV 二维码生成使用 `--tv-passport-base`；TV 二维码轮询
+和 TV token health probe 使用 `--tv-passport-poll-base`。如果只提供 `--tv-passport-base`，
+CLI 会让 TV poll base 跟随该覆盖；对 split-host mock 或代理，请显式设置
+`--tv-passport-poll-base`。
+TV playurl mode 使用 `--tv-api-base`，它独立于服务 TV 二维码登录和 TV token health 的 TV
+passport host。
 APP gRPC playurl mode 使用 `--app-grpc-base` 处理普通视频，使用 `--app-pgc-grpc-base` 处理
 PGC 分集；两个 APP gRPC 默认值都使用 `https://grpc.biliapi.net`，并且独立于 WEB、TV 和
 intl HTTP endpoint 覆盖。

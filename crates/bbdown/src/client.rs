@@ -556,7 +556,7 @@ impl BiliClient {
             .error_for_status()
             .map_err(Self::http_error_without_url)?;
         let response = response
-            .json::<ApiData<NavData>>()
+            .json::<ApiData<NavLoginData>>()
             .await
             .map_err(Self::http_error_without_url)?;
         Ok(response.into_data()?.is_login)
@@ -565,7 +565,7 @@ impl BiliClient {
     async fn fetch_oauth2_info(&self, kind: CredentialKind, access_key: &str) -> Result<()> {
         let endpoint_base = match kind {
             CredentialKind::AccessKey => &self.config.endpoints.passport_base,
-            CredentialKind::TvAccessKey => &self.config.endpoints.tv_passport_base,
+            CredentialKind::TvAccessKey => &self.config.endpoints.tv_passport_poll_base,
             CredentialKind::Cookie => {
                 return Err(Error::InvalidInput(
                     "cookie credential cannot use oauth2 info probe".to_owned(),
@@ -4055,9 +4055,13 @@ struct WatchLaterItemBuild {
 
 #[derive(Debug, Deserialize)]
 struct NavData {
+    wbi_img: WbiImage,
+}
+
+#[derive(Debug, Deserialize)]
+struct NavLoginData {
     #[serde(default, rename = "isLogin")]
     is_login: bool,
-    wbi_img: WbiImage,
 }
 
 #[derive(Debug, Deserialize)]
@@ -5846,6 +5850,35 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn credential_health_cookie_probe_does_not_require_wbi_image() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let cookie_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/nav")
+                .header("cookie", "SESSDATA=COOKIE_SECRET");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "isLogin": true
+                }
+            }));
+        });
+        let mut client = test_client(&server);
+        client.config.credentials = Credentials::default().with_cookie("SESSDATA=COOKIE_SECRET");
+
+        let report = client.check_credential_health().await;
+
+        let cookie_probe = report
+            .probes
+            .iter()
+            .find(|probe| probe.kind == CredentialKind::Cookie)
+            .ok_or_else(|| anyhow::anyhow!("missing cookie probe"))?;
+        assert_eq!(cookie_probe.status, CredentialHealthStatus::Valid);
+        cookie_mock.assert_calls(1);
+        Ok(())
+    }
+
     #[test]
     fn credential_health_oauth2_info_params_are_kind_specific_and_signed() -> anyhow::Result<()> {
         let generic = oauth2_info_params(CredentialKind::AccessKey, "ACCESS", 1_700_000_000)?;
@@ -5908,10 +5941,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn credential_health_uses_tv_passport_base_for_tv_access_key() -> anyhow::Result<()> {
+    async fn credential_health_uses_tv_passport_poll_base_for_tv_access_key() -> anyhow::Result<()>
+    {
         let passport_server = MockServer::start();
-        let tv_passport_server = MockServer::start();
-        let tv_access_key_mock = tv_passport_server.mock(|when, then| {
+        let tv_passport_poll_server = MockServer::start();
+        let tv_access_key_mock = tv_passport_poll_server.mock(|when, then| {
             when.method(GET)
                 .path("/x/passport-login/oauth2/info")
                 .query_param("access_key", "TV_SECRET")
@@ -5926,7 +5960,8 @@ mod tests {
             }));
         });
         let mut client = test_client(&passport_server);
-        client.config.endpoints.tv_passport_base = tv_passport_server.base_url();
+        client.config.endpoints.tv_passport_base = "http://127.0.0.1:1".to_owned();
+        client.config.endpoints.tv_passport_poll_base = tv_passport_poll_server.base_url();
         client.config.credentials = Credentials::default().with_tv_access_key("TV_SECRET");
 
         let report = client.check_credential_health().await;

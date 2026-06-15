@@ -359,7 +359,7 @@ the WEB cookie, generic `access_key`, and TV `tv_access_key` independently befor
 fallback flow. The WEB cookie probe uses `/x/web-interface/nav`; the token probes use
 `/x/passport-login/oauth2/info` with the credential sent as a signed `access_key` app query value and
 without sending cookies. Generic token probes use the configured `passport_base`; TV token probes use
-the configured `tv_passport_base`. Probe failures are contained per credential as `missing`,
+the configured `tv_passport_poll_base`. Probe failures are contained per credential as `missing`,
 `valid`, `rejected`, or `request_failed` rather than failing the whole report.
 
 QR login is modeled as an explicit state machine in the crate. WEB QR login creates a

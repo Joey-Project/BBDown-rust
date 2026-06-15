@@ -200,14 +200,16 @@ temporary login secrets; status output and the `saved` event expose redacted boo
 `auth health` checks configured credentials without printing secret values: the WEB cookie is
 checked through the web nav endpoint, while the generic `access_key` and TV `tv_access_key` are
 checked through the OAuth info endpoint as signed `access_key` app query values. Generic token probes
-use `--passport-base`; TV token probes use `--tv-passport-base`. JSON output reports per-credential
+use `--passport-base`; TV token probes use `--tv-passport-poll-base`, which follows
+`--tv-passport-base` when only that TV override is supplied. JSON output reports per-credential
 `missing`, `valid`, `rejected`, or `request_failed` states for embedding callers and automation.
 
 Use `--request-timeout-seconds` or `BBDOWN_REQUEST_TIMEOUT_SECONDS` to tune API request bounds.
 Media body reads use `--download-idle-timeout-seconds`; pass `0` to disable the idle timeout.
 Use `--comment-base` or `BBDOWN_COMMENT_BASE` to point danmaku XML downloads at a mock or proxy
-endpoint. Use `--passport-base` for WEB QR login mocks or proxies, and use `--tv-passport-base` /
-`--tv-passport-poll-base` for TV QR login mocks or proxies. TV QR polling follows
+endpoint. Use `--passport-base` for WEB QR login and generic token-health mocks or proxies, and use
+`--tv-passport-base` / `--tv-passport-poll-base` for TV QR login and TV token-health mocks or
+proxies. TV QR polling and TV token-health probes follow
 `--tv-passport-base` only when that TV-specific override is supplied; otherwise it uses the upstream
 TV poll default unless `--tv-passport-poll-base` is set explicitly.
 Use `--playurl-mode tv` with `--tv-api-base` when a plan, playback request, or download should use
