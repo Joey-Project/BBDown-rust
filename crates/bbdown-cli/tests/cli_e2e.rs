@@ -29,6 +29,7 @@ const CLI_OVERRIDE_ENV_VARS: &[&str] = &[
     "BBDOWN_RESTRICTED_AREA_PROXY",
     "BBDOWN_RESTRICTED_API_PROXY",
     "BBDOWN_CREDENTIAL_FILE",
+    "BBDOWN_CREDENTIAL_PROFILE",
     "BBDOWN_REQUEST_TIMEOUT_SECONDS",
     "BBDOWN_COOKIE",
     "BBDOWN_ACCESS_KEY",
@@ -2445,6 +2446,126 @@ fn auth_import_status_and_logout_use_local_store() -> anyhow::Result<()> {
         .clone();
     let status: Value = serde_json::from_slice(&output)?;
     assert_eq!(status["has_cookie"], false);
+    Ok(())
+}
+
+#[test]
+fn auth_profile_selection_isolates_named_profile() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+
+    bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .env("BBDOWN_COOKIE", "SESSDATA=default")
+        .args(["auth", "import-cookie"])
+        .assert()
+        .success();
+
+    bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .env("BBDOWN_ACCESS_KEY", "INTL_ACCESS")
+        .args(["auth", "import-access-key"])
+        .assert()
+        .success();
+
+    let default_output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .args(["auth", "status"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let default_status: Value = serde_json::from_slice(&default_output)?;
+    assert_eq!(default_status["has_cookie"], true);
+    assert_eq!(default_status["has_access_key"], false);
+
+    let intl_output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .args(["auth", "status"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let intl_status: Value = serde_json::from_slice(&intl_output)?;
+    assert_eq!(intl_status["has_cookie"], false);
+    assert_eq!(intl_status["has_access_key"], true);
+
+    bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .args(["auth", "logout"])
+        .assert()
+        .success();
+
+    assert_eq!(
+        CredentialStore::new(credential_file.clone())
+            .load()?
+            .cookie
+            .as_deref(),
+        Some("SESSDATA=default")
+    );
+    assert!(
+        CredentialStore::new(credential_file)
+            .load_profile("intl")?
+            .is_empty()
+    );
+    Ok(())
+}
+
+#[test]
+fn info_json_uses_selected_credential_profile() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let store = CredentialStore::new(credential_file.clone());
+    store.save(&Credentials {
+        cookie: Some("SESSDATA=default".to_owned()),
+        access_key: None,
+        tv_access_key: None,
+    })?;
+    store.save_profile(
+        "web",
+        &Credentials {
+            cookie: Some("SESSDATA=WEB_COOKIE".to_owned()),
+            access_key: None,
+            tv_access_key: None,
+        },
+    )?;
+    mock_watch_later_collection(&server);
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("web")
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("info")
+        .arg("watch-later")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    assert_eq!(json["collection"]["collection"]["kind"], "watch_later");
+    assert_eq!(
+        json["collection"]["selected_items"][0]["title"],
+        "Watch later video"
+    );
     Ok(())
 }
 

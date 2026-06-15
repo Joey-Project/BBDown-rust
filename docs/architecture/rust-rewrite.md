@@ -361,6 +361,11 @@ credential sets in a versioned profile document. Loading a legacy flat file thro
 wraps it as the `default` profile, and saving a named profile migrates the file to the profile
 document while preserving default credentials. Raw credential values stay redacted in debug output
 for both `Credentials` and `CredentialProfiles`.
+`CredentialProfileSelection` is the shared selection layer for CLI and embedding callers: the default
+selection preserves legacy `load`/`save` behavior, while named selections route through the profile
+document APIs and preserve other profiles during writes. The CLI exposes this through the global
+`--credential-profile` flag and `BBDOWN_CREDENTIAL_PROFILE`; `auth logout` clears the whole store for
+legacy default selection and removes only the named profile when one is explicitly selected.
 Credential health diagnostics are a read-only layer over the same credential model. The crate exposes
 `CredentialHealthReport` and `BiliClient::check_credential_health()` so embedding callers can check
 the WEB cookie, generic `access_key`, and TV `tv_access_key` independently before choosing a login or

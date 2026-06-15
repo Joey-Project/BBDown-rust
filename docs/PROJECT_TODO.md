@@ -54,7 +54,7 @@
   scope.
 - [completed] Add multi-account credential profile storage while preserving default-profile
   behavior.
-- [pending] Make CLI and embedding credential selection profile-aware.
+- [completed] Make CLI and embedding credential selection profile-aware.
 - [pending] Add the core generic `access_key` acquisition flow after validating the historical
   BiliPlus QR/URL authorization approach.
 - [pending] Add CLI/docs integration for generic `access_key` acquisition.

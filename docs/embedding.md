@@ -205,6 +205,9 @@ single-profile JSON file shape. Use `CredentialProfiles` plus the `load_profiles
 and `load_profile`/`save_profile` helpers when an embedding project needs multiple accounts. A legacy
 flat file loaded through the profile API appears as the `default` profile, and saving a named profile
 migrates the store to the versioned profile document without dropping the default credentials.
+`CredentialProfileSelection` and the selected-profile store helpers provide the same default-profile
+versus named-profile routing used by the CLI, so embedders can bind user-selected accounts without
+duplicating the migration behavior.
 For QR login, convert `QrLoginTicket` to `QrLoginTicketOutput` when a downstream application needs a
 stable serialized scan URL and `qr_payload`; current WEB and TV login flows use the scan URL itself
 as the QR payload.
@@ -217,7 +220,7 @@ applications that need APP gRPC or proxy-specific assurance should treat that as
 decision. Probe messages are sanitized before they are serialized.
 
 ```rust,no_run
-use bbdown_core::{BiliClient, ClientConfig, CredentialStore, Credentials};
+use bbdown_core::{BiliClient, ClientConfig, CredentialProfileSelection, CredentialStore, Credentials};
 
 async fn check_credentials() {
     let credentials = Credentials::default()
@@ -230,7 +233,8 @@ async fn check_credentials() {
 }
 
 fn load_named_profile(store: &CredentialStore, profile: &str) -> bbdown_core::Result<Credentials> {
-    store.load_profile(profile)
+    let selection = CredentialProfileSelection::named(profile)?;
+    store.load_selected_profile(&selection)
 }
 ```
 
