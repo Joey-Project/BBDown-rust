@@ -54,5 +54,6 @@
   acquisition flow after validating the historical BiliPlus QR/URL authorization approach.
 - [pending] Add append-only danmaku update workflows that can update XML sidecars and regenerate
   selected formats such as ASS for already downloaded archive records.
-- [pending] Continue the remaining BBDown parity backlog after the current playback/list slices:
+- [pending] Continue the remaining BBDown parity backlog after the current `0.4.0` credential and
+  danmaku sequence unless reprioritized:
   aria2 or multi-thread download integration, MP4Box muxing, and subtitle-to-SRT conversion.

@@ -5,8 +5,8 @@ status: active
 created: 2026-06-15
 updated: 2026-06-15
 branch: wip/v0-4-roadmap-housekeeping
-pr:
-supersedes: []
+pr: https://github.com/Joey-Project/BBDown-rust/pull/42
+supersedes: [20260614-019ec8-credential-lifecycle-roadmap]
 superseded_by:
 ---
 
@@ -31,9 +31,10 @@ superseded_by:
   sidecar merging and regeneration of selected derived formats such as ASS.
 
 ## Next Steps
-- Land PR 1 with full validation and the normal three-review merge gate.
-- After PR 1 merges, update `master`, cut the PR 2 branch, and implement unified login QR output and
+- Cut the PR 2 branch from updated `master` and implement unified login QR output and
   credential health diagnostics.
+- After PR 2 merges, cut PR 3 for credential profiles and generic `access_key` acquisition.
+- After PR 3 merges, cut PR 4 for append-only danmaku update support.
 - Keep automatic credential refresh and remaining BBDown parity items outside this four-PR sequence
   unless explicitly reprioritized.
 

@@ -443,7 +443,7 @@ DASH video ids plus optional labels derived from `accept_description` and `suppo
 human summary prints the same ids alongside video/audio stream summaries, while JSON callers can
 select exact DASH streams through `DownloadOptions::stream_selection`.
 
-The reusable crate is now on the `0.3` development line after the published `0.1.0` release, so
+The reusable crate is now on the `0.4.0` development line after the published `0.3.0` release, so
 public configuration structs are intentionally hardened through constructor and builder APIs rather
 than preserving local struct-literal experiments. Embedders should create configuration with those APIs, including
 `ClientConfig::default().with_*`, `EndpointConfig::default().with_*`,
