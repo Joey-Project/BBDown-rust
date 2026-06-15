@@ -26,10 +26,10 @@ constructor paths so downstream projects do not need struct literals for ordinar
 The CLI uses the same public builders, which makes it an in-repo integration test surface for the
 crate API.
 
-Output models remain typed data surfaces. The current crate version is `0.3.0`, a post-`0.1.0`
-development line that includes batch collection metadata, cover and sidecar-only download surfaces,
-playback request/ABR metadata, and TV/APP playurl modes; callers should read fields or serialize
-output values rather than treating output structs as stable construction targets.
+Output models remain typed data surfaces. The current crate version is `0.4.0`, a post-`0.3.0`
+development line focused on credential lifecycle improvements, access-key acquisition, unified
+login QR output, and append-only danmaku updates; callers should read fields or serialize output
+values rather than treating output structs as stable construction targets.
 
 ## Resolver Model
 

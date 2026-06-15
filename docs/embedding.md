@@ -9,10 +9,10 @@ projects that need typed Bilibili metadata, download plans, media downloads, sub
 danmaku sidecars, QR login state, batch collection parsing, and restricted-area proxy diagnostics
 without shelling out to the CLI.
 
-The current crate version is `0.3.0`, a post-`0.1.0` development line that includes batch collection
-metadata, cover and sidecar-only download surfaces, playback request/ABR metadata, and
-BBDown-compatible TV/APP playurl modes. Prefer constructors and builder-style APIs for
-configuration, and treat metadata and plan structs as read-only output surfaces. This keeps
+The current crate version is `0.4.0`, a post-`0.3.0` development line focused on credential
+lifecycle improvements, access-key acquisition, unified login QR output, and append-only danmaku
+updates. Prefer constructors and builder-style APIs for configuration, and treat metadata and plan
+structs as read-only output surfaces. This keeps
 embedding code resilient when new fields are added while the crate matures.
 
 ## Planning Only

@@ -26,10 +26,9 @@
 项目在普通集成代码中不需要结构体字面量。CLI 使用相同 public builder，这让它成为 crate
 API 的仓库内集成测试表面。
 
-输出模型保持为 typed data surfaces。当前 crate 版本是 `0.3.0`，属于已发布 `0.1.0` 之后
-的开发线，并包含批量 collection metadata、封面与 sidecar-only 下载表面、播放请求/ABR
-metadata，以及 TV/APP playurl modes；调用方应读取字段或序列化输出值，而不是把输出结构
-体视为稳定的构造目标。
+输出模型保持为 typed data surfaces。当前 crate 版本是 `0.4.0`，属于已发布 `0.3.0` 之后
+的开发线，重点是 credential lifecycle 改进、access-key 获取、统一登录二维码输出，以及
+append-only 弹幕更新；调用方应读取字段或序列化输出值，而不是把输出结构体视为稳定的构造目标。
 
 ## 解析器模型
 

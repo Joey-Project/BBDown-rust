@@ -35,20 +35,18 @@
 - The publishable library package is named `bbdown-core`; Rust code imports it as `bbdown_core`.
 - First-release automation now uses a protected RC tag workflow followed by RC promotion to GitHub
   Release and crates.io.
-- Versions `0.1.0` and `0.2.0` have shipped through that flow as GitHub Releases `v0.1.0` /
-  `v0.2.0` and crates.io package versions `bbdown-core` `0.1.0` / `0.2.0`.
-- `master` is now the `0.3.0` development line. The richer feed/list sequence has completed the
-  shared resolver abstraction, history parsing, following/UP dynamic feed parsing, homepage
-  recommendation parsing, and watch-later parsing.
-- `v0.3.0-rc.1` is abandoned; its promotion run was cancelled before final tag, GitHub Release, or
-  crates.io publication. Use the next automatically selected RC number when the `0.3.0` line is
-  ready for release.
+- Versions `0.1.0`, `0.2.0`, and `0.3.0` have shipped through that flow as GitHub Releases and
+  crates.io package versions for `bbdown-core`.
+- `master` is now the `0.4.0` development line. The `0.4.0` roadmap is scoped to credential
+  lifecycle improvements, access-key acquisition, unified login QR output, and append-only danmaku
+  update workflows.
 
 ## Recovery Pointers
 
 - Run `just ci` for the local default gate after dependencies are restored.
 - Workstream detail and PR-local state should live under `docs/project_journal/`.
-- Active v0.3.0 roadmap: `docs/project_journal/2026/06/2026-06-14-v0-3-feed-list-roadmap-019ec5.md`.
+- Active v0.4.0 roadmap:
+  `docs/project_journal/2026/06/2026-06-15-v0-4-credential-danmaku-roadmap-019ecf.md`.
 - User-facing CLI behavior is documented in `docs/user-guide.md`.
 - Crate embedding guidance is documented in `docs/embedding.md`.
 - Simplified Chinese companion docs use `*.zh-CN.md` next to the English originals.

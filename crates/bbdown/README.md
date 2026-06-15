@@ -14,10 +14,10 @@ video feeds, and space dynamic video feeds.
 
 Install with `cargo add bbdown-core`, then import with `bbdown_core`.
 
-The current crate version is `0.3.0`, a post-`0.1.0` development line that includes batch collection
-metadata, cover and sidecar-only download surfaces, playback request/ABR metadata, and
-BBDown-compatible TV/APP playurl modes. Embedding projects should prefer constructor and
-builder-style APIs such as `ClientConfig::default().with_*()`, `EndpointConfig::default().with_*()`,
+The current crate version is `0.4.0`, a post-`0.3.0` development line focused on credential
+lifecycle improvements, access-key acquisition, unified login QR output, and append-only danmaku
+updates. Embedding projects should prefer constructor and builder-style APIs such as
+`ClientConfig::default().with_*()`, `EndpointConfig::default().with_*()`,
 `RestrictedAreaConfig::default().with_*()`, `DownloadOptions::new(...).with_*()`,
 `RetryPolicy::new(...)`, and `StreamSelection::new(...)` instead of struct literals for
 configuration values that may grow while the crate matures. Public plan output containers are
