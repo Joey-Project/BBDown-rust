@@ -689,11 +689,13 @@ fn json_u64_field(
     };
     match value {
         serde_json::Value::Null => Ok(None),
-        serde_json::Value::Number(number) => number.as_u64().map(Some).ok_or_else(|| {
-            Error::InvalidInput(format!(
+        serde_json::Value::Number(number) => match number.as_u64() {
+            Some(0) => Ok(None),
+            Some(value) => Ok(Some(value)),
+            None => Err(Error::InvalidInput(format!(
                 "access-key login field {key} must be a positive integer"
-            ))
-        }),
+            ))),
+        },
         serde_json::Value::String(raw) => parse_optional_u64(raw, key),
         _ => Err(Error::InvalidInput(format!(
             "access-key login field {key} must be a positive integer"
@@ -1046,6 +1048,14 @@ mod tests {
             r#"balh-login-credentials: {"access_key":"AK","oauth_expires_at":"1710000000","expires_at":"not-used"}"#,
         )?;
         assert_eq!(json_credentials.oauth_expires_at, Some(1_710_000_000_000));
+
+        let json_zero_credentials = AccessKeyLoginCredentials::from_balh_message(
+            r#"balh-login-credentials: {"access_key":"AK","oauth_expires_at":0,"expires_at":1710000000}"#,
+        )?;
+        assert_eq!(
+            json_zero_credentials.oauth_expires_at,
+            Some(1_710_000_000_000)
+        );
 
         let query_credentials = AccessKeyLoginCredentials::from_balh_payload(
             "access_key=AK&oauth_expires_at=1710000000&expires_at=not-used",
