@@ -592,19 +592,29 @@ fn access_key_callback_query(payload: &str) -> Result<String> {
         return Err(Error::MissingField("access-key callback query"));
     }
     if let Ok(url) = url::Url::parse(trimmed) {
+        if let Some(query) = url.query().filter(|query| !query.is_empty()) {
+            return Ok(query.to_owned());
+        }
         return url
-            .query()
-            .filter(|query| !query.is_empty())
+            .fragment()
+            .map(str::trim)
+            .filter(|fragment| !fragment.is_empty())
             .map(str::to_owned)
             .ok_or(Error::MissingField("access-key callback query"));
     }
-    let query = trimmed
-        .split_once('?')
-        .map_or(trimmed, |(_, query)| query)
+    let candidate = if let Some((_, query)) = trimmed.split_once('?') {
+        query
+    } else if let Some((_, fragment)) = trimmed.split_once('#') {
+        fragment
+    } else {
+        trimmed
+    };
+    let query = candidate
+        .trim_start_matches('?')
+        .trim_start_matches('#')
         .split('#')
         .next()
         .unwrap_or_default()
-        .trim_start_matches('?')
         .trim();
     if query.is_empty() {
         return Err(Error::MissingField("access-key callback query"));
@@ -950,6 +960,13 @@ mod tests {
         assert!(
             matches!(error, Some(Error::InvalidInput(message)) if message.contains("does not match ticket"))
         );
+        let output_error = ticket
+            .output()
+            .credentials_from_message("https://evil.example", message)
+            .err();
+        assert!(
+            matches!(output_error, Some(Error::InvalidInput(message)) if message.contains("does not match ticket"))
+        );
         Ok(())
     }
 
@@ -989,6 +1006,23 @@ mod tests {
         assert_eq!(credentials.refresh_token.as_deref(), Some("RT"));
         assert_eq!(credentials.oauth_expires_at, Some(1_710_000_000_000));
         assert_eq!(credentials.expires_in, None);
+        Ok(())
+    }
+
+    #[test]
+    fn parses_balh_fragment_callback_with_access_token_alias() -> anyhow::Result<()> {
+        let credentials = AccessKeyLoginCredentials::from_balh_payload(
+            "https://legacy.example/callback#access_token=ALT&refresh_token=RT&expires_in=7200",
+        )?;
+
+        assert_eq!(credentials.access_key, "ALT");
+        assert_eq!(credentials.refresh_token.as_deref(), Some("RT"));
+        assert_eq!(credentials.oauth_expires_at, None);
+        assert_eq!(credentials.expires_in, Some(7_200));
+
+        let raw = AccessKeyLoginCredentials::from_balh_payload("#access_key=AK&expires_in=60")?;
+        assert_eq!(raw.access_key, "AK");
+        assert_eq!(raw.expires_in, Some(60));
         Ok(())
     }
 
