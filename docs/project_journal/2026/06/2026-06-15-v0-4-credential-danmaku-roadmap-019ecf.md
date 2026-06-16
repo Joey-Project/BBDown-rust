@@ -53,3 +53,5 @@ superseded_by:
   `wip/generic-access-key-auth`.
 - PR 6 local validation before review: `cargo test -p bbdown-core login --locked` and
   `cargo clippy --workspace --all-targets --locked -- -D warnings`.
+- PR 6 review fixes accept both auth and callback sender origins for BALH `postMessage` imports,
+  lazily parse fallback expiration fields, and preserve raw query text before trailing fragments.

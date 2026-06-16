@@ -219,8 +219,9 @@ generic `access_key` plus optional refresh/expiration metadata. Calling `credent
 the generic access key into the existing `Credentials` model; automatic refresh and CLI persistence
 are separate lifecycle concerns. In browser `postMessage` flows, prefer
 `AccessKeyLoginTicketOutput::credentials_from_message(event_origin, data)` so the sender origin is
-validated against the ticket before parsing. Use the raw `AccessKeyLoginCredentials::from_balh_*`
-parsers only after an embedding application has already validated message provenance.
+validated against the ticket's trusted auth or callback origin before parsing. Use the raw
+`AccessKeyLoginCredentials::from_balh_*` parsers only after an embedding application has already
+validated message provenance.
 Call `BiliClient::check_credential_health()` when an embedding project needs a redacted diagnostic
 report before deciding whether to prompt for login, import a token, or continue with anonymous
 requests. The report includes one probe each for the WEB cookie, generic `access_key`, and TV

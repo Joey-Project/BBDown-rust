@@ -339,7 +339,8 @@ JSON credentials，也可以是使用 `access_key` 或 `access_token` 的 URL/qu
 `expires_in` metadata，但转回 `Credentials` 时只保存通用 `access_key`。refresh scheduling、
 token rotation 和 CLI persistence 会作为独立 lifecycle 工作处理，让嵌入方可以选择自己的策略。
 browser `postMessage` consumer 应通过 ticket/output 的 `credentials_from_message` helper
-解析，它会先校验 sender origin，再使用 raw BALH payload parser。
+解析，它会先把 sender origin 与可信 auth origin 或 callback origin 校验，再使用 raw BALH
+payload parser。
 
 二维码登录在 crate 中建模为显式状态机。WEB 二维码登录创建 `QrLoginTicket`，它可以转换为
 `QrLoginTicketOutput`，提供稳定的可序列化扫码 URL 和 QR payload 表面；随后轮询

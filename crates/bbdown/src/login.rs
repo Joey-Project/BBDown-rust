@@ -78,7 +78,7 @@ impl AccessKeyLoginTicket {
         message: impl AsRef<str>,
     ) -> Result<AccessKeyLoginCredentials> {
         credentials_from_trusted_message(
-            &self.message_origin,
+            &[self.message_origin.as_str(), self.callback_origin.as_str()],
             message_origin.as_ref(),
             message.as_ref(),
         )
@@ -125,7 +125,7 @@ impl AccessKeyLoginTicketOutput {
         message: impl AsRef<str>,
     ) -> Result<AccessKeyLoginCredentials> {
         credentials_from_trusted_message(
-            &self.message_origin,
+            &[self.message_origin.as_str(), self.callback_origin.as_str()],
             message_origin.as_ref(),
             message.as_ref(),
         )
@@ -569,7 +569,7 @@ fn credentials_from_json_payload(payload: &str) -> Result<AccessKeyLoginCredenti
         json_string_field(object, "access_key")
             .or_else(|| json_string_field(object, "access_token")),
         json_string_field(object, "refresh_token"),
-        json_u64_field(object, "oauth_expires_at")?.or(json_u64_field(object, "expires_at")?),
+        json_u64_field_or(object, "oauth_expires_at", "expires_at")?,
         json_u64_field(object, "expires_in")?,
     )
 }
@@ -581,7 +581,7 @@ fn credentials_from_query_payload(payload: &str) -> Result<AccessKeyLoginCredent
         query_string_field(&params, "access_key")
             .or_else(|| query_string_field(&params, "access_token")),
         query_string_field(&params, "refresh_token"),
-        query_u64_field(&params, "oauth_expires_at")?.or(query_u64_field(&params, "expires_at")?),
+        query_u64_field_or(&params, "oauth_expires_at", "expires_at")?,
         query_u64_field(&params, "expires_in")?,
     )
 }
@@ -607,7 +607,10 @@ fn access_key_callback_query(payload: &str) -> Result<String> {
     let (query, fragment) = match (trimmed.split_once('?'), trimmed.split_once('#')) {
         (Some((_, query)), Some((_, fragment))) => (Some(query), Some(fragment)),
         (Some((_, query)), None) => (Some(query), None),
-        (None, Some((_, fragment))) => (None, Some(fragment)),
+        (None, Some((before_fragment, fragment))) if before_fragment.trim().is_empty() => {
+            (None, Some(fragment))
+        }
+        (None, Some((before_fragment, fragment))) => (Some(before_fragment), Some(fragment)),
         (None, None) => (Some(trimmed), None),
     };
     let query = match (query, fragment) {
@@ -633,13 +636,16 @@ fn access_key_callback_query(payload: &str) -> Result<String> {
 }
 
 fn credentials_from_trusted_message(
-    expected_origin: &str,
+    expected_origins: &[&str],
     message_origin: &str,
     message: &str,
 ) -> Result<AccessKeyLoginCredentials> {
-    let expected_origin = http_origin(expected_origin, "access-key expected message origin")?;
+    let expected_origins = expected_origins
+        .iter()
+        .map(|origin| http_origin(origin, "access-key expected message origin"))
+        .collect::<Result<Vec<_>>>()?;
     let message_origin = http_origin(message_origin, "access-key message origin")?;
-    if message_origin != expected_origin {
+    if !expected_origins.contains(&message_origin) {
         return Err(Error::InvalidInput(
             "access-key login message origin does not match ticket".to_owned(),
         ));
@@ -695,6 +701,17 @@ fn json_u64_field(
     }
 }
 
+fn json_u64_field_or(
+    object: &serde_json::Map<String, serde_json::Value>,
+    preferred_key: &'static str,
+    fallback_key: &'static str,
+) -> Result<Option<u64>> {
+    match json_u64_field(object, preferred_key)? {
+        Some(value) => Ok(Some(value)),
+        None => json_u64_field(object, fallback_key),
+    }
+}
+
 fn query_string_field(
     params: &[(std::borrow::Cow<'_, str>, std::borrow::Cow<'_, str>)],
     key: &str,
@@ -718,6 +735,17 @@ fn query_u64_field(
         return Ok(None);
     };
     parse_optional_u64(value, key)
+}
+
+fn query_u64_field_or(
+    params: &[(std::borrow::Cow<'_, str>, std::borrow::Cow<'_, str>)],
+    preferred_key: &'static str,
+    fallback_key: &'static str,
+) -> Result<Option<u64>> {
+    match query_u64_field(params, preferred_key)? {
+        Some(value) => Ok(Some(value)),
+        None => query_u64_field(params, fallback_key),
+    }
 }
 
 fn parse_optional_u64(raw: &str, key: &'static str) -> Result<Option<u64>> {
@@ -959,8 +987,14 @@ mod tests {
         );
         assert_eq!(
             ticket
+                .credentials_from_message("https://www.bilibili.com/video/BV1", message)?
+                .access_key,
+            "AK"
+        );
+        assert_eq!(
+            ticket
                 .output()
-                .credentials_from_message("https://www.biliplus.com", message)?
+                .credentials_from_message("https://www.bilibili.com", message)?
                 .access_key,
             "AK"
         );
@@ -1003,6 +1037,27 @@ mod tests {
         assert!(debug.contains("has_refresh_token: true"));
         assert!(!debug.contains("AK"));
         assert!(!debug.contains("RT"));
+        Ok(())
+    }
+
+    #[test]
+    fn preferred_balh_expiry_fields_skip_invalid_fallbacks() -> anyhow::Result<()> {
+        let json_credentials = AccessKeyLoginCredentials::from_balh_message(
+            r#"balh-login-credentials: {"access_key":"AK","oauth_expires_at":"1710000000","expires_at":"not-used"}"#,
+        )?;
+        assert_eq!(json_credentials.oauth_expires_at, Some(1_710_000_000_000));
+
+        let query_credentials = AccessKeyLoginCredentials::from_balh_payload(
+            "access_key=AK&oauth_expires_at=1710000000&expires_at=not-used",
+        )?;
+        assert_eq!(query_credentials.oauth_expires_at, Some(1_710_000_000_000));
+
+        let error =
+            AccessKeyLoginCredentials::from_balh_payload("access_key=AK&expires_at=not-a-number")
+                .err();
+        assert!(
+            matches!(error, Some(Error::InvalidInput(message)) if message.contains("expires_at"))
+        );
         Ok(())
     }
 
@@ -1052,6 +1107,12 @@ mod tests {
         assert_eq!(credentials.refresh_token, None);
         assert_eq!(credentials.oauth_expires_at, None);
         assert_eq!(credentials.expires_in, None);
+
+        let raw_without_marker = AccessKeyLoginCredentials::from_balh_payload(
+            "access_key=RAW&refresh_token=RT#ignored",
+        )?;
+        assert_eq!(raw_without_marker.access_key, "RAW");
+        assert_eq!(raw_without_marker.refresh_token.as_deref(), Some("RT"));
         Ok(())
     }
 
