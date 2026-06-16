@@ -301,6 +301,8 @@ Import credentials when an endpoint requires account access:
 ```bash
 bbdown auth import-cookie --stdin
 bbdown auth import-access-key --stdin
+bbdown auth login-access-key --stdin < balh-callback.txt
+bbdown auth login-access-key --file balh-callback.txt
 bbdown auth login-web
 bbdown auth login-tv
 bbdown auth status
@@ -310,14 +312,24 @@ bbdown auth logout
 
 Secret import commands also read `BBDOWN_COOKIE` and `BBDOWN_ACCESS_KEY` when no input flag is
 provided. Use `--credential-file <path>` to isolate test credentials from the default platform
-config path. `auth login-web` prints a QR login URL, polls until scan confirmation, and saves the
-resulting cookie. `auth login-tv` uses the TV QR flow and saves a TV-specific access key for future
-TV/app flows without overwriting the generic intl/Bstar access key imported by `auth import-access-key`.
-With `--json`, QR login prints newline-delimited JSON events: `ticket` includes the scan URL plus
-`qr_payload` before polling, and `saved` includes only redacted credential booleans. For current WEB
-and TV login flows, `qr_payload` is the same URL and can be rendered directly as a QR code by
-embedding projects. Treat the scan URL and QR payload as temporary login secrets because they contain
-the QR login key. Token values are not printed by status or the `saved` JSON event.
+config path. `auth login-access-key` prints a BiliPlus/BALH-compatible authorization URL plus
+`qr_payload`, then reads a pasted `balh-login-credentials:` message or callback URL/query from
+`--stdin` or `--file`, then saves the resulting generic intl/Bstar access key. It does not offer an
+interactive paste prompt because terminal echo can expose token values in scrollback; `--stdin`
+must be piped or redirected and will reject terminal stdin, and `--file` rejects terminal-backed
+paths. The command never consumes implicit stdin; pass `--stdin` for pipes or redirects. Use
+`--message-origin` when ingesting browser `postMessage` data so the sender origin is checked against
+the login ticket; trusted manual callback URL/query input does not need that flag. Use `--auth-base`
+and `--callback-origin` for compatible mocks or deployments.
+`auth login-web` prints a QR login URL, polls until scan confirmation, and saves the resulting
+cookie. `auth login-tv` uses the TV QR flow and saves a TV-specific access key for future TV/app
+flows without overwriting the generic intl/Bstar access key imported or acquired through the generic
+access-key commands. With `--json`, login commands print newline-delimited JSON events: `ticket`
+includes the login URL plus `qr_payload` before polling or handoff, and `saved` includes only
+redacted credential booleans. For current WEB and TV login flows, `qr_payload` is the same URL and
+can be rendered directly as a QR code by embedding projects. Treat login URLs and QR payloads as
+temporary login secrets because they contain login handoff state. Token values are not printed by
+status or the `saved` JSON event.
 
 Use `auth health` to diagnose configured credentials without exposing secret values. The command
 checks the WEB cookie against the web nav endpoint and checks both the generic `access_key` and TV
@@ -341,6 +353,7 @@ bbdown --comment-base http://127.0.0.1:8080 download av170001 --output-dir downl
 bbdown --passport-base http://127.0.0.1:8080 auth login-web
 bbdown --tv-passport-base http://127.0.0.1:8080 auth login-tv
 bbdown --tv-passport-base http://127.0.0.1:8080 --tv-passport-poll-base http://127.0.0.1:8081 auth login-tv
+bbdown auth login-access-key --auth-base http://127.0.0.1:8080 --callback-origin http://127.0.0.1:3000 --stdin < balh-callback.txt
 ```
 
 Current intl support uses official intl metadata/subtitle endpoints and the official signed intl OGV

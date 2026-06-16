@@ -29,15 +29,13 @@ superseded_by:
 - PR 5 makes CLI and embedding credential selection profile-aware.
 - PR 6 adds the core generic `access_key` acquisition flow after validating the BiliPlus URL/QR
   authorization behavior observed in the prior `bilibili-helper` implementation.
-- PR 7 will add CLI/docs integration for generic `access_key` acquisition.
+- PR 7 adds CLI/docs integration for generic `access_key` acquisition.
 - PR 8 will add append-only danmaku update support for already downloaded entries, including XML
   sidecar merging and regeneration of selected derived formats such as ASS.
 
 ## Next Steps
-- Cut PR 7 from updated `master` after PR 6 lands and add CLI/docs integration for generic
-  `access_key` acquisition.
-- Continue one slice at a time through PR 8, updating `master` after each merge before cutting the
-  next branch.
+- Continue to PR 8 after the CLI/docs access-key acquisition slice lands, updating `master` after the
+  merge before cutting the next branch.
 - Keep automatic credential refresh and remaining BBDown parity items outside this eight-PR sequence
   unless explicitly reprioritized.
 
@@ -55,3 +53,13 @@ superseded_by:
   `cargo clippy --workspace --all-targets --locked -- -D warnings`.
 - PR 6 review fixes accept both auth and callback sender origins for BALH `postMessage` imports,
   lazily parse fallback expiration fields, and preserve raw query text before trailing fragments.
+- PR 7 branch: `wip/access-key-login-cli`.
+- PR 7 local targeted validation: `cargo test -p bbdown-cli access_key --locked`.
+- PR 7 local full validation: `just ci`.
+- PR 7 independent review found that terminal access-key paste paths could echo callback tokens in
+  scrollback; the CLI now requires `--file` or piped/redirected `--stdin` for pasted BALH data and
+  documents the no-interactive-paste policy.
+- PR 7 Codex review-gate found that implicit piped stdin could still be consumed without `--stdin`;
+  the CLI now rejects missing input-source flags and requires callers to opt in to pipe consumption.
+- PR 7 independent review found that terminal-backed `--file` paths such as `/dev/tty` could bypass
+  the no-interactive-paste policy; the CLI now rejects terminal file descriptors before reading.

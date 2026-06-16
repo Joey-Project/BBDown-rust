@@ -180,6 +180,8 @@ Manage local credentials:
 bbdown auth import-cookie --stdin
 bbdown auth import-cookie --file cookie.txt
 bbdown auth import-access-key --stdin
+bbdown auth login-access-key --stdin < balh-callback.txt
+bbdown auth login-access-key --file balh-callback.txt
 bbdown auth login-web
 bbdown auth login-tv
 bbdown auth status
@@ -190,12 +192,20 @@ bbdown auth logout
 Credentials are stored in the platform config directory by default. Use
 `--credential-file <path>` to override this path for integration tests or local experiments.
 Secret import commands also read `BBDOWN_COOKIE` or `BBDOWN_ACCESS_KEY` when no input flag is
-provided, so callers can avoid passing credentials through process arguments. QR login commands poll
-the Bilibili QR state machine and save only the resulting credential. WEB QR login saves a cookie;
-TV QR login saves a TV-specific access key without overwriting the generic intl/Bstar access key.
-With `--json`, QR login emits newline-delimited JSON events: a `ticket` event with the scan URL and
-`qr_payload` before polling, then a `saved` event after credentials are stored. The current WEB and
-TV login flows use the scan URL itself as the QR payload. Treat the scan URL and QR payload as
+provided, so callers can avoid passing credentials through process arguments. `auth login-access-key`
+prints a BiliPlus/BALH-compatible authorization URL plus QR payload, then reads a pasted
+`balh-login-credentials:` message or callback URL/query from `--stdin` or `--file`, then saves the
+resulting generic intl/Bstar access key. It does not offer an interactive paste prompt because
+terminal echo can expose token values in scrollback; `--stdin` must be piped or redirected and will
+reject terminal stdin, and `--file` rejects terminal-backed paths. The command never consumes
+implicit stdin; pass `--stdin` for pipes or redirects. Use `--message-origin` when ingesting browser
+`postMessage` data and `--auth-base` / `--callback-origin` for compatible mocks or deployments.
+QR login commands poll the Bilibili QR state machine and save only the resulting credential. WEB QR
+login saves a cookie; TV QR login saves a TV-specific access
+key without overwriting the generic intl/Bstar access key. With `--json`, login commands emit
+newline-delimited JSON events: a `ticket` event with the login URL and `qr_payload` before the
+credential handoff or poll, then a `saved` event after credentials are stored. The current WEB and
+TV login flows use the scan URL itself as the QR payload. Treat login URLs and QR payloads as
 temporary login secrets; status output and the `saved` event expose redacted booleans only.
 `auth health` checks configured credentials without printing secret values: the WEB cookie is
 checked through the web nav endpoint, while the generic `access_key` and TV `tv_access_key` are

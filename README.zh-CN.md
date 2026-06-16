@@ -171,6 +171,8 @@ WEB cookie，目前只包含普通视频 `archive` 历史记录。稍后再看�
 bbdown auth import-cookie --stdin
 bbdown auth import-cookie --file cookie.txt
 bbdown auth import-access-key --stdin
+bbdown auth login-access-key --stdin < balh-callback.txt
+bbdown auth login-access-key --file balh-callback.txt
 bbdown auth login-web
 bbdown auth login-tv
 bbdown auth status
@@ -180,12 +182,20 @@ bbdown auth logout
 
 凭据默认存储在平台配置目录。使用 `--credential-file <path>` 可以为集成测试或本地实验覆
 盖该路径。没有输入标志时，密钥导入命令也会读取 `BBDOWN_COOKIE` 或
-`BBDOWN_ACCESS_KEY`，这样调用方无需把凭据放到进程参数里。二维码登录命令会轮询
-Bilibili 二维码状态机，并只保存最终得到的凭据。WEB 二维码登录保存 cookie；TV 二维码登
-录保存 TV 专用 access key，不会覆盖通用 intl/Bstar access key。使用 `--json` 时，二维
-码登录输出换行分隔 JSON 事件：先输出带扫码 URL 和 `qr_payload` 的 `ticket` 事件，再在凭
-据保存后输出 `saved` 事件。当前 WEB 和 TV 登录流程会直接使用扫码 URL 作为 QR payload。
-请把扫码 URL 和 QR payload 当成临时登录密钥；状态输出和 `saved` 事件只暴露脱敏布尔值。
+`BBDOWN_ACCESS_KEY`，这样调用方无需把凭据放到进程参数里。`auth login-access-key` 会打
+印 BiliPlus/BALH-compatible 授权 URL 和 `qr_payload`，然后从 `--stdin` 或 `--file` 读取
+粘贴的 `balh-login-credentials:` message 或 callback URL/query，并保存得到的通用
+intl/Bstar access key。它不会提供交互粘贴 prompt，因为终端 echo 可能把 token 值暴露在
+scrollback 中；`--stdin` 必须来自 pipe 或 redirect，并会拒绝 terminal stdin；`--file` 也
+会拒绝 terminal-backed path。命令不会隐式消费 stdin；pipe 或 redirect 必须显式传
+`--stdin`。如果输入来自浏览器 `postMessage`，请使用 `--message-origin`，这样 CLI 会把
+sender origin 与本次 login ticket 校验；兼容 mock 或部署可以使用 `--auth-base` 和
+`--callback-origin`。二维码登录命令会轮询 Bilibili 二维码状态机，并只保存最终得到的凭
+据。WEB 二维码登录保存 cookie；TV 二维码登录保存 TV 专用 access key，不会覆盖由通用
+access-key 命令导入或获取的 intl/Bstar access key。使用 `--json` 时，登录命令输出换行分
+隔 JSON 事件：先输出带登录 URL 和 `qr_payload` 的 `ticket` 事件，再在凭据保存后输出
+`saved` 事件。当前 WEB 和 TV 登录流程会直接使用扫码 URL 作为 QR payload。请把登录 URL
+和 QR payload 当成临时登录密钥；状态输出和 `saved` 事件只暴露脱敏布尔值。
 `auth health` 会在不打印密钥值的情况下检查已配置凭据：WEB cookie 通过 web nav 端点检查；
 通用 `access_key` 和 TV `tv_access_key` 会通过 OAuth info 端点以 signed `access_key` app
 query 值检查。通用 token probe 当前覆盖 intl/Bstar scope，并使用 `--passport-base`；它不会

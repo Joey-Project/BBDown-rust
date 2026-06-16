@@ -270,6 +270,8 @@ fallback host，即使它们并不像 PCDN。存在 `--upos-host` 时，它优�
 ```bash
 bbdown auth import-cookie --stdin
 bbdown auth import-access-key --stdin
+bbdown auth login-access-key --stdin < balh-callback.txt
+bbdown auth login-access-key --file balh-callback.txt
 bbdown auth login-web
 bbdown auth login-tv
 bbdown auth status
@@ -278,14 +280,22 @@ bbdown auth logout
 ```
 
 没有输入标志时，密钥导入命令也会读取 `BBDOWN_COOKIE` 和 `BBDOWN_ACCESS_KEY`。使用
-`--credential-file <path>` 可以把测试凭据与默认平台配置路径隔离。`auth login-web` 打印二
-维码登录 URL，轮询到扫码确认，并保存得到的 cookie。`auth login-tv` 使用 TV 二维码流程，
-保存 TV 专用 access key 供未来 TV/app 流程使用，不会覆盖由 `auth import-access-key` 导入
-的通用 intl/Bstar access key。使用 `--json` 时，二维码登录会打印换行分隔 JSON 事件：
-`ticket` 在轮询前包含扫码 URL 和 `qr_payload`，`saved` 只包含脱敏后的凭据布尔值。当前 WEB
-和 TV 登录流程中，`qr_payload` 与扫码 URL 相同，嵌入项目可以直接把它渲染成二维码。请把扫
-码 URL 和 QR payload 当成临时登录密钥，因为它们包含二维码登录 key。状态输出或 `saved`
-JSON 事件不会打印 token 值。
+`--credential-file <path>` 可以把测试凭据与默认平台配置路径隔离。`auth login-access-key`
+会打印 BiliPlus/BALH-compatible 授权 URL 和 `qr_payload`，然后从 `--stdin` 或 `--file` 读
+取粘贴的 `balh-login-credentials:` message 或 callback URL/query，并保存得到的通用
+intl/Bstar access key。它不会提供交互粘贴 prompt，因为终端 echo 可能把 token 值暴露在
+scrollback 中；`--stdin` 必须来自 pipe 或 redirect，并会拒绝 terminal stdin；`--file` 也会
+拒绝 terminal-backed path。命令不会隐式消费 stdin；pipe 或 redirect 必须显式传
+`--stdin`。如果输入来自浏览器 `postMessage`，请使用 `--message-origin`，这样 CLI 会把
+sender origin 与本次 login ticket 校验；可信的手工 callback URL/query 输入不需要该标志。
+兼容 mock 或部署可以使用 `--auth-base` 和 `--callback-origin`。`auth login-web` 打印二维码登录 URL，轮询到扫码确认，并保存得到的
+cookie。`auth login-tv` 使用 TV 二维码流程，保存 TV 专用 access key 供未来 TV/app 流程使
+用，不会覆盖由通用 access-key 命令导入或获取的 intl/Bstar access key。使用 `--json` 时，
+登录命令会打印换行分隔 JSON 事件：`ticket` 在轮询或 handoff 前包含登录 URL 和
+`qr_payload`，`saved` 只包含脱敏后的凭据布尔值。当前 WEB 和 TV 登录流程中，`qr_payload`
+与扫码 URL 相同，嵌入项目可以直接把它渲染成二维码。请把登录 URL 和 QR payload 当成临
+时登录密钥，因为它们包含登录 handoff 状态。状态输出或 `saved` JSON 事件不会打印 token
+值。
 
 使用 `auth health` 可以在不暴露密钥值的情况下诊断已配置凭据。该命令会用 web nav 端点检
 查 WEB cookie，并通过 OAuth info 端点把通用 `access_key` 与 TV `tv_access_key` 作为
@@ -308,6 +318,7 @@ bbdown --comment-base http://127.0.0.1:8080 download av170001 --output-dir downl
 bbdown --passport-base http://127.0.0.1:8080 auth login-web
 bbdown --tv-passport-base http://127.0.0.1:8080 auth login-tv
 bbdown --tv-passport-base http://127.0.0.1:8080 --tv-passport-poll-base http://127.0.0.1:8081 auth login-tv
+bbdown auth login-access-key --auth-base http://127.0.0.1:8080 --callback-origin http://127.0.0.1:3000 --stdin < balh-callback.txt
 ```
 
 当前 intl 支持使用官方 intl 元数据/字幕端点，以及在配置 access key 时使用官方签名 intl
