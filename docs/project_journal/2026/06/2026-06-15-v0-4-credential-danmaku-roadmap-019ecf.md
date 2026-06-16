@@ -3,7 +3,7 @@ id: 20260615-019ecf-v0-4-credential-danmaku-roadmap
 title: v0.4.0 Credential And Danmaku Roadmap
 status: active
 created: 2026-06-15
-updated: 2026-06-15
+updated: 2026-06-16
 branch: wip/v0-4-roadmap-housekeeping
 pr: https://github.com/Joey-Project/BBDown-rust/pull/42
 supersedes: [20260614-019ec8-credential-lifecycle-roadmap]
@@ -27,14 +27,15 @@ superseded_by:
   `tv_access_key` credentials.
 - PR 4 adds the credential profile storage model while preserving the current default profile.
 - PR 5 makes CLI and embedding credential selection profile-aware.
-- PR 6 will add the core generic `access_key` acquisition flow after validating the BiliPlus URL/QR
+- PR 6 adds the core generic `access_key` acquisition flow after validating the BiliPlus URL/QR
   authorization behavior observed in the prior `bilibili-helper` implementation.
 - PR 7 will add CLI/docs integration for generic `access_key` acquisition.
 - PR 8 will add append-only danmaku update support for already downloaded entries, including XML
   sidecar merging and regeneration of selected derived formats such as ASS.
 
 ## Next Steps
-- Cut PR 6 from updated `master` and add the core generic `access_key` acquisition flow.
+- Cut PR 7 from updated `master` after PR 6 lands and add CLI/docs integration for generic
+  `access_key` acquisition.
 - Continue one slice at a time through PR 8, updating `master` after each merge before cutting the
   next branch.
 - Keep automatic credential refresh and remaining BBDown parity items outside this eight-PR sequence
@@ -48,3 +49,6 @@ superseded_by:
 - BiliPlus access-key login preflight on 2026-06-15 showed `/login?balh_auth=1` still serves a page
   with QR-code rendering, an authorization URL, and callback data containing `access_key`,
   `refresh_token`, and expiration fields.
+- PR 6 implementation branch: `wip/generic-access-key-auth`.
+- PR 6 local validation before review: `cargo test -p bbdown-core login --locked` and
+  `cargo clippy --workspace --all-targets --locked -- -D warnings`.

@@ -378,6 +378,16 @@ same stored `access_key`. TV token probes use the configured `tv_passport_poll_b
 are contained per credential as `missing`, `valid`, `rejected`, or `request_failed` rather than
 failing the whole report.
 
+Generic access-key acquisition is modeled as a BiliPlus/BALH-compatible browser handoff rather than
+an official Bilibili poller. `AccessKeyLoginConfig` builds the authorization URL with
+`balh_auth=1` and a normalized callback origin; `AccessKeyLoginTicketOutput` exposes the URL, QR
+payload, expected message origin, and callback origin for embedding UIs. The parser accepts the
+historical `balh-login-credentials:` message prefix with either JSON credentials or a URL/query
+callback using `access_key` or `access_token`. `AccessKeyLoginCredentials` preserves optional
+`refresh_token`, absolute `oauth_expires_at`, and relative `expires_in` metadata, but conversion back
+to `Credentials` stores only the generic `access_key`. Refresh scheduling, token rotation, and CLI
+persistence are intentionally separate lifecycle work so embedders can choose their own policy.
+
 QR login is modeled as an explicit state machine in the crate. WEB QR login creates a
 `QrLoginTicket`, which can be converted to `QrLoginTicketOutput` for a stable serialized scan URL and
 QR payload surface, polls waiting-for-scan, waiting-for-confirmation, expired, and succeeded states,
