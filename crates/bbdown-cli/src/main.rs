@@ -1357,7 +1357,7 @@ fn merge_credentials(stored: &mut Credentials, credentials: Credentials) {
 
 fn read_access_key_login_input(args: &AccessKeyLoginArgs) -> anyhow::Result<String> {
     let raw = if args.stdin {
-        ensure_access_key_login_stdin_is_safe(true, io::stdin().is_terminal())?;
+        ensure_access_key_login_stdin_is_safe(io::stdin().is_terminal())?;
         let mut buffer = String::new();
         io::stdin()
             .read_to_string(&mut buffer)
@@ -1371,31 +1371,18 @@ fn read_access_key_login_input(args: &AccessKeyLoginArgs) -> anyhow::Result<Stri
             )
         })?
     } else {
-        ensure_access_key_login_stdin_is_safe(false, io::stdin().is_terminal())?;
-        let mut buffer = String::new();
-        io::stdin()
-            .read_to_string(&mut buffer)
-            .context("failed to read access-key login data from stdin")?;
-        buffer
+        bail!("provide access-key login data through --stdin with piped input or --file");
     };
     let input = raw.trim_end_matches(['\r', '\n']).to_owned();
     ensure!(!input.trim().is_empty(), "access-key login input is empty");
     Ok(input)
 }
 
-fn ensure_access_key_login_stdin_is_safe(
-    explicit_stdin: bool,
-    stdin_is_terminal: bool,
-) -> anyhow::Result<()> {
-    if !stdin_is_terminal {
-        return Ok(());
-    }
-    if explicit_stdin {
+fn ensure_access_key_login_stdin_is_safe(stdin_is_terminal: bool) -> anyhow::Result<()> {
+    if stdin_is_terminal {
         bail!("--stdin requires piped or redirected input to avoid terminal echoing secrets");
     }
-    bail!(
-        "provide access-key login data through --stdin with piped input or --file to avoid terminal echoing secrets"
-    );
+    Ok(())
 }
 
 fn parse_access_key_login_input(
@@ -2533,19 +2520,13 @@ mod tests {
 
     #[test]
     fn access_key_login_stdin_guard_rejects_terminal_input() {
-        let explicit_error = ensure_access_key_login_stdin_is_safe(true, true)
-            .err()
-            .map(|error| error.to_string())
-            .unwrap_or_default();
-        let implicit_error = ensure_access_key_login_stdin_is_safe(false, true)
+        let explicit_error = ensure_access_key_login_stdin_is_safe(true)
             .err()
             .map(|error| error.to_string())
             .unwrap_or_default();
 
         assert!(explicit_error.contains("--stdin requires piped or redirected input"));
-        assert!(implicit_error.contains("--stdin with piped input or --file"));
-        assert!(ensure_access_key_login_stdin_is_safe(true, false).is_ok());
-        assert!(ensure_access_key_login_stdin_is_safe(false, false).is_ok());
+        assert!(ensure_access_key_login_stdin_is_safe(false).is_ok());
     }
 
     #[test]

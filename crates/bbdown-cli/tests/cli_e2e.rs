@@ -2823,6 +2823,29 @@ fn auth_login_access_key_failures_do_not_save_credentials() -> anyhow::Result<()
 }
 
 #[test]
+fn auth_login_access_key_requires_explicit_input_source() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .args(["auth", "login-access-key", "--json"])
+        .write_stdin(r#"balh-login-credentials: {"access_key":"PIPE_SECRET"}"#)
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(output.stderr)?;
+    let stdout = String::from_utf8(output.stdout)?;
+
+    assert!(stderr.contains("provide access-key login data through --stdin"));
+    assert!(!stderr.contains("PIPE_SECRET"));
+    assert!(!stdout.contains("PIPE_SECRET"));
+    assert!(!credential_file.exists());
+    Ok(())
+}
+
+#[test]
 fn auth_qr_login_failures_do_not_save_credentials() -> anyhow::Result<()> {
     let expired_server = MockServer::start();
     let temp = tempfile::tempdir()?;

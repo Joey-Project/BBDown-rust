@@ -59,3 +59,5 @@ superseded_by:
 - PR 7 independent review found that terminal access-key paste paths could echo callback tokens in
   scrollback; the CLI now requires `--file` or piped/redirected `--stdin` for pasted BALH data and
   documents the no-interactive-paste policy.
+- PR 7 Codex review-gate found that implicit piped stdin could still be consumed without `--stdin`;
+  the CLI now rejects missing input-source flags and requires callers to opt in to pipe consumption.

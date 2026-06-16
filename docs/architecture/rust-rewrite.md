@@ -394,7 +394,8 @@ The CLI wraps this core API in `auth login-access-key`: it prints the same autho
 payload, accepts pasted message or callback data through `--stdin` or `--file`, then merges only the
 resulting generic `access_key` into the currently selected credential profile. It deliberately avoids
 interactive secret paste prompts because terminal echo can leak callback tokens into scrollback.
-`--stdin` requires piped or redirected input for the same reason.
+`--stdin` requires piped or redirected input for the same reason, and the command rejects implicit
+stdin so callers must opt in before pipe or redirect input is consumed.
 Automation can use newline-delimited JSON ticket/saved events without receiving token values in stdout.
 
 QR login is modeled as an explicit state machine in the crate. WEB QR login creates a
