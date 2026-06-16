@@ -592,30 +592,40 @@ fn access_key_callback_query(payload: &str) -> Result<String> {
         return Err(Error::MissingField("access-key callback query"));
     }
     if let Ok(url) = url::Url::parse(trimmed) {
-        if let Some(query) = url.query().filter(|query| !query.is_empty()) {
-            return Ok(query.to_owned());
-        }
-        return url
+        let query = url.query().filter(|query| !query.is_empty());
+        let fragment = url
             .fragment()
             .map(str::trim)
-            .filter(|fragment| !fragment.is_empty())
-            .map(str::to_owned)
-            .ok_or(Error::MissingField("access-key callback query"));
+            .filter(|fragment| !fragment.is_empty());
+        return match (query, fragment) {
+            (Some(query), Some(fragment)) => Ok(format!("{query}&{fragment}")),
+            (Some(query), None) => Ok(query.to_owned()),
+            (None, Some(fragment)) => Ok(fragment.to_owned()),
+            (None, None) => Err(Error::MissingField("access-key callback query")),
+        };
     }
-    let candidate = if let Some((_, query)) = trimmed.split_once('?') {
-        query
-    } else if let Some((_, fragment)) = trimmed.split_once('#') {
-        fragment
-    } else {
-        trimmed
+    let (query, fragment) = match (trimmed.split_once('?'), trimmed.split_once('#')) {
+        (Some((_, query)), Some((_, fragment))) => (Some(query), Some(fragment)),
+        (Some((_, query)), None) => (Some(query), None),
+        (None, Some((_, fragment))) => (None, Some(fragment)),
+        (None, None) => (Some(trimmed), None),
     };
-    let query = candidate
-        .trim_start_matches('?')
-        .trim_start_matches('#')
-        .split('#')
-        .next()
-        .unwrap_or_default()
-        .trim();
+    let query = match (query, fragment) {
+        (Some(query), Some(fragment)) => {
+            let query = query.split('#').next().unwrap_or_default().trim();
+            let fragment = fragment.trim();
+            match (query.is_empty(), fragment.is_empty()) {
+                (false, false) => format!("{query}&{fragment}"),
+                (false, true) => query.to_owned(),
+                (true, false) => fragment.to_owned(),
+                (true, true) => String::new(),
+            }
+        }
+        (Some(query), None) => query.trim().to_owned(),
+        (None, Some(fragment)) => fragment.trim().to_owned(),
+        (None, None) => String::new(),
+    };
+    let query = query.trim_start_matches('?').trim_start_matches('#').trim();
     if query.is_empty() {
         return Err(Error::MissingField("access-key callback query"));
     }
@@ -1023,6 +1033,12 @@ mod tests {
         let raw = AccessKeyLoginCredentials::from_balh_payload("#access_key=AK&expires_in=60")?;
         assert_eq!(raw.access_key, "AK");
         assert_eq!(raw.expires_in, Some(60));
+
+        let mixed = AccessKeyLoginCredentials::from_balh_payload(
+            "https://legacy.example/callback?state=csrf#access_token=MIXED&refresh_token=RT",
+        )?;
+        assert_eq!(mixed.access_key, "MIXED");
+        assert_eq!(mixed.refresh_token.as_deref(), Some("RT"));
         Ok(())
     }
 
