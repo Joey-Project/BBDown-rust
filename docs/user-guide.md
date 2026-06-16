@@ -301,7 +301,8 @@ Import credentials when an endpoint requires account access:
 ```bash
 bbdown auth import-cookie --stdin
 bbdown auth import-access-key --stdin
-bbdown auth login-access-key --stdin
+bbdown auth login-access-key --stdin < balh-callback.txt
+bbdown auth login-access-key --file balh-callback.txt
 bbdown auth login-web
 bbdown auth login-tv
 bbdown auth status
@@ -314,10 +315,11 @@ provided. Use `--credential-file <path>` to isolate test credentials from the de
 config path. `auth login-access-key` prints a BiliPlus/BALH-compatible authorization URL plus
 `qr_payload`, then reads a pasted `balh-login-credentials:` message or callback URL/query from
 `--stdin` or `--file`, then saves the resulting generic intl/Bstar access key. It does not offer an
-interactive paste prompt because terminal echo can expose token values in scrollback. Use
-`--message-origin` when ingesting browser `postMessage` data so the sender origin is checked against
-the login ticket; trusted manual callback URL/query input does not need that flag. Use `--auth-base`
-and `--callback-origin` for compatible mocks or deployments.
+interactive paste prompt because terminal echo can expose token values in scrollback; `--stdin`
+must be piped or redirected and will reject terminal stdin. Use `--message-origin` when ingesting
+browser `postMessage` data so the sender origin is checked against the login ticket; trusted manual
+callback URL/query input does not need that flag. Use `--auth-base` and `--callback-origin` for
+compatible mocks or deployments.
 `auth login-web` prints a QR login URL, polls until scan confirmation, and saves the resulting
 cookie. `auth login-tv` uses the TV QR flow and saves a TV-specific access key for future TV/app
 flows without overwriting the generic intl/Bstar access key imported or acquired through the generic
@@ -350,7 +352,7 @@ bbdown --comment-base http://127.0.0.1:8080 download av170001 --output-dir downl
 bbdown --passport-base http://127.0.0.1:8080 auth login-web
 bbdown --tv-passport-base http://127.0.0.1:8080 auth login-tv
 bbdown --tv-passport-base http://127.0.0.1:8080 --tv-passport-poll-base http://127.0.0.1:8081 auth login-tv
-bbdown auth login-access-key --auth-base http://127.0.0.1:8080 --callback-origin http://127.0.0.1:3000 --stdin
+bbdown auth login-access-key --auth-base http://127.0.0.1:8080 --callback-origin http://127.0.0.1:3000 --stdin < balh-callback.txt
 ```
 
 Current intl support uses official intl metadata/subtitle endpoints and the official signed intl OGV

@@ -270,7 +270,8 @@ fallback host，即使它们并不像 PCDN。存在 `--upos-host` 时，它优�
 ```bash
 bbdown auth import-cookie --stdin
 bbdown auth import-access-key --stdin
-bbdown auth login-access-key --stdin
+bbdown auth login-access-key --stdin < balh-callback.txt
+bbdown auth login-access-key --file balh-callback.txt
 bbdown auth login-web
 bbdown auth login-tv
 bbdown auth status
@@ -283,9 +284,10 @@ bbdown auth logout
 会打印 BiliPlus/BALH-compatible 授权 URL 和 `qr_payload`，然后从 `--stdin` 或 `--file` 读
 取粘贴的 `balh-login-credentials:` message 或 callback URL/query，并保存得到的通用
 intl/Bstar access key。它不会提供交互粘贴 prompt，因为终端 echo 可能把 token 值暴露在
-scrollback 中。如果输入来自浏览器 `postMessage`，请使用 `--message-origin`，这样 CLI 会把
-sender origin 与本次 login ticket 校验；可信的手工 callback URL/query 输入不需要该标志。
-兼容 mock 或部署可以使用 `--auth-base` 和 `--callback-origin`。`auth login-web` 打印二维码登录 URL，轮询到扫码确认，并保存得到的
+scrollback 中；`--stdin` 必须来自 pipe 或 redirect，并会拒绝 terminal stdin。如果输入来自
+浏览器 `postMessage`，请使用 `--message-origin`，这样 CLI 会把 sender origin 与本次 login
+ticket 校验；可信的手工 callback URL/query 输入不需要该标志。兼容 mock 或部署可以使用
+`--auth-base` 和 `--callback-origin`。`auth login-web` 打印二维码登录 URL，轮询到扫码确认，并保存得到的
 cookie。`auth login-tv` 使用 TV 二维码流程，保存 TV 专用 access key 供未来 TV/app 流程使
 用，不会覆盖由通用 access-key 命令导入或获取的 intl/Bstar access key。使用 `--json` 时，
 登录命令会打印换行分隔 JSON 事件：`ticket` 在轮询或 handoff 前包含登录 URL 和
@@ -315,7 +317,7 @@ bbdown --comment-base http://127.0.0.1:8080 download av170001 --output-dir downl
 bbdown --passport-base http://127.0.0.1:8080 auth login-web
 bbdown --tv-passport-base http://127.0.0.1:8080 auth login-tv
 bbdown --tv-passport-base http://127.0.0.1:8080 --tv-passport-poll-base http://127.0.0.1:8081 auth login-tv
-bbdown auth login-access-key --auth-base http://127.0.0.1:8080 --callback-origin http://127.0.0.1:3000 --stdin
+bbdown auth login-access-key --auth-base http://127.0.0.1:8080 --callback-origin http://127.0.0.1:3000 --stdin < balh-callback.txt
 ```
 
 当前 intl 支持使用官方 intl 元数据/字幕端点，以及在配置 access key 时使用官方签名 intl

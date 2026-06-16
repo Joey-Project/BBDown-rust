@@ -180,7 +180,8 @@ Manage local credentials:
 bbdown auth import-cookie --stdin
 bbdown auth import-cookie --file cookie.txt
 bbdown auth import-access-key --stdin
-bbdown auth login-access-key --stdin
+bbdown auth login-access-key --stdin < balh-callback.txt
+bbdown auth login-access-key --file balh-callback.txt
 bbdown auth login-web
 bbdown auth login-tv
 bbdown auth status
@@ -195,8 +196,9 @@ provided, so callers can avoid passing credentials through process arguments. `a
 prints a BiliPlus/BALH-compatible authorization URL plus QR payload, then reads a pasted
 `balh-login-credentials:` message or callback URL/query from `--stdin` or `--file`, then saves the
 resulting generic intl/Bstar access key. It does not offer an interactive paste prompt because
-terminal echo can expose token values in scrollback; use `--message-origin` when ingesting browser
-`postMessage` data and `--auth-base` / `--callback-origin` for compatible mocks or deployments.
+terminal echo can expose token values in scrollback; `--stdin` must be piped or redirected and will
+reject terminal stdin. Use `--message-origin` when ingesting browser `postMessage` data and
+`--auth-base` / `--callback-origin` for compatible mocks or deployments.
 QR login commands poll the Bilibili QR state machine and save only the resulting credential. WEB QR
 login saves a cookie; TV QR login saves a TV-specific access
 key without overwriting the generic intl/Bstar access key. With `--json`, login commands emit

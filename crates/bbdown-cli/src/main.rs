@@ -511,7 +511,7 @@ struct AccessKeyLoginArgs {
     #[arg(
         long,
         conflicts_with = "file",
-        help = "Read pasted BALH message or callback URL/query from stdin"
+        help = "Read pasted BALH message or callback URL/query from piped or redirected stdin"
     )]
     stdin: bool,
     #[arg(
@@ -1357,6 +1357,7 @@ fn merge_credentials(stored: &mut Credentials, credentials: Credentials) {
 
 fn read_access_key_login_input(args: &AccessKeyLoginArgs) -> anyhow::Result<String> {
     let raw = if args.stdin {
+        ensure_access_key_login_stdin_is_safe(true, io::stdin().is_terminal())?;
         let mut buffer = String::new();
         io::stdin()
             .read_to_string(&mut buffer)
@@ -1370,10 +1371,7 @@ fn read_access_key_login_input(args: &AccessKeyLoginArgs) -> anyhow::Result<Stri
             )
         })?
     } else {
-        ensure!(
-            !io::stdin().is_terminal(),
-            "provide access-key login data through --stdin or --file to avoid terminal echoing secrets"
-        );
+        ensure_access_key_login_stdin_is_safe(false, io::stdin().is_terminal())?;
         let mut buffer = String::new();
         io::stdin()
             .read_to_string(&mut buffer)
@@ -1383,6 +1381,21 @@ fn read_access_key_login_input(args: &AccessKeyLoginArgs) -> anyhow::Result<Stri
     let input = raw.trim_end_matches(['\r', '\n']).to_owned();
     ensure!(!input.trim().is_empty(), "access-key login input is empty");
     Ok(input)
+}
+
+fn ensure_access_key_login_stdin_is_safe(
+    explicit_stdin: bool,
+    stdin_is_terminal: bool,
+) -> anyhow::Result<()> {
+    if !stdin_is_terminal {
+        return Ok(());
+    }
+    if explicit_stdin {
+        bail!("--stdin requires piped or redirected input to avoid terminal echoing secrets");
+    }
+    bail!(
+        "provide access-key login data through --stdin with piped input or --file to avoid terminal echoing secrets"
+    );
 }
 
 fn parse_access_key_login_input(
@@ -1885,8 +1898,9 @@ fn _assert_credentials_send_sync(_: Credentials) {}
 mod tests {
     use super::{
         Cli, CredentialRuntime, archive_sidecar_path, credential_profile_selection,
-        endpoints_from_cli, ensure_archive_file_is_not_output_root, next_poll_sleep,
-        parse_access_key_login_input, remaining_until, restricted_area_from_cli_with_args,
+        endpoints_from_cli, ensure_access_key_login_stdin_is_safe,
+        ensure_archive_file_is_not_output_root, next_poll_sleep, parse_access_key_login_input,
+        remaining_until, restricted_area_from_cli_with_args,
         restricted_area_from_cli_with_env_values, save_credentials,
         should_prompt_duplicate_decision, validate_media_host_spec,
     };
@@ -2515,6 +2529,23 @@ mod tests {
         assert!(bad_origin.contains("access-key login message origin does not match ticket"));
         assert!(raw_payload_with_origin.contains("--message-origin can only be used"));
         Ok(())
+    }
+
+    #[test]
+    fn access_key_login_stdin_guard_rejects_terminal_input() {
+        let explicit_error = ensure_access_key_login_stdin_is_safe(true, true)
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
+        let implicit_error = ensure_access_key_login_stdin_is_safe(false, true)
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
+
+        assert!(explicit_error.contains("--stdin requires piped or redirected input"));
+        assert!(implicit_error.contains("--stdin with piped input or --file"));
+        assert!(ensure_access_key_login_stdin_is_safe(true, false).is_ok());
+        assert!(ensure_access_key_login_stdin_is_safe(false, false).is_ok());
     }
 
     #[test]
