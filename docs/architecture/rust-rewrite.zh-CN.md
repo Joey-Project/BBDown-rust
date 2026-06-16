@@ -330,6 +330,18 @@ cookie。通用 token probe 当前通过配置的 `passport_base` 检查 intl/Bs
 配置的 `tv_passport_poll_base`。probe failure 会按凭据独立记录为 `missing`、`valid`、
 `rejected` 或 `request_failed`，不会让整份报告失败。
 
+通用 access-key 获取被建模为 BiliPlus/BALH-compatible browser handoff，而不是官方 Bilibili
+poller。`AccessKeyLoginConfig` 会用 `balh_auth=1` 和归一化 callback origin 构造授权 URL；
+`AccessKeyLoginTicketOutput` 会暴露 URL、QR payload、预期 message origin 和 callback origin，
+供嵌入 UI 使用。parser 接受历史 `balh-login-credentials:` message prefix；payload 可以是
+JSON credentials，也可以是使用 `access_key` 或 `access_token` 的 URL/query callback。
+`AccessKeyLoginCredentials` 会保留可选的 `refresh_token`、绝对 `oauth_expires_at` 和相对
+`expires_in` metadata，但转回 `Credentials` 时只保存通用 `access_key`。refresh scheduling、
+token rotation 和 CLI persistence 会作为独立 lifecycle 工作处理，让嵌入方可以选择自己的策略。
+browser `postMessage` consumer 应通过 ticket/output 的 `credentials_from_message` helper
+解析，它会先把 sender origin 与可信 auth origin 或 callback origin 校验，再使用 raw BALH
+payload parser。
+
 二维码登录在 crate 中建模为显式状态机。WEB 二维码登录创建 `QrLoginTicket`，它可以转换为
 `QrLoginTicketOutput`，提供稳定的可序列化扫码 URL 和 QR payload 表面；随后轮询
 waiting-for-scan、waiting-for-confirmation、expired 和 succeeded 状态，然后返回 cookie 凭据。TV

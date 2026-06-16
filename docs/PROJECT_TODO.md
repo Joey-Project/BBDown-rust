@@ -55,7 +55,7 @@
 - [completed] Add multi-account credential profile storage while preserving default-profile
   behavior.
 - [completed] Make CLI and embedding credential selection profile-aware.
-- [pending] Add the core generic `access_key` acquisition flow after validating the historical
+- [completed] Add the core generic `access_key` acquisition flow after validating the historical
   BiliPlus QR/URL authorization approach.
 - [pending] Add CLI/docs integration for generic `access_key` acquisition.
 - [pending] Add append-only danmaku update workflows that can update XML sidecars and regenerate

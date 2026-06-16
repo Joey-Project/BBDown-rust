@@ -211,6 +211,17 @@ duplicating the migration behavior.
 For QR login, convert `QrLoginTicket` to `QrLoginTicketOutput` when a downstream application needs a
 stable serialized scan URL and `qr_payload`; current WEB and TV login flows use the scan URL itself
 as the QR payload.
+For generic access-key authorization, `AccessKeyLoginConfig::biliplus(callback_origin)` builds a
+BiliPlus/BALH-compatible browser handoff URL whose `AccessKeyLoginTicketOutput::qr_payload` can be
+rendered directly as a QR code. The parser accepts the historical `balh-login-credentials:` message
+shape with either a JSON payload or URL/query callback, returning `AccessKeyLoginCredentials` with the
+generic `access_key` plus optional refresh/expiration metadata. Calling `credentials()` converts only
+the generic access key into the existing `Credentials` model; automatic refresh and CLI persistence
+are separate lifecycle concerns. In browser `postMessage` flows, prefer
+`AccessKeyLoginTicketOutput::credentials_from_message(event_origin, data)` so the sender origin is
+validated against the ticket's trusted auth or callback origin before parsing. Use the raw
+`AccessKeyLoginCredentials::from_balh_*` parsers only after an embedding application has already
+validated message provenance.
 Call `BiliClient::check_credential_health()` when an embedding project needs a redacted diagnostic
 report before deciding whether to prompt for login, import a token, or continue with anonymous
 requests. The report includes one probe each for the WEB cookie, generic `access_key`, and TV
@@ -220,7 +231,10 @@ applications that need APP gRPC or proxy-specific assurance should treat that as
 decision. Probe messages are sanitized before they are serialized.
 
 ```rust,no_run
-use bbdown_core::{BiliClient, ClientConfig, CredentialProfileSelection, CredentialStore, Credentials};
+use bbdown_core::{
+    AccessKeyLoginConfig, AccessKeyLoginCredentials, AccessKeyLoginTicketOutput, BiliClient,
+    ClientConfig, CredentialProfileSelection, CredentialStore, Credentials,
+};
 
 async fn check_credentials() {
     let credentials = Credentials::default()
@@ -235,6 +249,25 @@ async fn check_credentials() {
 fn load_named_profile(store: &CredentialStore, profile: &str) -> bbdown_core::Result<Credentials> {
     let selection = CredentialProfileSelection::named(profile)?;
     store.load_selected_profile(&selection)
+}
+
+fn access_key_login_ticket() -> bbdown_core::Result<AccessKeyLoginTicketOutput> {
+    let config = AccessKeyLoginConfig::biliplus("https://www.bilibili.com")?;
+    Ok(config.ticket()?.output())
+}
+
+fn access_key_from_balh_message(
+    ticket: &AccessKeyLoginTicketOutput,
+    event_origin: &str,
+    message: &str,
+) -> bbdown_core::Result<Credentials> {
+    Ok(ticket
+        .credentials_from_message(event_origin, message)?
+        .credentials())
+}
+
+fn access_key_from_trusted_payload(message: &str) -> bbdown_core::Result<Credentials> {
+    Ok(AccessKeyLoginCredentials::from_balh_message(message)?.credentials())
 }
 ```
 

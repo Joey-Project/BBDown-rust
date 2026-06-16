@@ -200,6 +200,16 @@ profile / 命名 profile 路由语义，因此嵌入方可以绑定用户选择�
 对于二维码登录，如果下游应用需要稳定的可序列化扫码 URL 和 `qr_payload`，可以把
 `QrLoginTicket` 转换成 `QrLoginTicketOutput`；当前 WEB 和 TV 登录流程会直接使用扫码 URL
 作为 QR payload。
+对于通用 access-key 授权，`AccessKeyLoginConfig::biliplus(callback_origin)` 会构造
+BiliPlus/BALH-compatible browser handoff URL；`AccessKeyLoginTicketOutput::qr_payload` 可以
+直接渲染成二维码。parser 接受历史 `balh-login-credentials:` message shape，payload 可以是
+JSON，也可以是 URL/query callback；返回的 `AccessKeyLoginCredentials` 包含通用
+`access_key` 以及可选的 refresh/expiration metadata。调用 `credentials()` 只会把通用
+access key 转成现有 `Credentials` model；自动续期和 CLI 持久化属于独立 lifecycle 事项。
+在 browser `postMessage` flow 中，应优先使用
+`AccessKeyLoginTicketOutput::credentials_from_message(event_origin, data)`，让 sender origin
+先按 ticket 的可信 auth origin 或 callback origin 校验后再解析。只有当嵌入应用已经自行验证
+message provenance 时，才直接使用 raw `AccessKeyLoginCredentials::from_balh_*` parser。
 当嵌入项目需要在决定提示登录、导入 token 或继续匿名请求前做脱敏诊断时，可以调用
 `BiliClient::check_credential_health()`。报告会分别包含 WEB cookie、通用 `access_key` 和
 TV `tv_access_key` 的 probe；`kind` 表示凭据槽位，`scope` 表示实际检查的消费场景。通用
@@ -207,7 +217,10 @@ TV `tv_access_key` 的 probe；`kind` 表示凭据槽位，`scope` 表示实际�
 proxy-specific assurance，应把它作为单独策略判断。probe message 在序列化前会先脱敏。
 
 ```rust,no_run
-use bbdown_core::{BiliClient, ClientConfig, CredentialProfileSelection, CredentialStore, Credentials};
+use bbdown_core::{
+    AccessKeyLoginConfig, AccessKeyLoginCredentials, AccessKeyLoginTicketOutput, BiliClient,
+    ClientConfig, CredentialProfileSelection, CredentialStore, Credentials,
+};
 
 async fn check_credentials() {
     let credentials = Credentials::default()
@@ -222,6 +235,25 @@ async fn check_credentials() {
 fn load_named_profile(store: &CredentialStore, profile: &str) -> bbdown_core::Result<Credentials> {
     let selection = CredentialProfileSelection::named(profile)?;
     store.load_selected_profile(&selection)
+}
+
+fn access_key_login_ticket() -> bbdown_core::Result<AccessKeyLoginTicketOutput> {
+    let config = AccessKeyLoginConfig::biliplus("https://www.bilibili.com")?;
+    Ok(config.ticket()?.output())
+}
+
+fn access_key_from_balh_message(
+    ticket: &AccessKeyLoginTicketOutput,
+    event_origin: &str,
+    message: &str,
+) -> bbdown_core::Result<Credentials> {
+    Ok(ticket
+        .credentials_from_message(event_origin, message)?
+        .credentials())
+}
+
+fn access_key_from_trusted_payload(message: &str) -> bbdown_core::Result<Credentials> {
+    Ok(AccessKeyLoginCredentials::from_balh_message(message)?.credentials())
 }
 ```
 
