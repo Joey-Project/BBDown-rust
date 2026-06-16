@@ -342,9 +342,10 @@ browser `postMessage` consumer 应通过 ticket/output 的 `credentials_from_mes
 解析，它会先把 sender origin 与可信 auth origin 或 callback origin 校验，再使用 raw BALH
 payload parser。
 CLI 用 `auth login-access-key` 包装这个 core API：它会打印同一组授权 URL 和 QR payload，
-通过 stdin、文件或交互输入接收粘贴的 message 或 callback data，然后只把得到的通用
-`access_key` merge 到当前选择的 credential profile。自动化可以读取换行分隔 JSON
-ticket/saved 事件，stdout 中不会包含 token 值。
+通过 `--stdin` 或 `--file` 接收粘贴的 message 或 callback data，然后只把得到的通用
+`access_key` merge 到当前选择的 credential profile。它会刻意避免交互式 secret paste
+prompt，因为终端 echo 可能把 callback token 泄露到 scrollback 中。自动化可以读取换行分隔
+JSON ticket/saved 事件，stdout 中不会包含 token 值。
 
 二维码登录在 crate 中建模为显式状态机。WEB 二维码登录创建 `QrLoginTicket`，它可以转换为
 `QrLoginTicketOutput`，提供稳定的可序列化扫码 URL 和 QR payload 表面；随后轮询

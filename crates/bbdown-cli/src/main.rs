@@ -206,6 +206,7 @@ enum AuthCommand {
     ImportAccessKey(SecretImportArgs),
     LoginWeb(QrLoginArgs),
     LoginTv(QrLoginArgs),
+    #[command(about = "Acquire a generic access key through a BiliPlus/BALH browser handoff")]
     LoginAccessKey(AccessKeyLoginArgs),
     Logout,
 }
@@ -485,21 +486,39 @@ struct QrLoginArgs {
 
 #[derive(Debug, Args)]
 struct AccessKeyLoginArgs {
-    #[arg(long)]
+    #[arg(long, help = "Emit newline-delimited JSON ticket and saved events")]
     json: bool,
-    #[arg(long, default_value = DEFAULT_ACCESS_KEY_AUTH_BASE, value_name = "URL")]
+    #[arg(
+        long,
+        default_value = DEFAULT_ACCESS_KEY_AUTH_BASE,
+        value_name = "URL",
+        help = "BiliPlus/BALH-compatible authorization base URL"
+    )]
     auth_base: String,
     #[arg(
         long,
         default_value = DEFAULT_ACCESS_KEY_CALLBACK_ORIGIN,
-        value_name = "ORIGIN"
+        value_name = "ORIGIN",
+        help = "Callback origin passed to the authorization page"
     )]
     callback_origin: String,
-    #[arg(long, value_name = "ORIGIN")]
+    #[arg(
+        long,
+        value_name = "ORIGIN",
+        help = "Validate a browser postMessage sender origin before parsing BALH data"
+    )]
     message_origin: Option<String>,
-    #[arg(long, conflicts_with = "file")]
+    #[arg(
+        long,
+        conflicts_with = "file",
+        help = "Read pasted BALH message or callback URL/query from stdin"
+    )]
     stdin: bool,
-    #[arg(long, value_name = "PATH")]
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Read pasted BALH message or callback URL/query from a file"
+    )]
     file: Option<PathBuf>,
 }
 
@@ -1350,14 +1369,11 @@ fn read_access_key_login_input(args: &AccessKeyLoginArgs) -> anyhow::Result<Stri
                 path.display()
             )
         })?
-    } else if io::stdin().is_terminal() {
-        eprintln!("paste BALH credentials message or callback URL/query, then press Enter:");
-        let mut line = String::new();
-        io::stdin()
-            .read_line(&mut line)
-            .context("failed to read access-key login data from stdin")?;
-        line
     } else {
+        ensure!(
+            !io::stdin().is_terminal(),
+            "provide access-key login data through --stdin or --file to avoid terminal echoing secrets"
+        );
         let mut buffer = String::new();
         io::stdin()
             .read_to_string(&mut buffer)

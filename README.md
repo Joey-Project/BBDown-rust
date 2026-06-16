@@ -193,11 +193,12 @@ Credentials are stored in the platform config directory by default. Use
 Secret import commands also read `BBDOWN_COOKIE` or `BBDOWN_ACCESS_KEY` when no input flag is
 provided, so callers can avoid passing credentials through process arguments. `auth login-access-key`
 prints a BiliPlus/BALH-compatible authorization URL plus QR payload, then reads a pasted
-`balh-login-credentials:` message or callback URL/query from stdin, `--file`, or an interactive
-prompt. It saves the resulting generic intl/Bstar access key without printing token values; use
-`--message-origin` when ingesting browser `postMessage` data and `--auth-base` / `--callback-origin`
-for compatible mocks or deployments. QR login commands poll the Bilibili QR state machine and save
-only the resulting credential. WEB QR login saves a cookie; TV QR login saves a TV-specific access
+`balh-login-credentials:` message or callback URL/query from `--stdin` or `--file`, then saves the
+resulting generic intl/Bstar access key. It does not offer an interactive paste prompt because
+terminal echo can expose token values in scrollback; use `--message-origin` when ingesting browser
+`postMessage` data and `--auth-base` / `--callback-origin` for compatible mocks or deployments.
+QR login commands poll the Bilibili QR state machine and save only the resulting credential. WEB QR
+login saves a cookie; TV QR login saves a TV-specific access
 key without overwriting the generic intl/Bstar access key. With `--json`, login commands emit
 newline-delimited JSON events: a `ticket` event with the login URL and `qr_payload` before the
 credential handoff or poll, then a `saved` event after credentials are stored. The current WEB and

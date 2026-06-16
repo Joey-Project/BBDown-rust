@@ -313,10 +313,11 @@ Secret import commands also read `BBDOWN_COOKIE` and `BBDOWN_ACCESS_KEY` when no
 provided. Use `--credential-file <path>` to isolate test credentials from the default platform
 config path. `auth login-access-key` prints a BiliPlus/BALH-compatible authorization URL plus
 `qr_payload`, then reads a pasted `balh-login-credentials:` message or callback URL/query from
-stdin, `--file`, or an interactive prompt. It saves the resulting generic intl/Bstar access key
-without printing token values. Use `--message-origin` when ingesting browser `postMessage` data so
-the sender origin is checked against the login ticket; trusted manual callback URL/query input does
-not need that flag. Use `--auth-base` and `--callback-origin` for compatible mocks or deployments.
+`--stdin` or `--file`, then saves the resulting generic intl/Bstar access key. It does not offer an
+interactive paste prompt because terminal echo can expose token values in scrollback. Use
+`--message-origin` when ingesting browser `postMessage` data so the sender origin is checked against
+the login ticket; trusted manual callback URL/query input does not need that flag. Use `--auth-base`
+and `--callback-origin` for compatible mocks or deployments.
 `auth login-web` prints a QR login URL, polls until scan confirmation, and saves the resulting
 cookie. `auth login-tv` uses the TV QR flow and saves a TV-specific access key for future TV/app
 flows without overwriting the generic intl/Bstar access key imported or acquired through the generic

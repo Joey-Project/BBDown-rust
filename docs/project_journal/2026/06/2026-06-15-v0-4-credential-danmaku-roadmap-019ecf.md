@@ -56,3 +56,6 @@ superseded_by:
 - PR 7 branch: `wip/access-key-login-cli`.
 - PR 7 local targeted validation: `cargo test -p bbdown-cli access_key --locked`.
 - PR 7 local full validation: `just ci`.
+- PR 7 independent review found that an interactive access-key paste prompt would echo callback
+  tokens in terminal scrollback; the CLI now requires `--stdin` or `--file` for pasted BALH data and
+  documents the no-interactive-paste policy.

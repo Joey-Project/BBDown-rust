@@ -391,10 +391,10 @@ Browser `postMessage` consumers should parse through the ticket/output `credenti
 helpers, which validate the sender origin against the trusted auth or callback origin before using
 the raw BALH payload parser.
 The CLI wraps this core API in `auth login-access-key`: it prints the same authorization URL and QR
-payload, accepts pasted message or callback data through stdin, file, or interactive input, then
-merges only the resulting generic `access_key` into the currently selected credential profile.
-Automation can use newline-delimited JSON ticket/saved events without receiving token values in
-stdout.
+payload, accepts pasted message or callback data through `--stdin` or `--file`, then merges only the
+resulting generic `access_key` into the currently selected credential profile. It deliberately avoids
+interactive secret paste prompts because terminal echo can leak callback tokens into scrollback.
+Automation can use newline-delimited JSON ticket/saved events without receiving token values in stdout.
 
 QR login is modeled as an explicit state machine in the crate. WEB QR login creates a
 `QrLoginTicket`, which can be converted to `QrLoginTicketOutput` for a stable serialized scan URL and
