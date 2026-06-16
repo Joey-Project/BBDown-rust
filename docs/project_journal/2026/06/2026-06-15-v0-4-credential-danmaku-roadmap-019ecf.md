@@ -49,6 +49,7 @@ superseded_by:
 - BiliPlus access-key login preflight on 2026-06-15 showed `/login?balh_auth=1` still serves a page
   with QR-code rendering, an authorization URL, and callback data containing `access_key`,
   `refresh_token`, and expiration fields.
-- PR 6 implementation branch: `wip/generic-access-key-auth`.
+- PR 6: `https://github.com/Joey-Project/BBDown-rust/pull/47` on branch
+  `wip/generic-access-key-auth`.
 - PR 6 local validation before review: `cargo test -p bbdown-core login --locked` and
   `cargo clippy --workspace --all-targets --locked -- -D warnings`.
