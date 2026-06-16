@@ -3,14 +3,14 @@
 
 use anyhow::{Context, bail, ensure};
 use bbdown_core::{
-    BiliClient, ClientConfig, CredentialHealthReport, CredentialHealthScope,
-    CredentialHealthStatus, CredentialKind, CredentialProfileSelection, CredentialStore,
-    Credentials, DanmakuFormat, DownloadArchive, DownloadMode, DownloadOptions,
-    DownloadPathTemplates, DownloadPreflight, DownloadReport, DuplicateDecision, EndpointConfig,
-    MediaHostOptions, MediaStream, MuxOptions, PlaybackPlan, PlayurlMode, QrLoginKind,
-    QrLoginState, QrLoginTicket, QrLoginTicketOutput, ResolvedContent, RestrictedArea,
-    RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection,
-    StreamQuality, StreamSelection, StreamSet,
+    AccessKeyLoginConfig, AccessKeyLoginCredentials, AccessKeyLoginTicketOutput, BiliClient,
+    ClientConfig, CredentialHealthReport, CredentialHealthScope, CredentialHealthStatus,
+    CredentialKind, CredentialProfileSelection, CredentialStore, Credentials, DanmakuFormat,
+    DownloadArchive, DownloadMode, DownloadOptions, DownloadPathTemplates, DownloadPreflight,
+    DownloadReport, DuplicateDecision, EndpointConfig, MediaHostOptions, MediaStream, MuxOptions,
+    PlaybackPlan, PlayurlMode, QrLoginKind, QrLoginState, QrLoginTicket, QrLoginTicketOutput,
+    ResolvedContent, RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy,
+    RestrictedAreaProxyKind, RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::ffi::{OsStr, OsString};
@@ -18,6 +18,10 @@ use std::fs;
 use std::io::{self, IsTerminal, Read};
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, Instant};
+
+const DEFAULT_ACCESS_KEY_AUTH_BASE: &str = "https://www.biliplus.com";
+const DEFAULT_ACCESS_KEY_CALLBACK_ORIGIN: &str = "https://www.bilibili.com";
+const BALH_LOGIN_CREDENTIALS_PREFIX: &str = "balh-login-credentials:";
 
 #[derive(Debug, Parser)]
 #[command(name = "bbdown")]
@@ -202,6 +206,7 @@ enum AuthCommand {
     ImportAccessKey(SecretImportArgs),
     LoginWeb(QrLoginArgs),
     LoginTv(QrLoginArgs),
+    LoginAccessKey(AccessKeyLoginArgs),
     Logout,
 }
 
@@ -476,6 +481,26 @@ struct QrLoginArgs {
     timeout_seconds: u64,
     #[arg(long, default_value_t = 1)]
     poll_interval_seconds: u64,
+}
+
+#[derive(Debug, Args)]
+struct AccessKeyLoginArgs {
+    #[arg(long)]
+    json: bool,
+    #[arg(long, default_value = DEFAULT_ACCESS_KEY_AUTH_BASE, value_name = "URL")]
+    auth_base: String,
+    #[arg(
+        long,
+        default_value = DEFAULT_ACCESS_KEY_CALLBACK_ORIGIN,
+        value_name = "ORIGIN"
+    )]
+    callback_origin: String,
+    #[arg(long, value_name = "ORIGIN")]
+    message_origin: Option<String>,
+    #[arg(long, conflicts_with = "file")]
+    stdin: bool,
+    #[arg(long, value_name = "PATH")]
+    file: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -1140,6 +1165,9 @@ async fn handle_auth(
         AuthCommand::LoginTv(args) => {
             handle_qr_login(QrLoginKind::Tv, args, credential_runtime, client_runtime).await?;
         }
+        AuthCommand::LoginAccessKey(args) => {
+            handle_access_key_login(&args, credential_runtime)?;
+        }
         AuthCommand::Logout => {
             credential_runtime.logout()?;
             println!("credentials cleared");
@@ -1225,7 +1253,7 @@ async fn handle_qr_login(
         print_human_line(format_args!("scan: {}", output.url))?;
     }
     let credentials = wait_for_qr_login(&client, &ticket, &args).await?;
-    let summary = save_qr_credentials(credential_runtime, credentials)?;
+    let summary = save_credentials(credential_runtime, credentials)?;
     if args.json {
         print_json_line(&serde_json::json!({
             "event": "saved",
@@ -1234,6 +1262,34 @@ async fn handle_qr_login(
         }))?;
     } else {
         print_human_line("credentials saved")?;
+    }
+    Ok(())
+}
+
+fn handle_access_key_login(
+    args: &AccessKeyLoginArgs,
+    credential_runtime: &CredentialRuntime,
+) -> anyhow::Result<()> {
+    let ticket = AccessKeyLoginConfig::new(&args.auth_base, &args.callback_origin)?.ticket()?;
+    let output = ticket.output();
+    if args.json {
+        print_access_key_ticket_json(&output)?;
+    } else {
+        print_human_line(format_args!("authorization: {}", output.url))?;
+        print_human_line(format_args!("qr_payload: {}", output.qr_payload))?;
+    }
+    let input = read_access_key_login_input(args)?;
+    let credentials =
+        parse_access_key_login_input(&output, args.message_origin.as_deref(), &input)?;
+    let summary = save_credentials(credential_runtime, credentials.credentials())?;
+    if args.json {
+        print_json_line(&serde_json::json!({
+            "event": "saved",
+            "kind": "access_key",
+            "saved": summary,
+        }))?;
+    } else {
+        print_human_line("access key saved")?;
     }
     Ok(())
 }
@@ -1247,7 +1303,18 @@ fn print_qr_ticket_json(output: &QrLoginTicketOutput) -> anyhow::Result<()> {
     }))
 }
 
-fn save_qr_credentials(
+fn print_access_key_ticket_json(output: &AccessKeyLoginTicketOutput) -> anyhow::Result<()> {
+    print_json_line(&serde_json::json!({
+        "event": "ticket",
+        "kind": "access_key",
+        "url": output.url,
+        "qr_payload": output.qr_payload,
+        "message_origin": output.message_origin,
+        "callback_origin": output.callback_origin,
+    }))
+}
+
+fn save_credentials(
     credential_runtime: &CredentialRuntime,
     credentials: Credentials,
 ) -> anyhow::Result<bbdown_core::CredentialSource> {
@@ -1267,6 +1334,59 @@ fn merge_credentials(stored: &mut Credentials, credentials: Credentials) {
     if credentials.tv_access_key.is_some() {
         stored.tv_access_key = credentials.tv_access_key;
     }
+}
+
+fn read_access_key_login_input(args: &AccessKeyLoginArgs) -> anyhow::Result<String> {
+    let raw = if args.stdin {
+        let mut buffer = String::new();
+        io::stdin()
+            .read_to_string(&mut buffer)
+            .context("failed to read access-key login data from stdin")?;
+        buffer
+    } else if let Some(path) = &args.file {
+        fs::read_to_string(path).with_context(|| {
+            format!(
+                "failed to read access-key login data from {}",
+                path.display()
+            )
+        })?
+    } else if io::stdin().is_terminal() {
+        eprintln!("paste BALH credentials message or callback URL/query, then press Enter:");
+        let mut line = String::new();
+        io::stdin()
+            .read_line(&mut line)
+            .context("failed to read access-key login data from stdin")?;
+        line
+    } else {
+        let mut buffer = String::new();
+        io::stdin()
+            .read_to_string(&mut buffer)
+            .context("failed to read access-key login data from stdin")?;
+        buffer
+    };
+    let input = raw.trim_end_matches(['\r', '\n']).to_owned();
+    ensure!(!input.trim().is_empty(), "access-key login input is empty");
+    Ok(input)
+}
+
+fn parse_access_key_login_input(
+    ticket: &AccessKeyLoginTicketOutput,
+    message_origin: Option<&str>,
+    input: &str,
+) -> anyhow::Result<AccessKeyLoginCredentials> {
+    let input = input.trim();
+    if input.starts_with(BALH_LOGIN_CREDENTIALS_PREFIX) {
+        return if let Some(origin) = message_origin {
+            Ok(ticket.credentials_from_message(origin, input)?)
+        } else {
+            Ok(AccessKeyLoginCredentials::from_balh_message(input)?)
+        };
+    }
+    ensure!(
+        message_origin.is_none(),
+        "--message-origin can only be used with balh-login-credentials message input"
+    );
+    Ok(AccessKeyLoginCredentials::from_balh_payload(input)?)
 }
 
 async fn wait_for_qr_login(
@@ -1750,13 +1870,13 @@ mod tests {
     use super::{
         Cli, CredentialRuntime, archive_sidecar_path, credential_profile_selection,
         endpoints_from_cli, ensure_archive_file_is_not_output_root, next_poll_sleep,
-        remaining_until, restricted_area_from_cli_with_args,
-        restricted_area_from_cli_with_env_values, save_qr_credentials,
+        parse_access_key_login_input, remaining_until, restricted_area_from_cli_with_args,
+        restricted_area_from_cli_with_env_values, save_credentials,
         should_prompt_duplicate_decision, validate_media_host_spec,
     };
     use bbdown_core::{
-        CredentialProfileSelection, CredentialStore, Credentials, DownloadOutputConflict,
-        DownloadPreflight, DuplicateDecision, EndpointConfig,
+        AccessKeyLoginConfig, CredentialProfileSelection, CredentialStore, Credentials,
+        DownloadOutputConflict, DownloadPreflight, DuplicateDecision, EndpointConfig,
     };
     use clap::Parser as _;
     use std::fs;
@@ -2337,7 +2457,52 @@ mod tests {
     }
 
     #[test]
-    fn save_qr_credentials_merges_with_current_store() -> anyhow::Result<()> {
+    fn parse_access_key_login_input_accepts_message_origins() -> anyhow::Result<()> {
+        let ticket = AccessKeyLoginConfig::biliplus("https://www.bilibili.com/video/BV1")?
+            .ticket()?
+            .output();
+        let message = r#"balh-login-credentials: {"access_key":"AK"}"#;
+
+        let from_auth_origin =
+            parse_access_key_login_input(&ticket, Some("https://www.biliplus.com/login"), message)?;
+        let from_callback_origin =
+            parse_access_key_login_input(&ticket, Some("https://www.bilibili.com/watch"), message)?;
+        let trusted_manual_message = parse_access_key_login_input(&ticket, None, message)?;
+
+        assert_eq!(from_auth_origin.access_key, "AK");
+        assert_eq!(from_callback_origin.access_key, "AK");
+        assert_eq!(trusted_manual_message.access_key, "AK");
+        Ok(())
+    }
+
+    #[test]
+    fn parse_access_key_login_input_rejects_untrusted_or_mismatched_shapes() -> anyhow::Result<()> {
+        let ticket = AccessKeyLoginConfig::biliplus("https://www.bilibili.com")?
+            .ticket()?
+            .output();
+        let message = r#"balh-login-credentials: {"access_key":"AK"}"#;
+
+        let bad_origin =
+            parse_access_key_login_input(&ticket, Some("https://attacker.example"), message)
+                .err()
+                .map(|error| error.to_string())
+                .unwrap_or_default();
+        let raw_payload_with_origin = parse_access_key_login_input(
+            &ticket,
+            Some("https://www.biliplus.com"),
+            "access_key=AK",
+        )
+        .err()
+        .map(|error| error.to_string())
+        .unwrap_or_default();
+
+        assert!(bad_origin.contains("access-key login message origin does not match ticket"));
+        assert!(raw_payload_with_origin.contains("--message-origin can only be used"));
+        Ok(())
+    }
+
+    #[test]
+    fn save_credentials_merges_with_current_store() -> anyhow::Result<()> {
         let temp = tempfile::tempdir()?;
         let store = CredentialStore::new(temp.path().join("credentials.json"));
         store.save(&Credentials {
@@ -2348,7 +2513,7 @@ mod tests {
         let runtime =
             CredentialRuntime::new(store.clone(), CredentialProfileSelection::default_profile());
 
-        let summary = save_qr_credentials(
+        let summary = save_credentials(
             &runtime,
             Credentials {
                 cookie: None,
@@ -2373,7 +2538,7 @@ mod tests {
     }
 
     #[test]
-    fn save_qr_credentials_merges_with_selected_profile() -> anyhow::Result<()> {
+    fn save_credentials_merges_with_selected_profile() -> anyhow::Result<()> {
         let temp = tempfile::tempdir()?;
         let store = CredentialStore::new(temp.path().join("credentials.json"));
         store.save(&Credentials {
@@ -2384,7 +2549,7 @@ mod tests {
         let runtime =
             CredentialRuntime::new(store.clone(), CredentialProfileSelection::named("tv")?);
 
-        let summary = save_qr_credentials(
+        let summary = save_credentials(
             &runtime,
             Credentials {
                 cookie: None,

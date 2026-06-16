@@ -2709,6 +2709,120 @@ fn auth_qr_login_web_and_tv_use_local_store() -> anyhow::Result<()> {
 }
 
 #[test]
+fn auth_login_access_key_message_saves_redacted_credentials() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .args([
+            "auth",
+            "login-access-key",
+            "--json",
+            "--stdin",
+            "--message-origin",
+            "https://www.biliplus.com/login",
+        ])
+        .write_stdin(
+            r#"balh-login-credentials: {"access_key":"ACCESS_SECRET","refresh_token":"REFRESH_SECRET"}"#,
+        )
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let events = json_lines(&output)?;
+
+    assert_eq!(events[0]["event"], "ticket");
+    assert_eq!(events[0]["kind"], "access_key");
+    assert_eq!(events[0]["message_origin"], "https://www.biliplus.com");
+    assert_eq!(events[0]["callback_origin"], "https://www.bilibili.com");
+    assert_eq!(events[1]["event"], "saved");
+    assert_eq!(events[1]["saved"]["has_cookie"], false);
+    assert_eq!(events[1]["saved"]["has_access_key"], true);
+    assert_eq!(events[1]["saved"]["has_tv_access_key"], false);
+    let output_text = String::from_utf8(output)?;
+    for secret in ["ACCESS_SECRET", "REFRESH_SECRET"] {
+        assert!(!output_text.contains(secret));
+    }
+    let saved = CredentialStore::new(credential_file).load()?;
+    assert_eq!(saved.access_key.as_deref(), Some("ACCESS_SECRET"));
+    assert_eq!(saved.cookie, None);
+    assert_eq!(saved.tv_access_key, None);
+    Ok(())
+}
+
+#[test]
+fn auth_login_access_key_callback_url_saves_selected_profile() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    CredentialStore::new(credential_file.clone()).save(&Credentials {
+        cookie: Some("SESSDATA=default".to_owned()),
+        access_key: None,
+        tv_access_key: None,
+    })?;
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .args([
+            "auth",
+            "login-access-key",
+            "--json",
+            "--stdin",
+            "--callback-origin",
+            "https://m.bilibili.com/watch",
+        ])
+        .write_stdin(
+            "https://www.bilibili.com/callback?access_token=PROFILE_SECRET&refresh_token=PROFILE_REFRESH",
+        )
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let events = json_lines(&output)?;
+
+    assert_eq!(events[0]["callback_origin"], "https://m.bilibili.com");
+    assert_eq!(events[1]["saved"]["has_access_key"], true);
+    let output_text = String::from_utf8(output)?;
+    for secret in ["PROFILE_SECRET", "PROFILE_REFRESH"] {
+        assert!(!output_text.contains(secret));
+    }
+    let store = CredentialStore::new(credential_file);
+    assert_eq!(store.load()?.access_key, None);
+    assert_eq!(store.load()?.cookie.as_deref(), Some("SESSDATA=default"));
+    assert_eq!(
+        store.load_profile("intl")?.access_key.as_deref(),
+        Some("PROFILE_SECRET")
+    );
+    Ok(())
+}
+
+#[test]
+fn auth_login_access_key_failures_do_not_save_credentials() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .args(["auth", "login-access-key", "--json", "--stdin"])
+        .write_stdin(r#"balh-login-credentials: {"refresh_token":"REFRESH_SECRET"}"#)
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8(output)?;
+
+    assert!(stderr.contains("access_key"));
+    assert!(!stderr.contains("REFRESH_SECRET"));
+    assert!(!credential_file.exists());
+    Ok(())
+}
+
+#[test]
 fn auth_qr_login_failures_do_not_save_credentials() -> anyhow::Result<()> {
     let expired_server = MockServer::start();
     let temp = tempfile::tempdir()?;
