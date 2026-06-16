@@ -21,8 +21,8 @@ pub use client::{
 };
 pub use credentials::{
     CredentialHealthProbe, CredentialHealthReport, CredentialHealthScope, CredentialHealthStatus,
-    CredentialKind, CredentialProfiles, CredentialSource, CredentialStore, Credentials,
-    DEFAULT_CREDENTIAL_PROFILE,
+    CredentialKind, CredentialProfileSelection, CredentialProfiles, CredentialSource,
+    CredentialStore, Credentials, DEFAULT_CREDENTIAL_PROFILE,
 };
 pub use danmaku::{DanmakuFormat, DanmakuFormats};
 pub use download::{

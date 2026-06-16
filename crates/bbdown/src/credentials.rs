@@ -9,6 +9,38 @@ use std::path::{Path, PathBuf};
 pub const DEFAULT_CREDENTIAL_PROFILE: &str = "default";
 const CREDENTIAL_PROFILES_VERSION: u32 = 1;
 
+#[non_exhaustive]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub enum CredentialProfileSelection {
+    #[default]
+    Default,
+    Named(String),
+}
+
+impl CredentialProfileSelection {
+    #[must_use]
+    pub fn default_profile() -> Self {
+        Self::Default
+    }
+
+    pub fn named(name: impl AsRef<str>) -> Result<Self> {
+        Ok(Self::Named(normalize_profile_name(name.as_ref())?))
+    }
+
+    #[must_use]
+    pub fn profile_name(&self) -> Option<&str> {
+        match self {
+            Self::Default => None,
+            Self::Named(name) => Some(name.as_str()),
+        }
+    }
+
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        matches!(self, Self::Default)
+    }
+}
+
 #[derive(Clone, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Credentials {
     pub cookie: Option<String>,
@@ -340,10 +372,31 @@ impl CredentialStore {
         self.load_profiles()?.profile(profile)
     }
 
+    pub fn load_selected_profile(
+        &self,
+        selection: &CredentialProfileSelection,
+    ) -> Result<Credentials> {
+        match selection {
+            CredentialProfileSelection::Default => self.load(),
+            CredentialProfileSelection::Named(profile) => self.load_profile(profile),
+        }
+    }
+
     pub fn save_profile(&self, profile: &str, credentials: &Credentials) -> Result<()> {
         let mut profiles = self.load_profiles()?;
         profiles.set_profile(profile, credentials.clone())?;
         self.save_profiles(&profiles)
+    }
+
+    pub fn save_selected_profile(
+        &self,
+        selection: &CredentialProfileSelection,
+        credentials: &Credentials,
+    ) -> Result<()> {
+        match selection {
+            CredentialProfileSelection::Default => self.save(credentials),
+            CredentialProfileSelection::Named(profile) => self.save_profile(profile, credentials),
+        }
     }
 
     pub fn remove_profile(&self, profile: &str) -> Result<Option<Credentials>> {
@@ -478,7 +531,10 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CredentialProfiles, CredentialStore, Credentials, DEFAULT_CREDENTIAL_PROFILE};
+    use super::{
+        CredentialProfileSelection, CredentialProfiles, CredentialStore, Credentials,
+        DEFAULT_CREDENTIAL_PROFILE,
+    };
 
     #[test]
     fn stores_credentials_without_leaking_values_in_summary() -> anyhow::Result<()> {
@@ -761,6 +817,46 @@ mod tests {
             Some("SESSDATA=updated-intl")
         );
         Ok(())
+    }
+
+    #[test]
+    fn selected_profile_helpers_preserve_default_and_named_profiles() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let store = CredentialStore::new(temp.path().join("credentials.json"));
+        let default_selection = CredentialProfileSelection::default_profile();
+        let intl_selection = CredentialProfileSelection::named("intl")?;
+
+        store.save_selected_profile(
+            &default_selection,
+            &Credentials {
+                cookie: Some("SESSDATA=default".to_owned()),
+                access_key: None,
+                tv_access_key: None,
+            },
+        )?;
+        store.save_selected_profile(
+            &intl_selection,
+            &Credentials {
+                cookie: None,
+                access_key: Some("intl-access".to_owned()),
+                tv_access_key: None,
+            },
+        )?;
+
+        let default = store.load_selected_profile(&default_selection)?;
+        let intl = store.load_selected_profile(&intl_selection)?;
+        assert_eq!(default.cookie.as_deref(), Some("SESSDATA=default"));
+        assert_eq!(default.access_key, None);
+        assert_eq!(intl.cookie, None);
+        assert_eq!(intl.access_key.as_deref(), Some("intl-access"));
+        assert!(default_selection.is_default());
+        assert_eq!(intl_selection.profile_name(), Some("intl"));
+        Ok(())
+    }
+
+    #[test]
+    fn selected_profile_rejects_blank_named_profile() {
+        assert!(CredentialProfileSelection::named(" ").is_err());
     }
 
     #[test]

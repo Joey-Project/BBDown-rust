@@ -4,12 +4,13 @@
 use anyhow::{Context, bail, ensure};
 use bbdown_core::{
     BiliClient, ClientConfig, CredentialHealthReport, CredentialHealthScope,
-    CredentialHealthStatus, CredentialKind, CredentialStore, Credentials, DanmakuFormat,
-    DownloadArchive, DownloadMode, DownloadOptions, DownloadPathTemplates, DownloadPreflight,
-    DownloadReport, DuplicateDecision, EndpointConfig, MediaHostOptions, MediaStream, MuxOptions,
-    PlaybackPlan, PlayurlMode, QrLoginKind, QrLoginState, QrLoginTicket, QrLoginTicketOutput,
-    ResolvedContent, RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy,
-    RestrictedAreaProxyKind, RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet,
+    CredentialHealthStatus, CredentialKind, CredentialProfileSelection, CredentialStore,
+    Credentials, DanmakuFormat, DownloadArchive, DownloadMode, DownloadOptions,
+    DownloadPathTemplates, DownloadPreflight, DownloadReport, DuplicateDecision, EndpointConfig,
+    MediaHostOptions, MediaStream, MuxOptions, PlaybackPlan, PlayurlMode, QrLoginKind,
+    QrLoginState, QrLoginTicket, QrLoginTicketOutput, ResolvedContent, RestrictedArea,
+    RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection,
+    StreamQuality, StreamSelection, StreamSet,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::ffi::{OsStr, OsString};
@@ -95,6 +96,8 @@ struct Cli {
     restricted_api_proxy: Vec<String>,
     #[arg(long, env = "BBDOWN_CREDENTIAL_FILE")]
     credential_file: Option<PathBuf>,
+    #[arg(long, env = "BBDOWN_CREDENTIAL_PROFILE", value_name = "NAME")]
+    credential_profile: Option<String>,
     #[arg(long, env = "BBDOWN_REQUEST_TIMEOUT_SECONDS", default_value_t = 30)]
     request_timeout_seconds: u64,
     #[command(subcommand)]
@@ -489,29 +492,32 @@ async fn main() -> anyhow::Result<()> {
     let request_timeout = Duration::from_secs(cli.request_timeout_seconds);
     let client_runtime =
         ClientRuntimeConfig::new(endpoints, restricted_area, playurl_mode, request_timeout);
-    let store = CredentialStore::new(credential_path(cli.credential_file)?);
+    let credential_runtime = CredentialRuntime::new(
+        CredentialStore::new(credential_path(cli.credential_file)?),
+        credential_profile_selection(cli.credential_profile)?,
+    );
     match cli.command {
         Command::Info { url, select, json } => {
-            handle_info(&store, &client_runtime, url, select, json).await?;
+            handle_info(&credential_runtime, &client_runtime, url, select, json).await?;
         }
         Command::Plan { url, select, json } => {
-            handle_plan(&store, &client_runtime, url, select, json).await?;
+            handle_plan(&credential_runtime, &client_runtime, url, select, json).await?;
         }
         Command::Playback { url, select, json } => {
-            handle_playback(&store, &client_runtime, url, select, json).await?;
+            handle_playback(&credential_runtime, &client_runtime, url, select, json).await?;
         }
         Command::Download(args) => {
-            handle_download_cli(&store, &client_runtime, *args).await?;
+            handle_download_cli(&credential_runtime, &client_runtime, *args).await?;
         }
         Command::Auth { command } => {
-            handle_auth(command, &store, &client_runtime).await?;
+            handle_auth(command, &credential_runtime, &client_runtime).await?;
         }
     }
     Ok(())
 }
 
 async fn handle_download_cli(
-    store: &CredentialStore,
+    credentials: &CredentialRuntime,
     client_runtime: &ClientRuntimeConfig,
     args: DownloadCliArgs,
 ) -> anyhow::Result<()> {
@@ -557,7 +563,7 @@ async fn handle_download_cli(
         archive_file: args.archive_file,
         on_duplicate: args.on_duplicate.map(Into::into),
     };
-    handle_download(store, client_runtime, command_args).await
+    handle_download(credentials, client_runtime, command_args).await
 }
 
 struct DownloadCommandArgs {
@@ -601,15 +607,63 @@ impl ClientRuntimeConfig {
     }
 }
 
+#[derive(Clone, Debug)]
+struct CredentialRuntime {
+    store: CredentialStore,
+    selection: CredentialProfileSelection,
+}
+
+impl CredentialRuntime {
+    fn new(store: CredentialStore, selection: CredentialProfileSelection) -> Self {
+        Self { store, selection }
+    }
+
+    fn load(&self) -> anyhow::Result<Credentials> {
+        self.store
+            .load_selected_profile(&self.selection)
+            .context("failed to load credentials")
+    }
+
+    fn save(&self, credentials: &Credentials) -> anyhow::Result<()> {
+        self.store
+            .save_selected_profile(&self.selection, credentials)
+            .context("failed to save credentials")
+    }
+
+    fn logout(&self) -> anyhow::Result<()> {
+        match self.selection.profile_name() {
+            Some(profile) => {
+                self.store
+                    .remove_profile(profile)
+                    .context("failed to clear credential profile")?;
+            }
+            None => {
+                self.store.clear().context("failed to clear credentials")?;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn credential_profile_selection(
+    profile: Option<String>,
+) -> anyhow::Result<CredentialProfileSelection> {
+    match profile {
+        Some(profile) => CredentialProfileSelection::named(profile)
+            .map_err(anyhow::Error::from)
+            .context("invalid credential profile"),
+        None => Ok(CredentialProfileSelection::default_profile()),
+    }
+}
+
 async fn handle_info(
-    store: &CredentialStore,
+    credentials: &CredentialRuntime,
     client_runtime: &ClientRuntimeConfig,
     url: String,
     select: Option<Selection>,
     json: bool,
 ) -> anyhow::Result<()> {
-    let credentials = store.load().context("failed to load credentials")?;
-    let client = BiliClient::new(client_runtime.client_config(credentials));
+    let client = BiliClient::new(client_runtime.client_config(credentials.load()?));
     let resolved = client.resolve_input(&url, select).await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&resolved)?);
@@ -620,14 +674,13 @@ async fn handle_info(
 }
 
 async fn handle_plan(
-    store: &CredentialStore,
+    credentials: &CredentialRuntime,
     client_runtime: &ClientRuntimeConfig,
     url: String,
     select: Option<Selection>,
     json: bool,
 ) -> anyhow::Result<()> {
-    let credentials = store.load().context("failed to load credentials")?;
-    let client = BiliClient::new(client_runtime.client_config(credentials));
+    let client = BiliClient::new(client_runtime.client_config(credentials.load()?));
     let plan = client.plan_download(&url, select).await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&plan)?);
@@ -638,14 +691,13 @@ async fn handle_plan(
 }
 
 async fn handle_playback(
-    store: &CredentialStore,
+    credentials: &CredentialRuntime,
     client_runtime: &ClientRuntimeConfig,
     url: String,
     select: Option<Selection>,
     json: bool,
 ) -> anyhow::Result<()> {
-    let credentials = store.load().context("failed to load credentials")?;
-    let client = BiliClient::new(client_runtime.client_config(credentials));
+    let client = BiliClient::new(client_runtime.client_config(credentials.load()?));
     let plan = client.plan_playback(&url, select).await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&plan)?);
@@ -762,12 +814,11 @@ fn media_stream_summary(label: &str, stream: &MediaStream) -> String {
 }
 
 async fn handle_download(
-    store: &CredentialStore,
+    credentials: &CredentialRuntime,
     client_runtime: &ClientRuntimeConfig,
     args: DownloadCommandArgs,
 ) -> anyhow::Result<()> {
-    let credentials = store.load().context("failed to load credentials")?;
-    let client = BiliClient::new(client_runtime.client_config(credentials));
+    let client = BiliClient::new(client_runtime.client_config(credentials.load()?));
     let report = if let Some(archive_file) = args.archive_file {
         let plan = client
             .plan_download_with_mode(&args.url, args.select, args.options.mode)
@@ -1050,20 +1101,18 @@ fn print_duplicate_preflight(preflight: &DownloadPreflight) {
 
 async fn handle_auth(
     command: AuthCommand,
-    store: &CredentialStore,
+    credential_runtime: &CredentialRuntime,
     client_runtime: &ClientRuntimeConfig,
 ) -> anyhow::Result<()> {
     match command {
         AuthCommand::Status => {
-            let credentials = store.load().context("failed to load credentials")?;
             println!(
                 "{}",
-                serde_json::to_string_pretty(&credentials.redacted_summary())?
+                serde_json::to_string_pretty(&credential_runtime.load()?.redacted_summary())?
             );
         }
         AuthCommand::Health(args) => {
-            let credentials = store.load().context("failed to load credentials")?;
-            let client = BiliClient::new(client_runtime.client_config(credentials));
+            let client = BiliClient::new(client_runtime.client_config(credential_runtime.load()?));
             let report = client.check_credential_health().await;
             if args.json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
@@ -1072,31 +1121,27 @@ async fn handle_auth(
             }
         }
         AuthCommand::ImportCookie(args) => {
-            let mut credentials = store.load().context("failed to load credentials")?;
+            let mut stored = credential_runtime.load()?;
             let cookie = read_secret(args, "BBDOWN_COOKIE", "cookie")?;
-            credentials.cookie = Some(cookie);
-            store
-                .save(&credentials)
-                .context("failed to save credentials")?;
+            stored.cookie = Some(cookie);
+            credential_runtime.save(&stored)?;
             println!("cookie imported");
         }
         AuthCommand::ImportAccessKey(args) => {
-            let mut credentials = store.load().context("failed to load credentials")?;
+            let mut stored = credential_runtime.load()?;
             let access_key = read_secret(args, "BBDOWN_ACCESS_KEY", "access key")?;
-            credentials.access_key = Some(access_key);
-            store
-                .save(&credentials)
-                .context("failed to save credentials")?;
+            stored.access_key = Some(access_key);
+            credential_runtime.save(&stored)?;
             println!("access key imported");
         }
         AuthCommand::LoginWeb(args) => {
-            handle_qr_login(QrLoginKind::Web, args, store, client_runtime).await?;
+            handle_qr_login(QrLoginKind::Web, args, credential_runtime, client_runtime).await?;
         }
         AuthCommand::LoginTv(args) => {
-            handle_qr_login(QrLoginKind::Tv, args, store, client_runtime).await?;
+            handle_qr_login(QrLoginKind::Tv, args, credential_runtime, client_runtime).await?;
         }
         AuthCommand::Logout => {
-            store.clear().context("failed to clear credentials")?;
+            credential_runtime.logout()?;
             println!("credentials cleared");
         }
     }
@@ -1157,7 +1202,7 @@ fn credential_health_status_label(status: CredentialHealthStatus) -> &'static st
 async fn handle_qr_login(
     kind: QrLoginKind,
     args: QrLoginArgs,
-    store: &CredentialStore,
+    credential_runtime: &CredentialRuntime,
     client_runtime: &ClientRuntimeConfig,
 ) -> anyhow::Result<()> {
     ensure!(
@@ -1180,7 +1225,7 @@ async fn handle_qr_login(
         print_human_line(format_args!("scan: {}", output.url))?;
     }
     let credentials = wait_for_qr_login(&client, &ticket, &args).await?;
-    let summary = save_qr_credentials(store, credentials)?;
+    let summary = save_qr_credentials(credential_runtime, credentials)?;
     if args.json {
         print_json_line(&serde_json::json!({
             "event": "saved",
@@ -1203,12 +1248,12 @@ fn print_qr_ticket_json(output: &QrLoginTicketOutput) -> anyhow::Result<()> {
 }
 
 fn save_qr_credentials(
-    store: &CredentialStore,
+    credential_runtime: &CredentialRuntime,
     credentials: Credentials,
 ) -> anyhow::Result<bbdown_core::CredentialSource> {
-    let mut stored = store.load().context("failed to load credentials")?;
+    let mut stored = credential_runtime.load()?;
     merge_credentials(&mut stored, credentials);
-    store.save(&stored).context("failed to save credentials")?;
+    credential_runtime.save(&stored)?;
     Ok(stored.redacted_summary())
 }
 
@@ -1703,14 +1748,15 @@ fn _assert_credentials_send_sync(_: Credentials) {}
 #[cfg(test)]
 mod tests {
     use super::{
-        Cli, archive_sidecar_path, endpoints_from_cli, ensure_archive_file_is_not_output_root,
-        next_poll_sleep, remaining_until, restricted_area_from_cli_with_args,
+        Cli, CredentialRuntime, archive_sidecar_path, credential_profile_selection,
+        endpoints_from_cli, ensure_archive_file_is_not_output_root, next_poll_sleep,
+        remaining_until, restricted_area_from_cli_with_args,
         restricted_area_from_cli_with_env_values, save_qr_credentials,
         should_prompt_duplicate_decision, validate_media_host_spec,
     };
     use bbdown_core::{
-        CredentialStore, Credentials, DownloadOutputConflict, DownloadPreflight, DuplicateDecision,
-        EndpointConfig,
+        CredentialProfileSelection, CredentialStore, Credentials, DownloadOutputConflict,
+        DownloadPreflight, DuplicateDecision, EndpointConfig,
     };
     use clap::Parser as _;
     use std::fs;
@@ -1977,6 +2023,25 @@ mod tests {
 
         assert_eq!(endpoints.tv_passport_base, "http://127.0.0.1:8080");
         assert_eq!(endpoints.tv_passport_poll_base, "http://127.0.0.1:8081");
+    }
+
+    #[test]
+    fn credential_profile_cli_arg_builds_named_selection() -> anyhow::Result<()> {
+        let cli = Cli::parse_from(["bbdown", "--credential-profile", "intl", "auth", "status"]);
+        let selection = credential_profile_selection(cli.credential_profile)?;
+
+        assert_eq!(
+            selection,
+            CredentialProfileSelection::Named("intl".to_owned())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn blank_credential_profile_cli_arg_is_rejected() {
+        let cli = Cli::parse_from(["bbdown", "--credential-profile", " ", "auth", "status"]);
+
+        assert!(credential_profile_selection(cli.credential_profile).is_err());
     }
 
     #[test]
@@ -2280,9 +2345,11 @@ mod tests {
             access_key: Some("BSTAR".to_owned()),
             tv_access_key: None,
         })?;
+        let runtime =
+            CredentialRuntime::new(store.clone(), CredentialProfileSelection::default_profile());
 
         let summary = save_qr_credentials(
-            &store,
+            &runtime,
             Credentials {
                 cookie: None,
                 access_key: None,
@@ -2301,6 +2368,49 @@ mod tests {
         );
         assert!(summary.has_cookie);
         assert!(summary.has_access_key);
+        assert!(summary.has_tv_access_key);
+        Ok(())
+    }
+
+    #[test]
+    fn save_qr_credentials_merges_with_selected_profile() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let store = CredentialStore::new(temp.path().join("credentials.json"));
+        store.save(&Credentials {
+            cookie: Some("SESSDATA=default".to_owned()),
+            access_key: None,
+            tv_access_key: None,
+        })?;
+        let runtime =
+            CredentialRuntime::new(store.clone(), CredentialProfileSelection::named("tv")?);
+
+        let summary = save_qr_credentials(
+            &runtime,
+            Credentials {
+                cookie: None,
+                access_key: None,
+                tv_access_key: Some("TV".to_owned()),
+            },
+        )?;
+
+        assert_eq!(
+            store.load()?,
+            Credentials {
+                cookie: Some("SESSDATA=default".to_owned()),
+                access_key: None,
+                tv_access_key: None,
+            }
+        );
+        assert_eq!(
+            store.load_profile("tv")?,
+            Credentials {
+                cookie: None,
+                access_key: None,
+                tv_access_key: Some("TV".to_owned()),
+            }
+        );
+        assert!(!summary.has_cookie);
+        assert!(!summary.has_access_key);
         assert!(summary.has_tv_access_key);
         Ok(())
     }

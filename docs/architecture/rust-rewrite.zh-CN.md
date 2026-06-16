@@ -315,6 +315,10 @@ JSON credential 形态，因此现有用户和测试 fixture 不需要迁移步�
 通过 profile API 读取旧扁平文件时，它会被包成 `default` profile；保存命名 profile 时，会把
 文件迁移到 profile document，同时保留默认凭据。`Credentials` 和 `CredentialProfiles` 的
 debug 输出都不会暴露原始凭据值。
+`CredentialProfileSelection` 是 CLI 和嵌入调用方共用的选择层：默认选择保留旧的
+`load`/`save` 行为，命名选择则通过 profile document API 路由，并在写入时保留其它 profile。
+CLI 通过全局 `--credential-profile` flag 和 `BBDOWN_CREDENTIAL_PROFILE` 暴露该能力；
+`auth logout` 在旧的默认选择下清空整个 store，在显式选择命名 profile 时只移除该 profile。
 credential health diagnostics 是同一 credential model 上的只读层。crate 暴露
 `CredentialHealthReport` 和 `BiliClient::check_credential_health()`，让嵌入调用方可以在选
 择登录或 fallback flow 之前，分别检查 WEB cookie、通用 `access_key` 和 TV `tv_access_key`。

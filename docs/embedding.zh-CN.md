@@ -195,6 +195,8 @@ selection、封面、字幕和弹幕旁路文件仍使用与普通视频下载�
 `load_profiles`/`save_profiles`、`load_profile`/`save_profile` helper。旧扁平文件通过
 profile API 读取时会表现为 `default` profile；保存命名 profile 时，会把 store 迁移到
 versioned profile document，同时保留默认凭据。
+`CredentialProfileSelection` 和 selected-profile store helper 提供与 CLI 相同的默认
+profile / 命名 profile 路由语义，因此嵌入方可以绑定用户选择的账号，而不必重复实现迁移行为。
 对于二维码登录，如果下游应用需要稳定的可序列化扫码 URL 和 `qr_payload`，可以把
 `QrLoginTicket` 转换成 `QrLoginTicketOutput`；当前 WEB 和 TV 登录流程会直接使用扫码 URL
 作为 QR payload。
@@ -205,7 +207,7 @@ TV `tv_access_key` 的 probe；`kind` 表示凭据槽位，`scope` 表示实际�
 proxy-specific assurance，应把它作为单独策略判断。probe message 在序列化前会先脱敏。
 
 ```rust,no_run
-use bbdown_core::{BiliClient, ClientConfig, CredentialStore, Credentials};
+use bbdown_core::{BiliClient, ClientConfig, CredentialProfileSelection, CredentialStore, Credentials};
 
 async fn check_credentials() {
     let credentials = Credentials::default()
@@ -218,7 +220,8 @@ async fn check_credentials() {
 }
 
 fn load_named_profile(store: &CredentialStore, profile: &str) -> bbdown_core::Result<Credentials> {
-    store.load_profile(profile)
+    let selection = CredentialProfileSelection::named(profile)?;
+    store.load_selected_profile(&selection)
 }
 ```
 
