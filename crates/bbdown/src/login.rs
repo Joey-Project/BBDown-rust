@@ -36,16 +36,19 @@ impl AccessKeyLoginConfig {
     }
 
     pub fn ticket(&self) -> Result<AccessKeyLoginTicket> {
-        let mut url = BiliClient::endpoint_url(&self.auth_base, "/login")?;
+        let auth_base = normalize_http_url(&self.auth_base, "access-key auth base")?;
+        let callback_origin = http_origin(&self.callback_origin, "access-key callback origin")?;
+        let message_origin = http_origin(&auth_base, "access-key auth base")?;
+        let mut url = BiliClient::endpoint_url(&auth_base, "/login")?;
         url.query_pairs_mut()
             .append_pair("balh_auth", "1")
-            .append_pair("balh_auth_origin", &self.callback_origin);
+            .append_pair("balh_auth_origin", &callback_origin);
         let url = url.to_string();
         Ok(AccessKeyLoginTicket {
             url: url.clone(),
             qr_payload: url,
-            message_origin: http_origin(&self.auth_base, "access-key auth base")?,
-            callback_origin: self.callback_origin.clone(),
+            message_origin,
+            callback_origin,
         })
     }
 }
@@ -67,6 +70,18 @@ impl AccessKeyLoginTicket {
             message_origin: self.message_origin.clone(),
             callback_origin: self.callback_origin.clone(),
         }
+    }
+
+    pub fn credentials_from_message(
+        &self,
+        message_origin: impl AsRef<str>,
+        message: impl AsRef<str>,
+    ) -> Result<AccessKeyLoginCredentials> {
+        credentials_from_trusted_message(
+            &self.message_origin,
+            message_origin.as_ref(),
+            message.as_ref(),
+        )
     }
 }
 
@@ -100,6 +115,20 @@ impl fmt::Debug for AccessKeyLoginTicketOutput {
             .field("has_message_origin", &!self.message_origin.is_empty())
             .field("has_callback_origin", &!self.callback_origin.is_empty())
             .finish()
+    }
+}
+
+impl AccessKeyLoginTicketOutput {
+    pub fn credentials_from_message(
+        &self,
+        message_origin: impl AsRef<str>,
+        message: impl AsRef<str>,
+    ) -> Result<AccessKeyLoginCredentials> {
+        credentials_from_trusted_message(
+            &self.message_origin,
+            message_origin.as_ref(),
+            message.as_ref(),
+        )
     }
 }
 
@@ -583,6 +612,21 @@ fn access_key_callback_query(payload: &str) -> Result<String> {
     Ok(query.to_owned())
 }
 
+fn credentials_from_trusted_message(
+    expected_origin: &str,
+    message_origin: &str,
+    message: &str,
+) -> Result<AccessKeyLoginCredentials> {
+    let expected_origin = http_origin(expected_origin, "access-key expected message origin")?;
+    let message_origin = http_origin(message_origin, "access-key message origin")?;
+    if message_origin != expected_origin {
+        return Err(Error::InvalidInput(
+            "access-key login message origin does not match ticket".to_owned(),
+        ));
+    }
+    AccessKeyLoginCredentials::from_balh_message(message)
+}
+
 fn build_access_key_login_credentials(
     access_key: Option<String>,
     refresh_token: Option<String>,
@@ -846,6 +890,27 @@ mod tests {
     }
 
     #[test]
+    fn access_key_login_ticket_revalidates_public_config_fields() -> anyhow::Result<()> {
+        let mut config = AccessKeyLoginConfig::biliplus("https://www.bilibili.com")?;
+        config.callback_origin = "https://m.bilibili.com/bangumi/play/ep1?from=unsafe".to_owned();
+        let ticket = config.ticket()?;
+
+        assert_eq!(ticket.callback_origin, "https://m.bilibili.com");
+        assert!(
+            ticket
+                .url
+                .contains("balh_auth_origin=https%3A%2F%2Fm.bilibili.com")
+        );
+
+        config.callback_origin = "javascript:alert(1)".to_owned();
+        let error = config.ticket().err();
+        assert!(
+            matches!(error, Some(Error::InvalidInput(message)) if message.contains("http or https"))
+        );
+        Ok(())
+    }
+
+    #[test]
     fn access_key_login_ticket_debug_redacts_auth_url() -> anyhow::Result<()> {
         let ticket = AccessKeyLoginConfig::biliplus("https://www.bilibili.com")?.ticket()?;
         let debug = format!("{ticket:?}");
@@ -858,6 +923,33 @@ mod tests {
         assert!(output_debug.contains("has_url: true"));
         assert!(!output_debug.contains("biliplus.com"));
         assert!(!output_debug.contains("balh_auth"));
+        Ok(())
+    }
+
+    #[test]
+    fn access_key_login_ticket_validates_message_origin() -> anyhow::Result<()> {
+        let ticket = AccessKeyLoginConfig::biliplus("https://www.bilibili.com")?.ticket()?;
+        let message = r#"balh-login-credentials: {"access_key":"AK"}"#;
+
+        assert_eq!(
+            ticket
+                .credentials_from_message("https://www.biliplus.com/login?ignored=1", message)?
+                .access_key,
+            "AK"
+        );
+        assert_eq!(
+            ticket
+                .output()
+                .credentials_from_message("https://www.biliplus.com", message)?
+                .access_key,
+            "AK"
+        );
+        let error = ticket
+            .credentials_from_message("https://evil.example", message)
+            .err();
+        assert!(
+            matches!(error, Some(Error::InvalidInput(message)) if message.contains("does not match ticket"))
+        );
         Ok(())
     }
 

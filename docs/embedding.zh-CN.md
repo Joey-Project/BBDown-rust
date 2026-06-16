@@ -206,6 +206,10 @@ BiliPlus/BALH-compatible browser handoff URL；`AccessKeyLoginTicketOutput::qr_p
 JSON，也可以是 URL/query callback；返回的 `AccessKeyLoginCredentials` 包含通用
 `access_key` 以及可选的 refresh/expiration metadata。调用 `credentials()` 只会把通用
 access key 转成现有 `Credentials` model；自动续期和 CLI 持久化属于独立 lifecycle 事项。
+在 browser `postMessage` flow 中，应优先使用
+`AccessKeyLoginTicketOutput::credentials_from_message(event_origin, data)`，让 sender origin
+先按 ticket 校验后再解析。只有当嵌入应用已经自行验证 message provenance 时，才直接使用 raw
+`AccessKeyLoginCredentials::from_balh_*` parser。
 当嵌入项目需要在决定提示登录、导入 token 或继续匿名请求前做脱敏诊断时，可以调用
 `BiliClient::check_credential_health()`。报告会分别包含 WEB cookie、通用 `access_key` 和
 TV `tv_access_key` 的 probe；`kind` 表示凭据槽位，`scope` 表示实际检查的消费场景。通用
@@ -238,7 +242,17 @@ fn access_key_login_ticket() -> bbdown_core::Result<AccessKeyLoginTicketOutput> 
     Ok(config.ticket()?.output())
 }
 
-fn access_key_from_balh_message(message: &str) -> bbdown_core::Result<Credentials> {
+fn access_key_from_balh_message(
+    ticket: &AccessKeyLoginTicketOutput,
+    event_origin: &str,
+    message: &str,
+) -> bbdown_core::Result<Credentials> {
+    Ok(ticket
+        .credentials_from_message(event_origin, message)?
+        .credentials())
+}
+
+fn access_key_from_trusted_payload(message: &str) -> bbdown_core::Result<Credentials> {
     Ok(AccessKeyLoginCredentials::from_balh_message(message)?.credentials())
 }
 ```

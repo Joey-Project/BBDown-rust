@@ -387,6 +387,8 @@ callback using `access_key` or `access_token`. `AccessKeyLoginCredentials` prese
 `refresh_token`, absolute `oauth_expires_at`, and relative `expires_in` metadata, but conversion back
 to `Credentials` stores only the generic `access_key`. Refresh scheduling, token rotation, and CLI
 persistence are intentionally separate lifecycle work so embedders can choose their own policy.
+Browser `postMessage` consumers should parse through the ticket/output `credentials_from_message`
+helpers, which validate the sender origin before using the raw BALH payload parser.
 
 QR login is modeled as an explicit state machine in the crate. WEB QR login creates a
 `QrLoginTicket`, which can be converted to `QrLoginTicketOutput` for a stable serialized scan URL and
