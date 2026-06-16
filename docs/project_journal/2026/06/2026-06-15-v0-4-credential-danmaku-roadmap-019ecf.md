@@ -61,3 +61,5 @@ superseded_by:
   documents the no-interactive-paste policy.
 - PR 7 Codex review-gate found that implicit piped stdin could still be consumed without `--stdin`;
   the CLI now rejects missing input-source flags and requires callers to opt in to pipe consumption.
+- PR 7 independent review found that terminal-backed `--file` paths such as `/dev/tty` could bypass
+  the no-interactive-paste policy; the CLI now rejects terminal file descriptors before reading.

@@ -1364,12 +1364,21 @@ fn read_access_key_login_input(args: &AccessKeyLoginArgs) -> anyhow::Result<Stri
             .context("failed to read access-key login data from stdin")?;
         buffer
     } else if let Some(path) = &args.file {
-        fs::read_to_string(path).with_context(|| {
+        let mut file = fs::File::open(path).with_context(|| {
+            format!(
+                "failed to open access-key login data from {}",
+                path.display()
+            )
+        })?;
+        ensure_access_key_login_file_is_safe(path, file.is_terminal())?;
+        let mut buffer = String::new();
+        file.read_to_string(&mut buffer).with_context(|| {
             format!(
                 "failed to read access-key login data from {}",
                 path.display()
             )
-        })?
+        })?;
+        buffer
     } else {
         bail!("provide access-key login data through --stdin with piped input or --file");
     };
@@ -1381,6 +1390,16 @@ fn read_access_key_login_input(args: &AccessKeyLoginArgs) -> anyhow::Result<Stri
 fn ensure_access_key_login_stdin_is_safe(stdin_is_terminal: bool) -> anyhow::Result<()> {
     if stdin_is_terminal {
         bail!("--stdin requires piped or redirected input to avoid terminal echoing secrets");
+    }
+    Ok(())
+}
+
+fn ensure_access_key_login_file_is_safe(path: &Path, file_is_terminal: bool) -> anyhow::Result<()> {
+    if file_is_terminal {
+        bail!(
+            "--file must not point to a terminal for access-key login data: {}",
+            path.display()
+        );
     }
     Ok(())
 }
@@ -1885,11 +1904,11 @@ fn _assert_credentials_send_sync(_: Credentials) {}
 mod tests {
     use super::{
         Cli, CredentialRuntime, archive_sidecar_path, credential_profile_selection,
-        endpoints_from_cli, ensure_access_key_login_stdin_is_safe,
-        ensure_archive_file_is_not_output_root, next_poll_sleep, parse_access_key_login_input,
-        remaining_until, restricted_area_from_cli_with_args,
-        restricted_area_from_cli_with_env_values, save_credentials,
-        should_prompt_duplicate_decision, validate_media_host_spec,
+        endpoints_from_cli, ensure_access_key_login_file_is_safe,
+        ensure_access_key_login_stdin_is_safe, ensure_archive_file_is_not_output_root,
+        next_poll_sleep, parse_access_key_login_input, remaining_until,
+        restricted_area_from_cli_with_args, restricted_area_from_cli_with_env_values,
+        save_credentials, should_prompt_duplicate_decision, validate_media_host_spec,
     };
     use bbdown_core::{
         AccessKeyLoginConfig, CredentialProfileSelection, CredentialStore, Credentials,
@@ -1897,7 +1916,7 @@ mod tests {
     };
     use clap::Parser as _;
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
 
     #[test]
@@ -2527,6 +2546,17 @@ mod tests {
 
         assert!(explicit_error.contains("--stdin requires piped or redirected input"));
         assert!(ensure_access_key_login_stdin_is_safe(false).is_ok());
+    }
+
+    #[test]
+    fn access_key_login_file_guard_rejects_terminal_input() {
+        let error = ensure_access_key_login_file_is_safe(Path::new("/dev/tty"), true)
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
+
+        assert!(error.contains("--file must not point to a terminal"));
+        assert!(ensure_access_key_login_file_is_safe(Path::new("credentials.txt"), false).is_ok());
     }
 
     #[test]

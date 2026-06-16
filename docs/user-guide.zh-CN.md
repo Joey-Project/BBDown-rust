@@ -284,11 +284,11 @@ bbdown auth logout
 会打印 BiliPlus/BALH-compatible 授权 URL 和 `qr_payload`，然后从 `--stdin` 或 `--file` 读
 取粘贴的 `balh-login-credentials:` message 或 callback URL/query，并保存得到的通用
 intl/Bstar access key。它不会提供交互粘贴 prompt，因为终端 echo 可能把 token 值暴露在
-scrollback 中；`--stdin` 必须来自 pipe 或 redirect，并会拒绝 terminal stdin。命令不会隐式消
-费 stdin；pipe 或 redirect 必须显式传 `--stdin`。如果输入来自浏览器 `postMessage`，请使
-用 `--message-origin`，这样 CLI 会把 sender origin 与本次 login ticket 校验；可信的手工
-callback URL/query 输入不需要该标志。兼容 mock 或部署可以使用 `--auth-base` 和
-`--callback-origin`。`auth login-web` 打印二维码登录 URL，轮询到扫码确认，并保存得到的
+scrollback 中；`--stdin` 必须来自 pipe 或 redirect，并会拒绝 terminal stdin；`--file` 也会
+拒绝 terminal-backed path。命令不会隐式消费 stdin；pipe 或 redirect 必须显式传
+`--stdin`。如果输入来自浏览器 `postMessage`，请使用 `--message-origin`，这样 CLI 会把
+sender origin 与本次 login ticket 校验；可信的手工 callback URL/query 输入不需要该标志。
+兼容 mock 或部署可以使用 `--auth-base` 和 `--callback-origin`。`auth login-web` 打印二维码登录 URL，轮询到扫码确认，并保存得到的
 cookie。`auth login-tv` 使用 TV 二维码流程，保存 TV 专用 access key 供未来 TV/app 流程使
 用，不会覆盖由通用 access-key 命令导入或获取的 intl/Bstar access key。使用 `--json` 时，
 登录命令会打印换行分隔 JSON 事件：`ticket` 在轮询或 handoff 前包含登录 URL 和
