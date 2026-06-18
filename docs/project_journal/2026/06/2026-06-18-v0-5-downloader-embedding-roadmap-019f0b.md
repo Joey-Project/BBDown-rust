@@ -26,6 +26,8 @@ superseded_by:
 - PR 1: post-release housekeeping, moving workspace package versions and docs to the `0.5.0`
   development line.
 - PR 2: embedder progress callbacks and a stable progress event model for download execution.
+  Completed by adding `DownloadProgressEvent`, `DownloadProgressSink`, `*_with_progress` download
+  APIs, and CLI `--progress-json` JSON Lines on stderr.
 - PR 3: cancellation-aware download execution so embedders and CLI flows can stop work without
   corrupting completed artifacts.
 - PR 4: chapter metadata mux support where the selected media source provides usable chapter data
@@ -49,3 +51,5 @@ superseded_by:
 - GitHub Release `v0.4.0`: `https://github.com/Joey-Project/BBDown-rust/releases/tag/v0.4.0`.
 - Promotion workflow: `https://github.com/Joey-Project/BBDown-rust/actions/runs/27769537947`.
 - Published crate version: `bbdown-core` `0.4.0`.
+- Progress callback slice validation covers core callback events and CLI `--progress-json` mock e2e
+  output.

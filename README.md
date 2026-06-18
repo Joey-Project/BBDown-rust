@@ -117,6 +117,7 @@ bbdown download av170001 --output-dir downloads --archive-file downloads/archive
 bbdown download av170001 --output-template "{title}-{entry_count:02}" --entry-template "{index:02}-{entry_title}" --no-mux
 bbdown danmaku update av170001 --archive-file downloads/archive.json --danmaku-format xml,ass
 bbdown download av170001 --upos-host upos-sz-mirrorcoso1.bilivideo.com --no-mux
+bbdown download av170001 --output-dir downloads --no-mux --json --progress-json
 ```
 
 `download` resolves a plan, downloads the first complete DASH video/audio pair or FLV segments,
@@ -136,6 +137,8 @@ The CLI avoids suspected PCDN media URLs by default while leaving local and priv
 Pass `--allow-pcdn` to keep original PCDN candidates, `--upos-host <HOST>` to rewrite DASH/FLV
 media candidates to a specific UPOS host, or `--force-replace-host` to rewrite media candidates to
 the built-in BBDown fallback host. Cover, subtitle, and danmaku sidecar URLs are not rewritten.
+Pass `--progress-json` to stream typed progress events as JSON Lines on stderr while stdout remains
+human output or the final `--json` report.
 Pass `--archive-file <path>` to record completed downloads by content identity. Archive output,
 sidecar, and mux paths are stored as absolute paths at record time so the same archive can be reused
 from another working directory. Entry identity uses stable aid/cid media ids, so the same PGC

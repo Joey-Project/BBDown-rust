@@ -170,6 +170,11 @@ playlist、segment 文件、retention、cleanup 和 finalization；例如
 `BiliClient::download_plan` 执行调用方提供的 `DownloadPlan`。`BiliClient::download` 和
 `BiliClient::download_input` 是先规划再执行的 convenience wrapper。executor 返回 typed
 `DownloadReport`，而不是抓取 CLI 输出。
+Progress 是 opt-in 的执行侧 observer。`*_with_progress` 变体接收
+`DownloadProgressSink`，并在 plan、条目、文件和 mux milestone 发出 typed
+`DownloadProgressEvent`。非 progress 方法会保留，并走 no-op sink。CLI 只有在传入
+`--progress-json` 时才暴露同一事件流，并把 JSON Lines 写到 stderr，因此 stdout 仍然是人类
+输出或最终 `DownloadReport` JSON。
 
 执行行为由 `DownloadOptions` 控制：
 

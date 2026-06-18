@@ -2,6 +2,7 @@ use crate::{
     BiliClient, DownloadEntry, DownloadPlan, Error, FlvSegment, Input, MediaStream, Result,
     Selection, SubtitleFormat, SubtitleTrack,
     danmaku::{self, DanmakuFormat, DanmakuFormats},
+    progress::{DownloadProgressEvent, DownloadProgressSink, NoopDownloadProgress},
 };
 use futures_util::StreamExt;
 use md5::{Digest, Md5};
@@ -767,8 +768,24 @@ impl BiliClient {
         selection: Option<Selection>,
         options: DownloadOptions,
     ) -> Result<DownloadReport> {
+        let progress = NoopDownloadProgress;
+        self.download_input_with_progress(raw, selection, options, &progress)
+            .await
+    }
+
+    pub async fn download_input_with_progress<P>(
+        &self,
+        raw: &str,
+        selection: Option<Selection>,
+        options: DownloadOptions,
+        progress: &P,
+    ) -> Result<DownloadReport>
+    where
+        P: DownloadProgressSink + ?Sized,
+    {
         let input = Input::parse(raw)?;
-        self.download(input, selection, options).await
+        self.download_with_progress(input, selection, options, progress)
+            .await
     }
 
     pub async fn download(
@@ -777,10 +794,26 @@ impl BiliClient {
         selection: Option<Selection>,
         options: DownloadOptions,
     ) -> Result<DownloadReport> {
+        let progress = NoopDownloadProgress;
+        self.download_with_progress(input, selection, options, &progress)
+            .await
+    }
+
+    pub async fn download_with_progress<P>(
+        &self,
+        input: Input,
+        selection: Option<Selection>,
+        options: DownloadOptions,
+        progress: &P,
+    ) -> Result<DownloadReport>
+    where
+        P: DownloadProgressSink + ?Sized,
+    {
         let plan = self
             .plan_for_download(input, selection, options.mode)
             .await?;
-        self.download_plan(&plan, options).await
+        self.download_plan_with_progress(&plan, options, progress)
+            .await
     }
 
     pub async fn download_plan(
@@ -788,9 +821,23 @@ impl BiliClient {
         plan: &DownloadPlan,
         options: DownloadOptions,
     ) -> Result<DownloadReport> {
+        let progress = NoopDownloadProgress;
+        self.download_plan_with_progress(plan, options, &progress)
+            .await
+    }
+
+    pub async fn download_plan_with_progress<P>(
+        &self,
+        plan: &DownloadPlan,
+        options: DownloadOptions,
+        progress: &P,
+    ) -> Result<DownloadReport>
+    where
+        P: DownloadProgressSink + ?Sized,
+    {
         validate_download_plan_options(plan, &options)?;
         let output_dir = default_plan_output_dir(plan, &options)?;
-        self.download_plan_to_output_dir(plan, options, output_dir)
+        self.download_plan_to_output_dir(plan, options, output_dir, progress)
             .await
     }
 
@@ -801,9 +848,27 @@ impl BiliClient {
         archive: &mut DownloadArchive,
         decision: DuplicateDecision,
     ) -> Result<DownloadReport> {
+        let progress = NoopDownloadProgress;
+        self.download_plan_with_archive_decision_with_progress(
+            plan, options, archive, decision, &progress,
+        )
+        .await
+    }
+
+    pub async fn download_plan_with_archive_decision_with_progress<P>(
+        &self,
+        plan: &DownloadPlan,
+        options: DownloadOptions,
+        archive: &mut DownloadArchive,
+        decision: DuplicateDecision,
+        progress: &P,
+    ) -> Result<DownloadReport>
+    where
+        P: DownloadProgressSink + ?Sized,
+    {
         let preflight = DownloadPreflight::inspect(plan, &options, Some(archive))?;
-        self.download_plan_with_archive_preflight_decision(
-            plan, options, archive, &preflight, decision,
+        self.download_plan_with_archive_preflight_decision_with_progress(
+            plan, options, archive, &preflight, decision, progress,
         )
         .await
     }
@@ -816,6 +881,25 @@ impl BiliClient {
         preflight: &DownloadPreflight,
         decision: DuplicateDecision,
     ) -> Result<DownloadReport> {
+        let progress = NoopDownloadProgress;
+        self.download_plan_with_archive_preflight_decision_with_progress(
+            plan, options, archive, preflight, decision, &progress,
+        )
+        .await
+    }
+
+    pub async fn download_plan_with_archive_preflight_decision_with_progress<P>(
+        &self,
+        plan: &DownloadPlan,
+        options: DownloadOptions,
+        archive: &mut DownloadArchive,
+        preflight: &DownloadPreflight,
+        decision: DuplicateDecision,
+        progress: &P,
+    ) -> Result<DownloadReport>
+    where
+        P: DownloadProgressSink + ?Sized,
+    {
         validate_download_path_templates(plan, &options)?;
         validate_archive_preflight(plan, &options, archive, preflight)?;
         let mut effective_options = options;
@@ -844,7 +928,7 @@ impl BiliClient {
             )));
         }
         let report = self
-            .download_plan_to_output_dir(plan, effective_options.clone(), output_dir)
+            .download_plan_to_output_dir(plan, effective_options.clone(), output_dir, progress)
             .await?;
         archive.record_download(plan, &effective_options, &report);
         Ok(report)
@@ -906,13 +990,14 @@ impl BiliClient {
             .with_retry_policy(options.retry)
             .with_resume(false)
             .with_download_idle_timeout(options.download_idle_timeout);
+        let source_request =
+            DownloadFileRequest::new(plan_entry, &source_path, DownloadFileKind::Danmaku, None);
         let source_file = self
             .download_url_to_file(
                 &plan_entry.danmaku.xml_url,
-                &source_path,
-                DownloadFileKind::Danmaku,
-                None,
+                &source_request,
                 &download_options,
+                &NoopDownloadProgress,
             )
             .await?;
         let fetched_xml = fs::read_to_string(&source_file.path).await;
@@ -951,21 +1036,35 @@ impl BiliClient {
         })
     }
 
-    async fn download_plan_to_output_dir(
+    async fn download_plan_to_output_dir<P>(
         &self,
         plan: &DownloadPlan,
         options: DownloadOptions,
         output_dir: PathBuf,
-    ) -> Result<DownloadReport> {
+        progress: &P,
+    ) -> Result<DownloadReport>
+    where
+        P: DownloadProgressSink + ?Sized,
+    {
         validate_download_plan_options(plan, &options)?;
         fs::create_dir_all(&output_dir).await?;
+        progress.on_download_progress(&DownloadProgressEvent::PlanStarted {
+            title: plan.title.clone(),
+            output_dir: output_dir.clone(),
+            entry_count: plan.entries.len(),
+        });
         let mut entries = Vec::new();
         for entry in &plan.entries {
             entries.push(
-                self.download_entry(plan, entry, &output_dir, &options)
+                self.download_entry(plan, entry, &output_dir, &options, progress)
                     .await?,
             );
         }
+        progress.on_download_progress(&DownloadProgressEvent::PlanCompleted {
+            title: plan.title.clone(),
+            output_dir: output_dir.clone(),
+            entry_count: entries.len(),
+        });
         Ok(DownloadReport {
             title: plan.title.clone(),
             output_dir,
@@ -973,39 +1072,60 @@ impl BiliClient {
         })
     }
 
-    async fn download_entry(
+    async fn download_entry<P>(
         &self,
         plan: &DownloadPlan,
         entry: &DownloadEntry,
         output_dir: &Path,
         options: &DownloadOptions,
-    ) -> Result<EntryDownloadReport> {
+        progress: &P,
+    ) -> Result<EntryDownloadReport>
+    where
+        P: DownloadProgressSink + ?Sized,
+    {
         let entry_dir = output_dir.join(entry_dir_name(&plan.title, entry, options)?);
         fs::create_dir_all(&entry_dir).await?;
-        let mut files = Vec::new();
-        self.download_entry_media(entry, &entry_dir, options, &mut files)
-            .await?;
-        self.download_entry_sidecars(entry, &entry_dir, options, &mut files)
-            .await?;
-        let mux = self
-            .mux_entry(&plan.title, entry, &entry_dir, &files, options)
-            .await?;
-        Ok(EntryDownloadReport {
+        progress.on_download_progress(&DownloadProgressEvent::EntryStarted {
             index: entry.index,
             title: entry.title.clone(),
-            directory: entry_dir,
+            directory: entry_dir.clone(),
+        });
+        let mut files = Vec::new();
+        self.download_entry_media(entry, &entry_dir, options, &mut files, progress)
+            .await?;
+        self.download_entry_sidecars(entry, &entry_dir, options, &mut files, progress)
+            .await?;
+        let mux = self
+            .mux_entry(&plan.title, entry, &entry_dir, &files, options, progress)
+            .await?;
+        let report = EntryDownloadReport {
+            index: entry.index,
+            title: entry.title.clone(),
+            directory: entry_dir.clone(),
             files,
             mux,
-        })
+        };
+        progress.on_download_progress(&DownloadProgressEvent::EntryCompleted {
+            index: report.index,
+            title: report.title.clone(),
+            directory: report.directory.clone(),
+            file_count: report.files.len(),
+            mux_output: report.mux.as_ref().map(|mux| mux.output_path.clone()),
+        });
+        Ok(report)
     }
 
-    async fn download_entry_media(
+    async fn download_entry_media<P>(
         &self,
         entry: &DownloadEntry,
         entry_dir: &Path,
         options: &DownloadOptions,
         files: &mut Vec<DownloadedFile>,
-    ) -> Result<()> {
+        progress: &P,
+    ) -> Result<()>
+    where
+        P: DownloadProgressSink + ?Sized,
+    {
         match options.mode {
             DownloadMode::All => {
                 let has_dash_pair =
@@ -1024,19 +1144,23 @@ impl BiliClient {
                     )?;
                     files.push(
                         self.download_media_stream(
+                            entry,
                             video,
                             DownloadFileKind::Video,
                             entry_dir,
                             options,
+                            progress,
                         )
                         .await?,
                     );
                     files.push(
                         self.download_media_stream(
+                            entry,
                             audio,
                             DownloadFileKind::Audio,
                             entry_dir,
                             options,
+                            progress,
                         )
                         .await?,
                     );
@@ -1049,7 +1173,7 @@ impl BiliClient {
                     }
                     for segment in &entry.streams.flv_segments {
                         files.push(
-                            self.download_flv_segment(segment, entry_dir, options)
+                            self.download_flv_segment(entry, segment, entry_dir, options, progress)
                                 .await?,
                         );
                     }
@@ -1064,8 +1188,15 @@ impl BiliClient {
                     "video",
                 )?;
                 files.push(
-                    self.download_media_stream(video, DownloadFileKind::Video, entry_dir, options)
-                        .await?,
+                    self.download_media_stream(
+                        entry,
+                        video,
+                        DownloadFileKind::Video,
+                        entry_dir,
+                        options,
+                        progress,
+                    )
+                    .await?,
                 );
             }
             DownloadMode::AudioOnly => {
@@ -1075,8 +1206,15 @@ impl BiliClient {
                     "audio",
                 )?;
                 files.push(
-                    self.download_media_stream(audio, DownloadFileKind::Audio, entry_dir, options)
-                        .await?,
+                    self.download_media_stream(
+                        entry,
+                        audio,
+                        DownloadFileKind::Audio,
+                        entry_dir,
+                        options,
+                        progress,
+                    )
+                    .await?,
                 );
             }
             DownloadMode::SubtitleOnly | DownloadMode::DanmakuOnly | DownloadMode::CoverOnly => {}
@@ -1084,24 +1222,25 @@ impl BiliClient {
         Ok(())
     }
 
-    async fn download_entry_sidecars(
+    async fn download_entry_sidecars<P>(
         &self,
         entry: &DownloadEntry,
         entry_dir: &Path,
         options: &DownloadOptions,
         files: &mut Vec<DownloadedFile>,
-    ) -> Result<()> {
+        progress: &P,
+    ) -> Result<()>
+    where
+        P: DownloadProgressSink + ?Sized,
+    {
         if should_download_cover(options) {
             if let Some(cover_url) = entry.cover_url.as_deref().filter(|url| !url.is_empty()) {
+                let cover_path = entry_dir.join(cover_file_name(cover_url));
+                let request =
+                    DownloadFileRequest::new(entry, &cover_path, DownloadFileKind::Cover, None);
                 files.push(
-                    self.download_url_to_file(
-                        cover_url,
-                        &entry_dir.join(cover_file_name(cover_url)),
-                        DownloadFileKind::Cover,
-                        None,
-                        options,
-                    )
-                    .await?,
+                    self.download_url_to_file(cover_url, &request, options, progress)
+                        .await?,
                 );
             } else if matches!(options.mode, DownloadMode::CoverOnly) {
                 return Err(Error::MissingField("cover URL"));
@@ -1114,7 +1253,7 @@ impl BiliClient {
                     continue;
                 }
                 files.push(
-                    self.download_subtitle(index, subtitle, entry_dir, options)
+                    self.download_subtitle(index, subtitle, entry, entry_dir, options, progress)
                         .await?,
                 );
             }
@@ -1123,43 +1262,44 @@ impl BiliClient {
             }
         }
         if should_download_danmaku(options) {
-            self.download_danmaku(entry, entry_dir, options, files)
+            self.download_danmaku(entry, entry_dir, options, files, progress)
                 .await?;
         }
         Ok(())
     }
 
-    async fn download_danmaku(
+    async fn download_danmaku<P>(
         &self,
         entry: &DownloadEntry,
         entry_dir: &Path,
         options: &DownloadOptions,
         files: &mut Vec<DownloadedFile>,
-    ) -> Result<()> {
+        progress: &P,
+    ) -> Result<()>
+    where
+        P: DownloadProgressSink + ?Sized,
+    {
         let xml_path = entry_dir.join("danmaku.xml");
         let writes_xml = options.danmaku_formats.contains(DanmakuFormat::Xml);
         let writes_ass = options.danmaku_formats.contains(DanmakuFormat::Ass);
         let source_file = if writes_xml {
+            let request =
+                DownloadFileRequest::new(entry, &xml_path, DownloadFileKind::Danmaku, None);
             let file = self
-                .download_url_to_file(
-                    &entry.danmaku.xml_url,
-                    &xml_path,
-                    DownloadFileKind::Danmaku,
-                    None,
-                    options,
-                )
+                .download_url_to_file(&entry.danmaku.xml_url, &request, options, progress)
                 .await?;
             files.push(file.clone());
             file
         } else {
             let source_path = temporary_path_with_suffix(&xml_path, ".bbdown-source");
             remove_file_if_exists(&source_path).await?;
+            let request =
+                DownloadFileRequest::new(entry, &source_path, DownloadFileKind::Danmaku, None);
             self.download_url_to_file(
                 &entry.danmaku.xml_url,
-                &source_path,
-                DownloadFileKind::Danmaku,
-                None,
+                &request,
                 options,
+                &NoopDownloadProgress,
             )
             .await?
         };
@@ -1168,10 +1308,12 @@ impl BiliClient {
             let xml = String::from_utf8_lossy(&xml);
             let ass = danmaku::xml_to_ass(&xml);
             files.push(
-                write_generated_text_file(
+                write_generated_text_file_with_progress(
                     &entry_dir.join("danmaku.ass"),
                     &ass,
                     DownloadFileKind::DanmakuAss,
+                    entry,
+                    progress,
                 )
                 .await?,
             );
@@ -1182,13 +1324,18 @@ impl BiliClient {
         Ok(())
     }
 
-    async fn download_media_stream(
+    async fn download_media_stream<P>(
         &self,
+        entry: &DownloadEntry,
         stream: &MediaStream,
         kind: DownloadFileKind,
         entry_dir: &Path,
         options: &DownloadOptions,
-    ) -> Result<DownloadedFile> {
+        progress: &P,
+    ) -> Result<DownloadedFile>
+    where
+        P: DownloadProgressSink + ?Sized,
+    {
         let label = match kind {
             DownloadFileKind::Video => "video",
             DownloadFileKind::Audio => "audio",
@@ -1199,68 +1346,80 @@ impl BiliClient {
             | DownloadFileKind::DanmakuAss => "media",
         };
         let path = entry_dir.join(media_file_name(label, stream));
+        let request = DownloadFileRequest::new(entry, &path, kind, stream.size);
         self.download_candidate_urls_to_file(
             &candidate_urls(&stream.base_url, &stream.backup_urls, &options.media_hosts),
-            &path,
-            kind,
-            stream.size,
+            &request,
             options,
+            progress,
         )
         .await
     }
 
-    async fn download_flv_segment(
+    async fn download_flv_segment<P>(
         &self,
+        entry: &DownloadEntry,
         segment: &FlvSegment,
         entry_dir: &Path,
         options: &DownloadOptions,
-    ) -> Result<DownloadedFile> {
+        progress: &P,
+    ) -> Result<DownloadedFile>
+    where
+        P: DownloadProgressSink + ?Sized,
+    {
         let path = entry_dir.join(format!("segment-{:03}.flv", segment.order));
+        let request =
+            DownloadFileRequest::new(entry, &path, DownloadFileKind::FlvSegment, segment.size);
         self.download_candidate_urls_to_file(
             &candidate_urls(&segment.url, &segment.backup_urls, &options.media_hosts),
-            &path,
-            DownloadFileKind::FlvSegment,
-            segment.size,
+            &request,
             options,
+            progress,
         )
         .await
     }
 
-    async fn download_subtitle(
+    async fn download_subtitle<P>(
         &self,
         index: usize,
         subtitle: &SubtitleTrack,
+        entry: &DownloadEntry,
         entry_dir: &Path,
         options: &DownloadOptions,
-    ) -> Result<DownloadedFile> {
+        progress: &P,
+    ) -> Result<DownloadedFile>
+    where
+        P: DownloadProgressSink + ?Sized,
+    {
         let path = entry_dir.join(subtitle_file_name(index, subtitle));
-        self.download_url_to_file(
-            &subtitle.url,
-            &path,
-            DownloadFileKind::Subtitle,
-            None,
-            options,
-        )
-        .await
+        let request = DownloadFileRequest::new(entry, &path, DownloadFileKind::Subtitle, None);
+        self.download_url_to_file(&subtitle.url, &request, options, progress)
+            .await
     }
 
-    async fn download_url_to_file(
+    async fn download_url_to_file<P>(
         &self,
         url: &str,
-        path: &Path,
-        kind: DownloadFileKind,
-        expected_size: Option<u64>,
+        request: &DownloadFileRequest<'_>,
         options: &DownloadOptions,
-    ) -> Result<DownloadedFile> {
+        progress: &P,
+    ) -> Result<DownloadedFile>
+    where
+        P: DownloadProgressSink + ?Sized,
+    {
         let attempts = options.retry.max_attempts.max(1);
         let mut last_error = None;
         for attempt in 1..=attempts {
+            let attempt = DownloadAttempt {
+                current: attempt,
+                max: attempts,
+            };
             match self
-                .try_download_url_to_file(url, path, kind.clone(), expected_size, options)
+                .try_download_url_to_file(url, request, options, attempt, progress)
                 .await
             {
                 Ok(file) => return Ok(file),
-                Err(error) if attempt < attempts => {
+                Err(error) if attempt.current < attempts => {
                     last_error = Some(error);
                     if !options.retry.backoff.is_zero() {
                         tokio::time::sleep(options.retry.backoff).await;
@@ -1272,18 +1431,20 @@ impl BiliClient {
         Err(last_error.unwrap_or_else(|| Error::InvalidInput("download retry failed".to_owned())))
     }
 
-    async fn download_candidate_urls_to_file(
+    async fn download_candidate_urls_to_file<P>(
         &self,
         urls: &[String],
-        path: &Path,
-        kind: DownloadFileKind,
-        expected_size: Option<u64>,
+        request: &DownloadFileRequest<'_>,
         options: &DownloadOptions,
-    ) -> Result<DownloadedFile> {
+        progress: &P,
+    ) -> Result<DownloadedFile>
+    where
+        P: DownloadProgressSink + ?Sized,
+    {
         let mut last_error = None;
         for url in urls {
             match self
-                .download_url_to_file(url, path, kind.clone(), expected_size, options)
+                .download_url_to_file(url, request, options, progress)
                 .await
             {
                 Ok(file) => return Ok(file),
@@ -1293,35 +1454,32 @@ impl BiliClient {
         Err(last_error.unwrap_or_else(|| Error::InvalidInput("empty download URL list".to_owned())))
     }
 
-    async fn try_download_url_to_file(
+    async fn try_download_url_to_file<P>(
         &self,
         url: &str,
-        path: &Path,
-        kind: DownloadFileKind,
-        expected_size: Option<u64>,
+        request: &DownloadFileRequest<'_>,
         options: &DownloadOptions,
-    ) -> Result<DownloadedFile> {
-        if let Some(parent) = path.parent() {
+        attempt: DownloadAttempt,
+        progress: &P,
+    ) -> Result<DownloadedFile>
+    where
+        P: DownloadProgressSink + ?Sized,
+    {
+        if let Some(parent) = request.path.parent() {
             fs::create_dir_all(parent).await?;
         }
-        let existing_len = existing_file_len(path).await?;
+        let existing_len = existing_file_len(request.path).await?;
         let resume_from = if options.resume { existing_len } else { 0 };
         let response = self.send_download_request(url, resume_from).await?;
         let status = response.status();
         if resume_from > 0 && status == StatusCode::RANGE_NOT_SATISFIABLE {
-            if content_range_complete_len(response.headers()) == Some(resume_from)
-                && expected_size.is_none_or(|size| size == resume_from)
-            {
-                return Ok(DownloadedFile {
-                    kind,
-                    path: path.to_path_buf(),
-                    bytes_written: 0,
-                    resumed_from: resume_from,
-                });
-            }
-            return Err(Error::InvalidInput(
-                "server rejected resume range for a different file length".to_owned(),
-            ));
+            return already_complete_resume_result(
+                &response,
+                request,
+                resume_from,
+                attempt,
+                progress,
+            );
         }
         let response = response
             .error_for_status()
@@ -1334,7 +1492,7 @@ impl BiliClient {
         let start_offset = if append { resume_from } else { 0 };
         let full_retry_after_ignored_range = resume_from > 0 && !append;
         let validation_expected_size = validation_size_for_full_retry(
-            expected_size,
+            request.expected_size,
             content_range,
             response_content_len,
             full_retry_after_ignored_range,
@@ -1344,11 +1502,18 @@ impl BiliClient {
                 "server ignored resume range without a verifiable full response length".to_owned(),
             ));
         }
+        emit_file_started(
+            progress,
+            request,
+            start_offset,
+            validation_expected_size,
+            attempt,
+        );
         let replace_existing = existing_len > 0 && !append;
         let write_path = if replace_existing {
-            temporary_download_path(path)
+            temporary_download_path(request.path)
         } else {
-            path.to_path_buf()
+            request.path.to_path_buf()
         };
         let mut file = OpenOptions::new()
             .create(true)
@@ -1360,10 +1525,14 @@ impl BiliClient {
         let write_result = write_response_body_to_file(
             &mut file,
             response,
-            content_range,
-            start_offset,
-            validation_expected_size,
-            options.download_idle_timeout,
+            WriteResponseRequest {
+                content_range,
+                start_offset,
+                expected_size: validation_expected_size,
+                idle_timeout: options.download_idle_timeout,
+            },
+            progress,
+            request,
         )
         .await;
         drop(file);
@@ -1376,18 +1545,19 @@ impl BiliClient {
                 return Err(error);
             }
         };
-        if is_unexpected_empty_response(&kind, bytes_written) {
+        if is_unexpected_empty_response(&request.kind, bytes_written) {
             if !append {
                 let _ = fs::remove_file(&write_path).await;
             }
             return Err(Error::InvalidInput("empty media response".to_owned()));
         }
         if replace_existing {
-            replace_file(&write_path, path).await?;
+            replace_file(&write_path, request.path).await?;
         }
+        emit_file_completed(progress, request, bytes_written, start_offset);
         Ok(DownloadedFile {
-            kind,
-            path: path.to_path_buf(),
+            kind: request.kind.clone(),
+            path: request.path.to_path_buf(),
             bytes_written,
             resumed_from: start_offset,
         })
@@ -1408,14 +1578,18 @@ impl BiliClient {
             .map_err(BiliClient::http_error_without_url)
     }
 
-    async fn mux_entry(
+    async fn mux_entry<P>(
         &self,
         plan_title: &str,
         entry: &DownloadEntry,
         entry_dir: &Path,
         files: &[DownloadedFile],
         options: &DownloadOptions,
-    ) -> Result<Option<MuxReport>> {
+        progress: &P,
+    ) -> Result<Option<MuxReport>>
+    where
+        P: DownloadProgressSink + ?Sized,
+    {
         if !options.mode.allows_mux() {
             return Ok(None);
         }
@@ -1461,6 +1635,13 @@ impl BiliClient {
             OsString::from("copy"),
             mux_output_path.as_os_str().to_os_string(),
         ]);
+        let command = command_report(binary, &args);
+        progress.on_download_progress(&DownloadProgressEvent::MuxStarted {
+            entry_index: entry.index,
+            entry_title: entry.title.clone(),
+            output_path: output_path.clone(),
+            command: command.clone(),
+        });
         let status = Command::new(binary)
             .args(&args)
             .stdin(Stdio::null())
@@ -1496,9 +1677,14 @@ impl BiliClient {
             });
         }
         replace_file(&mux_output_path, &output_path).await?;
+        progress.on_download_progress(&DownloadProgressEvent::MuxCompleted {
+            entry_index: entry.index,
+            entry_title: entry.title.clone(),
+            output_path: output_path.clone(),
+        });
         Ok(Some(MuxReport {
             output_path,
-            command: command_report(binary, &args),
+            command,
         }))
     }
 }
@@ -1516,6 +1702,43 @@ impl DownloadFileKind {
     }
 }
 
+struct DownloadFileRequest<'a> {
+    entry: &'a DownloadEntry,
+    path: &'a Path,
+    kind: DownloadFileKind,
+    expected_size: Option<u64>,
+}
+
+impl<'a> DownloadFileRequest<'a> {
+    fn new(
+        entry: &'a DownloadEntry,
+        path: &'a Path,
+        kind: DownloadFileKind,
+        expected_size: Option<u64>,
+    ) -> Self {
+        Self {
+            entry,
+            path,
+            kind,
+            expected_size,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct DownloadAttempt {
+    current: u32,
+    max: u32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct WriteResponseRequest {
+    content_range: Option<ParsedContentRange>,
+    start_offset: u64,
+    expected_size: Option<u64>,
+    idle_timeout: Option<Duration>,
+}
+
 fn command_report(binary: &Path, args: &[OsString]) -> Vec<String> {
     let mut command = Vec::with_capacity(args.len() + 1);
     command.push(binary.to_string_lossy().into_owned());
@@ -1523,47 +1746,151 @@ fn command_report(binary: &Path, args: &[OsString]) -> Vec<String> {
     command
 }
 
-async fn write_response_body_to_file(
+fn already_complete_resume_result<P>(
+    response: &reqwest::Response,
+    request: &DownloadFileRequest<'_>,
+    resume_from: u64,
+    attempt: DownloadAttempt,
+    progress: &P,
+) -> Result<DownloadedFile>
+where
+    P: DownloadProgressSink + ?Sized,
+{
+    if content_range_complete_len(response.headers()) == Some(resume_from)
+        && request.expected_size.is_none_or(|size| size == resume_from)
+    {
+        emit_file_started(progress, request, resume_from, Some(resume_from), attempt);
+        emit_file_completed(progress, request, 0, resume_from);
+        return Ok(DownloadedFile {
+            kind: request.kind.clone(),
+            path: request.path.to_path_buf(),
+            bytes_written: 0,
+            resumed_from: resume_from,
+        });
+    }
+    Err(Error::InvalidInput(
+        "server rejected resume range for a different file length".to_owned(),
+    ))
+}
+
+async fn write_response_body_to_file<P>(
     file: &mut tokio::fs::File,
     response: reqwest::Response,
-    content_range: Option<ParsedContentRange>,
-    start_offset: u64,
-    expected_size: Option<u64>,
-    download_idle_timeout: Option<Duration>,
-) -> Result<u64> {
-    let mut bytes_written = 0;
+    write_request: WriteResponseRequest,
+    progress: &P,
+    file_request: &DownloadFileRequest<'_>,
+) -> Result<u64>
+where
+    P: DownloadProgressSink + ?Sized,
+{
+    let mut bytes_written = 0_u64;
     let mut stream = response.bytes_stream();
-    while let Some(chunk) = match next_download_chunk(&mut stream, download_idle_timeout).await {
+    while let Some(chunk) = match next_download_chunk(&mut stream, write_request.idle_timeout).await
+    {
         Ok(chunk) => chunk,
         Err(error) => {
-            rollback_download_file(file, start_offset).await?;
+            rollback_download_file(file, write_request.start_offset).await?;
             return Err(error);
         }
     } {
         let chunk = match chunk {
             Ok(chunk) => chunk,
             Err(error) => {
-                rollback_download_file(file, start_offset).await?;
+                rollback_download_file(file, write_request.start_offset).await?;
                 return Err(BiliClient::http_error_without_url(error));
             }
         };
         if let Err(error) = file.write_all(&chunk).await {
-            rollback_download_file(file, start_offset).await?;
+            rollback_download_file(file, write_request.start_offset).await?;
             return Err(Error::Io(error));
         }
-        bytes_written += u64::try_from(chunk.len()).unwrap_or(u64::MAX);
+        let bytes_delta = u64::try_from(chunk.len()).unwrap_or(u64::MAX);
+        bytes_written = bytes_written.saturating_add(bytes_delta);
+        emit_file_progress(
+            progress,
+            file_request,
+            bytes_delta,
+            bytes_written,
+            write_request.start_offset,
+            write_request.expected_size,
+        );
     }
     if let Err(error) = file.flush().await {
-        rollback_download_file(file, start_offset).await?;
+        rollback_download_file(file, write_request.start_offset).await?;
         return Err(Error::Io(error));
     }
-    if let Err(error) =
-        validate_download_completion(expected_size, content_range, start_offset, bytes_written)
-    {
-        rollback_download_file(file, start_offset).await?;
+    if let Err(error) = validate_download_completion(
+        write_request.expected_size,
+        write_request.content_range,
+        write_request.start_offset,
+        bytes_written,
+    ) {
+        rollback_download_file(file, write_request.start_offset).await?;
         return Err(error);
     }
     Ok(bytes_written)
+}
+
+fn emit_file_started<P>(
+    progress: &P,
+    request: &DownloadFileRequest<'_>,
+    resumed_from: u64,
+    expected_size: Option<u64>,
+    attempt: DownloadAttempt,
+) where
+    P: DownloadProgressSink + ?Sized,
+{
+    progress.on_download_progress(&DownloadProgressEvent::FileStarted {
+        entry_index: request.entry.index,
+        entry_title: request.entry.title.clone(),
+        kind: request.kind.clone(),
+        path: request.path.to_path_buf(),
+        resumed_from,
+        expected_size,
+        attempt: attempt.current,
+        max_attempts: attempt.max,
+    });
+}
+
+fn emit_file_progress<P>(
+    progress: &P,
+    request: &DownloadFileRequest<'_>,
+    bytes_delta: u64,
+    bytes_written: u64,
+    resumed_from: u64,
+    expected_size: Option<u64>,
+) where
+    P: DownloadProgressSink + ?Sized,
+{
+    progress.on_download_progress(&DownloadProgressEvent::FileProgress {
+        entry_index: request.entry.index,
+        entry_title: request.entry.title.clone(),
+        kind: request.kind.clone(),
+        path: request.path.to_path_buf(),
+        bytes_delta,
+        bytes_written,
+        resumed_from,
+        expected_size,
+    });
+}
+
+fn emit_file_completed<P>(
+    progress: &P,
+    request: &DownloadFileRequest<'_>,
+    bytes_written: u64,
+    resumed_from: u64,
+) where
+    P: DownloadProgressSink + ?Sized,
+{
+    progress.on_download_progress(&DownloadProgressEvent::FileCompleted {
+        entry_index: request.entry.index,
+        entry_title: request.entry.title.clone(),
+        kind: request.kind.clone(),
+        path: request.path.to_path_buf(),
+        bytes_written,
+        resumed_from,
+        total_bytes: resumed_from.saturating_add(bytes_written),
+    });
 }
 
 async fn existing_file_len(path: &Path) -> Result<u64> {
@@ -1701,6 +2028,30 @@ async fn write_generated_text_file(
         bytes_written: u64::try_from(contents.len()).unwrap_or(u64::MAX),
         resumed_from: 0,
     })
+}
+
+async fn write_generated_text_file_with_progress<P>(
+    path: &Path,
+    contents: &str,
+    kind: DownloadFileKind,
+    entry: &DownloadEntry,
+    progress: &P,
+) -> Result<DownloadedFile>
+where
+    P: DownloadProgressSink + ?Sized,
+{
+    let expected_size = u64::try_from(contents.len()).unwrap_or(u64::MAX);
+    let request = DownloadFileRequest::new(entry, path, kind, Some(expected_size));
+    emit_file_started(
+        progress,
+        &request,
+        0,
+        Some(expected_size),
+        DownloadAttempt { current: 1, max: 1 },
+    );
+    let file = write_generated_text_file(path, contents, request.kind.clone()).await?;
+    emit_file_completed(progress, &request, file.bytes_written, 0);
+    Ok(file)
 }
 
 fn candidate_urls(
@@ -3199,8 +3550,8 @@ fn subtitle_dedup_key(url: &str) -> String {
 mod tests {
     use super::{
         DEFAULT_UPOS_REPLACEMENT_HOST, DanmakuUpdateOptions, DownloadArchive,
-        DownloadArchiveEntryRecord, DownloadArchiveRecord, DownloadMode, DownloadOptions,
-        DownloadPathTemplates, DownloadPreflight, DownloadReport, DownloadedFile,
+        DownloadArchiveEntryRecord, DownloadArchiveRecord, DownloadFileRequest, DownloadMode,
+        DownloadOptions, DownloadPathTemplates, DownloadPreflight, DownloadReport, DownloadedFile,
         DuplicateDecision, EntryDownloadReport, MAX_FILE_COMPONENT_BYTES, MAX_FILE_NAME_BYTES,
         MAX_SUBTITLE_EXTENSION_BYTES, MediaHostOptions, MuxOptions, RetryPolicy, SidecarOptions,
         StreamSelection, TemplateContext, archive_sidecar_path, candidate_urls,
@@ -3218,12 +3569,14 @@ mod tests {
     };
     use crate::{
         BiliClient, ClientConfig, Credentials, DanmakuFormat, DanmakuFormats, DownloadFileKind,
+        DownloadProgressEvent, NoopDownloadProgress,
     };
     use httpmock::MockServer;
     use httpmock::prelude::*;
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::path::Path;
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
     #[cfg(unix)]
     use std::{fs as std_fs, os::unix::fs::PermissionsExt};
@@ -3831,6 +4184,168 @@ mod tests {
                 })
         );
         assert!(entry.mux.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn download_plan_reports_progress_events() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/video.m4s");
+            then.status(200).body("video");
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let mut plan = test_plan(&server);
+        plan.entries[0].streams.videos[0].size = Some(5);
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress_events = Arc::clone(&events);
+        let progress = move |event: &DownloadProgressEvent| {
+            push_progress_event(&progress_events, event.clone());
+        };
+
+        let report = client
+            .download_plan_with_progress(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().to_path_buf(),
+                    retry: RetryPolicy::single_attempt(),
+                    mode: DownloadMode::VideoOnly,
+                    sidecars: SidecarOptions {
+                        subtitles: false,
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
+                    mux: MuxOptions::Disabled,
+                    ..DownloadOptions::default()
+                },
+                &progress,
+            )
+            .await?;
+
+        assert_eq!(report.entries[0].files.len(), 1);
+        let events = progress_events_snapshot(&events);
+        assert!(matches!(
+            events.first(),
+            Some(DownloadProgressEvent::PlanStarted {
+                title,
+                entry_count: 1,
+                ..
+            }) if title == "Mock video"
+        ));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::EntryStarted {
+                index: 1,
+                title,
+                ..
+            } if title == "Main"
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::FileStarted {
+                entry_index: 1,
+                kind: DownloadFileKind::Video,
+                resumed_from: 0,
+                expected_size: Some(5),
+                attempt: 1,
+                max_attempts: 1,
+                ..
+            }
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::FileProgress {
+                entry_index: 1,
+                kind: DownloadFileKind::Video,
+                bytes_delta: 5,
+                bytes_written: 5,
+                resumed_from: 0,
+                expected_size: Some(5),
+                ..
+            }
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::FileCompleted {
+                entry_index: 1,
+                kind: DownloadFileKind::Video,
+                bytes_written: 5,
+                resumed_from: 0,
+                total_bytes: 5,
+                ..
+            }
+        )));
+        assert!(matches!(
+            events.last(),
+            Some(DownloadProgressEvent::PlanCompleted {
+                title,
+                entry_count: 1,
+                ..
+            }) if title == "Mock video"
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn ass_only_danmaku_progress_excludes_internal_source_file() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/danmaku.xml");
+            then.status(200)
+                .body(r#"<i><d p="1,1,25,16777215,1,0,0,0">hello</d></i>"#);
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = test_plan(&server);
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress_events = Arc::clone(&events);
+        let progress = move |event: &DownloadProgressEvent| {
+            push_progress_event(&progress_events, event.clone());
+        };
+
+        let report = client
+            .download_plan_with_progress(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().to_path_buf(),
+                    retry: RetryPolicy::single_attempt(),
+                    mode: DownloadMode::DanmakuOnly,
+                    danmaku_formats: DanmakuFormats::new([DanmakuFormat::Ass]),
+                    mux: MuxOptions::Disabled,
+                    ..DownloadOptions::default()
+                },
+                &progress,
+            )
+            .await?;
+
+        assert_eq!(report.entries[0].files.len(), 1);
+        assert_eq!(
+            report.entries[0].files[0].kind,
+            DownloadFileKind::DanmakuAss
+        );
+        let events = progress_events_snapshot(&events);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::FileCompleted {
+                kind: DownloadFileKind::DanmakuAss,
+                ..
+            }
+        )));
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::FileCompleted {
+                kind: DownloadFileKind::Danmaku,
+                ..
+            }
+        )));
+        assert!(!events.iter().any(|event| match event {
+            DownloadProgressEvent::FileStarted { path, .. }
+            | DownloadProgressEvent::FileProgress { path, .. }
+            | DownloadProgressEvent::FileCompleted { path, .. } =>
+                path.to_string_lossy().contains(".bbdown-source"),
+            _ => false,
+        }));
         Ok(())
     }
 
@@ -4847,6 +5362,9 @@ mod tests {
         });
         let temp = tempfile::tempdir()?;
         let client = BiliClient::new(ClientConfig::default());
+        let entry = single_video_plan(format!("http://{address}/video.m4s"))
+            .entries
+            .remove(0);
         let path = temp.path().join("video.m4s");
         tokio::fs::write(&path, "existing").await?;
         let options = DownloadOptions {
@@ -4858,14 +5376,14 @@ mod tests {
             mux: MuxOptions::Disabled,
             ..DownloadOptions::default()
         };
+        let request = DownloadFileRequest::new(&entry, &path, DownloadFileKind::Video, None);
 
         let Err(error) = client
             .download_url_to_file(
                 &format!("http://{address}/video.m4s"),
-                &path,
-                DownloadFileKind::Video,
-                None,
+                &request,
                 &options,
+                &NoopDownloadProgress,
             )
             .await
         else {
@@ -5246,6 +5764,9 @@ mod tests {
         });
         let temp = tempfile::tempdir()?;
         let client = BiliClient::new(ClientConfig::default());
+        let entry = single_video_plan(format!("{}/video.m4s", server.base_url()))
+            .entries
+            .remove(0);
         let path = temp.path().join("video.m4s");
         let options = DownloadOptions {
             retry: RetryPolicy::single_attempt(),
@@ -5256,14 +5777,14 @@ mod tests {
             mux: MuxOptions::Disabled,
             ..DownloadOptions::default()
         };
+        let request = DownloadFileRequest::new(&entry, &path, DownloadFileKind::Video, Some(0));
 
         let Err(error) = client
             .download_url_to_file(
                 &format!("{}/video.m4s", server.base_url()),
-                &path,
-                DownloadFileKind::Video,
-                Some(0),
+                &request,
                 &options,
+                &NoopDownloadProgress,
             )
             .await
         else {
@@ -5382,6 +5903,9 @@ mod tests {
             request_timeout: Duration::from_millis(20),
             ..ClientConfig::default()
         });
+        let entry = single_video_plan(format!("http://{address}/video.m4s"))
+            .entries
+            .remove(0);
         let path = temp.path().join("video.m4s");
         let options = DownloadOptions {
             retry: RetryPolicy::single_attempt(),
@@ -5393,14 +5917,14 @@ mod tests {
             download_idle_timeout: Some(Duration::from_secs(1)),
             ..DownloadOptions::default()
         };
+        let request = DownloadFileRequest::new(&entry, &path, DownloadFileKind::Video, Some(2));
 
         let file = client
             .download_url_to_file(
                 &format!("http://{address}/video.m4s"),
-                &path,
-                DownloadFileKind::Video,
-                Some(2),
+                &request,
                 &options,
+                &NoopDownloadProgress,
             )
             .await?;
 
@@ -5427,6 +5951,9 @@ mod tests {
             request_timeout: Duration::from_millis(20),
             ..ClientConfig::default()
         });
+        let entry = single_video_plan(format!("http://{address}/video.m4s"))
+            .entries
+            .remove(0);
         let path = temp.path().join("video.m4s");
         let options = DownloadOptions {
             retry: RetryPolicy::single_attempt(),
@@ -5438,14 +5965,14 @@ mod tests {
             download_idle_timeout: Some(Duration::from_secs(1)),
             ..DownloadOptions::default()
         };
+        let request = DownloadFileRequest::new(&entry, &path, DownloadFileKind::Video, None);
 
         let Err(error) = client
             .download_url_to_file(
                 &format!("http://{address}/video.m4s"),
-                &path,
-                DownloadFileKind::Video,
-                None,
+                &request,
                 &options,
+                &NoopDownloadProgress,
             )
             .await
         else {
@@ -5480,6 +6007,9 @@ mod tests {
         });
         let temp = tempfile::tempdir()?;
         let client = BiliClient::new(ClientConfig::default());
+        let entry = single_video_plan(format!("http://{address}/video.m4s"))
+            .entries
+            .remove(0);
         let path = temp.path().join("video.m4s");
         let options = DownloadOptions {
             retry: RetryPolicy {
@@ -5493,14 +6023,14 @@ mod tests {
             mux: MuxOptions::Disabled,
             ..DownloadOptions::default()
         };
+        let request = DownloadFileRequest::new(&entry, &path, DownloadFileKind::Video, None);
 
         let file = client
             .download_url_to_file(
                 &format!("http://{address}/video.m4s"),
-                &path,
-                DownloadFileKind::Video,
-                None,
+                &request,
                 &options,
+                &NoopDownloadProgress,
             )
             .await?;
 
@@ -7351,6 +7881,25 @@ mod tests {
         url.set_query(None);
         url.set_fragment(None);
         url.to_string()
+    }
+
+    fn push_progress_event(
+        events: &Arc<Mutex<Vec<DownloadProgressEvent>>>,
+        event: DownloadProgressEvent,
+    ) {
+        match events.lock() {
+            Ok(mut events) => events.push(event),
+            Err(poisoned) => poisoned.into_inner().push(event),
+        }
+    }
+
+    fn progress_events_snapshot(
+        events: &Arc<Mutex<Vec<DownloadProgressEvent>>>,
+    ) -> Vec<DownloadProgressEvent> {
+        match events.lock() {
+            Ok(events) => events.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
     }
 
     fn server_authority(server: &MockServer) -> anyhow::Result<String> {

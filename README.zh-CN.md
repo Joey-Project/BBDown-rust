@@ -115,6 +115,7 @@ bbdown download av170001 --output-dir downloads --archive-file downloads/archive
 bbdown download av170001 --output-template "{title}-{entry_count:02}" --entry-template "{index:02}-{entry_title}" --no-mux
 bbdown danmaku update av170001 --archive-file downloads/archive.json --danmaku-format xml,ass
 bbdown download av170001 --upos-host upos-sz-mirrorcoso1.bilivideo.com --no-mux
+bbdown download av170001 --output-dir downloads --no-mux --json --progress-json
 ```
 
 `download` 会解析下载计划，下载第一组完整的 DASH 视频/音频，或下载 FLV 分段；默认写入
@@ -132,6 +133,8 @@ CLI 默认会避开疑似 PCDN 媒体 URL，同时保留本地和私网 host。�
 原始 PCDN 候选；传入 `--upos-host <HOST>` 可把 DASH/FLV 媒体候选改写到指定 UPOS host；
 传入 `--force-replace-host` 可把媒体候选改写到内置 BBDown fallback host。封面、字幕和弹
 幕旁路 URL 不会被改写。
+传入 `--progress-json` 会把 typed progress event 以 JSON Lines 流式写到 stderr，同时让
+stdout 保持人类输出或最终 `--json` report。
 传入 `--archive-file <path>` 后，CLI 会按内容身份记录已完成下载。归档输出、旁路文件和
 mux 路径会在记录时保存为绝对路径，因此同一份归档可以从另一个工作目录复用。条目身份使
 用稳定的 aid/cid 媒体 id，因此同一 PGC 分集即便之后通过 BV/av URL 规划，且其中一种形式

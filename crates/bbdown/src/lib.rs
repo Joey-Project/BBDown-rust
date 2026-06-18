@@ -13,6 +13,7 @@ mod input;
 mod login;
 mod models;
 mod playback;
+mod progress;
 mod selection;
 
 pub use client::{
@@ -52,4 +53,5 @@ pub use playback::{
     PlaybackSelectionHint, PlaybackSelectionHints, PlaybackSelectionReason, PlaybackVariant,
     PlaybackVariantCacheKey, PlaybackVariantKind,
 };
+pub use progress::{DownloadProgressEvent, DownloadProgressSink, NoopDownloadProgress};
 pub use selection::{IndexSelection, IndexSelector, Selection};

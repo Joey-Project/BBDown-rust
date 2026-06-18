@@ -7,7 +7,9 @@
 media downloads, single-output download modes, cover/subtitle/XML-or-ASS danmaku sidecars, QR login
 credentials, download archive preflight data, playback request specs, batch collection metadata,
 and restricted-area proxy diagnostics. Download execution can also apply explicit UPOS host
-replacement or BBDown-like PCDN avoidance through `MediaHostOptions`. Raw input parsing covers
+replacement or BBDown-like PCDN avoidance through `MediaHostOptions`, and the
+`*_with_progress` download methods emit typed `DownloadProgressEvent` callbacks for embedding
+UIs. Raw input parsing covers
 normal videos, PGC and intl episodes, PUGV/cheese courses, B23 short links, favorite lists, space
 videos, collections, series, homepage recommendations, watch history, watch-later lists, following
 video feeds, and space dynamic video feeds.
