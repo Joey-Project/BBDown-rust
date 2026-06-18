@@ -60,15 +60,15 @@
 - [completed] Add CLI/docs integration for generic `access_key` acquisition.
 - [completed] Add append-only danmaku update workflows that can update XML sidecars and regenerate
   selected formats such as ASS for already downloaded archive records.
-- [pending] Publish `v0.4.0` through the protected release candidate and promotion workflow now
-  that the eight-PR credential and danmaku sequence has landed.
-- [pending] Plan `v0.5.0` as the downloader and embedding polish line: embedder progress callbacks,
+- [completed] Publish `v0.4.0` through the protected release candidate and promotion workflow after
+  the eight-PR credential and danmaku sequence landed.
+- [pending] Execute `v0.5.0` as the downloader and embedding polish line: embedder progress callbacks,
   cancellation-aware download execution, chapter metadata muxing, audio language selection, and AI
   subtitle filtering.
 - [pending] Plan `v0.6.0` as the credential lifecycle line: automatic credential refresh, health
   policy/reporting, profile-level status, and multi-account lifecycle UX.
 - [pending] Plan `v0.7.0` or a later feed/page release for per-video related recommendations and
   any additional Bilibili page-family parsing that does not fit the downloader or credential lines.
-- [pending] Continue the remaining BBDown parity backlog after the current eight-PR `0.4.0`
-  credential and danmaku sequence unless reprioritized:
+- [pending] Continue the remaining BBDown parity backlog after the published `0.4.0` credential and
+  danmaku sequence unless reprioritized:
   aria2 or multi-thread download integration, MP4Box muxing, and subtitle-to-SRT conversion.

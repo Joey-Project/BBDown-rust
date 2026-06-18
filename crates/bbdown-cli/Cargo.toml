@@ -1,6 +1,6 @@
 [package]
 name = "bbdown-cli"
-version = "0.4.0"
+version = "0.5.0"
 description = "Command-line frontend for the BBDown Rust library."
 edition.workspace = true
 license.workspace = true
@@ -15,7 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
-bbdown_core = { package = "bbdown-core", version = "0.4.0", path = "../bbdown" }
+bbdown_core = { package = "bbdown-core", version = "0.5.0", path = "../bbdown" }
 clap.workspace = true
 dirs.workspace = true
 serde_json.workspace = true
