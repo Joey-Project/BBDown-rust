@@ -38,15 +38,18 @@
 - Versions `0.1.0`, `0.2.0`, and `0.3.0` have shipped through that flow as GitHub Releases and
   crates.io package versions for `bbdown-core`.
 - The `0.4.0` development line now covers credential lifecycle improvements, access-key
-  acquisition, unified login QR output, and append-only danmaku update workflows; release prep is
-  the next repo-wide step after the final PR 8 gate lands.
+  acquisition, unified login QR output, and append-only danmaku update workflows. The eight planned
+  feature PRs have landed; the next repo-wide step is the protected `v0.4.0` release candidate and
+  promotion flow.
 
 ## Recovery Pointers
 
 - Run `just ci` for the local default gate after dependencies are restored.
 - Workstream detail and PR-local state should live under `docs/project_journal/`.
-- Active v0.4.0 roadmap:
+- Completed v0.4.0 feature roadmap:
   `docs/project_journal/2026/06/2026-06-15-v0-4-credential-danmaku-roadmap-019ecf.md`.
+- Active v0.4.0 release prep:
+  `docs/project_journal/2026/06/2026-06-18-v0-4-release-prep-019f0a.md`.
 - User-facing CLI behavior is documented in `docs/user-guide.md`.
 - Crate embedding guidance is documented in `docs/embedding.md`.
 - Simplified Chinese companion docs use `*.zh-CN.md` next to the English originals.

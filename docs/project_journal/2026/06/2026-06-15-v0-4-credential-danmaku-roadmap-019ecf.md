@@ -1,7 +1,7 @@
 ---
 id: 20260615-019ecf-v0-4-credential-danmaku-roadmap
 title: v0.4.0 Credential And Danmaku Roadmap
-status: active
+status: completed
 created: 2026-06-15
 updated: 2026-06-18
 branch: wip/v0-4-roadmap-housekeeping
@@ -34,10 +34,9 @@ superseded_by:
   sidecar merging, ASS regeneration, CLI/API surfaces, and bilingual documentation.
 
 ## Next Steps
-- Finish the PR 8 readiness gate and merge it after CI, triple review, and resolved conversations.
-- After PR 8 lands, prepare the `0.4.0` release/versioning step.
-- Keep automatic credential refresh and remaining BBDown parity items outside this eight-PR sequence
-  unless explicitly reprioritized.
+- Prepare and publish `v0.4.0` through the protected release candidate and promotion workflow.
+- Keep automatic credential refresh and remaining BBDown parity items outside the completed
+  eight-PR sequence unless explicitly reprioritized.
 
 ## Evidence
 - Published GitHub Release `v0.3.0`:
