@@ -26,9 +26,9 @@
 项目在普通集成代码中不需要结构体字面量。CLI 使用相同 public builder，这让它成为 crate
 API 的仓库内集成测试表面。
 
-输出模型保持为 typed data surfaces。当前 crate 版本是 `0.4.0`，属于已发布 `0.3.0` 之后
-的开发线，重点是 credential lifecycle 改进、access-key 获取、统一登录二维码输出，以及
-append-only 弹幕更新；调用方应读取字段或序列化输出值，而不是把输出结构体视为稳定的构造目标。
+输出模型保持为 typed data surfaces。当前 crate 版本是 `0.5.0`，属于已发布 `0.4.0` 之后
+的开发线，重点是 downloader 和 embedding polish：progress callback、可取消的执行、章节
+metadata mux、音频语言选择，以及 AI 字幕筛选；调用方应读取字段或序列化输出值，而不是把输出结构体视为稳定的构造目标。
 
 ## 解析器模型
 
@@ -435,7 +435,7 @@ Plan output 现在暴露结构化 stream quality data。library 保留原始 `St
 stream 摘要旁打印相同 id，而 JSON 调用方可以通过 `DownloadOptions::stream_selection` 选
 择精确 DASH stream。
 
-可复用 crate 当前处于已发布 `0.3.0` 之后的 `0.4.0` 开发线，因此 public configuration
+可复用 crate 当前处于已发布 `0.4.0` 之后的 `0.5.0` 开发线，因此 public configuration
 structs 会通过 constructor 和 builder API 刻意加固，而不是保留本地 struct-literal 实验。
 嵌入者应通过这些 API 创建配置，包括
 `ClientConfig::default().with_*`、`EndpointConfig::default().with_*`、
