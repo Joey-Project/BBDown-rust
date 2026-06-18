@@ -190,6 +190,11 @@ runtime responsibilities into `bbdown-core`.
 `BiliClient::download_plan` executes a caller-provided `DownloadPlan`. `BiliClient::download` and
 `BiliClient::download_input` are convenience wrappers that plan first, then execute. The executor
 returns a typed `DownloadReport` instead of scraping CLI output.
+Progress is an opt-in execution-side observer. The `*_with_progress` variants accept a
+`DownloadProgressSink` and emit typed `DownloadProgressEvent` values for plan, entry, file, and mux
+milestones. The non-progress methods are preserved and route through a no-op sink. The CLI exposes
+the same event stream only when `--progress-json` is set, writing JSON Lines to stderr so stdout
+remains either human output or the final `DownloadReport` JSON.
 
 Execution behavior is controlled by `DownloadOptions`:
 

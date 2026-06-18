@@ -347,6 +347,47 @@ async fn main() -> bbdown_core::Result<()> {
 }
 ```
 
+Use the `*_with_progress` download methods when an embedding application needs progress callbacks
+without parsing CLI output. `DownloadProgressEvent` is emitted for plan start/completion, entry
+start/completion, file start/chunk/completion, and mux start/completion. The callback is
+synchronous and should stay lightweight; send events into an application channel if UI updates or
+database writes may block the download task.
+
+```rust,no_run
+use bbdown_core::{
+    BiliClient, ClientConfig, DownloadOptions, DownloadProgressEvent, DownloadProgressSink,
+};
+
+struct ProgressLogger;
+
+impl DownloadProgressSink for ProgressLogger {
+    fn on_download_progress(&self, event: &DownloadProgressEvent) {
+        eprintln!("{event:?}");
+    }
+}
+
+#[tokio::main]
+async fn main() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let progress = ProgressLogger;
+    let report = client
+        .download_input_with_progress(
+            "BV1qt4y1X7TW",
+            None,
+            DownloadOptions::new("downloads"),
+            &progress,
+        )
+        .await?;
+
+    println!("wrote {} entries", report.entries.len());
+    Ok(())
+}
+```
+
+Archive-aware flows have matching `download_plan_with_archive_decision_with_progress` and
+`download_plan_with_archive_preflight_decision_with_progress` methods. The existing non-progress
+methods remain available and use a no-op sink.
+
 Use `bbdown plan` or `BiliClient::plan_download` first when a UI needs to present quality choices.
 `StreamSelection::video`, `StreamSelection::audio`, and `StreamSelection::new` select exact DASH
 stream ids from the plan.

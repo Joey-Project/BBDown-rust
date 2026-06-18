@@ -191,6 +191,7 @@ bbdown download av170001 --output-dir downloads --archive-file downloads/archive
 bbdown download av170001 --output-template "{title}-{entry_count:02}" --entry-template "{index:02}-{entry_title}" --mux-template "{index:02}-{entry_title}"
 bbdown danmaku update av170001 --archive-file downloads/archive.json --danmaku-format xml,ass --json
 bbdown download av170001 --upos-host upos-sz-mirrorcoso1.bilivideo.com --no-mux
+bbdown download av170001 --output-dir downloads --no-mux --json --progress-json
 ```
 
 默认情况下，命令会为每个条目下载第一组完整 DASH 视频/音频。先使用 `bbdown plan` 查看可
@@ -198,6 +199,10 @@ bbdown download av170001 --upos-host upos-sz-mirrorcoso1.bilivideo.com --no-mux
 请求的 id 必须存在于该条目的 plan 中；否则命令会报告可用 id，并在写入媒体前失败。当
 DASH 媒体不完整而 legacy FLV `durl` 分段可用时，会改为下载这些分段。显式质量选择要求
 DASH 媒体，因此会禁用该条目的 FLV 回退。如果两种形态都不完整，下载会在写入媒体前失败。
+传入 `--progress-json` 会把 `DownloadProgressEvent` 以 JSON Lines 写到 stderr，同时保留
+stdout 上的普通人类输出或 `--json` report。事件覆盖 plan 开始/完成、条目开始/完成、文件
+开始/chunk/完成，以及 mux 开始/完成，因此 wrapper 可以流式展示进度，而不需要抓取最终
+report。
 当计划中存在对应 URL 时，封面、字幕和弹幕旁路文件默认启用。分别使用 `--no-cover`、
 `--no-subtitles` 和 `--no-danmaku` 关闭。
 弹幕旁路文件默认写为 XML。使用 `--danmaku-format ass` 可只生成 `danmaku.ass`，或使用

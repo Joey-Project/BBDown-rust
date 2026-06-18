@@ -7,11 +7,12 @@ use bbdown_core::{
     ClientConfig, CredentialHealthReport, CredentialHealthScope, CredentialHealthStatus,
     CredentialKind, CredentialProfileSelection, CredentialStore, Credentials, DanmakuFormat,
     DanmakuUpdateOptions, DownloadArchive, DownloadMode, DownloadOptions, DownloadPathTemplates,
-    DownloadPreflight, DownloadReport, DuplicateDecision, EndpointConfig, MediaHostOptions,
-    MediaStream, MuxOptions, PlaybackPlan, PlayurlMode, QrLoginKind, QrLoginState, QrLoginTicket,
-    QrLoginTicketOutput, ResolvedContent, RestrictedArea, RestrictedAreaConfig,
-    RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection, StreamQuality,
-    StreamSelection, StreamSet, archive_entry_allows_danmaku_update,
+    DownloadPreflight, DownloadProgressEvent, DownloadProgressSink, DownloadReport,
+    DuplicateDecision, EndpointConfig, MediaHostOptions, MediaStream, MuxOptions, PlaybackPlan,
+    PlayurlMode, QrLoginKind, QrLoginState, QrLoginTicket, QrLoginTicketOutput, ResolvedContent,
+    RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind,
+    RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet,
+    archive_entry_allows_danmaku_update,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::ffi::{OsStr, OsString};
@@ -153,6 +154,8 @@ struct DownloadCliArgs {
     output_dir: PathBuf,
     #[arg(long)]
     json: bool,
+    #[arg(long)]
+    progress_json: bool,
     #[arg(long, default_value_t = 3)]
     retry_attempts: u32,
     #[arg(long, default_value_t = 250)]
@@ -663,6 +666,7 @@ async fn handle_download_cli(
         url: args.url,
         select: args.select,
         json: args.json,
+        progress_json: args.progress_json,
         options,
         archive_file: args.archive_file,
         on_duplicate: args.on_duplicate.map(Into::into),
@@ -674,9 +678,26 @@ struct DownloadCommandArgs {
     url: String,
     select: Option<Selection>,
     json: bool,
+    progress_json: bool,
     options: DownloadOptions,
     archive_file: Option<PathBuf>,
     on_duplicate: Option<DuplicateDecision>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CliProgressReporter {
+    json: bool,
+}
+
+impl DownloadProgressSink for CliProgressReporter {
+    fn on_download_progress(&self, event: &DownloadProgressEvent) {
+        if !self.json {
+            return;
+        }
+        if let Ok(line) = serde_json::to_string(event) {
+            eprintln!("{line}");
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -923,6 +944,9 @@ async fn handle_download(
     args: DownloadCommandArgs,
 ) -> anyhow::Result<()> {
     let client = BiliClient::new(client_runtime.client_config(credentials.load()?));
+    let progress = CliProgressReporter {
+        json: args.progress_json,
+    };
     let report = if let Some(archive_file) = args.archive_file {
         let plan = client
             .plan_download_with_mode(&args.url, args.select, args.options.mode)
@@ -964,12 +988,13 @@ async fn handle_download(
         let decision_output_dir = preflight.output_dir_for_decision(decision)?;
         ensure_archive_file_is_not_output_root(&archive_file, &decision_output_dir)?;
         let report = client
-            .download_plan_with_archive_preflight_decision(
+            .download_plan_with_archive_preflight_decision_with_progress(
                 &plan,
                 args.options,
                 &mut archive,
                 &preflight,
                 execution_decision,
+                &progress,
             )
             .await?;
         ensure_archive_file_is_not_output_root(&archive_file, &report.output_dir)?;
@@ -979,7 +1004,7 @@ async fn handle_download(
         report
     } else {
         client
-            .download_input(&args.url, args.select, args.options)
+            .download_input_with_progress(&args.url, args.select, args.options, &progress)
             .await?
     };
     if args.json {

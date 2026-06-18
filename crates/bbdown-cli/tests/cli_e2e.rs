@@ -1563,6 +1563,49 @@ fn download_json_writes_mock_media_files() -> anyhow::Result<()> {
 }
 
 #[test]
+fn download_progress_json_writes_events_to_stderr() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    mock_minimal_download(&server);
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("download")
+        .arg("av170001")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--no-subtitles")
+        .arg("--no-danmaku")
+        .arg("--no-mux")
+        .arg("--json")
+        .arg("--progress-json");
+    let assert = command.assert().success();
+    let output = assert.get_output();
+    let report: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(
+        report["entries"][0]["files"].as_array().map(Vec::len),
+        Some(2)
+    );
+    let events = json_lines(&output.stderr)?;
+    assert!(events.iter().any(|event| event["type"] == "plan_started"));
+    assert!(events.iter().any(|event| event["type"] == "entry_started"));
+    assert!(events.iter().any(|event| {
+        event["type"] == "file_progress" && event["kind"] == "video" && event["bytes_written"] == 5
+    }));
+    assert!(events.iter().any(|event| {
+        event["type"] == "file_completed" && event["kind"] == "audio" && event["total_bytes"] == 5
+    }));
+    assert!(events.iter().any(|event| event["type"] == "plan_completed"));
+    Ok(())
+}
+
+#[test]
 fn download_json_applies_path_templates() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;

@@ -39,9 +39,9 @@
   crates.io package versions for `bbdown-core`.
 - The `0.4.0` line shipped credential lifecycle improvements, access-key acquisition, unified login
   QR output, and append-only danmaku update workflows.
-- The active `0.5.0` development line is downloader and embedding polish: embedder progress
-  callbacks, cancellation-aware download execution, chapter metadata muxing, audio language
-  selection, and AI subtitle filtering.
+- The active `0.5.0` development line is downloader and embedding polish. The progress callback
+  slice has landed; cancellation-aware download execution, chapter metadata muxing, audio language
+  selection, and AI subtitle filtering remain in the line.
 
 ## Recovery Pointers
 

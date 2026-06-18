@@ -331,6 +331,46 @@ async fn main() -> bbdown_core::Result<()> {
 }
 ```
 
+嵌入应用需要进度 callback、但不想解析 CLI 输出时，使用 `*_with_progress` 下载方法。
+`DownloadProgressEvent` 会覆盖 plan 开始/完成、条目开始/完成、文件开始/chunk/完成，以及
+mux 开始/完成。callback 是同步调用，应保持轻量；如果 UI 更新或数据库写入可能阻塞下载
+任务，请把事件转发到应用自己的 channel。
+
+```rust,no_run
+use bbdown_core::{
+    BiliClient, ClientConfig, DownloadOptions, DownloadProgressEvent, DownloadProgressSink,
+};
+
+struct ProgressLogger;
+
+impl DownloadProgressSink for ProgressLogger {
+    fn on_download_progress(&self, event: &DownloadProgressEvent) {
+        eprintln!("{event:?}");
+    }
+}
+
+#[tokio::main]
+async fn main() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let progress = ProgressLogger;
+    let report = client
+        .download_input_with_progress(
+            "BV1qt4y1X7TW",
+            None,
+            DownloadOptions::new("downloads"),
+            &progress,
+        )
+        .await?;
+
+    println!("wrote {} entries", report.entries.len());
+    Ok(())
+}
+```
+
+Archive-aware flow 也有对应的 `download_plan_with_archive_decision_with_progress` 和
+`download_plan_with_archive_preflight_decision_with_progress` 方法。已有非 progress 方法仍
+然可用，并会使用 no-op sink。
+
 当 UI 需要展示质量选择时，先使用 `bbdown plan` 或 `BiliClient::plan_download`。
 `StreamSelection::video`、`StreamSelection::audio` 和 `StreamSelection::new` 会从 plan 中
 选择精确的 DASH stream id。

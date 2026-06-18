@@ -209,6 +209,7 @@ bbdown download av170001 --output-dir downloads --archive-file downloads/archive
 bbdown download av170001 --output-template "{title}-{entry_count:02}" --entry-template "{index:02}-{entry_title}" --mux-template "{index:02}-{entry_title}"
 bbdown danmaku update av170001 --archive-file downloads/archive.json --danmaku-format xml,ass --json
 bbdown download av170001 --upos-host upos-sz-mirrorcoso1.bilivideo.com --no-mux
+bbdown download av170001 --output-dir downloads --no-mux --json --progress-json
 ```
 
 The command downloads the first complete DASH video/audio pair for each entry by default. Use
@@ -218,6 +219,10 @@ the plan for that entry; otherwise the command reports the available ids and fai
 media. When DASH media is incomplete and legacy FLV `durl` segments are available, it downloads
 those segments instead. Explicit quality selection requires DASH media and therefore disables FLV
 fallback for that entry. If neither shape is complete, the download fails before writing media.
+Pass `--progress-json` to emit `DownloadProgressEvent` JSON Lines on stderr while keeping the
+normal human output or `--json` report on stdout. Events cover plan start/completion, entry
+start/completion, file start/chunk/completion, and mux start/completion, so wrappers can stream
+progress without scraping the final report.
 Cover, subtitle, and danmaku sidecars are enabled by default when the plan has those URLs. Disable
 them individually with `--no-cover`, `--no-subtitles`, and `--no-danmaku`.
 Danmaku sidecars default to XML. Use `--danmaku-format ass` to generate only `danmaku.ass`, or
