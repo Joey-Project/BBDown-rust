@@ -6,11 +6,12 @@ use bbdown_core::{
     AccessKeyLoginConfig, AccessKeyLoginCredentials, AccessKeyLoginTicketOutput, BiliClient,
     ClientConfig, CredentialHealthReport, CredentialHealthScope, CredentialHealthStatus,
     CredentialKind, CredentialProfileSelection, CredentialStore, Credentials, DanmakuFormat,
-    DownloadArchive, DownloadMode, DownloadOptions, DownloadPathTemplates, DownloadPreflight,
-    DownloadReport, DuplicateDecision, EndpointConfig, MediaHostOptions, MediaStream, MuxOptions,
-    PlaybackPlan, PlayurlMode, QrLoginKind, QrLoginState, QrLoginTicket, QrLoginTicketOutput,
-    ResolvedContent, RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy,
-    RestrictedAreaProxyKind, RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet,
+    DanmakuUpdateOptions, DownloadArchive, DownloadMode, DownloadOptions, DownloadPathTemplates,
+    DownloadPreflight, DownloadReport, DuplicateDecision, EndpointConfig, MediaHostOptions,
+    MediaStream, MuxOptions, PlaybackPlan, PlayurlMode, QrLoginKind, QrLoginState, QrLoginTicket,
+    QrLoginTicketOutput, ResolvedContent, RestrictedArea, RestrictedAreaConfig,
+    RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection, StreamQuality,
+    StreamSelection, StreamSet, archive_entry_allows_danmaku_update,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::ffi::{OsStr, OsString};
@@ -132,6 +133,10 @@ enum Command {
         json: bool,
     },
     Download(Box<DownloadCliArgs>),
+    Danmaku {
+        #[command(subcommand)]
+        command: DanmakuCommand,
+    },
     Auth {
         #[command(subcommand)]
         command: AuthCommand,
@@ -196,6 +201,37 @@ struct DownloadCliArgs {
     force_replace_host: bool,
     #[arg(long)]
     allow_pcdn: bool,
+}
+
+#[derive(Debug, Subcommand)]
+enum DanmakuCommand {
+    #[command(about = "Append-update danmaku sidecars for existing download archive entries")]
+    Update(DanmakuUpdateCliArgs),
+}
+
+#[derive(Debug, Args)]
+struct DanmakuUpdateCliArgs {
+    url: String,
+    #[arg(long)]
+    select: Option<Selection>,
+    #[arg(long, value_name = "PATH")]
+    archive_file: PathBuf,
+    #[arg(long)]
+    json: bool,
+    #[arg(long, default_value_t = 3)]
+    retry_attempts: u32,
+    #[arg(long, default_value_t = 250)]
+    retry_backoff_ms: u64,
+    #[arg(long, default_value_t = 30)]
+    download_idle_timeout_seconds: u64,
+    #[arg(
+        long = "danmaku-format",
+        value_enum,
+        value_delimiter = ',',
+        default_value = "xml",
+        value_name = "FORMAT"
+    )]
+    danmaku_formats: Vec<DanmakuFormatArg>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -414,6 +450,27 @@ fn download_options_from_cli(args: DownloadOptionCliArgs) -> anyhow::Result<Down
         .with_mux(mux))
 }
 
+fn danmaku_update_options_from_cli(
+    args: &DanmakuUpdateCliArgs,
+) -> anyhow::Result<DanmakuUpdateOptions> {
+    ensure!(
+        args.retry_attempts > 0,
+        "--retry-attempts must be greater than 0"
+    );
+    let download_idle_timeout = if args.download_idle_timeout_seconds == 0 {
+        None
+    } else {
+        Some(Duration::from_secs(args.download_idle_timeout_seconds))
+    };
+    Ok(DanmakuUpdateOptions::default()
+        .with_retry_policy(RetryPolicy::new(
+            args.retry_attempts,
+            Duration::from_millis(args.retry_backoff_ms),
+        ))
+        .with_download_idle_timeout(download_idle_timeout)
+        .with_danmaku_formats(args.danmaku_formats.iter().copied().map(Into::into)))
+}
+
 fn path_templates_from_cli(flags: DownloadTemplateCliFlags) -> DownloadPathTemplates {
     let mut templates = DownloadPathTemplates::new();
     if let Some(output_template) = flags.output {
@@ -552,6 +609,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Download(args) => {
             handle_download_cli(&credential_runtime, &client_runtime, *args).await?;
+        }
+        Command::Danmaku { command } => {
+            handle_danmaku(command, &credential_runtime, &client_runtime).await?;
         }
         Command::Auth { command } => {
             handle_auth(command, &credential_runtime, &client_runtime).await?;
@@ -928,6 +988,154 @@ async fn handle_download(
         print_download_report(&report);
     }
     Ok(())
+}
+
+async fn handle_danmaku(
+    command: DanmakuCommand,
+    credentials: &CredentialRuntime,
+    client_runtime: &ClientRuntimeConfig,
+) -> anyhow::Result<()> {
+    match command {
+        DanmakuCommand::Update(args) => {
+            handle_danmaku_update(credentials, client_runtime, args).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn handle_danmaku_update(
+    credentials: &CredentialRuntime,
+    client_runtime: &ClientRuntimeConfig,
+    args: DanmakuUpdateCliArgs,
+) -> anyhow::Result<()> {
+    let options = danmaku_update_options_from_cli(&args)?;
+    let client = BiliClient::new(client_runtime.client_config(credentials.load()?));
+    let plan = client
+        .plan_download_with_mode(&args.url, args.select, DownloadMode::DanmakuOnly)
+        .await?;
+    let mut archive = DownloadArchive::load(&args.archive_file)
+        .with_context(|| format!("failed to load archive {}", args.archive_file.display()))?;
+    ensure_archive_file_does_not_overlap_danmaku_update_targets(
+        &args.archive_file,
+        &plan,
+        &archive,
+        &options,
+    )?;
+    let report = client
+        .update_danmaku_for_archive(&plan, &mut archive, options)
+        .await?;
+    ensure_archive_file_does_not_overlap_danmaku_update(&args.archive_file, &report)?;
+    archive
+        .save(&args.archive_file)
+        .with_context(|| format!("failed to save archive {}", args.archive_file.display()))?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        print_danmaku_update_report(&report);
+    }
+    Ok(())
+}
+
+fn ensure_archive_file_does_not_overlap_danmaku_update_targets(
+    archive_file: &Path,
+    plan: &bbdown_core::DownloadPlan,
+    archive: &DownloadArchive,
+    options: &DanmakuUpdateOptions,
+) -> anyhow::Result<()> {
+    let mut target_paths = Vec::new();
+    for record in &archive.records {
+        for archive_entry in &record.entries {
+            if !archive_entry_allows_danmaku_update(&record.content_key, archive_entry) {
+                continue;
+            }
+            if !plan.entries.iter().any(|plan_entry| {
+                plan_entry.aid == archive_entry.aid && plan_entry.cid == archive_entry.cid
+            }) {
+                continue;
+            }
+            let xml_path = archive_entry.directory.join("danmaku.xml");
+            push_danmaku_update_source_paths(&mut target_paths, &xml_path);
+            push_danmaku_update_generated_paths(&mut target_paths, &xml_path);
+            if options.danmaku_formats.contains(DanmakuFormat::Ass) {
+                let ass_path = archive_entry.directory.join("danmaku.ass");
+                push_danmaku_update_generated_paths(&mut target_paths, &ass_path);
+            }
+        }
+    }
+    ensure_archive_file_does_not_overlap_paths(archive_file, &target_paths)
+}
+
+fn push_danmaku_update_source_paths(paths: &mut Vec<PathBuf>, path: &Path) {
+    let source_path = danmaku_update_temporary_path(path, ".bbdown-source");
+    push_unique_path(paths, source_path.clone());
+    push_unique_path(
+        paths,
+        danmaku_update_temporary_path(&source_path, ".bbdown-download"),
+    );
+    push_unique_path(
+        paths,
+        danmaku_update_temporary_path(&source_path, ".bbdown-replace"),
+    );
+}
+
+fn push_danmaku_update_generated_paths(paths: &mut Vec<PathBuf>, path: &Path) {
+    push_unique_path(paths, path.to_path_buf());
+    push_unique_path(
+        paths,
+        danmaku_update_temporary_path(path, ".bbdown-generated"),
+    );
+    push_unique_path(
+        paths,
+        danmaku_update_temporary_path(path, ".bbdown-replace"),
+    );
+}
+
+fn danmaku_update_temporary_path(path: &Path, suffix: &str) -> PathBuf {
+    let base = path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or("danmaku");
+    path.with_file_name(format!("{base}{suffix}"))
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if !paths.iter().any(|existing| existing == &path) {
+        paths.push(path);
+    }
+}
+
+fn ensure_archive_file_does_not_overlap_paths(
+    archive_file: &Path,
+    target_paths: &[PathBuf],
+) -> anyhow::Result<()> {
+    let archive_paths = archive_write_paths(archive_file)?;
+    for archive_path in archive_paths {
+        let archive_lexical = lexical_path_components(&archive_path)?;
+        let archive_canonical = canonical_path_components(&archive_path)?;
+        for target_path in target_paths {
+            ensure!(
+                archive_lexical != lexical_path_components(target_path)?
+                    && archive_canonical != canonical_path_components(target_path)?,
+                "--archive-file and its sidecar files must not overwrite updated danmaku sidecars ({})",
+                target_path.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn ensure_archive_file_does_not_overlap_danmaku_update(
+    archive_file: &Path,
+    report: &bbdown_core::DanmakuUpdateReport,
+) -> anyhow::Result<()> {
+    ensure_archive_file_does_not_overlap_paths(
+        archive_file,
+        &report
+            .entries
+            .iter()
+            .flat_map(|entry| entry.files.iter().map(|file| file.path.clone()))
+            .collect::<Vec<_>>(),
+    )
 }
 
 fn ensure_archive_file_is_not_output_root(
@@ -1893,6 +2101,30 @@ fn print_download_report(report: &DownloadReport) {
         );
         if let Some(mux) = &entry.mux {
             println!("  mux: {}", mux.output_path.display());
+        }
+    }
+}
+
+fn print_danmaku_update_report(report: &bbdown_core::DanmakuUpdateReport) {
+    println!("updated entries: {}", report.entries.len());
+    for entry in &report.entries {
+        println!(
+            "- P{} aid={} cid={} appended={} fetched={} existing={} dir={}",
+            entry.index,
+            entry.aid,
+            entry.cid,
+            entry.appended_comments,
+            entry.fetched_comments,
+            entry.existing_comments,
+            entry.directory.display()
+        );
+        for file in &entry.files {
+            println!(
+                "  - {:?}: {} bytes -> {}",
+                file.kind,
+                file.bytes_written,
+                file.path.display()
+            );
         }
     }
 }

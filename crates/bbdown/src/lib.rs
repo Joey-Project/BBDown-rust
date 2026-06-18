@@ -24,12 +24,13 @@ pub use credentials::{
     CredentialKind, CredentialProfileSelection, CredentialProfiles, CredentialSource,
     CredentialStore, Credentials, DEFAULT_CREDENTIAL_PROFILE,
 };
-pub use danmaku::{DanmakuFormat, DanmakuFormats};
+pub use danmaku::{DanmakuFormat, DanmakuFormats, DanmakuXmlMerge, merge_xml_append_only};
 pub use download::{
-    DownloadArchive, DownloadArchiveEntryRecord, DownloadArchiveRecord, DownloadFileKind,
-    DownloadMode, DownloadOptions, DownloadOutputConflict, DownloadPathTemplates,
-    DownloadPreflight, DownloadReport, DownloadedFile, DuplicateDecision, EntryDownloadReport,
-    MediaHostOptions, MuxOptions, MuxReport, RetryPolicy, SidecarOptions, StreamSelection,
+    DanmakuUpdateOptions, DanmakuUpdateReport, DownloadArchive, DownloadArchiveEntryRecord,
+    DownloadArchiveRecord, DownloadFileKind, DownloadMode, DownloadOptions, DownloadOutputConflict,
+    DownloadPathTemplates, DownloadPreflight, DownloadReport, DownloadedFile, DuplicateDecision,
+    EntryDanmakuUpdateReport, EntryDownloadReport, MediaHostOptions, MuxOptions, MuxReport,
+    RetryPolicy, SidecarOptions, StreamSelection, archive_entry_allows_danmaku_update,
 };
 pub use error::{Error, Result};
 pub use input::Input;

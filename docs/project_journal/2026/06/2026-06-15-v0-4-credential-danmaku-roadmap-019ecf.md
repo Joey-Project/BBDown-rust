@@ -3,7 +3,7 @@ id: 20260615-019ecf-v0-4-credential-danmaku-roadmap
 title: v0.4.0 Credential And Danmaku Roadmap
 status: active
 created: 2026-06-15
-updated: 2026-06-16
+updated: 2026-06-18
 branch: wip/v0-4-roadmap-housekeeping
 pr: https://github.com/Joey-Project/BBDown-rust/pull/42
 supersedes: [20260614-019ec8-credential-lifecycle-roadmap]
@@ -30,12 +30,12 @@ superseded_by:
 - PR 6 adds the core generic `access_key` acquisition flow after validating the BiliPlus URL/QR
   authorization behavior observed in the prior `bilibili-helper` implementation.
 - PR 7 adds CLI/docs integration for generic `access_key` acquisition.
-- PR 8 will add append-only danmaku update support for already downloaded entries, including XML
-  sidecar merging and regeneration of selected derived formats such as ASS.
+- PR 8 adds append-only danmaku update support for already downloaded entries, including XML
+  sidecar merging, ASS regeneration, CLI/API surfaces, and bilingual documentation.
 
 ## Next Steps
-- Continue to PR 8 after the CLI/docs access-key acquisition slice lands, updating `master` after the
-  merge before cutting the next branch.
+- Finish the PR 8 readiness gate and merge it after CI, triple review, and resolved conversations.
+- After PR 8 lands, prepare the `0.4.0` release/versioning step.
 - Keep automatic credential refresh and remaining BBDown parity items outside this eight-PR sequence
   unless explicitly reprioritized.
 
@@ -63,3 +63,9 @@ superseded_by:
   the CLI now rejects missing input-source flags and requires callers to opt in to pipe consumption.
 - PR 7 independent review found that terminal-backed `--file` paths such as `/dev/tty` could bypass
   the no-interactive-paste policy; the CLI now rejects terminal file descriptors before reading.
+- PR 8 branch: `wip/danmaku-append-update`.
+- PR 8 targeted validation: `cargo fmt --all --check`,
+  `cargo test -p bbdown-core danmaku --locked`,
+  `cargo test -p bbdown-cli danmaku_update --locked`, and
+  `cargo clippy --workspace --all-targets --locked -- -D warnings`.
+- PR 8 full local validation: `just ci`.

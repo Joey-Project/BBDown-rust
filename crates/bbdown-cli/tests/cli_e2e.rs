@@ -2228,6 +2228,542 @@ fn download_archive_replace_overwrites_existing_file() -> anyhow::Result<()> {
 }
 
 #[test]
+fn danmaku_update_archive_appends_xml_and_writes_ass() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let output_root = output_dir.join("Mock video");
+    let entry_dir = output_root.join("P001-BV1xx411c7mD-Main");
+    let archive_file = temp.path().join("archive.json");
+    let xml_path = entry_dir.join("danmaku.xml");
+    fs::create_dir_all(&entry_dir)?;
+    fs::write(&xml_path, r#"<i><d p="1,1,25,0,0,0,0,0">old</d></i>"#)?;
+    fs::write(
+        &archive_file,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "records": [{
+                "content_key": "plan|aid=170001;cid=2",
+                "title": "Mock video",
+                "output_dir": output_root.clone(),
+                "completed_at_unix": 1,
+                "entries": [{
+                    "content_key": "aid=170001;cid=2",
+                    "index": 1,
+                    "aid": 170_001,
+                    "bvid": "BV1xx411c7mD",
+                    "cid": 2,
+                    "epid": null,
+                    "title": "Main",
+                    "directory": entry_dir.clone(),
+                    "files": [xml_path.clone()],
+                    "mux_output": null
+                }]
+            }]
+        }))?,
+    )?;
+    mock_minimal_video_metadata(&server);
+    let danmaku_mock = server.mock(|when, then| {
+        when.method(GET).path("/2.xml");
+        then.status(200)
+            .body(r#"<i><d p="1,1,25,0,0,0,0,0">old</d><d p="2,1,25,0,0,0,0,0">new</d></i>"#);
+    });
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--comment-base")
+        .arg(server.base_url())
+        .arg("danmaku")
+        .arg("update")
+        .arg("av170001")
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--danmaku-format")
+        .arg("xml,ass")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    let archive: Value = serde_json::from_slice(&fs::read(&archive_file)?)?;
+
+    danmaku_mock.assert_calls(1);
+    assert_eq!(json["entries"].as_array().map(Vec::len), Some(1));
+    assert_eq!(json["entries"][0]["existing_comments"], 1);
+    assert_eq!(json["entries"][0]["fetched_comments"], 2);
+    assert_eq!(json["entries"][0]["appended_comments"], 1);
+    let merged_xml = fs::read_to_string(&xml_path)?;
+    assert_eq!(merged_xml.matches("<d ").count(), 2);
+    assert!(entry_dir.join("danmaku.ass").exists());
+    assert!(
+        archive["records"][0]["content_key"]
+            .as_str()
+            .is_some_and(|key| key.starts_with("mode=all;danmaku=xml+ass;plan|"))
+    );
+    assert!(
+        archive["records"][0]["entries"][0]["content_key"]
+            .as_str()
+            .is_some_and(|key| key.starts_with("mode=all;danmaku=xml+ass;aid=170001;cid=2"))
+    );
+    assert_eq!(
+        archive["records"][0]["entries"][0]["files"]
+            .as_array()
+            .map(Vec::len),
+        Some(2)
+    );
+    assert!(
+        archive["records"][0]["entries"][0]["files"]
+            .as_array()
+            .is_some_and(|files| files.iter().any(|path| path
+                .as_str()
+                .is_some_and(|path| path.ends_with("danmaku.ass"))))
+    );
+    Ok(())
+}
+
+#[test]
+fn danmaku_update_overlap_guard_ignores_non_danmaku_archive_entries() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let skipped_root = output_dir.join("Skipped cover");
+    let skipped_entry_dir = skipped_root.join("P001-BV1xx411c7mD-Main");
+    let eligible_root = output_dir.join("Mock video");
+    let eligible_entry_dir = eligible_root.join("P001-BV1xx411c7mD-Main");
+    let archive_file = skipped_entry_dir.join("danmaku.xml");
+    let cover_path = skipped_entry_dir.join("cover.jpg");
+    let eligible_xml_path = eligible_entry_dir.join("danmaku.xml");
+    fs::create_dir_all(&skipped_entry_dir)?;
+    fs::create_dir_all(&eligible_entry_dir)?;
+    fs::write(&cover_path, "cover")?;
+    fs::write(
+        &eligible_xml_path,
+        r#"<i><d p="1,1,25,0,0,0,0,0">old</d></i>"#,
+    )?;
+    fs::write(
+        &archive_file,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "records": [
+                {
+                    "content_key": "mode=cover;plan|aid=170001;cid=2",
+                    "title": "Skipped cover",
+                    "output_dir": skipped_root,
+                    "completed_at_unix": 1,
+                    "entries": [{
+                        "content_key": "mode=cover;aid=170001;cid=2",
+                        "index": 1,
+                        "aid": 170_001,
+                        "bvid": "BV1xx411c7mD",
+                        "cid": 2,
+                        "epid": null,
+                        "title": "Main",
+                        "directory": skipped_entry_dir,
+                        "files": [cover_path],
+                        "mux_output": null
+                    }]
+                },
+                {
+                    "content_key": "plan|aid=170001;cid=2",
+                    "title": "Mock video",
+                    "output_dir": eligible_root,
+                    "completed_at_unix": 1,
+                    "entries": [{
+                        "content_key": "aid=170001;cid=2",
+                        "index": 1,
+                        "aid": 170_001,
+                        "bvid": "BV1xx411c7mD",
+                        "cid": 2,
+                        "epid": null,
+                        "title": "Main",
+                        "directory": eligible_entry_dir,
+                        "files": [eligible_xml_path],
+                        "mux_output": null
+                    }]
+                }
+            ]
+        }))?,
+    )?;
+    mock_minimal_video_metadata(&server);
+    let danmaku_mock = server.mock(|when, then| {
+        when.method(GET).path("/2.xml");
+        then.status(200)
+            .body(r#"<i><d p="1,1,25,0,0,0,0,0">old</d><d p="2,1,25,0,0,0,0,0">new</d></i>"#);
+    });
+
+    let output = danmaku_update_command(&credential_file, &server, &archive_file)?
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    let archive: Value = serde_json::from_slice(&fs::read(&archive_file)?)?;
+
+    danmaku_mock.assert_calls(1);
+    assert_eq!(json["entries"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        fs::read_to_string(&eligible_xml_path)?
+            .matches("<d ")
+            .count(),
+        2
+    );
+    assert_eq!(
+        archive["records"][0]["content_key"],
+        "mode=cover;plan|aid=170001;cid=2"
+    );
+    assert_eq!(
+        archive["records"][1]["entries"][0]["files"]
+            .as_array()
+            .map(Vec::len),
+        Some(1)
+    );
+    Ok(())
+}
+
+#[test]
+fn danmaku_update_rejects_archive_file_that_overlaps_xml_sidecar() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_root = temp.path().join("downloads").join("Mock video");
+    let entry_dir = output_root.join("P001-BV1xx411c7mD-Main");
+    let archive_file = entry_dir.join("danmaku.xml");
+    fs::create_dir_all(&entry_dir)?;
+    let archive_bytes =
+        write_mock_danmaku_update_archive(&archive_file, &output_root, &entry_dir, &archive_file)?;
+    mock_minimal_video_metadata(&server);
+    let danmaku_mock = server.mock(|when, then| {
+        when.method(GET).path("/2.xml");
+        then.status(200)
+            .body(r#"<i><d p="1,1,25,0,0,0,0,0">new</d></i>"#);
+    });
+
+    let stderr = danmaku_update_command(&credential_file, &server, &archive_file)?
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+
+    assert!(
+        String::from_utf8_lossy(&stderr).contains("must not overwrite updated danmaku sidecars")
+    );
+    assert_eq!(fs::read(&archive_file)?, archive_bytes);
+    danmaku_mock.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+fn danmaku_update_rejects_archive_file_that_overlaps_source_temp_file() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_root = temp.path().join("downloads").join("Mock video");
+    let entry_dir = output_root.join("P001-BV1xx411c7mD-Main");
+    let xml_path = entry_dir.join("danmaku.xml");
+    let archive_file = entry_dir.join("danmaku.xml.bbdown-source");
+    fs::create_dir_all(&entry_dir)?;
+    fs::write(&xml_path, r#"<i><d p="1,1,25,0,0,0,0,0">old</d></i>"#)?;
+    let archive_bytes =
+        write_mock_danmaku_update_archive(&archive_file, &output_root, &entry_dir, &xml_path)?;
+    mock_minimal_video_metadata(&server);
+    let danmaku_mock = server.mock(|when, then| {
+        when.method(GET).path("/2.xml");
+        then.status(200)
+            .body(r#"<i><d p="1,1,25,0,0,0,0,0">old</d><d p="2,1,25,0,0,0,0,0">new</d></i>"#);
+    });
+
+    let stderr = danmaku_update_command(&credential_file, &server, &archive_file)?
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+
+    assert!(
+        String::from_utf8_lossy(&stderr).contains("must not overwrite updated danmaku sidecars")
+    );
+    assert_eq!(fs::read(&archive_file)?, archive_bytes);
+    assert_eq!(
+        fs::read_to_string(&xml_path)?,
+        r#"<i><d p="1,1,25,0,0,0,0,0">old</d></i>"#
+    );
+    danmaku_mock.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+fn danmaku_update_rejects_archive_file_that_overlaps_source_download_temp_file()
+-> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_root = temp.path().join("downloads").join("Mock video");
+    let entry_dir = output_root.join("P001-BV1xx411c7mD-Main");
+    let xml_path = entry_dir.join("danmaku.xml");
+    let archive_file = entry_dir.join("danmaku.xml.bbdown-source.bbdown-download");
+    fs::create_dir_all(&entry_dir)?;
+    fs::write(&xml_path, r#"<i><d p="1,1,25,0,0,0,0,0">old</d></i>"#)?;
+    let archive_bytes =
+        write_mock_danmaku_update_archive(&archive_file, &output_root, &entry_dir, &xml_path)?;
+    mock_minimal_video_metadata(&server);
+    let danmaku_mock = server.mock(|when, then| {
+        when.method(GET).path("/2.xml");
+        then.status(200)
+            .body(r#"<i><d p="1,1,25,0,0,0,0,0">old</d><d p="2,1,25,0,0,0,0,0">new</d></i>"#);
+    });
+
+    let stderr = danmaku_update_command(&credential_file, &server, &archive_file)?
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+
+    assert!(
+        String::from_utf8_lossy(&stderr).contains("must not overwrite updated danmaku sidecars")
+    );
+    assert_eq!(fs::read(&archive_file)?, archive_bytes);
+    assert_eq!(
+        fs::read_to_string(&xml_path)?,
+        r#"<i><d p="1,1,25,0,0,0,0,0">old</d></i>"#
+    );
+    danmaku_mock.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+fn danmaku_update_rejects_archive_file_that_overlaps_source_replace_temp_file() -> anyhow::Result<()>
+{
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_root = temp.path().join("downloads").join("Mock video");
+    let entry_dir = output_root.join("P001-BV1xx411c7mD-Main");
+    let xml_path = entry_dir.join("danmaku.xml");
+    let archive_file = entry_dir.join("danmaku.xml.bbdown-source.bbdown-replace");
+    fs::create_dir_all(&entry_dir)?;
+    fs::write(&xml_path, r#"<i><d p="1,1,25,0,0,0,0,0">old</d></i>"#)?;
+    let archive_bytes =
+        write_mock_danmaku_update_archive(&archive_file, &output_root, &entry_dir, &xml_path)?;
+    mock_minimal_video_metadata(&server);
+    let danmaku_mock = server.mock(|when, then| {
+        when.method(GET).path("/2.xml");
+        then.status(200)
+            .body(r#"<i><d p="1,1,25,0,0,0,0,0">old</d><d p="2,1,25,0,0,0,0,0">new</d></i>"#);
+    });
+
+    let stderr = danmaku_update_command(&credential_file, &server, &archive_file)?
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+
+    assert!(
+        String::from_utf8_lossy(&stderr).contains("must not overwrite updated danmaku sidecars")
+    );
+    assert_eq!(fs::read(&archive_file)?, archive_bytes);
+    assert_eq!(
+        fs::read_to_string(&xml_path)?,
+        r#"<i><d p="1,1,25,0,0,0,0,0">old</d></i>"#
+    );
+    danmaku_mock.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+fn danmaku_update_rejects_archive_file_that_overlaps_xml_generated_temp_file() -> anyhow::Result<()>
+{
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_root = temp.path().join("downloads").join("Mock video");
+    let entry_dir = output_root.join("P001-BV1xx411c7mD-Main");
+    let xml_path = entry_dir.join("danmaku.xml");
+    let archive_file = entry_dir.join("danmaku.xml.bbdown-generated");
+    fs::create_dir_all(&entry_dir)?;
+    fs::write(&xml_path, r#"<i><d p="1,1,25,0,0,0,0,0">old</d></i>"#)?;
+    let archive_bytes =
+        write_mock_danmaku_update_archive(&archive_file, &output_root, &entry_dir, &xml_path)?;
+    mock_minimal_video_metadata(&server);
+    let danmaku_mock = server.mock(|when, then| {
+        when.method(GET).path("/2.xml");
+        then.status(200)
+            .body(r#"<i><d p="1,1,25,0,0,0,0,0">old</d><d p="2,1,25,0,0,0,0,0">new</d></i>"#);
+    });
+
+    let stderr = danmaku_update_command(&credential_file, &server, &archive_file)?
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+
+    assert!(
+        String::from_utf8_lossy(&stderr).contains("must not overwrite updated danmaku sidecars")
+    );
+    assert_eq!(fs::read(&archive_file)?, archive_bytes);
+    danmaku_mock.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+fn danmaku_update_rejects_archive_file_that_overlaps_xml_replace_temp_file() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_root = temp.path().join("downloads").join("Mock video");
+    let entry_dir = output_root.join("P001-BV1xx411c7mD-Main");
+    let xml_path = entry_dir.join("danmaku.xml");
+    let archive_file = entry_dir.join("danmaku.xml.bbdown-replace");
+    fs::create_dir_all(&entry_dir)?;
+    fs::write(&xml_path, r#"<i><d p="1,1,25,0,0,0,0,0">old</d></i>"#)?;
+    let archive_bytes =
+        write_mock_danmaku_update_archive(&archive_file, &output_root, &entry_dir, &xml_path)?;
+    mock_minimal_video_metadata(&server);
+    let danmaku_mock = server.mock(|when, then| {
+        when.method(GET).path("/2.xml");
+        then.status(200)
+            .body(r#"<i><d p="1,1,25,0,0,0,0,0">old</d><d p="2,1,25,0,0,0,0,0">new</d></i>"#);
+    });
+
+    let stderr = danmaku_update_command(&credential_file, &server, &archive_file)?
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+
+    assert!(
+        String::from_utf8_lossy(&stderr).contains("must not overwrite updated danmaku sidecars")
+    );
+    assert_eq!(fs::read(&archive_file)?, archive_bytes);
+    danmaku_mock.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+fn danmaku_update_rejects_archive_file_that_overlaps_ass_generated_temp_file() -> anyhow::Result<()>
+{
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_root = temp.path().join("downloads").join("Mock video");
+    let entry_dir = output_root.join("P001-BV1xx411c7mD-Main");
+    let xml_path = entry_dir.join("danmaku.xml");
+    let archive_file = entry_dir.join("danmaku.ass.bbdown-generated");
+    fs::create_dir_all(&entry_dir)?;
+    fs::write(&xml_path, r#"<i><d p="1,1,25,0,0,0,0,0">old</d></i>"#)?;
+    let archive_bytes =
+        write_mock_danmaku_update_archive(&archive_file, &output_root, &entry_dir, &xml_path)?;
+    mock_minimal_video_metadata(&server);
+    let danmaku_mock = server.mock(|when, then| {
+        when.method(GET).path("/2.xml");
+        then.status(200)
+            .body(r#"<i><d p="1,1,25,0,0,0,0,0">old</d><d p="2,1,25,0,0,0,0,0">new</d></i>"#);
+    });
+
+    let mut command = danmaku_update_command(&credential_file, &server, &archive_file)?;
+    command.arg("--danmaku-format").arg("ass");
+    let stderr = command.assert().failure().get_output().stderr.clone();
+
+    assert!(
+        String::from_utf8_lossy(&stderr).contains("must not overwrite updated danmaku sidecars")
+    );
+    assert_eq!(fs::read(&archive_file)?, archive_bytes);
+    danmaku_mock.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+fn danmaku_update_rejects_archive_file_that_overlaps_ass_replace_temp_file() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_root = temp.path().join("downloads").join("Mock video");
+    let entry_dir = output_root.join("P001-BV1xx411c7mD-Main");
+    let xml_path = entry_dir.join("danmaku.xml");
+    let archive_file = entry_dir.join("danmaku.ass.bbdown-replace");
+    fs::create_dir_all(&entry_dir)?;
+    fs::write(&xml_path, r#"<i><d p="1,1,25,0,0,0,0,0">old</d></i>"#)?;
+    let archive_bytes =
+        write_mock_danmaku_update_archive(&archive_file, &output_root, &entry_dir, &xml_path)?;
+    mock_minimal_video_metadata(&server);
+    let danmaku_mock = server.mock(|when, then| {
+        when.method(GET).path("/2.xml");
+        then.status(200)
+            .body(r#"<i><d p="1,1,25,0,0,0,0,0">old</d><d p="2,1,25,0,0,0,0,0">new</d></i>"#);
+    });
+
+    let mut command = danmaku_update_command(&credential_file, &server, &archive_file)?;
+    command.arg("--danmaku-format").arg("ass");
+    let stderr = command.assert().failure().get_output().stderr.clone();
+
+    assert!(
+        String::from_utf8_lossy(&stderr).contains("must not overwrite updated danmaku sidecars")
+    );
+    assert_eq!(fs::read(&archive_file)?, archive_bytes);
+    danmaku_mock.assert_calls(0);
+    Ok(())
+}
+
+fn danmaku_update_command(
+    credential_file: &Path,
+    server: &MockServer,
+    archive_file: &Path,
+) -> anyhow::Result<Command> {
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--comment-base")
+        .arg(server.base_url())
+        .arg("danmaku")
+        .arg("update")
+        .arg("av170001")
+        .arg("--archive-file")
+        .arg(archive_file)
+        .arg("--json");
+    Ok(command)
+}
+
+fn write_mock_danmaku_update_archive(
+    archive_file: &Path,
+    output_root: &Path,
+    entry_dir: &Path,
+    recorded_file: &Path,
+) -> anyhow::Result<Vec<u8>> {
+    let archive_bytes = serde_json::to_vec_pretty(&serde_json::json!({
+        "records": [{
+            "content_key": "plan",
+            "title": "Mock video",
+            "output_dir": output_root.to_path_buf(),
+            "completed_at_unix": 1,
+            "entries": [{
+                "content_key": "entry",
+                "index": 1,
+                "aid": 170_001,
+                "bvid": "BV1xx411c7mD",
+                "cid": 2,
+                "epid": null,
+                "title": "Main",
+                "directory": entry_dir.to_path_buf(),
+                "files": [recorded_file.to_path_buf()],
+                "mux_output": null
+            }]
+        }]
+    }))?;
+    fs::write(archive_file, &archive_bytes)?;
+    Ok(archive_bytes)
+}
+
+#[test]
 fn download_archive_rejects_archive_file_as_output_root() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;
@@ -3103,7 +3639,7 @@ fn write_fake_ffmpeg(dir: &Path, body: &str) -> anyhow::Result<std::path::PathBu
     Ok(path)
 }
 
-fn mock_minimal_download(server: &MockServer) {
+fn mock_minimal_video_metadata(server: &MockServer) {
     server.mock(|when, then| {
         when.method(GET)
             .path("/x/web-interface/view")
@@ -3118,6 +3654,10 @@ fn mock_minimal_download(server: &MockServer) {
             }
         }));
     });
+}
+
+fn mock_minimal_download(server: &MockServer) {
+    mock_minimal_video_metadata(server);
     server.mock(|when, then| {
         when.method(GET)
             .path("/x/player/playurl")

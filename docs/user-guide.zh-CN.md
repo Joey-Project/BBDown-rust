@@ -5,9 +5,10 @@
 ## 范围
 
 BBDown Rust 当前提供可复用的 `bbdown-core` package / `bbdown_core` crate 和一个 CLI，用
-于确定性的元数据解析、下载计划解析、媒体下载执行、旁路文件下载，以及可选 `ffmpeg` 封装。
-支持的输入家族包括普通视频、PGC 和 intl 分集、PUGV/cheese 课程、B23 短链接、收藏夹、
-空间投稿、合集、系列、首页推荐、观看历史、稍后再看列表、关注 feed 和空间动态 feed。
+于确定性的元数据解析、下载计划解析、媒体下载执行、旁路文件下载、append-only 弹幕旁路文
+件更新，以及可选 `ffmpeg` 封装。支持的输入家族包括普通视频、PGC 和 intl 分集、PUGV/cheese
+课程、B23 短链接、收藏夹、空间投稿、合集、系列、首页推荐、观看历史、稍后再看列表、关
+注 feed 和空间动态 feed。
 
 ## 发布归档
 
@@ -188,6 +189,7 @@ bbdown download av170001 --video-quality 64 --audio-quality 30216 --output-dir d
 bbdown download av170001 --only subtitle --output-dir downloads --json
 bbdown download av170001 --output-dir downloads --archive-file downloads/archive.json --on-duplicate keep-both
 bbdown download av170001 --output-template "{title}-{entry_count:02}" --entry-template "{index:02}-{entry_title}" --mux-template "{index:02}-{entry_title}"
+bbdown danmaku update av170001 --archive-file downloads/archive.json --danmaku-format xml,ass --json
 bbdown download av170001 --upos-host upos-sz-mirrorcoso1.bilivideo.com --no-mux
 ```
 
@@ -255,6 +257,18 @@ fallback host，即使它们并不像 PCDN。存在 `--upos-host` 时，它优�
 输出目录重叠；对 `keep-both` 来说，检查应用于实际带后缀输出目录。如果 `--archive-file`
 是符号链接，保存会更新符号链接目标，使多个调用方能够共享一份归档路径而不拆分历史。CLI
 还会在保存归档前，根据 executor 报告的实际输出目录再次检查 archive-file 保护。
+
+使用 `bbdown danmaku update <input> --archive-file <path>` 可以刷新已经有归档记录的条目
+弹幕旁路文件。命令会解析当前输入和 selection，用稳定的 aid/cid 身份匹配归档条目，为每个
+匹配条目下载最新 XML 弹幕 payload，并只把新的 `<d ...>...</d>` 弹幕 append-merge 到
+`danmaku.xml`。已有弹幕保持原顺序，下载到的重复弹幕会被忽略；如果 XML 有 root close tag，
+新增弹幕会插入到 close tag 前。随后命令会从合并后的 XML 重新生成所选派生格式，例如
+`danmaku.ass`，并把更新后的旁路文件路径写回归档。
+
+XML 始终是 canonical 更新目标，即使只请求 `--danmaku-format ass` 也会更新 XML；ASS 会从
+合并后的 XML 重新生成。`--select` 沿用 `download` 的 selection 语法，因此批量输入可以按
+输入类型更新单个 page、范围、`latest` 或 `all`。归档文件不能与被更新的旁路文件路径重叠；
+`--json` 会输出 typed report，包含每个条目的已有、拉取和追加弹幕数量。
 
 `--request-timeout-seconds` 作用于 API 请求。媒体正文读取使用
 `--download-idle-timeout-seconds`；传入 `0` 可禁用该 idle timeout。

@@ -37,9 +37,9 @@
   Release and crates.io.
 - Versions `0.1.0`, `0.2.0`, and `0.3.0` have shipped through that flow as GitHub Releases and
   crates.io package versions for `bbdown-core`.
-- `master` is now the `0.4.0` development line. The `0.4.0` roadmap is scoped to credential
-  lifecycle improvements, access-key acquisition, unified login QR output, and append-only danmaku
-  update workflows.
+- The `0.4.0` development line now covers credential lifecycle improvements, access-key
+  acquisition, unified login QR output, and append-only danmaku update workflows; release prep is
+  the next repo-wide step after the final PR 8 gate lands.
 
 ## Recovery Pointers
 

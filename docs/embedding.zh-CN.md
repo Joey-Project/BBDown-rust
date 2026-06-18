@@ -436,6 +436,45 @@ aid/cid 媒体 id，而不是可选 BVID 或分集 id，因此通过分集 URL �
 JSON 文件路径；`DownloadArchive::save` 会拒绝目录目标。如果归档路径是符号链接，
 `DownloadArchive::save` 会更新符号链接目标，而不是替换链接本身。
 
+Append-only 弹幕刷新是面向已下载条目的单独 archive-driven 操作。用相同输入和 selection 按
+`DownloadMode::DanmakuOnly` 生成 plan，加载归档，然后调用
+`BiliClient::update_danmaku_for_archive`。Danmaku-only planning 不依赖媒体 playurl 可用性。
+该方法按 aid/cid 匹配归档条目，下载当前 XML 弹幕 payload，把新弹幕 append-merge 到
+`danmaku.xml`，重新生成所选派生格式（例如 ASS），更新归档条目的旁路文件列表，并返回 typed
+`DanmakuUpdateReport`，其中包含每个条目的已有、拉取和追加弹幕数量。XML 始终是 canonical 更
+新目标；`DanmakuUpdateOptions::with_danmaku_formats([DanmakuFormat::Ass])` 会基于合并后的
+XML 新增或刷新 `danmaku.ass`。
+
+```rust,no_run
+use bbdown_core::{
+    BiliClient, ClientConfig, DanmakuFormat, DanmakuUpdateOptions, DownloadArchive, DownloadMode,
+};
+
+#[tokio::main]
+async fn main() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let plan = client
+        .plan_download_with_mode("BV1qt4y1X7TW", None, DownloadMode::DanmakuOnly)
+        .await?;
+    let archive_path = "downloads/archive.json";
+    let mut archive = DownloadArchive::load(archive_path)?;
+    let report = client
+        .update_danmaku_for_archive(
+            &plan,
+            &mut archive,
+            DanmakuUpdateOptions::default().with_danmaku_formats([DanmakuFormat::Ass]),
+        )
+        .await?;
+    archive.save(archive_path)?;
+
+    println!("updated {} entries", report.entries.len());
+    Ok(())
+}
+```
+
+如果调用方自行管理旁路文件存储，可以直接使用 `merge_xml_append_only(existing, fetched)`，
+在不接触 `DownloadArchive` 的情况下复用同一套 XML-level append-only merge 逻辑。
+
 ## 端点覆盖
 
 测试、本地 mock 或受控 gateway 部署可使用 endpoint builder。

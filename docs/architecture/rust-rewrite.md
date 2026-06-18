@@ -217,6 +217,14 @@ when the selected `DanmakuFormats` set contains `DanmakuFormat::Ass`. ASS genera
 common scrolling, top, bottom, and reverse-scrolling comments and skips advanced positioned comments
 rather than writing misleading coordinates.
 
+Append-only danmaku refresh is intentionally modeled as a separate archive-backed execution path
+rather than as an implicit download side effect. `BiliClient::update_danmaku_for_archive` takes a
+fresh `DownloadPlan`, a mutable `DownloadArchive`, and `DanmakuUpdateOptions`; it matches existing
+archive entries by stable aid/cid identity, downloads the current XML payload, merges only new
+comment blocks into canonical `danmaku.xml`, and regenerates selected derived formats such as ASS
+from the merged XML. The lower-level `merge_xml_append_only` helper is public for callers that own
+sidecar storage outside `DownloadArchive`.
+
 Output naming is driven by `DownloadPathTemplates`. The output-root template is rendered from plan
 context, while entry-directory and mux-file-stem templates are rendered from entry context. Rendered
 values are sanitized as single filename components, so templates cannot inject nested paths. Media,
@@ -516,6 +524,10 @@ explicit decision, `cancel` preflight output, `keep-both` suffixed output roots,
 overwriting an existing file, symlink archive target updates, and rejecting an archive file path that
 overlaps the chosen output root lexically or through canonicalized targets, including archive save
 sidecar paths.
+Append-only danmaku update coverage includes XML merge unit tests, archive-backed core update tests
+that regenerate ASS, and CLI mock e2e coverage that verifies JSON reports plus archive sidecar path
+updates.
+
 
 Live tests against Bilibili are opt-in only through `just live-e2e`. The recipe fails fast unless an
 ignored `live-e2e.samples.json` manifest exists, so branch CI is not blocked by network, account, or

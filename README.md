@@ -15,7 +15,8 @@ planning, media downloads, cover/subtitle/danmaku sidecar downloads, retry/resum
 optional ffmpeg muxing, QR login, opt-in live test harnesses, configured restricted-area proxy
 ordering with diagnostics, playback request specs for downstream streaming/cache integrations,
 UPOS/PCDN media host controls, and builder-style crate integration APIs. It also supports an
-explicit download archive for duplicate preflight and CLI replace / keep-both / cancel decisions.
+explicit download archive for duplicate preflight, CLI replace / keep-both / cancel decisions, and
+append-only danmaku sidecar updates for already-downloaded archive entries.
 Input parsing covers normal videos, PGC and intl episodes, PUGV/cheese courses, B23 short links,
 favorite lists, space videos, collections, series, homepage recommendations, watch history,
 watch-later lists, following video feeds, and space dynamic video feeds. URL parsing includes canonical
@@ -114,6 +115,7 @@ bbdown download av170001 --output-dir downloads --no-mux --json
 bbdown download av170001 --only cover --output-dir downloads --json
 bbdown download av170001 --output-dir downloads --archive-file downloads/archive.json --on-duplicate keep-both
 bbdown download av170001 --output-template "{title}-{entry_count:02}" --entry-template "{index:02}-{entry_title}" --no-mux
+bbdown danmaku update av170001 --archive-file downloads/archive.json --danmaku-format xml,ass
 bbdown download av170001 --upos-host upos-sz-mirrorcoso1.bilivideo.com --no-mux
 ```
 
@@ -147,6 +149,13 @@ while avoiding all archive record output paths, and `cancel` reports the preflig
 downloading. The archive file itself must not be the chosen output root or inside that root; the CLI
 applies the same guard to archive save sidecar paths. If the archive file is a symlink, saves update
 the symlink target so shared archive history is not forked.
+
+Use `bbdown danmaku update <input> --archive-file <path>` to refresh danmaku sidecars for existing
+archive records without redownloading media. The command replans the input, finds matching archive
+entries by stable aid/cid identity, downloads the current XML danmaku payload, append-merges only
+new comments into `danmaku.xml`, regenerates selected derived formats such as `danmaku.ass`, and
+saves the updated sidecar paths back to the archive. XML is always the canonical update target;
+`--danmaku-format ass` adds or refreshes ASS from the merged XML.
 
 `ss` and `md` inputs require an explicit selection in non-interactive mode:
 
