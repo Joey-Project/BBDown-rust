@@ -294,9 +294,9 @@ running, so sample behavior is driven by the manifest rather than shell state.
 ## Documentation
 
 - Crate API note: the publishable package is `bbdown-core`, imported as `bbdown_core`. This rewrite
-  is now on the `0.4.0` development line after the published `0.3.0` release. The line is focused on
-  credential lifecycle improvements, access-key acquisition, unified login QR output, and append-only
-  danmaku updates. Embedding projects should prefer
+  is now on the `0.5.0` development line after the published `0.4.0` release. The line is focused on
+  downloader and embedding polish: progress callbacks, cancellation-aware execution, chapter metadata
+  muxing, audio language selection, and AI subtitle filtering. Embedding projects should prefer
   `Default`, `new`, and `with_*` constructors such as `ClientConfig::default().with_*`,
   `EndpointConfig::default().with_*`, `RestrictedAreaConfig::default().with_*`,
   `DownloadOptions::new(...).with_*`, and `RetryPolicy::new(...)` over struct literals so added
