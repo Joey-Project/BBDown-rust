@@ -11,7 +11,7 @@ use bbdown_core::{
     MediaStream, MuxOptions, PlaybackPlan, PlayurlMode, QrLoginKind, QrLoginState, QrLoginTicket,
     QrLoginTicketOutput, ResolvedContent, RestrictedArea, RestrictedAreaConfig,
     RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection, StreamQuality,
-    StreamSelection, StreamSet,
+    StreamSelection, StreamSet, archive_entry_allows_danmaku_update,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::ffi::{OsStr, OsString};
@@ -1045,6 +1045,9 @@ fn ensure_archive_file_does_not_overlap_danmaku_update_targets(
     let mut target_paths = Vec::new();
     for record in &archive.records {
         for archive_entry in &record.entries {
+            if !archive_entry_allows_danmaku_update(&record.content_key, archive_entry) {
+                continue;
+            }
             if !plan.entries.iter().any(|plan_entry| {
                 plan_entry.aid == archive_entry.aid && plan_entry.cid == archive_entry.cid
             }) {

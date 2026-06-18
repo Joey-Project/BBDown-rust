@@ -1984,7 +1984,8 @@ fn archive_content_key_has_danmaku_formats(key: &str, formats: &DanmakuFormats) 
     refresh_danmaku_archive_content_key(key, formats).is_some_and(|refreshed| refreshed == key)
 }
 
-fn archive_entry_allows_danmaku_update(
+#[must_use]
+pub fn archive_entry_allows_danmaku_update(
     record_content_key: &str,
     entry: &DownloadArchiveEntryRecord,
 ) -> bool {

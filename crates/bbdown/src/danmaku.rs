@@ -136,7 +136,8 @@ pub fn merge_xml_append_only(existing_xml: &str, fetched_xml: &str) -> DanmakuXm
         .map(|comment| comment.block.clone())
         .collect::<Vec<_>>();
     let appended_comments = appended.len();
-    let xml = append_comment_blocks(existing_xml, &appended);
+    let last_complete_comment_end = existing_comments.last().map(|comment| comment.end);
+    let xml = append_comment_blocks(existing_xml, &appended, last_complete_comment_end);
     DanmakuXmlMerge {
         xml,
         existing_comments: existing_comments.len(),
@@ -149,6 +150,7 @@ pub fn merge_xml_append_only(existing_xml: &str, fetched_xml: &str) -> DanmakuXm
 struct DanmakuXmlCommentBlock {
     key: String,
     block: String,
+    end: usize,
 }
 
 fn xml_comment_blocks(xml: &str) -> Vec<DanmakuXmlCommentBlock> {
@@ -181,16 +183,24 @@ fn xml_comment_blocks(xml: &str) -> Vec<DanmakuXmlCommentBlock> {
         comments.push(DanmakuXmlCommentBlock {
             key: format!("{parameters}\0{}", xml_unescape(text)),
             block: xml[tag_start..offset].to_owned(),
+            end: offset,
         });
     }
     comments
 }
 
-fn append_comment_blocks(existing_xml: &str, blocks: &[String]) -> String {
+fn append_comment_blocks(
+    existing_xml: &str,
+    blocks: &[String],
+    last_complete_comment_end: Option<usize>,
+) -> String {
     if blocks.is_empty() {
         return existing_xml.to_owned();
     }
-    let insertion_at = existing_xml.rfind("</i>").unwrap_or(existing_xml.len());
+    let insertion_at = existing_xml
+        .rfind("</i>")
+        .or(last_complete_comment_end)
+        .unwrap_or(existing_xml.len());
     let mut output = String::with_capacity(
         existing_xml.len() + blocks.iter().map(String::len).sum::<usize>() + blocks.len() + 1,
     );
@@ -636,5 +646,24 @@ mod tests {
                 .xml
                 .ends_with("old</d>\n<d p=\"2,1,25,0,0,0,0,0\">new</d>\n")
         );
+    }
+
+    #[test]
+    fn merge_xml_append_only_inserts_after_last_complete_comment_when_existing_has_dangling_tail() {
+        let merged = merge_xml_append_only(
+            r#"<i><d p="1,1,25,0,0,0,0,0">old</d><d p="99,1,25,0,0,0,0,0">partial"#,
+            r#"<i><d p="1,1,25,0,0,0,0,0">old</d><d p="2,1,25,0,0,0,0,0">new</d></i>"#,
+        );
+        let ass = xml_to_ass(&merged.xml);
+
+        assert_eq!(merged.existing_comments, 1);
+        assert_eq!(merged.fetched_comments, 2);
+        assert_eq!(merged.appended_comments, 1);
+        assert!(merged.xml.contains(
+            "old</d>\n<d p=\"2,1,25,0,0,0,0,0\">new</d>\n<d p=\"99,1,25,0,0,0,0,0\">partial"
+        ));
+        assert_eq!(ass.matches("Dialogue:").count(), 2);
+        assert!(ass.contains("new"));
+        assert!(!ass.contains("partial"));
     }
 }

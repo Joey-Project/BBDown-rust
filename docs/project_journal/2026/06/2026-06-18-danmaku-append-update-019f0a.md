@@ -74,23 +74,37 @@ superseded_by:
   reflects the actual sidecars refreshed by the update.
 - GitHub Codex review found that truncated existing XML with a `<chatserver>` header but no root
   close could insert appended `<d>` comments into the metadata element. Append-only XML merge now
-  inserts only before `</i>` when present and otherwise appends at EOF, preserving the existing
-  document shape instead of corrupting `<chatserver>`.
+  inserts before `</i>` when present and otherwise inserts after the last complete `<d>...</d>`
+  block, preserving metadata and dangling truncated tails instead of corrupting either one.
 - GitHub Codex review found that `danmaku update` could update archive records from `--no-danmaku`
   or sidecar-only non-danmaku runs that happened to share the same aid/cid. Archive-backed updates
   now skip records whose content keys disallow danmaku update and skip legacy/default entries that
   do not already record a danmaku sidecar.
+- Independent PR review found that XML truncated in the middle of an unclosed `<d>` block could
+  swallow newly appended comments into the dangling comment body. The merge now falls back to the
+  last complete comment end when no root close tag is present, and unit coverage verifies the new
+  comment remains visible to ASS generation.
+- Independent PR review found that CLI archive overlap preflight still considered skipped
+  non-danmaku archive entries when computing hypothetical update paths. The CLI now reuses the core
+  danmaku-update eligibility predicate before generating preflight paths, and e2e coverage verifies
+  an archive file at a skipped entry's hypothetical `danmaku.xml` path no longer blocks another
+  eligible entry.
 - `cargo test -p bbdown-core download::tests::danmaku_update --locked` passed: 2 related tests.
 - `cargo test -p bbdown-core danmaku::tests::merge_xml_append_only --locked` passed: 5 related tests.
 - `cargo test -p bbdown-core merge_xml_append_only_does_not_insert_comments_into_chatserver --locked`
+  passed.
+- `cargo test -p bbdown-core merge_xml_append_only_inserts_after_last_complete_comment_when_existing_has_dangling_tail --locked`
   passed.
 - `cargo test -p bbdown-core danmaku_update_skips_archive_entries_without_danmaku_sidecars --locked`
   passed.
 - `cargo test -p bbdown-core archive_entry_danmaku_update_target_requires_danmaku_eligible_archive_mode --locked`
   passed.
-- `cargo test -p bbdown-cli danmaku_update --locked` passed: 9 CLI e2e tests plus filtered targets.
+- `cargo test -p bbdown-cli danmaku_update_overlap_guard_ignores_non_danmaku_archive_entries --locked`
+  passed.
 - `just ci` passed: format, clippy, Rust 1.95 workspace check, workspace tests, CLI e2e, and
-  `cargo publish --dry-run -p bbdown-core --locked --allow-dirty`.
+  `cargo publish --dry-run -p bbdown-core --locked --allow-dirty`. The workspace test pass covered
+  CLI unit tests (34), CLI e2e (57), live e2e manifest checks (5 passed, 1 ignored), and core unit
+  tests (294); the explicit CLI e2e rerun also passed all 57 tests.
 
 ## Next Steps
 

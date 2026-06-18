@@ -2324,6 +2324,106 @@ fn danmaku_update_archive_appends_xml_and_writes_ass() -> anyhow::Result<()> {
 }
 
 #[test]
+fn danmaku_update_overlap_guard_ignores_non_danmaku_archive_entries() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let skipped_root = output_dir.join("Skipped cover");
+    let skipped_entry_dir = skipped_root.join("P001-BV1xx411c7mD-Main");
+    let eligible_root = output_dir.join("Mock video");
+    let eligible_entry_dir = eligible_root.join("P001-BV1xx411c7mD-Main");
+    let archive_file = skipped_entry_dir.join("danmaku.xml");
+    let cover_path = skipped_entry_dir.join("cover.jpg");
+    let eligible_xml_path = eligible_entry_dir.join("danmaku.xml");
+    fs::create_dir_all(&skipped_entry_dir)?;
+    fs::create_dir_all(&eligible_entry_dir)?;
+    fs::write(&cover_path, "cover")?;
+    fs::write(
+        &eligible_xml_path,
+        r#"<i><d p="1,1,25,0,0,0,0,0">old</d></i>"#,
+    )?;
+    fs::write(
+        &archive_file,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "records": [
+                {
+                    "content_key": "mode=cover;plan|aid=170001;cid=2",
+                    "title": "Skipped cover",
+                    "output_dir": skipped_root,
+                    "completed_at_unix": 1,
+                    "entries": [{
+                        "content_key": "mode=cover;aid=170001;cid=2",
+                        "index": 1,
+                        "aid": 170_001,
+                        "bvid": "BV1xx411c7mD",
+                        "cid": 2,
+                        "epid": null,
+                        "title": "Main",
+                        "directory": skipped_entry_dir,
+                        "files": [cover_path],
+                        "mux_output": null
+                    }]
+                },
+                {
+                    "content_key": "plan|aid=170001;cid=2",
+                    "title": "Mock video",
+                    "output_dir": eligible_root,
+                    "completed_at_unix": 1,
+                    "entries": [{
+                        "content_key": "aid=170001;cid=2",
+                        "index": 1,
+                        "aid": 170_001,
+                        "bvid": "BV1xx411c7mD",
+                        "cid": 2,
+                        "epid": null,
+                        "title": "Main",
+                        "directory": eligible_entry_dir,
+                        "files": [eligible_xml_path],
+                        "mux_output": null
+                    }]
+                }
+            ]
+        }))?,
+    )?;
+    mock_minimal_video_metadata(&server);
+    let danmaku_mock = server.mock(|when, then| {
+        when.method(GET).path("/2.xml");
+        then.status(200)
+            .body(r#"<i><d p="1,1,25,0,0,0,0,0">old</d><d p="2,1,25,0,0,0,0,0">new</d></i>"#);
+    });
+
+    let output = danmaku_update_command(&credential_file, &server, &archive_file)?
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    let archive: Value = serde_json::from_slice(&fs::read(&archive_file)?)?;
+
+    danmaku_mock.assert_calls(1);
+    assert_eq!(json["entries"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        fs::read_to_string(&eligible_xml_path)?
+            .matches("<d ")
+            .count(),
+        2
+    );
+    assert_eq!(
+        archive["records"][0]["content_key"],
+        "mode=cover;plan|aid=170001;cid=2"
+    );
+    assert_eq!(
+        archive["records"][1]["entries"][0]["files"]
+            .as_array()
+            .map(Vec::len),
+        Some(1)
+    );
+    Ok(())
+}
+
+#[test]
 fn danmaku_update_rejects_archive_file_that_overlaps_xml_sidecar() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;
