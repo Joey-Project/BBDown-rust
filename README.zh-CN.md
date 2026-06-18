@@ -14,8 +14,9 @@
 旁路文件下载、重试和断点续传、可选 `ffmpeg` 封装、二维码登录、可选 live 测试框架、带诊
 断信息的受限区域代理排序、面向下游流式播放 / 缓存集成的播放请求规格、UPOS/PCDN 媒体
 host 控制，以及 builder 风格的 crate 集成 API。它还支持显式下载归档，用于重复下载预检
-查，以及 CLI 的 replace / keep-both / cancel 决策。输入解析覆盖普通视频、PGC 和 intl 分
-集、PUGV/cheese 课程、B23 短链接、收藏夹、空间投稿、合集、系列、首页推荐、观看历史、
+查、CLI 的 replace / keep-both / cancel 决策，以及已下载归档条目的 append-only 弹幕旁路
+文件更新。输入解析覆盖普通视频、PGC 和 intl 分集、PUGV/cheese 课程、B23 短链接、收藏
+夹、空间投稿、合集、系列、首页推荐、观看历史、
 稍后再看列表、关注视频 feed 和空间动态视频 feed。URL 解析包括 canonical
 `bilibili.com/list/...` 页面、
 path-based medialist 收藏夹 URL，以及带 uploader mid 的空间合集 / 系列 URL，以便使用较
@@ -112,6 +113,7 @@ bbdown download av170001 --output-dir downloads --no-mux --json
 bbdown download av170001 --only cover --output-dir downloads --json
 bbdown download av170001 --output-dir downloads --archive-file downloads/archive.json --on-duplicate keep-both
 bbdown download av170001 --output-template "{title}-{entry_count:02}" --entry-template "{index:02}-{entry_title}" --no-mux
+bbdown danmaku update av170001 --archive-file downloads/archive.json --danmaku-format xml,ass
 bbdown download av170001 --upos-host upos-sz-mirrorcoso1.bilivideo.com --no-mux
 ```
 
@@ -140,6 +142,12 @@ mux 路径会在记录时保存为绝对路径，因此同一份归档可以从�
 开所有归档记录输出路径；`cancel` 会只报告预检查状态，不下载。归档文件本身不能是所选输
 出根目录，也不能位于该根目录之内；CLI 对归档保存旁路路径应用相同保护。如果归档文件是
 符号链接，保存会更新符号链接目标，以免共享归档历史被拆分。
+
+使用 `bbdown danmaku update <input> --archive-file <path>` 可以在不重新下载媒体的情况下
+刷新已有归档记录的弹幕旁路文件。命令会重新规划输入，用稳定的 aid/cid 身份查找匹配归档
+条目，下载当前 XML 弹幕 payload，只把新增弹幕 append-merge 到 `danmaku.xml`，再重新生成
+所选派生格式，例如 `danmaku.ass`，并把更新后的旁路文件路径写回归档。XML 始终是 canonical
+更新目标；`--danmaku-format ass` 会基于合并后的 XML 新增或刷新 ASS。
 
 `ss` 和 `md` 输入在非交互模式下需要显式选择：
 

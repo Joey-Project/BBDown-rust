@@ -196,6 +196,13 @@ Plan 条目保留 canonical 弹幕 XML 端点；只有当执行层选择的 `Dan
 `DanmakuFormat::Ass` 时，executor 才会把 XML 转为 ASS。ASS 生成支持常见滚动、顶部、底
 部和反向滚动弹幕，并会跳过高级定位弹幕，避免写出误导性的坐标。
 
+Append-only 弹幕刷新被建模为单独的 archive-backed 执行路径，而不是普通下载的隐式副作用。
+`BiliClient::update_danmaku_for_archive` 接收新的 `DownloadPlan`、可变 `DownloadArchive` 和
+`DanmakuUpdateOptions`；它用稳定 aid/cid 身份匹配已有归档条目，下载当前 XML payload，只
+把新的弹幕 block 合并进 canonical `danmaku.xml`，再从合并后的 XML 重新生成所选派生格式，
+例如 ASS。底层 `merge_xml_append_only` helper 也是 public API，供自行管理 sidecar storage
+且不使用 `DownloadArchive` 的调用方复用。
+
 输出命名由 `DownloadPathTemplates` 驱动。输出根目录模板从 plan context 渲染；条目目录
 和 mux 文件名 stem 模板从 entry context 渲染。渲染结果会作为单个文件名组件清洗，因此模
 板不能注入嵌套路径。媒体、封面、字幕和弹幕旁路文件名会继续由 metadata 生成并保持稳定，
@@ -448,6 +455,9 @@ archive target saves 和 directory-target archive save rejection。CLI mock e2e 
 显式决策时的 JSON duplicate failure、`cancel` preflight output、`keep-both` 带后缀输出根
 目录、`replace` 覆盖已有文件、symlink archive target updates，以及拒绝与所选输出根目录按
 lexical path 或 canonicalized targets 重叠的 archive file path，包括 archive save sidecar paths。
+
+Append-only 弹幕更新覆盖 XML merge 单元测试、会重新生成 ASS 的 archive-backed core update 测
+试，以及验证 JSON report 和 archive sidecar path 更新的 CLI mock e2e 覆盖。
 
 对 Bilibili 的 live tests 只通过 `just live-e2e` 可选运行。recipe 在被忽略的
 `live-e2e.samples.json` manifest 不存在时会快速失败，因此分支 CI 不受网络、账号或区域状

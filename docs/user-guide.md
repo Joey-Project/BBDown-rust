@@ -6,9 +6,10 @@
 
 BBDown Rust currently exposes a reusable `bbdown-core` package / `bbdown_core` crate and a CLI for
 deterministic metadata, download-plan resolution, media download execution, sidecar downloads, and
-optional ffmpeg muxing. Supported input families include normal videos, PGC and intl episodes,
-PUGV/cheese courses, B23 short links, favorite lists, space videos, collections, series, homepage
-recommendations, watch history, watch-later lists, following feeds, and space dynamic feeds.
+append-only danmaku sidecar updates, plus optional ffmpeg muxing. Supported input families include
+normal videos, PGC and intl episodes, PUGV/cheese courses, B23 short links, favorite lists, space
+videos, collections, series, homepage recommendations, watch history, watch-later lists, following
+feeds, and space dynamic feeds.
 
 ## Release Archives
 
@@ -205,6 +206,7 @@ bbdown download av170001 --video-quality 64 --audio-quality 30216 --output-dir d
 bbdown download av170001 --only subtitle --output-dir downloads --json
 bbdown download av170001 --output-dir downloads --archive-file downloads/archive.json --on-duplicate keep-both
 bbdown download av170001 --output-template "{title}-{entry_count:02}" --entry-template "{index:02}-{entry_title}" --mux-template "{index:02}-{entry_title}"
+bbdown danmaku update av170001 --archive-file downloads/archive.json --danmaku-format xml,ass --json
 bbdown download av170001 --upos-host upos-sz-mirrorcoso1.bilivideo.com --no-mux
 ```
 
@@ -285,6 +287,20 @@ decision; for `keep-both`, that check is applied to the actual suffixed output d
 `--archive-file` is a symlink, saves update the symlink target so multiple callers can share one
 archive path without forking history. The CLI also rechecks the archive-file guard against the
 actual output directory reported by the executor before saving the archive.
+
+Use `bbdown danmaku update <input> --archive-file <path>` to refresh danmaku sidecars for entries
+that already have archive records. The command resolves the current input and selection, matches
+archive entries by stable aid/cid identity, downloads the latest XML danmaku payload for each match,
+and append-merges only new `<d ...>...</d>` comments into `danmaku.xml`. Existing comments are kept
+in their original order, fetched duplicates are ignored, and new comments are inserted before the
+XML root close tag when one is present. The command then regenerates selected derived formats such
+as `danmaku.ass` from the merged XML and saves updated sidecar paths back to the archive.
+
+XML is always the canonical update target, even when only `--danmaku-format ass` is requested; ASS
+is regenerated from the merged XML. `--select` follows the same selection syntax as `download`, so
+batch inputs can update one page, a range, `latest`, or `all` as appropriate for the input type. The
+archive file must not overlap the updated sidecar paths, and `--json` prints a typed report with
+per-entry existing, fetched, and appended comment counts.
 
 `--request-timeout-seconds` applies to API requests. Media body reads use
 `--download-idle-timeout-seconds`; pass `0` to disable that idle timeout.

@@ -461,6 +461,46 @@ disk. Store the archive at a JSON file path outside the chosen output root and a
 sidecar paths; `DownloadArchive::save` rejects directory targets. If the archive path is a symlink,
 `DownloadArchive::save` updates the symlink target instead of replacing the link itself.
 
+Append-only danmaku refresh is a separate archive-driven operation for already downloaded entries.
+Plan the same input and selection with `DownloadMode::DanmakuOnly`, load the archive, then call
+`BiliClient::update_danmaku_for_archive`. Danmaku-only planning keeps the refresh independent from
+media playurl availability. The method matches archive entries by aid/cid, downloads the current XML
+danmaku payload, append-merges new comments into `danmaku.xml`, regenerates selected derived formats
+such as ASS, updates the archive entry sidecar list, and returns a typed `DanmakuUpdateReport` with
+per-entry existing, fetched, and appended comment counts. XML is always the canonical update target;
+`DanmakuUpdateOptions::with_danmaku_formats([DanmakuFormat::Ass])` adds or refreshes `danmaku.ass`
+from the merged XML.
+
+```rust,no_run
+use bbdown_core::{
+    BiliClient, ClientConfig, DanmakuFormat, DanmakuUpdateOptions, DownloadArchive, DownloadMode,
+};
+
+#[tokio::main]
+async fn main() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let plan = client
+        .plan_download_with_mode("BV1qt4y1X7TW", None, DownloadMode::DanmakuOnly)
+        .await?;
+    let archive_path = "downloads/archive.json";
+    let mut archive = DownloadArchive::load(archive_path)?;
+    let report = client
+        .update_danmaku_for_archive(
+            &plan,
+            &mut archive,
+            DanmakuUpdateOptions::default().with_danmaku_formats([DanmakuFormat::Ass]),
+        )
+        .await?;
+    archive.save(archive_path)?;
+
+    println!("updated {} entries", report.entries.len());
+    Ok(())
+}
+```
+
+Callers that manage sidecar storage themselves can use `merge_xml_append_only(existing, fetched)`
+to apply the same XML-level append-only merge without touching `DownloadArchive`.
+
 ## Endpoint Overrides
 
 Use endpoint builders for tests, local mocks, or controlled gateway deployments.

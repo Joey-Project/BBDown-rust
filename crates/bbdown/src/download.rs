@@ -206,6 +206,47 @@ impl DownloadOptions {
 }
 
 #[non_exhaustive]
+#[derive(Clone, Debug)]
+pub struct DanmakuUpdateOptions {
+    pub retry: RetryPolicy,
+    pub danmaku_formats: DanmakuFormats,
+    pub download_idle_timeout: Option<Duration>,
+}
+
+impl Default for DanmakuUpdateOptions {
+    fn default() -> Self {
+        Self {
+            retry: RetryPolicy::default(),
+            danmaku_formats: DanmakuFormats::default(),
+            download_idle_timeout: Some(Duration::from_secs(30)),
+        }
+    }
+}
+
+impl DanmakuUpdateOptions {
+    #[must_use]
+    pub fn with_retry_policy(mut self, retry: RetryPolicy) -> Self {
+        self.retry = retry;
+        self
+    }
+
+    #[must_use]
+    pub fn with_danmaku_formats(
+        mut self,
+        danmaku_formats: impl IntoIterator<Item = DanmakuFormat>,
+    ) -> Self {
+        self.danmaku_formats = DanmakuFormats::new(danmaku_formats);
+        self
+    }
+
+    #[must_use]
+    pub fn with_download_idle_timeout(mut self, download_idle_timeout: Option<Duration>) -> Self {
+        self.download_idle_timeout = download_idle_timeout;
+        self
+    }
+}
+
+#[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DownloadPathTemplates {
     pub output_dir: String,
@@ -680,6 +721,26 @@ pub struct DownloadedFile {
     pub resumed_from: u64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DanmakuUpdateReport {
+    pub entries: Vec<EntryDanmakuUpdateReport>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct EntryDanmakuUpdateReport {
+    pub index: u32,
+    pub aid: u64,
+    pub bvid: Option<String>,
+    pub cid: u64,
+    pub epid: Option<u64>,
+    pub title: String,
+    pub directory: PathBuf,
+    pub existing_comments: usize,
+    pub fetched_comments: usize,
+    pub appended_comments: usize,
+    pub files: Vec<DownloadedFile>,
+}
+
 #[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -787,6 +848,103 @@ impl BiliClient {
             .await?;
         archive.record_download(plan, &effective_options, &report);
         Ok(report)
+    }
+
+    pub async fn update_danmaku_for_archive(
+        &self,
+        plan: &DownloadPlan,
+        archive: &mut DownloadArchive,
+        options: DanmakuUpdateOptions,
+    ) -> Result<DanmakuUpdateReport> {
+        let archive_danmaku_formats = danmaku_update_archive_formats(&options.danmaku_formats);
+        let mut entries = Vec::new();
+        for record in &mut archive.records {
+            let mut record_updated = false;
+            for archive_entry in &mut record.entries {
+                let Some(plan_entry) = plan
+                    .entries
+                    .iter()
+                    .find(|plan_entry| archive_entry_matches_plan_entry(archive_entry, plan_entry))
+                else {
+                    continue;
+                };
+                let report = self
+                    .update_danmaku_archive_entry(plan_entry, archive_entry, &options)
+                    .await?;
+                refresh_archive_entry_danmaku_content_key(archive_entry, &archive_danmaku_formats);
+                record_updated = true;
+                entries.push(report);
+            }
+            if record_updated {
+                refresh_archive_record_danmaku_content_key(record, &archive_danmaku_formats);
+                record.completed_at_unix = current_unix_seconds();
+            }
+        }
+        if entries.is_empty() {
+            return Err(Error::InvalidInput(
+                "download archive does not contain entries selected by the current plan".to_owned(),
+            ));
+        }
+        Ok(DanmakuUpdateReport { entries })
+    }
+
+    async fn update_danmaku_archive_entry(
+        &self,
+        plan_entry: &DownloadEntry,
+        archive_entry: &mut DownloadArchiveEntryRecord,
+        options: &DanmakuUpdateOptions,
+    ) -> Result<EntryDanmakuUpdateReport> {
+        ensure_directory_exists(&archive_entry.directory).await?;
+        let xml_path = archive_entry.directory.join("danmaku.xml");
+        let source_path = temporary_path_with_suffix(&xml_path, ".bbdown-source");
+        remove_file_if_exists(&source_path).await?;
+        let download_options = DownloadOptions::default()
+            .with_retry_policy(options.retry)
+            .with_resume(false)
+            .with_download_idle_timeout(options.download_idle_timeout);
+        let source_file = self
+            .download_url_to_file(
+                &plan_entry.danmaku.xml_url,
+                &source_path,
+                DownloadFileKind::Danmaku,
+                None,
+                &download_options,
+            )
+            .await?;
+        let fetched_xml = fs::read_to_string(&source_file.path).await;
+        let _ = remove_file_if_exists(&source_file.path).await;
+        let fetched_xml = fetched_xml?;
+        let existing_xml = read_optional_text_file(&xml_path).await?;
+        let merged = danmaku::merge_xml_append_only(&existing_xml, &fetched_xml);
+        let mut files = Vec::new();
+        let xml_file =
+            write_generated_text_file(&xml_path, &merged.xml, DownloadFileKind::Danmaku).await?;
+        remember_archive_entry_file(archive_entry, &xml_file.path);
+        files.push(xml_file);
+        if options.danmaku_formats.contains(DanmakuFormat::Ass) {
+            let ass = danmaku::xml_to_ass(&merged.xml);
+            let ass_file = write_generated_text_file(
+                &archive_entry.directory.join("danmaku.ass"),
+                &ass,
+                DownloadFileKind::DanmakuAss,
+            )
+            .await?;
+            remember_archive_entry_file(archive_entry, &ass_file.path);
+            files.push(ass_file);
+        }
+        Ok(EntryDanmakuUpdateReport {
+            index: archive_entry.index,
+            aid: archive_entry.aid,
+            bvid: archive_entry.bvid.clone(),
+            cid: archive_entry.cid,
+            epid: archive_entry.epid,
+            title: archive_entry.title.clone(),
+            directory: archive_entry.directory.clone(),
+            existing_comments: merged.existing_comments,
+            fetched_comments: merged.fetched_comments,
+            appended_comments: merged.appended_comments,
+            files,
+        })
     }
 
     async fn download_plan_to_output_dir(
@@ -1420,6 +1578,10 @@ fn temporary_replace_path(path: &Path) -> PathBuf {
     temporary_path_with_suffix(path, ".bbdown-replace")
 }
 
+fn temporary_generated_path(path: &Path) -> PathBuf {
+    temporary_path_with_suffix(path, ".bbdown-generated")
+}
+
 fn temporary_mux_path(path: &Path) -> PathBuf {
     temporary_path_with_suffix(path, ".bbdown-mux")
 }
@@ -1525,7 +1687,7 @@ async fn write_generated_text_file(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).await?;
     }
-    let write_path = temporary_replace_path(path);
+    let write_path = temporary_generated_path(path);
     remove_file_if_exists(&write_path).await?;
     fs::write(&write_path, contents).await?;
     replace_file(&write_path, path).await?;
@@ -1736,6 +1898,112 @@ async fn remove_file_if_exists(path: &Path) -> Result<()> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(Error::Io(error)),
     }
+}
+
+async fn ensure_directory_exists(path: &Path) -> Result<()> {
+    let metadata = fs::metadata(path).await?;
+    if metadata.is_dir() {
+        Ok(())
+    } else {
+        Err(Error::InvalidInput(format!(
+            "download archive entry directory is not a directory: {}",
+            path.display()
+        )))
+    }
+}
+
+async fn read_optional_text_file(path: &Path) -> Result<String> {
+    match fs::read_to_string(path).await {
+        Ok(value) => Ok(value),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(error) => Err(Error::Io(error)),
+    }
+}
+
+fn remember_archive_entry_file(entry: &mut DownloadArchiveEntryRecord, path: &Path) {
+    let path = archive_record_path(path);
+    let path_key = comparable_output_path_key(&path);
+    if !entry
+        .files
+        .iter()
+        .any(|existing| comparable_output_path_key(existing) == path_key)
+    {
+        entry.files.push(path);
+    }
+}
+
+fn danmaku_update_archive_formats(formats: &DanmakuFormats) -> DanmakuFormats {
+    let mut effective = Vec::with_capacity(formats.as_slice().len() + 1);
+    effective.push(DanmakuFormat::Xml);
+    effective.extend(formats.as_slice().iter().copied());
+    DanmakuFormats::new(effective)
+}
+
+fn refresh_archive_entry_danmaku_content_key(
+    entry: &mut DownloadArchiveEntryRecord,
+    formats: &DanmakuFormats,
+) {
+    if let Some(key) = refresh_danmaku_archive_content_key(&entry.content_key, formats) {
+        entry.content_key = key;
+    }
+}
+
+fn refresh_archive_record_danmaku_content_key(
+    record: &mut DownloadArchiveRecord,
+    formats: &DanmakuFormats,
+) {
+    if !record
+        .entries
+        .iter()
+        .all(|entry| archive_content_key_has_danmaku_formats(&entry.content_key, formats))
+    {
+        return;
+    }
+    if let Some(key) = refresh_danmaku_archive_content_key(&record.content_key, formats) {
+        record.content_key = key;
+    }
+}
+
+fn refresh_danmaku_archive_content_key(key: &str, formats: &DanmakuFormats) -> Option<String> {
+    let (prefix, base) = split_archive_content_key_prefix(key);
+    let mode = archive_content_key_mode(prefix).unwrap_or("all");
+    if !matches!(mode, "all" | "danmaku") {
+        return None;
+    }
+    Some(apply_archive_key_prefix(
+        base.to_owned(),
+        archive_key_prefix_for_danmaku_update(mode, formats).as_deref(),
+    ))
+}
+
+fn archive_content_key_has_danmaku_formats(key: &str, formats: &DanmakuFormats) -> bool {
+    refresh_danmaku_archive_content_key(key, formats).is_some_and(|refreshed| refreshed == key)
+}
+
+fn split_archive_content_key_prefix(key: &str) -> (Option<&str>, &str) {
+    if key.starts_with("plan") || key.starts_with("aid=") {
+        return (None, key);
+    }
+    if let Some(index) = key.find(";plan") {
+        return (Some(&key[..index]), &key[index + 1..]);
+    }
+    if let Some(index) = key.find(";aid=") {
+        return (Some(&key[..index]), &key[index + 1..]);
+    }
+    (None, key)
+}
+
+fn archive_content_key_mode(prefix: Option<&str>) -> Option<&str> {
+    prefix?
+        .split(';')
+        .find_map(|token| token.strip_prefix("mode="))
+}
+
+fn archive_entry_matches_plan_entry(
+    archive_entry: &DownloadArchiveEntryRecord,
+    plan_entry: &DownloadEntry,
+) -> bool {
+    archive_entry.aid == plan_entry.aid && archive_entry.cid == plan_entry.cid
 }
 
 async fn remove_output_root_if_exists(path: &Path) -> Result<()> {
@@ -2273,9 +2541,33 @@ fn archive_key_prefix_for_danmaku_formats(
     mode: DownloadMode,
     danmaku_formats: &DanmakuFormats,
 ) -> String {
+    archive_key_prefix_for_danmaku_formats_token(mode.archive_key_token(), danmaku_formats)
+}
+
+fn archive_key_prefix_for_danmaku_update(
+    mode: &str,
+    danmaku_formats: &DanmakuFormats,
+) -> Option<String> {
+    if mode == "all" && danmaku_formats.is_default() {
+        return None;
+    }
+    let mode_prefix = format!("mode={mode}");
+    if danmaku_formats.is_default() {
+        return Some(mode_prefix);
+    }
+    Some(archive_key_prefix_for_danmaku_formats_token(
+        mode,
+        danmaku_formats,
+    ))
+}
+
+fn archive_key_prefix_for_danmaku_formats_token(
+    mode: &str,
+    danmaku_formats: &DanmakuFormats,
+) -> String {
+    let mode_prefix = format!("mode={mode}");
     format!(
-        "mode={};danmaku={}",
-        mode.archive_key_token(),
+        "{mode_prefix};danmaku={}",
         danmaku_formats.archive_key_token()
     )
 }
@@ -2861,17 +3153,18 @@ fn subtitle_dedup_key(url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_UPOS_REPLACEMENT_HOST, DownloadArchive, DownloadArchiveEntryRecord,
-        DownloadArchiveRecord, DownloadMode, DownloadOptions, DownloadPathTemplates,
-        DownloadPreflight, DownloadReport, DownloadedFile, DuplicateDecision, EntryDownloadReport,
-        MAX_FILE_COMPONENT_BYTES, MAX_FILE_NAME_BYTES, MAX_SUBTITLE_EXTENSION_BYTES,
-        MediaHostOptions, MuxOptions, RetryPolicy, SidecarOptions, StreamSelection,
-        TemplateContext, archive_sidecar_path, candidate_urls, comparable_output_path,
-        cover_file_name, default_plan_output_dir, download_entry_content_key,
-        download_plan_content_key, entry_dir_name, media_file_name, mux_file_stem,
-        path_is_occupied, render_template_component, safe_file_name, safe_file_name_with_budget,
-        select_media_stream, subtitle_dedup_key, subtitle_extension, subtitle_file_name,
-        temporary_download_path, temporary_mux_path, temporary_replace_path,
+        DEFAULT_UPOS_REPLACEMENT_HOST, DanmakuUpdateOptions, DownloadArchive,
+        DownloadArchiveEntryRecord, DownloadArchiveRecord, DownloadMode, DownloadOptions,
+        DownloadPathTemplates, DownloadPreflight, DownloadReport, DownloadedFile,
+        DuplicateDecision, EntryDownloadReport, MAX_FILE_COMPONENT_BYTES, MAX_FILE_NAME_BYTES,
+        MAX_SUBTITLE_EXTENSION_BYTES, MediaHostOptions, MuxOptions, RetryPolicy, SidecarOptions,
+        StreamSelection, TemplateContext, archive_sidecar_path, candidate_urls,
+        comparable_output_path, cover_file_name, default_plan_output_dir,
+        download_entry_content_key, download_plan_content_key, entry_dir_name, media_file_name,
+        mux_file_stem, path_is_occupied, render_template_component, safe_file_name,
+        safe_file_name_with_budget, select_media_stream, subtitle_dedup_key, subtitle_extension,
+        subtitle_file_name, temporary_download_path, temporary_generated_path, temporary_mux_path,
+        temporary_replace_path, write_generated_text_file,
     };
     use crate::models::{
         DanmakuTrack, DownloadEntry, DownloadPlan, FlvSegment, MediaStream, StreamDiagnostics,
@@ -3382,6 +3675,7 @@ mod tests {
         for temporary in [
             temporary_download_path(&path),
             temporary_replace_path(&path),
+            temporary_generated_path(&path),
             temporary_mux_path(&path),
         ] {
             assert!(
@@ -3391,6 +3685,26 @@ mod tests {
                     .is_some_and(|name| name.len() <= MAX_FILE_COMPONENT_BYTES)
             );
         }
+    }
+
+    #[tokio::test]
+    async fn write_generated_text_file_replaces_existing_target() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("danmaku.xml");
+        tokio::fs::write(&path, "old").await?;
+
+        let file = write_generated_text_file(&path, "new", DownloadFileKind::Danmaku).await?;
+
+        assert_ne!(
+            temporary_generated_path(&path),
+            temporary_replace_path(&path)
+        );
+        assert_eq!(file.path, path);
+        assert_eq!(file.bytes_written, 3);
+        assert_eq!(tokio::fs::read_to_string(&path).await?, "new");
+        assert!(!temporary_generated_path(&path).exists());
+        assert!(!temporary_replace_path(&path).exists());
+        Ok(())
     }
 
     #[test]
@@ -6418,6 +6732,184 @@ mod tests {
             Some(&archive),
         )?;
         assert_eq!(ass_preflight.archived_records.len(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn danmaku_update_archive_appends_xml_and_regenerates_ass() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let plan = test_plan(&server);
+        let temp = tempfile::tempdir()?;
+        let output_dir = temp.path().join("downloads").join("Mock video");
+        let entry_dir = output_dir.join("P001-BV1xx411c7mD-Main");
+        std::fs::create_dir_all(&entry_dir)?;
+        let xml_path = entry_dir.join("danmaku.xml");
+        std::fs::write(&xml_path, r#"<i><d p="1,1,25,0,0,0,0,0">old</d></i>"#)?;
+        let danmaku_mock = server.mock(|when, then| {
+            when.method(GET).path("/danmaku.xml");
+            then.status(200)
+                .body(r#"<i><d p="1,1,25,0,0,0,0,0">old</d><d p="2,1,25,0,0,0,0,0">new</d></i>"#);
+        });
+        let mut archive = DownloadArchive::new(vec![DownloadArchiveRecord {
+            content_key: download_plan_content_key(&plan),
+            title: plan.title.clone(),
+            output_dir: output_dir.clone(),
+            completed_at_unix: 1,
+            entries: vec![DownloadArchiveEntryRecord {
+                content_key: download_entry_content_key(&plan.entries[0]),
+                index: 1,
+                aid: plan.entries[0].aid,
+                bvid: plan.entries[0].bvid.clone(),
+                cid: plan.entries[0].cid,
+                epid: plan.entries[0].epid,
+                title: plan.entries[0].title.clone(),
+                directory: entry_dir.clone(),
+                files: vec![xml_path.clone()],
+                mux_output: None,
+            }],
+        }]);
+        let client = BiliClient::new(ClientConfig::default());
+
+        let report = client
+            .update_danmaku_for_archive(
+                &plan,
+                &mut archive,
+                DanmakuUpdateOptions::default().with_danmaku_formats([DanmakuFormat::Ass]),
+            )
+            .await?;
+
+        danmaku_mock.assert_calls(1);
+        assert_eq!(report.entries.len(), 1);
+        assert_eq!(report.entries[0].existing_comments, 1);
+        assert_eq!(report.entries[0].fetched_comments, 2);
+        assert_eq!(report.entries[0].appended_comments, 1);
+        assert_eq!(report.entries[0].files.len(), 2);
+        let merged_xml = tokio::fs::read_to_string(&xml_path).await?;
+        assert_eq!(merged_xml.matches("<d ").count(), 2);
+        let ass_path = entry_dir.join("danmaku.ass");
+        assert!(
+            tokio::fs::read_to_string(&ass_path)
+                .await?
+                .contains("Dialogue:")
+        );
+        assert_eq!(archive.records[0].entries[0].files.len(), 2);
+        assert!(archive.records[0].entries[0].files.iter().any(|path| path
+            .ends_with(Path::new("P001-BV1xx411c7mD-Main").join("danmaku.xml"))));
+        assert!(archive.records[0].entries[0].files.iter().any(|path| path
+            .ends_with(Path::new("P001-BV1xx411c7mD-Main").join("danmaku.ass"))));
+        assert!(
+            archive.records[0]
+                .content_key
+                .starts_with("mode=all;danmaku=xml+ass;plan|")
+        );
+        assert!(
+            archive.records[0].entries[0]
+                .content_key
+                .starts_with("mode=all;danmaku=xml+ass;aid=170001;cid=2")
+        );
+        let ass_preflight = DownloadPreflight::inspect(
+            &plan,
+            &DownloadOptions::new(temp.path().join("next"))
+                .with_download_mode(DownloadMode::All)
+                .with_danmaku_formats([DanmakuFormat::Xml, DanmakuFormat::Ass]),
+            Some(&archive),
+        )?;
+        assert_eq!(ass_preflight.archived_records.len(), 1);
+        let xml_preflight = DownloadPreflight::inspect(
+            &plan,
+            &DownloadOptions::new(temp.path().join("xml-only")),
+            Some(&archive),
+        )?;
+        assert!(xml_preflight.archived_records.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn danmaku_update_partial_selection_keeps_record_content_key_conservative()
+    -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let mut full_plan = test_plan(&server);
+        let mut second_entry = full_plan.entries[0].clone();
+        second_entry.index = 2;
+        second_entry.cid = 3;
+        second_entry.danmaku.cid = 3;
+        second_entry.title = "Second".to_owned();
+        second_entry.danmaku.xml_url = format!("{}/danmaku-2.xml", server.base_url());
+        full_plan.entries.push(second_entry);
+        let selected_plan = DownloadPlan {
+            title: full_plan.title.clone(),
+            entries: vec![full_plan.entries[0].clone()],
+        };
+        let temp = tempfile::tempdir()?;
+        let output_dir = temp.path().join("downloads").join("Mock video");
+        let first_dir = output_dir.join("P001-BV1xx411c7mD-Main");
+        let second_dir = output_dir.join("P002-BV1xx411c7mD-Second");
+        std::fs::create_dir_all(&first_dir)?;
+        std::fs::create_dir_all(&second_dir)?;
+        let first_xml = first_dir.join("danmaku.xml");
+        let second_xml = second_dir.join("danmaku.xml");
+        std::fs::write(&first_xml, r#"<i><d p="1,1,25,0,0,0,0,0">old</d></i>"#)?;
+        std::fs::write(&second_xml, r#"<i><d p="1,1,25,0,0,0,0,0">old</d></i>"#)?;
+        server.mock(|when, then| {
+            when.method(GET).path("/danmaku.xml");
+            then.status(200)
+                .body(r#"<i><d p="1,1,25,0,0,0,0,0">old</d><d p="2,1,25,0,0,0,0,0">new</d></i>"#);
+        });
+        let original_record_key = download_plan_content_key(&full_plan);
+        let original_second_entry_key = download_entry_content_key(&full_plan.entries[1]);
+        let mut archive = DownloadArchive::new(vec![DownloadArchiveRecord {
+            content_key: original_record_key.clone(),
+            title: full_plan.title.clone(),
+            output_dir: output_dir.clone(),
+            completed_at_unix: 1,
+            entries: vec![
+                DownloadArchiveEntryRecord {
+                    content_key: download_entry_content_key(&full_plan.entries[0]),
+                    index: 1,
+                    aid: full_plan.entries[0].aid,
+                    bvid: full_plan.entries[0].bvid.clone(),
+                    cid: full_plan.entries[0].cid,
+                    epid: full_plan.entries[0].epid,
+                    title: full_plan.entries[0].title.clone(),
+                    directory: first_dir,
+                    files: vec![first_xml],
+                    mux_output: None,
+                },
+                DownloadArchiveEntryRecord {
+                    content_key: original_second_entry_key.clone(),
+                    index: 2,
+                    aid: full_plan.entries[1].aid,
+                    bvid: full_plan.entries[1].bvid.clone(),
+                    cid: full_plan.entries[1].cid,
+                    epid: full_plan.entries[1].epid,
+                    title: full_plan.entries[1].title.clone(),
+                    directory: second_dir,
+                    files: vec![second_xml],
+                    mux_output: None,
+                },
+            ],
+        }]);
+        let client = BiliClient::new(ClientConfig::default());
+
+        let report = client
+            .update_danmaku_for_archive(
+                &selected_plan,
+                &mut archive,
+                DanmakuUpdateOptions::default().with_danmaku_formats([DanmakuFormat::Ass]),
+            )
+            .await?;
+
+        assert_eq!(report.entries.len(), 1);
+        assert_eq!(archive.records[0].content_key, original_record_key);
+        assert!(
+            archive.records[0].entries[0]
+                .content_key
+                .starts_with("mode=all;danmaku=xml+ass;aid=170001;cid=2")
+        );
+        assert_eq!(
+            archive.records[0].entries[1].content_key,
+            original_second_entry_key
+        );
         Ok(())
     }
 
