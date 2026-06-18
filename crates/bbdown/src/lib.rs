@@ -29,9 +29,10 @@ pub use danmaku::{DanmakuFormat, DanmakuFormats, DanmakuXmlMerge, merge_xml_appe
 pub use download::{
     DanmakuUpdateOptions, DanmakuUpdateReport, DownloadArchive, DownloadArchiveEntryRecord,
     DownloadArchiveRecord, DownloadFileKind, DownloadMode, DownloadOptions, DownloadOutputConflict,
-    DownloadPathTemplates, DownloadPreflight, DownloadReport, DownloadedFile, DuplicateDecision,
-    EntryDanmakuUpdateReport, EntryDownloadReport, MediaHostOptions, MuxOptions, MuxReport,
-    RetryPolicy, SidecarOptions, StreamSelection, archive_entry_allows_danmaku_update,
+    DownloadPathTemplates, DownloadPreflight, DownloadReport, DownloadReportSummary,
+    DownloadedFile, DuplicateDecision, EntryDanmakuUpdateReport, EntryDownloadReport,
+    EntryDownloadSummary, MediaHostOptions, MuxOptions, MuxReport, RetryPolicy, SidecarOptions,
+    StreamSelection, archive_entry_allows_danmaku_update,
 };
 pub use error::{Error, Result};
 pub use input::Input;

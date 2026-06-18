@@ -332,9 +332,9 @@ async fn main() -> bbdown_core::Result<()> {
 ```
 
 嵌入应用需要进度 callback、但不想解析 CLI 输出时，使用 `*_with_progress` 下载方法。
-`DownloadProgressEvent` 会覆盖 plan 开始/完成、条目开始/完成、文件开始/chunk/完成，以及
-mux 开始/完成。callback 是同步调用，应保持轻量；如果 UI 更新或数据库写入可能阻塞下载
-任务，请把事件转发到应用自己的 channel。
+`DownloadProgressEvent` 会覆盖 plan 开始/完成/失败/取消、条目开始/完成/失败、文件
+开始/chunk/完成/失败，以及 mux 开始/完成/失败。callback 是同步调用，应保持
+轻量；如果 UI 更新或数据库写入可能阻塞下载任务，请把事件转发到应用自己的 channel。
 
 ```rust,no_run
 use bbdown_core::{
@@ -362,7 +362,11 @@ async fn main() -> bbdown_core::Result<()> {
         )
         .await?;
 
-    println!("wrote {} entries", report.entries.len());
+    let summary = report.summary();
+    println!(
+        "wrote {} files across {} entries ({} bytes newly written)",
+        summary.file_count, summary.entry_count, summary.bytes_written
+    );
     Ok(())
 }
 ```
@@ -370,6 +374,33 @@ async fn main() -> bbdown_core::Result<()> {
 Archive-aware flow 也有对应的 `download_plan_with_archive_decision_with_progress` 和
 `download_plan_with_archive_preflight_decision_with_progress` 方法。已有非 progress 方法仍
 然可用，并会使用 no-op sink。
+把 `plan_completed`、`plan_failed` 和 `plan_cancelled` 视为一次下载任务互斥的终态。
+`plan_cancelled` 目前表示显式 archive duplicate 取消；后续 cancellable execution API
+会复用同一个 sink 形状：取消触发器放在 sink 外部，progress event 转发到应用 channel，
+并让 UI 从终态事件收口，而不是从 task handle 被 drop 来推断取消。
+
+```rust,no_run
+use bbdown_core::DownloadProgressEvent;
+
+fn apply_progress(event: &DownloadProgressEvent) {
+    match event {
+        DownloadProgressEvent::FileProgress {
+            path,
+            bytes_written,
+            expected_size,
+            ..
+        } => {
+            eprintln!("{path:?}: {bytes_written}/{expected_size:?}");
+        }
+        DownloadProgressEvent::PlanCompleted { .. } => eprintln!("download completed"),
+        DownloadProgressEvent::PlanFailed { error, .. } => eprintln!("download failed: {error}"),
+        DownloadProgressEvent::PlanCancelled { error, .. } => {
+            eprintln!("download cancelled: {error}");
+        }
+        _ => {}
+    }
+}
+```
 
 当 UI 需要展示质量选择时，先使用 `bbdown plan` 或 `BiliClient::plan_download`。
 `StreamSelection::video`、`StreamSelection::audio` 和 `StreamSelection::new` 会从 plan 中

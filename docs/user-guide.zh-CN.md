@@ -201,8 +201,18 @@ DASH 媒体不完整而 legacy FLV `durl` 分段可用时，会改为下载这�
 DASH 媒体，因此会禁用该条目的 FLV 回退。如果两种形态都不完整，下载会在写入媒体前失败。
 传入 `--progress-json` 会把 `DownloadProgressEvent` 以 JSON Lines 写到 stderr，同时保留
 stdout 上的普通人类输出或 `--json` report。事件覆盖 plan 开始/完成、条目开始/完成、文件
-开始/chunk/完成，以及 mux 开始/完成，因此 wrapper 可以流式展示进度，而不需要抓取最终
-report。
+开始/chunk/完成/失败、mux 开始/完成/失败，以及 plan 完成/失败/取消，因此 wrapper 可以
+流式展示进度，而不需要抓取最终 report。每个 JSON object 使用 snake_case `type` tag，例如
+`file_progress`、`file_failed` 或 `plan_cancelled`；路径会序列化为字符串。失败时 stderr
+可能同时包含 JSON Lines 和最终 CLI 错误行，因此 wrapper 应只解析 JSON object 行。
+
+`--progress-json` 输出示例：
+
+```json
+{"type":"file_progress","entry_index":1,"entry_title":"Main","kind":"video","path":"downloads/Mock video/P001-aid-170001-cid-2-Main/video-80-abcd.m4s","bytes_delta":1048576,"bytes_written":1048576,"resumed_from":0,"expected_size":5242880}
+{"type":"file_failed","entry_index":1,"entry_title":"Main","kind":"video","path":"downloads/Mock video/P001-aid-170001-cid-2-Main/video-80-abcd.m4s","attempt":1,"max_attempts":3,"error":"HTTP error: ..."}
+{"type":"plan_failed","title":"Mock video","output_dir":"downloads/Mock video","completed_entries":0,"error":"HTTP error: ..."}
+```
 当计划中存在对应 URL 时，封面、字幕和弹幕旁路文件默认启用。分别使用 `--no-cover`、
 `--no-subtitles` 和 `--no-danmaku` 关闭。
 弹幕旁路文件默认写为 XML。使用 `--danmaku-format ass` 可只生成 `danmaku.ass`，或使用

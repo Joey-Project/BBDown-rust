@@ -64,8 +64,12 @@
   the eight-PR credential and danmaku sequence landed.
 - [completed] Add the `v0.5.0` progress callback slice with a stable `DownloadProgressEvent` model,
   core `*_with_progress` download APIs, and CLI `--progress-json` output.
+- [pending] Add the next `v0.5.0` progress polish slice: terminal failure/cancelled progress events,
+  clearer CLI `--progress-json` schema/sample docs, embedding guidance for progress plus
+  cancellation, and `DownloadReport` summary helpers for downstream UI state.
 - [pending] Continue `v0.5.0` as the downloader and embedding polish line: cancellation-aware
-  download execution, chapter metadata muxing, audio language selection, and AI subtitle filtering.
+  download execution, chapter metadata muxing, audio language selection, AI subtitle filtering, and
+  final `v0.5.0` release prep.
 - [pending] Plan `v0.6.0` as the credential lifecycle line: automatic credential refresh, health
   policy/reporting, profile-level status, and multi-account lifecycle UX.
 - [pending] Plan `v0.7.0` or a later feed/page release for per-video related recommendations and
