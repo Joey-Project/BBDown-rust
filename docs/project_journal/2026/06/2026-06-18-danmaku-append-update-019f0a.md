@@ -72,14 +72,26 @@ superseded_by:
   canonical XML and ASS but refreshed archive content keys as ASS-only. The update path now computes
   effective archive formats as XML plus the requested formats, so archive duplicate/preflight matching
   reflects the actual sidecars refreshed by the update.
+- GitHub Codex review found that truncated existing XML with a `<chatserver>` header but no root
+  close could insert appended `<d>` comments into the metadata element. Append-only XML merge now
+  inserts only before `</i>` when present and otherwise appends at EOF, preserving the existing
+  document shape instead of corrupting `<chatserver>`.
+- GitHub Codex review found that `danmaku update` could update archive records from `--no-danmaku`
+  or sidecar-only non-danmaku runs that happened to share the same aid/cid. Archive-backed updates
+  now skip records whose content keys disallow danmaku update and skip legacy/default entries that
+  do not already record a danmaku sidecar.
 - `cargo test -p bbdown-core download::tests::danmaku_update --locked` passed: 2 related tests.
 - `cargo test -p bbdown-core danmaku::tests::merge_xml_append_only --locked` passed: 5 related tests.
+- `cargo test -p bbdown-core merge_xml_append_only_does_not_insert_comments_into_chatserver --locked`
+  passed.
+- `cargo test -p bbdown-core danmaku_update_skips_archive_entries_without_danmaku_sidecars --locked`
+  passed.
+- `cargo test -p bbdown-core archive_entry_danmaku_update_target_requires_danmaku_eligible_archive_mode --locked`
+  passed.
 - `cargo test -p bbdown-cli danmaku_update --locked` passed: 9 CLI e2e tests plus filtered targets.
 - `just ci` passed: format, clippy, Rust 1.95 workspace check, workspace tests, CLI e2e, and
   `cargo publish --dry-run -p bbdown-core --locked --allow-dirty`.
 
 ## Next Steps
 
-- Open the PR and run the normal CI plus triple-review merge gate.
-- After this lands, prepare the `0.4.0` release/versioning step before starting the next feature
-  train.
+- Prepare the `0.4.0` release/versioning step before starting the next feature train.

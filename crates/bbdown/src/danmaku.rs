@@ -190,10 +190,7 @@ fn append_comment_blocks(existing_xml: &str, blocks: &[String]) -> String {
     if blocks.is_empty() {
         return existing_xml.to_owned();
     }
-    let insertion_at = existing_xml
-        .rfind("</i>")
-        .or_else(|| existing_xml.rfind("</chatserver>"))
-        .unwrap_or(existing_xml.len());
+    let insertion_at = existing_xml.rfind("</i>").unwrap_or(existing_xml.len());
     let mut output = String::with_capacity(
         existing_xml.len() + blocks.iter().map(String::len).sum::<usize>() + blocks.len() + 1,
     );
@@ -616,5 +613,28 @@ mod tests {
         assert_eq!(merged.fetched_comments, 1);
         assert_eq!(merged.appended_comments, 1);
         assert_eq!(merged.xml, fetched);
+    }
+
+    #[test]
+    fn merge_xml_append_only_does_not_insert_comments_into_chatserver() {
+        let merged = merge_xml_append_only(
+            r#"<i><chatserver>chat.example</chatserver><d p="1,1,25,0,0,0,0,0">old</d>"#,
+            r#"<i><chatserver>chat.example</chatserver><d p="1,1,25,0,0,0,0,0">old</d><d p="2,1,25,0,0,0,0,0">new</d></i>"#,
+        );
+
+        assert_eq!(merged.existing_comments, 1);
+        assert_eq!(merged.fetched_comments, 2);
+        assert_eq!(merged.appended_comments, 1);
+        assert!(
+            merged
+                .xml
+                .contains("<chatserver>chat.example</chatserver><d")
+        );
+        assert!(!merged.xml.contains("new</d>\n</chatserver>"));
+        assert!(
+            merged
+                .xml
+                .ends_with("old</d>\n<d p=\"2,1,25,0,0,0,0,0\">new</d>\n")
+        );
     }
 }
