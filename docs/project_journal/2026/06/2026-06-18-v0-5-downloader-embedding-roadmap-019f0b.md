@@ -79,3 +79,7 @@ superseded_by:
 - Independent review found the same duplicate `FileFailed` risk when cancellation happens during a
   non-zero retry backoff after a retryable file failure. The fix suppresses terminal cancellation
   `FileFailed` for file attempts that never started and adds explicit backoff-cancellation coverage.
+- Offline follow-up review found that the single-URL sidecar path still had the same backoff
+  cancellation duplicate `FileFailed` risk after the candidate-URL path was fixed. The follow-up fix
+  applies the same terminal-event guard to single-URL downloads and adds cover-sidecar retry-backoff
+  cancellation coverage.

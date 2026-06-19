@@ -1831,7 +1831,9 @@ impl BiliClient {
         match result {
             Ok(file) => Ok(file),
             Err(error) => {
-                emit_file_failed(progress, request, error.attempt, &error.error);
+                if error.started || !error.error.is_cancelled() {
+                    emit_file_failed(progress, request, error.attempt, &error.error);
+                }
                 Err(error.error)
             }
         }
@@ -5832,6 +5834,83 @@ mod tests {
                 ..
             } if error.contains("test cancellation during retry backoff")
         )));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancelled_single_url_retry_backoff_does_not_duplicate_file_failed()
+    -> anyhow::Result<()> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let cover_url = format!("http://{}/cover.jpg", listener.local_addr()?);
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buffer = [0_u8; 1024];
+                let _ = stream.read(&mut buffer);
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+            }
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = single_video_plan(cover_url.clone());
+        let path = temp.path().join("cover.jpg");
+        let request =
+            DownloadFileRequest::new(&plan.entries[0], &path, DownloadFileKind::Cover, None);
+        let cancellation = DownloadCancellationToken::new();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress_events = Arc::clone(&events);
+        let progress_cancellation = cancellation.clone();
+        let progress = move |event: &DownloadProgressEvent| {
+            if matches!(
+                event,
+                DownloadProgressEvent::FileFailed {
+                    kind: DownloadFileKind::Cover,
+                    attempt: 1,
+                    ..
+                }
+            ) {
+                progress_cancellation
+                    .cancel_with_reason("test sidecar cancellation during retry backoff");
+            }
+            push_progress_event(&progress_events, event.clone());
+        };
+
+        let Err(error) = client
+            .download_url_to_file(
+                &cover_url,
+                &request,
+                &DownloadOptions {
+                    retry: RetryPolicy {
+                        max_attempts: 2,
+                        backoff: Duration::from_millis(200),
+                    },
+                    ..DownloadOptions::default()
+                },
+                &progress,
+                &cancellation,
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!(
+                "cancelled single-url retry-backoff download should fail"
+            ));
+        };
+
+        assert!(error.is_cancelled());
+        let events = progress_events_snapshot(&events);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    DownloadProgressEvent::FileFailed {
+                        kind: DownloadFileKind::Cover,
+                        ..
+                    }
+                ))
+                .count(),
+            1
+        );
+        assert!(!path.exists());
         Ok(())
     }
 
