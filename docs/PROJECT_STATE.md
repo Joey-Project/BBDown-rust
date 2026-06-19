@@ -43,6 +43,8 @@
   terminal progress events/report summaries, and cancellation-aware download execution have landed;
   next slices add chapter metadata muxing, audio language selection, AI subtitle filtering, and
   release prep.
+- Repo-local skill `$bbdown-live-e2e-fixtures` records canonical real Bilibili fixtures for opt-in
+  normal, multi-page, and restricted-area live e2e validation.
 
 ## Recovery Pointers
 
@@ -54,6 +56,8 @@
   `docs/project_journal/2026/06/2026-06-18-v0-4-release-prep-019f0a.md`.
 - Active v0.5.0 roadmap:
   `docs/project_journal/2026/06/2026-06-18-v0-5-downloader-embedding-roadmap-019f0b.md`.
+- Repo-local live e2e fixture skill:
+  `.agents/skills/bbdown-live-e2e-fixtures/SKILL.md`.
 - User-facing CLI behavior is documented in `docs/user-guide.md`.
 - Crate embedding guidance is documented in `docs/embedding.md`.
 - Simplified Chinese companion docs use `*.zh-CN.md` next to the English originals.

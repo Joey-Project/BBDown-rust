@@ -69,6 +69,8 @@
   cancellation, and `DownloadReport` summary helpers for downstream UI state.
 - [completed] Add cancellation-aware download execution with `DownloadCancellationToken`, graceful
   CLI `Ctrl-C`, terminal `plan_cancelled` progress events, and partial-file rollback semantics.
+- [completed] Add a repo-local `$bbdown-live-e2e-fixtures` skill with canonical real Bilibili URLs
+  for opt-in normal, multi-page, and restricted-area live e2e validation.
 - [pending] Continue `v0.5.0` as the downloader and embedding polish line: chapter metadata muxing,
   audio language selection, AI subtitle filtering, and final `v0.5.0` release prep.
 - [pending] Plan `v0.6.0` as the credential lifecycle line: automatic credential refresh, health
