@@ -7,14 +7,14 @@ fixtures; page availability, titles, codecs, region policy, and account requirem
 | --- | --- | --- | --- |
 | `normal-playlist-video` | `https://www.bilibili.com/video/BV1QtjA6BEB8/` | Normal public video with a playlist/list-style surface. Use for input parsing, page/list selection, planning, playback metadata, and ordinary download smoke checks. | Should not require restricted-area proxy. |
 | `normal-multipage-video` | `https://www.bilibili.com/video/BV1uW4y1s7zN/` | Normal public video with multiple pages. Use for page selection, batch entry planning, file naming, and archive identity checks. | Should not require restricted-area proxy. |
-| `restricted-bangumi-series` | `https://www.bilibili.com/bangumi/media/md28338980` | Restricted-area bangumi series page. Use for season/media parsing, selected episode planning, and restricted-area fallback coverage. | Requires the repo's configured restricted-area credentials/proxy path. |
+| `restricted-bangumi-series` | `https://www.bilibili.com/bangumi/media/md28338980` | Restricted-area bangumi series page. Use for season/media parsing, selected episode planning, and restricted-area fallback coverage. | Requires an explicit selection such as `current` or `latest`. Metadata parsing may work without a proxy; restricted stream planning/download requires the repo's configured credentials/proxy/access-key path. |
 | `restricted-bangumi-episode` | `https://www.bilibili.com/bangumi/play/ep664928` | Restricted-area bangumi episode page. Use for direct episode parsing, stream planning, download smoke checks, and restricted-area fallback coverage. | Requires the repo's configured restricted-area credentials/proxy path. |
 
 ## Selection Guidance
 
 - Input parser changes: run both public video fixtures plus the restricted episode fixture.
 - Page or episode selection changes: run `normal-multipage-video`, `restricted-bangumi-series`, and
-  `restricted-bangumi-episode`.
+  `restricted-bangumi-episode`; include an explicit selection for the series fixture.
 - Restricted-area resolver changes: run both restricted fixtures and record the access path used.
 - Download execution changes: prefer a narrow smoke run against one public fixture first, then one
   restricted fixture if the change touches PGC or proxy flow.
