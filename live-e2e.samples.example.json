@@ -39,6 +39,7 @@
       "expect": {
         "info": "season",
         "allowed_plan_sources": ["pgc_web", "pgc_proxy"],
+        "required_plan_sources": ["pgc_proxy"],
         "allow_plan_error": true,
         "plan_error_contains": [
           "restricted-area resolver failed",
@@ -59,6 +60,7 @@
       "expect": {
         "info": "season",
         "allowed_plan_sources": ["pgc_web", "pgc_proxy"],
+        "required_plan_sources": ["pgc_proxy"],
         "allow_plan_error": true,
         "plan_error_contains": [
           "restricted-area resolver failed",
