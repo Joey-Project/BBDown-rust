@@ -195,6 +195,16 @@ Progress is an opt-in execution-side observer. The `*_with_progress` variants ac
 milestones. The non-progress methods are preserved and route through a no-op sink. The CLI exposes
 the same event stream only when `--progress-json` is set, writing JSON Lines to stderr so stdout
 remains either human output or the final `DownloadReport` JSON.
+Cancellation is also opt-in for embedding callers. The `*_with_cancellation` and
+`*_with_progress_and_cancellation` variants accept a `DownloadCancellationToken` that can be
+cancelled from another task. The executor checks the token across planning, entry boundaries,
+sidecar generation, retry sleeps, HTTP request/response streaming, and muxing. Cancellation returns
+`Error::Cancelled` and emits the same plan-level `PlanCancelled` terminal progress event used by
+archive duplicate cancellation. Completed entries remain intact; newly created partial files are
+removed, and resumed files are truncated back to the pre-attempt size. The CLI installs the same
+token for download-time `Ctrl-C`, so terminal users and embedders share the cancellation semantics.
+The interactive archive duplicate prompt is the CLI exception: because terminal `stdin` input cannot
+be rolled back like an executor task, `Ctrl-C` at that prompt exits immediately with status 130.
 
 Execution behavior is controlled by `DownloadOptions`:
 

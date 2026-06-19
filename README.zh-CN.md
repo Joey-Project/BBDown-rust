@@ -140,11 +140,12 @@ mux 路径会在记录时保存为绝对路径，因此同一份归档可以从�
 用稳定的 aid/cid 媒体 id，因此同一 PGC 分集即便之后通过 BV/av URL 规划，且其中一种形式
 缺少 BVID，也仍能匹配。当同一内容、条目或归档输出目录再次出现时，非交互 JSON 模式需要
 提供 `--on-duplicate replace`、`--on-duplicate keep-both` 或 `--on-duplicate cancel`；
-交互式人类模式在没有决策时会提示。`replace` 会先删除已有的计划输出根目录，再重新下载，
-并替换指向该输出路径的陈旧归档记录；`keep-both` 会写入下一个带后缀的输出根目录，并避
-开所有归档记录输出路径；`cancel` 会只报告预检查状态，不下载。归档文件本身不能是所选输
-出根目录，也不能位于该根目录之内；CLI 对归档保存旁路路径应用相同保护。如果归档文件是
-符号链接，保存会更新符号链接目标，以免共享归档历史被拆分。
+交互式人类模式在没有决策时会提示，且在该提示中按 `Ctrl-C` 会立即以 130 退出。`replace`
+会先删除已有的计划输出根目录，再重新下载，并替换指向该输出路径的陈旧归档记录；
+`keep-both` 会写入下一个带后缀的输出根目录，并避开所有归档记录输出路径；`cancel` 会只
+报告预检查状态，不下载。归档文件本身不能是所选输出根目录，也不能位于该根目录之内；CLI
+对归档保存旁路路径应用相同保护。如果归档文件是符号链接，保存会更新符号链接目标，以免
+共享归档历史被拆分。
 
 使用 `bbdown danmaku update <input> --archive-file <path>` 可以在不重新下载媒体的情况下
 刷新已有归档记录的弹幕旁路文件。命令会重新规划输入，用稳定的 aid/cid 身份查找匹配归档
@@ -282,7 +283,9 @@ just ci
 
 - Crate API 说明：可发布 package 是 `bbdown-core`，导入时使用 `bbdown_core`。此重写处于
   已发布 `0.4.0` 之后的 `0.5.0` 开发线。该版本线重点是 downloader 和 embedding polish：
-  progress callback、可取消的执行、章节 metadata mux、音频语言选择，以及 AI 字幕筛选；嵌入项目应优先使用
+  progress callback、可取消的执行、章节 metadata mux、音频语言选择，以及 AI 字幕筛选。当前
+  download API 已包含 `DownloadProgressEvent` callback 和基于 `DownloadCancellationToken`
+  的 graceful cancellation；嵌入项目应优先使用
   `Default`、`new` 和
   `with_*` 构造器，例如 `ClientConfig::default().with_*`、`EndpointConfig::default().with_*`、
   `RestrictedAreaConfig::default().with_*`、`DownloadOptions::new(...).with_*` 和

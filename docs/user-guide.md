@@ -225,7 +225,12 @@ start/completion/failure, file start/chunk/completion/failure, mux start/complet
 plan completion/failure/cancellation, so wrappers can stream progress without scraping the final
 report. Each JSON object uses a snake_case `type` tag such as `file_progress`, `file_failed`, or
 `plan_cancelled`; paths are serialized as strings. On failure, stderr can contain both JSON Lines
-and the final CLI error line, so wrappers should parse only JSON object lines.
+and the final CLI error line, so wrappers should parse only JSON object lines. Pressing `Ctrl-C`
+requests a graceful cancellation: the command exits non-zero, emits `plan_cancelled` when
+`--progress-json` is active, removes newly created partial files, rolls resumed files back to the
+pre-attempt size, and leaves already completed entries in place. Press `Ctrl-C` again to force an
+immediate process exit. When the CLI is waiting at the interactive archive duplicate prompt,
+`Ctrl-C` exits immediately with status 130; pass `--on-duplicate` for non-interactive wrappers.
 
 Example `--progress-json` lines:
 
@@ -233,6 +238,7 @@ Example `--progress-json` lines:
 {"type":"file_progress","entry_index":1,"entry_title":"Main","kind":"video","path":"downloads/Mock video/P001-aid-170001-cid-2-Main/video-80-abcd.m4s","bytes_delta":1048576,"bytes_written":1048576,"resumed_from":0,"expected_size":5242880}
 {"type":"file_failed","entry_index":1,"entry_title":"Main","kind":"video","path":"downloads/Mock video/P001-aid-170001-cid-2-Main/video-80-abcd.m4s","attempt":1,"max_attempts":3,"error":"HTTP error: ..."}
 {"type":"plan_failed","title":"Mock video","output_dir":"downloads/Mock video","completed_entries":0,"error":"HTTP error: ..."}
+{"type":"plan_cancelled","title":"Mock video","output_dir":"downloads/Mock video","completed_entries":0,"error":"download cancelled by Ctrl-C"}
 ```
 Cover, subtitle, and danmaku sidecars are enabled by default when the plan has those URLs. Disable
 them individually with `--no-cover`, `--no-subtitles`, and `--no-danmaku`.

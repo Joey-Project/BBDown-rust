@@ -350,9 +350,8 @@ async fn main() -> bbdown_core::Result<()> {
 Use the `*_with_progress` download methods when an embedding application needs progress callbacks
 without parsing CLI output. `DownloadProgressEvent` is emitted for plan start/completion, entry
 start/completion/failure, file start/chunk/completion/failure, mux start/completion/failure, and
-plan completion/failure/cancellation. The callback is
-synchronous and should stay lightweight; send events into an application channel if UI updates or
-database writes may block the download task.
+plan completion/failure/cancellation. The callback is synchronous and should stay lightweight; send
+events into an application channel if UI updates or database writes may block the download task.
 
 ```rust,no_run
 use bbdown_core::{
@@ -391,12 +390,13 @@ async fn main() -> bbdown_core::Result<()> {
 
 Archive-aware flows have matching `download_plan_with_archive_decision_with_progress` and
 `download_plan_with_archive_preflight_decision_with_progress` methods. The existing non-progress
-methods remain available and use a no-op sink.
-Treat `plan_completed`, `plan_failed`, and `plan_cancelled` as mutually exclusive terminal states
-for a download task. `plan_cancelled` currently represents explicit archive duplicate cancellation;
-the planned cancellable execution API will reuse the same sink shape, with the cancellation trigger
-outside the sink and UI state closing itself from the terminal event instead of inferring
-cancellation from a dropped task handle.
+methods remain available and use a no-op sink. Treat `plan_completed`, `plan_failed`, and
+`plan_cancelled` as mutually exclusive terminal states for a download task. `plan_cancelled` is
+emitted for explicit archive duplicate cancellation and for downloads cancelled through a
+`DownloadCancellationToken`. Token-triggered cancellation returns `Error::Cancelled`; use
+`Error::is_cancelled()` when UI code needs to separate a user stop from ordinary failures. Explicit
+archive duplicate cancellation is a preflight decision path, so callers should use the duplicate
+decision/report state instead of treating every `plan_cancelled` event as `Error::Cancelled`.
 
 ```rust,no_run
 use bbdown_core::DownloadProgressEvent;
@@ -419,6 +419,64 @@ fn apply_progress(event: &DownloadProgressEvent) {
         _ => {}
     }
 }
+```
+
+Use the `*_with_cancellation` or `*_with_progress_and_cancellation` download variants when a UI,
+task supervisor, or cache server needs to stop work explicitly. A token can be cancelled from any
+task with `cancel()` or `cancel_with_reason(...)`. Cancellation is checked during planning, before
+new entries and sidecars, while waiting for retry backoff, while sending HTTP requests, while
+streaming response bodies, and while waiting for `ffmpeg` muxing. Newly created partial files are
+removed on cancellation; resumed files are truncated back to the pre-attempt size; already completed
+entries remain valid and are counted in the terminal event.
+
+```rust,no_run
+use bbdown_core::{
+    BiliClient, ClientConfig, DownloadCancellationToken, DownloadOptions, DownloadProgressEvent,
+    DownloadProgressSink,
+};
+
+struct UiProgress;
+
+impl DownloadProgressSink for UiProgress {
+    fn on_download_progress(&self, event: &DownloadProgressEvent) {
+        // Forward the event into the application's UI or task-state channel.
+        eprintln!("{event:?}");
+    }
+}
+
+#[tokio::main]
+async fn main() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let progress = UiProgress;
+    let cancellation = DownloadCancellationToken::new();
+
+    let cancel_from_ui = cancellation.clone();
+    tokio::spawn(async move {
+        // Replace this with the application's cancel button, task shutdown, or HTTP disconnect.
+        wait_for_user_cancel().await;
+        cancel_from_ui.cancel_with_reason("user cancelled download");
+    });
+
+    let result = client
+        .download_input_with_progress_and_cancellation(
+            "BV1qt4y1X7TW",
+            None,
+            DownloadOptions::new("downloads"),
+            &progress,
+            &cancellation,
+        )
+        .await;
+
+    if let Err(error) = &result {
+        if error.is_cancelled() {
+            eprintln!("download stopped by caller: {error}");
+        }
+    }
+
+    result.map(|_| ())
+}
+
+async fn wait_for_user_cancel() {}
 ```
 
 Use `bbdown plan` or `BiliClient::plan_download` first when a UI needs to present quality choices.

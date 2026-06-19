@@ -1,6 +1,7 @@
 use crate::{
     BiliClient, DownloadEntry, DownloadPlan, Error, FlvSegment, Input, MediaStream, Result,
     Selection, SubtitleFormat, SubtitleTrack,
+    cancellation::DownloadCancellationToken,
     danmaku::{self, DanmakuFormat, DanmakuFormats},
     progress::{DownloadProgressEvent, DownloadProgressSink, NoopDownloadProgress},
 };
@@ -12,8 +13,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fmt::Write as _;
+use std::future::Future;
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::process::{ExitStatus, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::fs::{self, OpenOptions};
 use tokio::io::AsyncWriteExt;
@@ -23,6 +27,8 @@ const MAX_FILE_NAME_BYTES: usize = 80;
 const MAX_FILE_COMPONENT_BYTES: usize = 240;
 const MAX_SUBTITLE_EXTENSION_BYTES: usize = 16;
 const MAX_COVER_EXTENSION_BYTES: usize = 16;
+#[cfg(any(unix, windows))]
+const MUX_SIGNAL_CANCELLATION_GRACE: Duration = Duration::from_millis(100);
 const DEFAULT_UPOS_REPLACEMENT_HOST: &str = "upos-sz-mirrorcoso1.bilivideo.com";
 const DEFAULT_OUTPUT_DIR_TEMPLATE: &str = "{title}";
 const DEFAULT_ENTRY_DIR_TEMPLATE: &str = "P{index:03}-{content_id}-{entry_title}";
@@ -844,12 +850,52 @@ impl BiliClient {
             .await
     }
 
+    pub async fn download_input_with_cancellation(
+        &self,
+        raw: &str,
+        selection: Option<Selection>,
+        options: DownloadOptions,
+        cancellation: &DownloadCancellationToken,
+    ) -> Result<DownloadReport> {
+        let progress = NoopDownloadProgress;
+        self.download_input_with_progress_and_cancellation(
+            raw,
+            selection,
+            options,
+            &progress,
+            cancellation,
+        )
+        .await
+    }
+
     pub async fn download_input_with_progress<P>(
         &self,
         raw: &str,
         selection: Option<Selection>,
         options: DownloadOptions,
         progress: &P,
+    ) -> Result<DownloadReport>
+    where
+        P: DownloadProgressSink + ?Sized,
+    {
+        let cancellation = DownloadCancellationToken::new();
+        self.download_input_with_progress_and_cancellation(
+            raw,
+            selection,
+            options,
+            progress,
+            &cancellation,
+        )
+        .await
+    }
+
+    pub async fn download_input_with_progress_and_cancellation<P>(
+        &self,
+        raw: &str,
+        selection: Option<Selection>,
+        options: DownloadOptions,
+        progress: &P,
+        cancellation: &DownloadCancellationToken,
     ) -> Result<DownloadReport>
     where
         P: DownloadProgressSink + ?Sized,
@@ -861,8 +907,18 @@ impl BiliClient {
                 return Err(error);
             }
         };
-        self.download_with_progress(input, selection, options, progress)
-            .await
+        if let Err(error) = cancellation.check() {
+            emit_plan_cancelled_title(progress, raw.to_owned(), &options.output_dir, 0, &error);
+            return Err(error);
+        }
+        self.download_with_progress_and_cancellation(
+            input,
+            selection,
+            options,
+            progress,
+            cancellation,
+        )
+        .await
     }
 
     pub async fn download(
@@ -876,6 +932,24 @@ impl BiliClient {
             .await
     }
 
+    pub async fn download_with_cancellation(
+        &self,
+        input: Input,
+        selection: Option<Selection>,
+        options: DownloadOptions,
+        cancellation: &DownloadCancellationToken,
+    ) -> Result<DownloadReport> {
+        let progress = NoopDownloadProgress;
+        self.download_with_progress_and_cancellation(
+            input,
+            selection,
+            options,
+            &progress,
+            cancellation,
+        )
+        .await
+    }
+
     pub async fn download_with_progress<P>(
         &self,
         input: Input,
@@ -886,15 +960,50 @@ impl BiliClient {
     where
         P: DownloadProgressSink + ?Sized,
     {
+        let cancellation = DownloadCancellationToken::new();
+        self.download_with_progress_and_cancellation(
+            input,
+            selection,
+            options,
+            progress,
+            &cancellation,
+        )
+        .await
+    }
+
+    pub async fn download_with_progress_and_cancellation<P>(
+        &self,
+        input: Input,
+        selection: Option<Selection>,
+        options: DownloadOptions,
+        progress: &P,
+        cancellation: &DownloadCancellationToken,
+    ) -> Result<DownloadReport>
+    where
+        P: DownloadProgressSink + ?Sized,
+    {
         let title = input_progress_title(&input);
-        let plan = match self.plan_for_download(input, selection, options.mode).await {
+        if let Err(error) = cancellation.check() {
+            emit_plan_cancelled_title(progress, title, &options.output_dir, 0, &error);
+            return Err(error);
+        }
+        let plan = match await_or_cancel(
+            self.plan_for_download(input, selection, options.mode),
+            cancellation,
+        )
+        .await
+        {
             Ok(plan) => plan,
             Err(error) => {
-                emit_plan_failed_title(progress, title, &options.output_dir, 0, &error);
+                if error.is_cancelled() {
+                    emit_plan_cancelled_title(progress, title, &options.output_dir, 0, &error);
+                } else {
+                    emit_plan_failed_title(progress, title, &options.output_dir, 0, &error);
+                }
                 return Err(error);
             }
         };
-        self.download_plan_with_progress(&plan, options, progress)
+        self.download_plan_with_progress_and_cancellation(&plan, options, progress, cancellation)
             .await
     }
 
@@ -908,11 +1017,37 @@ impl BiliClient {
             .await
     }
 
+    pub async fn download_plan_with_cancellation(
+        &self,
+        plan: &DownloadPlan,
+        options: DownloadOptions,
+        cancellation: &DownloadCancellationToken,
+    ) -> Result<DownloadReport> {
+        let progress = NoopDownloadProgress;
+        self.download_plan_with_progress_and_cancellation(plan, options, &progress, cancellation)
+            .await
+    }
+
     pub async fn download_plan_with_progress<P>(
         &self,
         plan: &DownloadPlan,
         options: DownloadOptions,
         progress: &P,
+    ) -> Result<DownloadReport>
+    where
+        P: DownloadProgressSink + ?Sized,
+    {
+        let cancellation = DownloadCancellationToken::new();
+        self.download_plan_with_progress_and_cancellation(plan, options, progress, &cancellation)
+            .await
+    }
+
+    pub async fn download_plan_with_progress_and_cancellation<P>(
+        &self,
+        plan: &DownloadPlan,
+        options: DownloadOptions,
+        progress: &P,
+        cancellation: &DownloadCancellationToken,
     ) -> Result<DownloadReport>
     where
         P: DownloadProgressSink + ?Sized,
@@ -924,7 +1059,7 @@ impl BiliClient {
             Ok(output_dir) => output_dir,
             Err(error) => return plan_failed(progress, plan, &options.output_dir, 0, error),
         };
-        self.download_plan_to_output_dir(plan, options, output_dir, progress)
+        self.download_plan_to_output_dir(plan, options, output_dir, progress, cancellation)
             .await
     }
 
@@ -942,6 +1077,26 @@ impl BiliClient {
         .await
     }
 
+    pub async fn download_plan_with_archive_decision_with_cancellation(
+        &self,
+        plan: &DownloadPlan,
+        options: DownloadOptions,
+        archive: &mut DownloadArchive,
+        decision: DuplicateDecision,
+        cancellation: &DownloadCancellationToken,
+    ) -> Result<DownloadReport> {
+        let progress = NoopDownloadProgress;
+        self.download_plan_with_archive_decision_with_progress_and_cancellation(
+            plan,
+            options,
+            archive,
+            decision,
+            &progress,
+            cancellation,
+        )
+        .await
+    }
+
     pub async fn download_plan_with_archive_decision_with_progress<P>(
         &self,
         plan: &DownloadPlan,
@@ -953,12 +1108,42 @@ impl BiliClient {
     where
         P: DownloadProgressSink + ?Sized,
     {
+        let cancellation = DownloadCancellationToken::new();
+        self.download_plan_with_archive_decision_with_progress_and_cancellation(
+            plan,
+            options,
+            archive,
+            decision,
+            progress,
+            &cancellation,
+        )
+        .await
+    }
+
+    pub async fn download_plan_with_archive_decision_with_progress_and_cancellation<P>(
+        &self,
+        plan: &DownloadPlan,
+        options: DownloadOptions,
+        archive: &mut DownloadArchive,
+        decision: DuplicateDecision,
+        progress: &P,
+        cancellation: &DownloadCancellationToken,
+    ) -> Result<DownloadReport>
+    where
+        P: DownloadProgressSink + ?Sized,
+    {
         let preflight = match DownloadPreflight::inspect(plan, &options, Some(archive)) {
             Ok(preflight) => preflight,
             Err(error) => return plan_failed(progress, plan, &options.output_dir, 0, error),
         };
-        self.download_plan_with_archive_preflight_decision_with_progress(
-            plan, options, archive, &preflight, decision, progress,
+        self.download_plan_with_archive_preflight_decision_with_progress_and_cancellation(
+            plan,
+            options,
+            archive,
+            &preflight,
+            decision,
+            progress,
+            cancellation,
         )
         .await
     }
@@ -978,6 +1163,28 @@ impl BiliClient {
         .await
     }
 
+    pub async fn download_plan_with_archive_preflight_decision_with_cancellation(
+        &self,
+        plan: &DownloadPlan,
+        options: DownloadOptions,
+        archive: &mut DownloadArchive,
+        preflight: &DownloadPreflight,
+        decision: DuplicateDecision,
+        cancellation: &DownloadCancellationToken,
+    ) -> Result<DownloadReport> {
+        let progress = NoopDownloadProgress;
+        self.download_plan_with_archive_preflight_decision_with_progress_and_cancellation(
+            plan,
+            options,
+            archive,
+            preflight,
+            decision,
+            &progress,
+            cancellation,
+        )
+        .await
+    }
+
     pub async fn download_plan_with_archive_preflight_decision_with_progress<P>(
         &self,
         plan: &DownloadPlan,
@@ -990,98 +1197,64 @@ impl BiliClient {
     where
         P: DownloadProgressSink + ?Sized,
     {
+        let cancellation = DownloadCancellationToken::new();
+        self.download_plan_with_archive_preflight_decision_with_progress_and_cancellation(
+            plan,
+            options,
+            archive,
+            preflight,
+            decision,
+            progress,
+            &cancellation,
+        )
+        .await
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "archive-aware progress plus cancellation API mirrors the explicit existing archive execution API"
+    )]
+    pub async fn download_plan_with_archive_preflight_decision_with_progress_and_cancellation<P>(
+        &self,
+        plan: &DownloadPlan,
+        options: DownloadOptions,
+        archive: &mut DownloadArchive,
+        preflight: &DownloadPreflight,
+        decision: DuplicateDecision,
+        progress: &P,
+        cancellation: &DownloadCancellationToken,
+    ) -> Result<DownloadReport>
+    where
+        P: DownloadProgressSink + ?Sized,
+    {
         if let Err(error) = validate_download_path_templates(plan, &options) {
             return plan_failed(progress, plan, &preflight.planned_output_dir, 0, error);
         }
         if let Err(error) = validate_archive_preflight(plan, &options, archive, preflight) {
             return plan_failed(progress, plan, &preflight.planned_output_dir, 0, error);
         }
-        let mut effective_options = options;
-        let output_dir = match decision {
-            DuplicateDecision::Cancel if preflight.requires_decision() => {
-                progress.on_download_progress(&DownloadProgressEvent::PlanCancelled {
-                    title: plan.title.clone(),
-                    output_dir: preflight.planned_output_dir.clone(),
-                    completed_entries: 0,
-                    error: "archive or output conflict requires a decision".to_owned(),
-                });
-                return Err(Error::InvalidInput(
-                    "download canceled because archive or output conflict requires a decision"
-                        .to_owned(),
-                ));
-            }
-            DuplicateDecision::Cancel => match default_plan_output_dir(plan, &effective_options) {
-                Ok(output_dir) => output_dir,
-                Err(error) => {
-                    return plan_failed(progress, plan, &preflight.planned_output_dir, 0, error);
-                }
-            },
-            DuplicateDecision::Replace => {
-                match path_is_occupied(&preflight.planned_output_dir) {
-                    Ok(true) => {
-                        if let Err(error) = validate_plan_stream_selection(plan, &effective_options)
-                        {
-                            return plan_failed(
-                                progress,
-                                plan,
-                                &preflight.planned_output_dir,
-                                0,
-                                error,
-                            );
-                        }
-                        if let Err(error) =
-                            remove_output_root_if_exists(&preflight.planned_output_dir).await
-                        {
-                            return plan_failed(
-                                progress,
-                                plan,
-                                &preflight.planned_output_dir,
-                                0,
-                                error,
-                            );
-                        }
-                        effective_options.resume = false;
-                    }
-                    Ok(false) => {}
-                    Err(error) => {
-                        return plan_failed(
-                            progress,
-                            plan,
-                            &preflight.planned_output_dir,
-                            0,
-                            error,
-                        );
-                    }
-                }
-                preflight.planned_output_dir.clone()
-            }
-            DuplicateDecision::KeepBoth => match preflight.output_dir_for_decision(decision) {
-                Ok(output_dir) => output_dir,
-                Err(error) => {
-                    return plan_failed(progress, plan, &preflight.planned_output_dir, 0, error);
-                }
-            },
-        };
-        if decision != DuplicateDecision::Replace {
-            match path_is_occupied(&output_dir) {
-                Ok(true) => {
-                    return plan_failed(
-                        progress,
-                        plan,
-                        &output_dir,
-                        0,
-                        Error::InvalidInput(format!(
-                            "output directory appeared after duplicate preflight: {}",
-                            output_dir.display()
-                        )),
-                    );
-                }
-                Ok(false) => {}
-                Err(error) => return plan_failed(progress, plan, &output_dir, 0, error),
-            }
+        if let Err(error) = cancellation.check() {
+            emit_plan_cancelled(progress, plan, &preflight.planned_output_dir, 0, &error);
+            return Err(error);
         }
+        let mut effective_options = options;
+        let output_dir = archive_output_dir_for_decision(
+            plan,
+            &mut effective_options,
+            preflight,
+            decision,
+            progress,
+            cancellation,
+        )
+        .await?;
         let report = self
-            .download_plan_to_output_dir(plan, effective_options.clone(), output_dir, progress)
+            .download_plan_to_output_dir(
+                plan,
+                effective_options.clone(),
+                output_dir,
+                progress,
+                cancellation,
+            )
             .await?;
         archive.record_download(plan, &effective_options, &report);
         Ok(report)
@@ -1145,12 +1318,14 @@ impl BiliClient {
             .with_download_idle_timeout(options.download_idle_timeout);
         let source_request =
             DownloadFileRequest::new(plan_entry, &source_path, DownloadFileKind::Danmaku, None);
+        let cancellation = DownloadCancellationToken::new();
         let source_file = self
             .download_url_to_file(
                 &plan_entry.danmaku.xml_url,
                 &source_request,
                 &download_options,
                 &NoopDownloadProgress,
+                &cancellation,
             )
             .await?;
         let fetched_xml = fs::read_to_string(&source_file.path).await;
@@ -1195,12 +1370,17 @@ impl BiliClient {
         options: DownloadOptions,
         output_dir: PathBuf,
         progress: &P,
+        cancellation: &DownloadCancellationToken,
     ) -> Result<DownloadReport>
     where
         P: DownloadProgressSink + ?Sized,
     {
         if let Err(error) = validate_download_plan_options(plan, &options) {
             return plan_failed(progress, plan, &output_dir, 0, error);
+        }
+        if let Err(error) = cancellation.check() {
+            emit_plan_cancelled(progress, plan, &output_dir, 0, &error);
+            return Err(error);
         }
         if let Err(error) = fs::create_dir_all(&output_dir).await {
             return plan_failed(progress, plan, &output_dir, 0, error.into());
@@ -1212,13 +1392,23 @@ impl BiliClient {
         });
         let mut entries = Vec::new();
         for entry in &plan.entries {
-            match self
-                .download_entry(plan, entry, &output_dir, &options, progress)
-                .await
-            {
+            if let Err(error) = cancellation.check() {
+                emit_plan_cancelled(progress, plan, &output_dir, entries.len(), &error);
+                return Err(error);
+            }
+            let context = DownloadExecutionContext {
+                options: &options,
+                progress,
+                cancellation,
+            };
+            match self.download_entry(plan, entry, &output_dir, context).await {
                 Ok(entry_report) => entries.push(entry_report),
                 Err(error) => {
-                    emit_plan_failed(progress, plan, &output_dir, entries.len(), &error);
+                    if error.is_cancelled() {
+                        emit_plan_cancelled(progress, plan, &output_dir, entries.len(), &error);
+                    } else {
+                        emit_plan_failed(progress, plan, &output_dir, entries.len(), &error);
+                    }
                     return Err(error);
                 }
             }
@@ -1240,13 +1430,19 @@ impl BiliClient {
         plan: &DownloadPlan,
         entry: &DownloadEntry,
         output_dir: &Path,
-        options: &DownloadOptions,
-        progress: &P,
+        context: DownloadExecutionContext<'_, P>,
     ) -> Result<EntryDownloadReport>
     where
         P: DownloadProgressSink + ?Sized,
     {
+        let options = context.options;
+        let progress = context.progress;
+        let cancellation = context.cancellation;
         let entry_dir = output_dir.join(entry_dir_name(&plan.title, entry, options)?);
+        if let Err(error) = cancellation.check() {
+            emit_entry_failed(progress, entry, &entry_dir, &error);
+            return Err(error);
+        }
         if let Err(error) = fs::create_dir_all(&entry_dir).await {
             let error = Error::Io(error);
             emit_entry_failed(progress, entry, &entry_dir, &error);
@@ -1259,21 +1455,29 @@ impl BiliClient {
         });
         let mut files = Vec::new();
         if let Err(error) = self
-            .download_entry_media(entry, &entry_dir, options, &mut files, progress)
+            .download_entry_media(entry, &entry_dir, &mut files, context)
             .await
         {
+            emit_entry_failed(progress, entry, &entry_dir, &error);
+            return Err(error);
+        }
+        if let Err(error) = cancellation.check() {
             emit_entry_failed(progress, entry, &entry_dir, &error);
             return Err(error);
         }
         if let Err(error) = self
-            .download_entry_sidecars(entry, &entry_dir, options, &mut files, progress)
+            .download_entry_sidecars(entry, &entry_dir, &mut files, context)
             .await
         {
             emit_entry_failed(progress, entry, &entry_dir, &error);
             return Err(error);
         }
+        if let Err(error) = cancellation.check() {
+            emit_entry_failed(progress, entry, &entry_dir, &error);
+            return Err(error);
+        }
         let mux = match self
-            .mux_entry(&plan.title, entry, &entry_dir, &files, options, progress)
+            .mux_entry(&plan.title, entry, &entry_dir, &files, context)
             .await
         {
             Ok(mux) => mux,
@@ -1303,13 +1507,14 @@ impl BiliClient {
         &self,
         entry: &DownloadEntry,
         entry_dir: &Path,
-        options: &DownloadOptions,
         files: &mut Vec<DownloadedFile>,
-        progress: &P,
+        context: DownloadExecutionContext<'_, P>,
     ) -> Result<()>
     where
         P: DownloadProgressSink + ?Sized,
     {
+        let options = context.options;
+        let cancellation = context.cancellation;
         match options.mode {
             DownloadMode::All => {
                 let has_dash_pair =
@@ -1332,19 +1537,18 @@ impl BiliClient {
                             video,
                             DownloadFileKind::Video,
                             entry_dir,
-                            options,
-                            progress,
+                            context,
                         )
                         .await?,
                     );
+                    cancellation.check()?;
                     files.push(
                         self.download_media_stream(
                             entry,
                             audio,
                             DownloadFileKind::Audio,
                             entry_dir,
-                            options,
-                            progress,
+                            context,
                         )
                         .await?,
                     );
@@ -1356,8 +1560,9 @@ impl BiliClient {
                         ));
                     }
                     for segment in &entry.streams.flv_segments {
+                        cancellation.check()?;
                         files.push(
-                            self.download_flv_segment(entry, segment, entry_dir, options, progress)
+                            self.download_flv_segment(entry, segment, entry_dir, context)
                                 .await?,
                         );
                     }
@@ -1377,8 +1582,7 @@ impl BiliClient {
                         video,
                         DownloadFileKind::Video,
                         entry_dir,
-                        options,
-                        progress,
+                        context,
                     )
                     .await?,
                 );
@@ -1395,8 +1599,7 @@ impl BiliClient {
                         audio,
                         DownloadFileKind::Audio,
                         entry_dir,
-                        options,
-                        progress,
+                        context,
                     )
                     .await?,
                 );
@@ -1410,20 +1613,23 @@ impl BiliClient {
         &self,
         entry: &DownloadEntry,
         entry_dir: &Path,
-        options: &DownloadOptions,
         files: &mut Vec<DownloadedFile>,
-        progress: &P,
+        context: DownloadExecutionContext<'_, P>,
     ) -> Result<()>
     where
         P: DownloadProgressSink + ?Sized,
     {
+        let options = context.options;
+        let progress = context.progress;
+        let cancellation = context.cancellation;
         if should_download_cover(options) {
             if let Some(cover_url) = entry.cover_url.as_deref().filter(|url| !url.is_empty()) {
+                cancellation.check()?;
                 let cover_path = entry_dir.join(cover_file_name(cover_url));
                 let request =
                     DownloadFileRequest::new(entry, &cover_path, DownloadFileKind::Cover, None);
                 files.push(
-                    self.download_url_to_file(cover_url, &request, options, progress)
+                    self.download_url_to_file(cover_url, &request, options, progress, cancellation)
                         .await?,
                 );
             } else if matches!(options.mode, DownloadMode::CoverOnly) {
@@ -1436,8 +1642,9 @@ impl BiliClient {
                 if !seen_subtitles.insert(subtitle_dedup_key(&subtitle.url)) {
                     continue;
                 }
+                cancellation.check()?;
                 files.push(
-                    self.download_subtitle(index, subtitle, entry, entry_dir, options, progress)
+                    self.download_subtitle(index, subtitle, entry, entry_dir, context)
                         .await?,
                 );
             }
@@ -1446,7 +1653,8 @@ impl BiliClient {
             }
         }
         if should_download_danmaku(options) {
-            self.download_danmaku(entry, entry_dir, options, files, progress)
+            cancellation.check()?;
+            self.download_danmaku(entry, entry_dir, files, context)
                 .await?;
         }
         Ok(())
@@ -1456,13 +1664,15 @@ impl BiliClient {
         &self,
         entry: &DownloadEntry,
         entry_dir: &Path,
-        options: &DownloadOptions,
         files: &mut Vec<DownloadedFile>,
-        progress: &P,
+        context: DownloadExecutionContext<'_, P>,
     ) -> Result<()>
     where
         P: DownloadProgressSink + ?Sized,
     {
+        let options = context.options;
+        let progress = context.progress;
+        let cancellation = context.cancellation;
         let xml_path = entry_dir.join("danmaku.xml");
         let writes_xml = options.danmaku_formats.contains(DanmakuFormat::Xml);
         let writes_ass = options.danmaku_formats.contains(DanmakuFormat::Ass);
@@ -1470,7 +1680,13 @@ impl BiliClient {
             let request =
                 DownloadFileRequest::new(entry, &xml_path, DownloadFileKind::Danmaku, None);
             let file = self
-                .download_url_to_file(&entry.danmaku.xml_url, &request, options, progress)
+                .download_url_to_file(
+                    &entry.danmaku.xml_url,
+                    &request,
+                    options,
+                    progress,
+                    cancellation,
+                )
                 .await?;
             files.push(file.clone());
             file
@@ -1484,23 +1700,37 @@ impl BiliClient {
                 &request,
                 options,
                 &NoopDownloadProgress,
+                cancellation,
             )
             .await?
         };
         if writes_ass {
-            let xml = fs::read(&source_file.path).await?;
-            let xml = String::from_utf8_lossy(&xml);
-            let ass = danmaku::xml_to_ass(&xml);
-            files.push(
+            let ass_file = match async {
+                cancellation.check()?;
+                let xml = fs::read(&source_file.path).await?;
+                let xml = String::from_utf8_lossy(&xml);
+                let ass = danmaku::xml_to_ass(&xml);
                 write_generated_text_file_with_progress(
                     &entry_dir.join("danmaku.ass"),
                     &ass,
                     DownloadFileKind::DanmakuAss,
                     entry,
                     progress,
+                    cancellation,
                 )
-                .await?,
-            );
+                .await
+            }
+            .await
+            {
+                Ok(ass_file) => ass_file,
+                Err(error) => {
+                    if !writes_xml {
+                        let _ = remove_file_if_exists(&source_file.path).await;
+                    }
+                    return Err(error);
+                }
+            };
+            files.push(ass_file);
         }
         if !writes_xml {
             let _ = remove_file_if_exists(&source_file.path).await;
@@ -1514,12 +1744,12 @@ impl BiliClient {
         stream: &MediaStream,
         kind: DownloadFileKind,
         entry_dir: &Path,
-        options: &DownloadOptions,
-        progress: &P,
+        context: DownloadExecutionContext<'_, P>,
     ) -> Result<DownloadedFile>
     where
         P: DownloadProgressSink + ?Sized,
     {
+        let options = context.options;
         let label = match kind {
             DownloadFileKind::Video => "video",
             DownloadFileKind::Audio => "audio",
@@ -1535,7 +1765,8 @@ impl BiliClient {
             &candidate_urls(&stream.base_url, &stream.backup_urls, &options.media_hosts),
             &request,
             options,
-            progress,
+            context.progress,
+            context.cancellation,
         )
         .await
     }
@@ -1545,12 +1776,12 @@ impl BiliClient {
         entry: &DownloadEntry,
         segment: &FlvSegment,
         entry_dir: &Path,
-        options: &DownloadOptions,
-        progress: &P,
+        context: DownloadExecutionContext<'_, P>,
     ) -> Result<DownloadedFile>
     where
         P: DownloadProgressSink + ?Sized,
     {
+        let options = context.options;
         let path = entry_dir.join(format!("segment-{:03}.flv", segment.order));
         let request =
             DownloadFileRequest::new(entry, &path, DownloadFileKind::FlvSegment, segment.size);
@@ -1558,7 +1789,8 @@ impl BiliClient {
             &candidate_urls(&segment.url, &segment.backup_urls, &options.media_hosts),
             &request,
             options,
-            progress,
+            context.progress,
+            context.cancellation,
         )
         .await
     }
@@ -1569,16 +1801,21 @@ impl BiliClient {
         subtitle: &SubtitleTrack,
         entry: &DownloadEntry,
         entry_dir: &Path,
-        options: &DownloadOptions,
-        progress: &P,
+        context: DownloadExecutionContext<'_, P>,
     ) -> Result<DownloadedFile>
     where
         P: DownloadProgressSink + ?Sized,
     {
         let path = entry_dir.join(subtitle_file_name(index, subtitle));
         let request = DownloadFileRequest::new(entry, &path, DownloadFileKind::Subtitle, None);
-        self.download_url_to_file(&subtitle.url, &request, options, progress)
-            .await
+        self.download_url_to_file(
+            &subtitle.url,
+            &request,
+            context.options,
+            context.progress,
+            context.cancellation,
+        )
+        .await
     }
 
     async fn download_url_to_file<P>(
@@ -1587,17 +1824,20 @@ impl BiliClient {
         request: &DownloadFileRequest<'_>,
         options: &DownloadOptions,
         progress: &P,
+        cancellation: &DownloadCancellationToken,
     ) -> Result<DownloadedFile>
     where
         P: DownloadProgressSink + ?Sized,
     {
         let result = self
-            .download_url_to_file_without_terminal(url, request, options, progress)
+            .download_url_to_file_without_terminal(url, request, options, progress, cancellation)
             .await;
         match result {
             Ok(file) => Ok(file),
             Err(error) => {
-                emit_file_failed(progress, request, error.attempt, &error.error);
+                if error.started || !error.error.is_cancelled() {
+                    emit_file_failed(progress, request, error.attempt, &error.error);
+                }
                 Err(error.error)
             }
         }
@@ -1609,6 +1849,7 @@ impl BiliClient {
         request: &DownloadFileRequest<'_>,
         options: &DownloadOptions,
         progress: &P,
+        cancellation: &DownloadCancellationToken,
     ) -> std::result::Result<DownloadedFile, DownloadFileAttemptError>
     where
         P: DownloadProgressSink + ?Sized,
@@ -1616,22 +1857,37 @@ impl BiliClient {
         let attempts = options.retry.max_attempts.max(1);
         let mut last_error = None;
         for attempt in 1..=attempts {
+            if let Err(error) = cancellation.check() {
+                return Err(DownloadFileAttemptError::new(
+                    error,
+                    DownloadAttempt {
+                        current: attempt,
+                        max: attempts,
+                    },
+                    false,
+                ));
+            }
             let attempt = DownloadAttempt {
                 current: attempt,
                 max: attempts,
             };
             match self
-                .try_download_url_to_file(url, request, options, attempt, progress)
+                .try_download_url_to_file(url, request, options, attempt, progress, cancellation)
                 .await
             {
                 Ok(file) => return Ok(file),
+                Err(error) if error.error.is_cancelled() => return Err(error),
                 Err(error) if attempt.current < attempts => {
                     if error.started {
                         emit_file_failed(progress, request, error.attempt, &error.error);
                     }
                     last_error = Some(error);
                     if !options.retry.backoff.is_zero() {
-                        tokio::time::sleep(options.retry.backoff).await;
+                        sleep_or_cancel(options.retry.backoff, cancellation)
+                            .await
+                            .map_err(|error| {
+                                DownloadFileAttemptError::new(error, attempt, false)
+                            })?;
                     }
                 }
                 Err(error) => return Err(error),
@@ -1652,14 +1908,22 @@ impl BiliClient {
         request: &DownloadFileRequest<'_>,
         options: &DownloadOptions,
         progress: &P,
+        cancellation: &DownloadCancellationToken,
     ) -> Result<DownloadedFile>
     where
         P: DownloadProgressSink + ?Sized,
     {
         let mut last_error = None;
         for (index, url) in urls.iter().enumerate() {
+            cancellation.check()?;
             match self
-                .download_url_to_file_without_terminal(url, request, options, progress)
+                .download_url_to_file_without_terminal(
+                    url,
+                    request,
+                    options,
+                    progress,
+                    cancellation,
+                )
                 .await
             {
                 Ok(file) => return Ok(file),
@@ -1678,7 +1942,9 @@ impl BiliClient {
                 false,
             )
         });
-        emit_file_failed(progress, request, error.attempt, &error.error);
+        if error.started || !error.error.is_cancelled() {
+            emit_file_failed(progress, request, error.attempt, &error.error);
+        }
         Err(error.error)
     }
 
@@ -1689,11 +1955,13 @@ impl BiliClient {
         options: &DownloadOptions,
         attempt: DownloadAttempt,
         progress: &P,
+        cancellation: &DownloadCancellationToken,
     ) -> std::result::Result<DownloadedFile, DownloadFileAttemptError>
     where
         P: DownloadProgressSink + ?Sized,
     {
         let started = false;
+        map_attempt_error(cancellation.check(), attempt, started)?;
         if let Some(parent) = request.path.parent() {
             map_attempt_error(
                 fs::create_dir_all(parent).await.map_err(Error::from),
@@ -1704,8 +1972,9 @@ impl BiliClient {
         let existing_len =
             map_attempt_error(existing_file_len(request.path).await, attempt, started)?;
         let resume_from = if options.resume { existing_len } else { 0 };
+        map_attempt_error(cancellation.check(), attempt, started)?;
         let response = map_attempt_error(
-            self.send_download_request(url, resume_from).await,
+            await_or_cancel(self.send_download_request(url, resume_from), cancellation).await,
             attempt,
             started,
         )?;
@@ -1769,7 +2038,11 @@ impl BiliClient {
             existing_len,
             append,
             attempt,
-            progress,
+            DownloadExecutionContext {
+                options,
+                progress,
+                cancellation,
+            },
         )
         .await
     }
@@ -1781,7 +2054,7 @@ impl BiliClient {
         existing_len: u64,
         append: bool,
         attempt: DownloadAttempt,
-        progress: &P,
+        context: DownloadExecutionContext<'_, P>,
     ) -> std::result::Result<DownloadedFile, DownloadFileAttemptError>
     where
         P: DownloadProgressSink + ?Sized,
@@ -1804,14 +2077,20 @@ impl BiliClient {
             attempt,
             true,
         )?;
-        let write_result =
-            write_response_body_to_file(&mut file, response, write_request, progress, request)
-                .await;
+        let write_result = write_response_body_to_file(
+            &mut file,
+            response,
+            write_request,
+            context.progress,
+            request,
+            context.cancellation,
+        )
+        .await;
         drop(file);
         let bytes_written = match write_result {
             Ok(bytes_written) => bytes_written,
             Err(error) => {
-                if replace_existing {
+                if replace_existing || (error.is_cancelled() && write_request.start_offset == 0) {
                     let _ = fs::remove_file(&write_path).await;
                 }
                 return Err(DownloadFileAttemptError::new(error, attempt, true));
@@ -1830,7 +2109,12 @@ impl BiliClient {
         if replace_existing {
             map_attempt_error(replace_file(&write_path, request.path).await, attempt, true)?;
         }
-        emit_file_completed(progress, request, bytes_written, write_request.start_offset);
+        emit_file_completed(
+            context.progress,
+            request,
+            bytes_written,
+            write_request.start_offset,
+        );
         Ok(DownloadedFile {
             kind: request.kind.clone(),
             path: request.path.to_path_buf(),
@@ -1860,18 +2144,21 @@ impl BiliClient {
         entry: &DownloadEntry,
         entry_dir: &Path,
         files: &[DownloadedFile],
-        options: &DownloadOptions,
-        progress: &P,
+        context: DownloadExecutionContext<'_, P>,
     ) -> Result<Option<MuxReport>>
     where
         P: DownloadProgressSink + ?Sized,
     {
+        let options = context.options;
+        let progress = context.progress;
+        let cancellation = context.cancellation;
         if !options.mode.allows_mux() {
             return Ok(None);
         }
         let MuxOptions::Ffmpeg { binary } = &options.mux else {
             return Ok(None);
         };
+        cancellation.check()?;
         let media_files = files
             .iter()
             .filter(|file| file.kind.is_media())
@@ -1918,11 +2205,12 @@ impl BiliClient {
             output_path: output_path.clone(),
             command: command.clone(),
         });
-        if let Err(error) = run_ffmpeg_mux(binary, &args, &mux_output_path).await {
+        if let Err(error) = run_ffmpeg_mux(binary, &args, &mux_output_path, cancellation).await {
             let _ = fs::remove_file(&mux_output_path).await;
             emit_mux_failed(progress, entry, &output_path, &command, &error);
             return Err(error);
         }
+        remove_mux_output_if_cancelled(cancellation, &mux_output_path).await?;
         if let Err(error) = replace_file(&mux_output_path, &output_path).await {
             emit_mux_failed(progress, entry, &output_path, &command, &error);
             return Err(error);
@@ -1936,6 +2224,125 @@ impl BiliClient {
             output_path,
             command,
         }))
+    }
+}
+
+async fn remove_mux_output_if_cancelled(
+    cancellation: &DownloadCancellationToken,
+    mux_output_path: &Path,
+) -> Result<()> {
+    if let Err(error) = cancellation.check() {
+        let _ = fs::remove_file(mux_output_path).await;
+        return Err(error);
+    }
+    Ok(())
+}
+
+async fn archive_output_dir_for_decision<P>(
+    plan: &DownloadPlan,
+    effective_options: &mut DownloadOptions,
+    preflight: &DownloadPreflight,
+    decision: DuplicateDecision,
+    progress: &P,
+    cancellation: &DownloadCancellationToken,
+) -> Result<PathBuf>
+where
+    P: DownloadProgressSink + ?Sized,
+{
+    let output_dir = match decision {
+        DuplicateDecision::Cancel if preflight.requires_decision() => {
+            progress.on_download_progress(&DownloadProgressEvent::PlanCancelled {
+                title: plan.title.clone(),
+                output_dir: preflight.planned_output_dir.clone(),
+                completed_entries: 0,
+                error: "archive or output conflict requires a decision".to_owned(),
+            });
+            return Err(Error::InvalidInput(
+                "download canceled because archive or output conflict requires a decision"
+                    .to_owned(),
+            ));
+        }
+        DuplicateDecision::Cancel => match default_plan_output_dir(plan, effective_options) {
+            Ok(output_dir) => output_dir,
+            Err(error) => {
+                return plan_failed(progress, plan, &preflight.planned_output_dir, 0, error);
+            }
+        },
+        DuplicateDecision::Replace => {
+            prepare_archive_replace_output(
+                plan,
+                effective_options,
+                preflight,
+                progress,
+                cancellation,
+            )
+            .await?;
+            preflight.planned_output_dir.clone()
+        }
+        DuplicateDecision::KeepBoth => match preflight.output_dir_for_decision(decision) {
+            Ok(output_dir) => output_dir,
+            Err(error) => {
+                return plan_failed(progress, plan, &preflight.planned_output_dir, 0, error);
+            }
+        },
+    };
+    if decision != DuplicateDecision::Replace {
+        reject_late_archive_output_conflict(plan, &output_dir, progress)?;
+    }
+    Ok(output_dir)
+}
+
+async fn prepare_archive_replace_output<P>(
+    plan: &DownloadPlan,
+    effective_options: &mut DownloadOptions,
+    preflight: &DownloadPreflight,
+    progress: &P,
+    cancellation: &DownloadCancellationToken,
+) -> Result<()>
+where
+    P: DownloadProgressSink + ?Sized,
+{
+    match path_is_occupied(&preflight.planned_output_dir) {
+        Ok(true) => {
+            if let Err(error) = validate_plan_stream_selection(plan, effective_options) {
+                return plan_failed(progress, plan, &preflight.planned_output_dir, 0, error);
+            }
+            if let Err(error) = cancellation.check() {
+                emit_plan_cancelled(progress, plan, &preflight.planned_output_dir, 0, &error);
+                return Err(error);
+            }
+            if let Err(error) = remove_output_root_if_exists(&preflight.planned_output_dir).await {
+                return plan_failed(progress, plan, &preflight.planned_output_dir, 0, error);
+            }
+            effective_options.resume = false;
+        }
+        Ok(false) => {}
+        Err(error) => return plan_failed(progress, plan, &preflight.planned_output_dir, 0, error),
+    }
+    Ok(())
+}
+
+fn reject_late_archive_output_conflict<P>(
+    plan: &DownloadPlan,
+    output_dir: &Path,
+    progress: &P,
+) -> Result<()>
+where
+    P: DownloadProgressSink + ?Sized,
+{
+    match path_is_occupied(output_dir) {
+        Ok(true) => plan_failed(
+            progress,
+            plan,
+            output_dir,
+            0,
+            Error::InvalidInput(format!(
+                "output directory appeared after duplicate preflight: {}",
+                output_dir.display()
+            )),
+        ),
+        Ok(false) => Ok(()),
+        Err(error) => plan_failed(progress, plan, output_dir, 0, error),
     }
 }
 
@@ -1957,6 +2364,20 @@ impl DownloadFileKind {
         )
     }
 }
+
+struct DownloadExecutionContext<'a, P: ?Sized> {
+    options: &'a DownloadOptions,
+    progress: &'a P,
+    cancellation: &'a DownloadCancellationToken,
+}
+
+impl<P: ?Sized> Clone for DownloadExecutionContext<'_, P> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<P: ?Sized> Copy for DownloadExecutionContext<'_, P> {}
 
 struct DownloadFileRequest<'a> {
     entry: &'a DownloadEntry,
@@ -2027,21 +2448,28 @@ fn command_report(binary: &Path, args: &[OsString]) -> Vec<String> {
     command
 }
 
-async fn run_ffmpeg_mux(binary: &Path, args: &[OsString], mux_output_path: &Path) -> Result<()> {
-    let status = Command::new(binary)
+async fn run_ffmpeg_mux(
+    binary: &Path,
+    args: &[OsString],
+    mux_output_path: &Path,
+    cancellation: &DownloadCancellationToken,
+) -> Result<()> {
+    let mut child = Command::new(binary)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .status()
-        .await?;
+        .spawn()?;
+    let status = tokio::select! {
+        status = child.wait() => status?,
+        () = cancellation.cancelled() => {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            return Err(cancellation.cancelled_error());
+        }
+    };
     if !status.success() {
-        return Err(Error::MuxFailed {
-            status: status.code().map_or_else(
-                || "terminated by signal".to_owned(),
-                |code| code.to_string(),
-            ),
-        });
+        return Err(mux_error_for_failed_status(status, cancellation).await);
     }
     let metadata = fs::metadata(mux_output_path)
         .await
@@ -2059,6 +2487,72 @@ async fn run_ffmpeg_mux(binary: &Path, args: &[OsString], mux_output_path: &Path
         });
     }
     Ok(())
+}
+
+async fn mux_error_for_failed_status(
+    status: ExitStatus,
+    cancellation: &DownloadCancellationToken,
+) -> Error {
+    if let Some(error) = mux_cancellation_error_for_status(status, cancellation).await {
+        return error;
+    }
+    Error::MuxFailed {
+        status: mux_status_message(status),
+    }
+}
+
+async fn mux_cancellation_error_for_status(
+    status: ExitStatus,
+    cancellation: &DownloadCancellationToken,
+) -> Option<Error> {
+    if cancellation.is_cancelled() {
+        return Some(cancellation.cancelled_error());
+    }
+    #[cfg(unix)]
+    {
+        // ffmpeg often handles SIGINT itself and exits 255 instead of surfacing a signal status.
+        const FFMPEG_INTERRUPTED_EXIT_CODE: i32 = 255;
+        const SIGINT_SIGNAL: i32 = 2;
+        if (status.signal() == Some(SIGINT_SIGNAL)
+            || status.code() == Some(FFMPEG_INTERRUPTED_EXIT_CODE))
+            && let Some(error) = wait_for_mux_signal_cancellation(cancellation).await
+        {
+            return Some(error);
+        }
+    }
+    #[cfg(windows)]
+    {
+        const STATUS_CONTROL_C_EXIT: u32 = 0xC000_013A;
+        if status
+            .code()
+            .is_some_and(|code| code as u32 == STATUS_CONTROL_C_EXIT)
+            && let Some(error) = wait_for_mux_signal_cancellation(cancellation).await
+        {
+            return Some(error);
+        }
+    }
+    if cancellation.is_cancelled() {
+        Some(cancellation.cancelled_error())
+    } else {
+        None
+    }
+}
+
+#[cfg(any(unix, windows))]
+async fn wait_for_mux_signal_cancellation(
+    cancellation: &DownloadCancellationToken,
+) -> Option<Error> {
+    tokio::select! {
+        () = cancellation.cancelled() => Some(cancellation.cancelled_error()),
+        () = tokio::time::sleep(MUX_SIGNAL_CANCELLATION_GRACE) => None,
+    }
+}
+
+fn mux_status_message(status: ExitStatus) -> String {
+    status.code().map_or_else(
+        || "terminated by signal".to_owned(),
+        |code| code.to_string(),
+    )
 }
 
 fn already_complete_resume_result<P>(
@@ -2094,20 +2588,30 @@ async fn write_response_body_to_file<P>(
     write_request: WriteResponseRequest,
     progress: &P,
     file_request: &DownloadFileRequest<'_>,
+    cancellation: &DownloadCancellationToken,
 ) -> Result<u64>
 where
     P: DownloadProgressSink + ?Sized,
 {
     let mut bytes_written = 0_u64;
     let mut stream = response.bytes_stream();
-    while let Some(chunk) = match next_download_chunk(&mut stream, write_request.idle_timeout).await
-    {
+    while let Some(chunk) = match tokio::select! {
+        chunk = next_download_chunk(&mut stream, write_request.idle_timeout) => chunk,
+        () = cancellation.cancelled() => {
+            rollback_download_file(file, write_request.start_offset).await?;
+            return Err(cancellation.cancelled_error());
+        }
+    } {
         Ok(chunk) => chunk,
         Err(error) => {
             rollback_download_file(file, write_request.start_offset).await?;
             return Err(error);
         }
     } {
+        if let Err(error) = cancellation.check() {
+            rollback_download_file(file, write_request.start_offset).await?;
+            return Err(error);
+        }
         let chunk = match chunk {
             Ok(chunk) => chunk,
             Err(error) => {
@@ -2130,6 +2634,10 @@ where
             write_request.expected_size,
         );
     }
+    if let Err(error) = cancellation.check() {
+        rollback_download_file(file, write_request.start_offset).await?;
+        return Err(error);
+    }
     if let Err(error) = file.flush().await {
         rollback_download_file(file, write_request.start_offset).await?;
         return Err(Error::Io(error));
@@ -2144,6 +2652,26 @@ where
         return Err(error);
     }
     Ok(bytes_written)
+}
+
+async fn await_or_cancel<T, F>(future: F, cancellation: &DownloadCancellationToken) -> Result<T>
+where
+    F: Future<Output = Result<T>>,
+{
+    tokio::select! {
+        result = future => result,
+        () = cancellation.cancelled() => Err(cancellation.cancelled_error()),
+    }
+}
+
+async fn sleep_or_cancel(
+    duration: Duration,
+    cancellation: &DownloadCancellationToken,
+) -> Result<()> {
+    tokio::select! {
+        () = tokio::time::sleep(duration) => Ok(()),
+        () = cancellation.cancelled() => Err(cancellation.cancelled_error()),
+    }
 }
 
 fn emit_file_started<P>(
@@ -2293,6 +2821,41 @@ fn emit_plan_failed_title<P>(
     P: DownloadProgressSink + ?Sized,
 {
     progress.on_download_progress(&DownloadProgressEvent::PlanFailed {
+        title,
+        output_dir: output_dir.to_path_buf(),
+        completed_entries,
+        error: error.to_string(),
+    });
+}
+
+fn emit_plan_cancelled<P>(
+    progress: &P,
+    plan: &DownloadPlan,
+    output_dir: &Path,
+    completed_entries: usize,
+    error: &Error,
+) where
+    P: DownloadProgressSink + ?Sized,
+{
+    emit_plan_cancelled_title(
+        progress,
+        plan.title.clone(),
+        output_dir,
+        completed_entries,
+        error,
+    );
+}
+
+fn emit_plan_cancelled_title<P>(
+    progress: &P,
+    title: String,
+    output_dir: &Path,
+    completed_entries: usize,
+    error: &Error,
+) where
+    P: DownloadProgressSink + ?Sized,
+{
+    progress.on_download_progress(&DownloadProgressEvent::PlanCancelled {
         title,
         output_dir: output_dir.to_path_buf(),
         completed_entries,
@@ -2493,6 +3056,7 @@ async fn write_generated_text_file_with_progress<P>(
     kind: DownloadFileKind,
     entry: &DownloadEntry,
     progress: &P,
+    cancellation: &DownloadCancellationToken,
 ) -> Result<DownloadedFile>
 where
     P: DownloadProgressSink + ?Sized,
@@ -2506,6 +3070,15 @@ where
         Some(expected_size),
         DownloadAttempt { current: 1, max: 1 },
     );
+    if let Err(error) = cancellation.check() {
+        emit_file_failed(
+            progress,
+            &request,
+            DownloadAttempt { current: 1, max: 1 },
+            &error,
+        );
+        return Err(error);
+    }
     let file = match write_generated_text_file(path, contents, request.kind.clone()).await {
         Ok(file) => file,
         Err(error) => {
@@ -4027,18 +4600,19 @@ mod tests {
         comparable_output_path, cover_file_name, default_plan_output_dir,
         download_entry_content_key, download_entry_content_key_for_options,
         download_plan_content_key, download_plan_content_key_for_options, entry_dir_name,
-        media_file_name, mux_file_stem, path_is_occupied, render_template_component,
-        safe_file_name, safe_file_name_with_budget, select_media_stream, subtitle_dedup_key,
-        subtitle_extension, subtitle_file_name, temporary_download_path, temporary_generated_path,
-        temporary_mux_path, temporary_replace_path, write_generated_text_file,
+        media_file_name, mux_file_stem, path_is_occupied, remove_mux_output_if_cancelled,
+        render_template_component, safe_file_name, safe_file_name_with_budget, select_media_stream,
+        subtitle_dedup_key, subtitle_extension, subtitle_file_name, temporary_download_path,
+        temporary_generated_path, temporary_mux_path, temporary_replace_path,
+        write_generated_text_file,
     };
     use crate::models::{
         DanmakuTrack, DownloadEntry, DownloadPlan, FlvSegment, MediaStream, StreamDiagnostics,
         StreamQuality, StreamSet, StreamSource, SubtitleFormat, SubtitleTrack,
     };
     use crate::{
-        BiliClient, ClientConfig, Credentials, DanmakuFormat, DanmakuFormats, DownloadFileKind,
-        DownloadProgressEvent, NoopDownloadProgress,
+        BiliClient, ClientConfig, Credentials, DanmakuFormat, DanmakuFormats,
+        DownloadCancellationToken, DownloadFileKind, DownloadProgressEvent, NoopDownloadProgress,
     };
     use httpmock::MockServer;
     use httpmock::prelude::*;
@@ -5028,6 +5602,524 @@ mod tests {
                 completed_entries: 0,
                 error: error.to_string(),
             }]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancelled_download_plan_reports_plan_cancelled_before_start() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = test_plan(&server);
+        let options = DownloadOptions::new(temp.path()).with_mux(MuxOptions::Disabled);
+        let output_dir = default_plan_output_dir(&plan, &options)?;
+        let cancellation = DownloadCancellationToken::new();
+        cancellation.cancel_with_reason("test cancellation before start");
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress_events = Arc::clone(&events);
+        let progress = move |event: &DownloadProgressEvent| {
+            push_progress_event(&progress_events, event.clone());
+        };
+
+        let Err(error) = client
+            .download_plan_with_progress_and_cancellation(&plan, options, &progress, &cancellation)
+            .await
+        else {
+            return Err(anyhow::anyhow!("pre-cancelled download should fail"));
+        };
+
+        assert!(error.is_cancelled());
+        assert_eq!(
+            progress_events_snapshot(&events),
+            vec![DownloadProgressEvent::PlanCancelled {
+                title: plan.title.clone(),
+                output_dir,
+                completed_entries: 0,
+                error: error.to_string(),
+            }]
+        );
+        assert!(!temp.path().join("Mock video").exists());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancelled_started_file_rolls_back_and_reports_cancelled() -> anyhow::Result<()> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let media_url = format!("http://{}/video.m4s", listener.local_addr()?);
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buffer = [0_u8; 1024];
+                let _ = stream.read(&mut buffer);
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n");
+                std::thread::sleep(Duration::from_millis(200));
+                let _ = stream.write_all(b"video");
+            }
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = single_video_plan(media_url);
+        let cancellation = DownloadCancellationToken::new();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress_events = Arc::clone(&events);
+        let progress_cancellation = cancellation.clone();
+        let progress = move |event: &DownloadProgressEvent| {
+            if matches!(event, DownloadProgressEvent::FileStarted { .. }) {
+                progress_cancellation.cancel_with_reason("test cancellation after file start");
+            }
+            push_progress_event(&progress_events, event.clone());
+        };
+
+        let Err(error) = client
+            .download_plan_with_progress_and_cancellation(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().to_path_buf(),
+                    retry: RetryPolicy::single_attempt(),
+                    mode: DownloadMode::VideoOnly,
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        cover: false,
+                        subtitles: false,
+                    },
+                    mux: MuxOptions::Disabled,
+                    ..DownloadOptions::default()
+                },
+                &progress,
+                &cancellation,
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!("cancelled file download should fail"));
+        };
+
+        assert!(error.is_cancelled());
+        let events = progress_events_snapshot(&events);
+        let started_path = events.iter().find_map(|event| match event {
+            DownloadProgressEvent::FileStarted { path, .. } => Some(path.clone()),
+            _ => None,
+        });
+        let Some(started_path) = started_path else {
+            return Err(anyhow::anyhow!("file start event should be emitted"));
+        };
+        assert!(!started_path.exists());
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::FileFailed {
+                kind: DownloadFileKind::Video,
+                error,
+                ..
+            } if error.contains("test cancellation after file start")
+        )));
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, DownloadProgressEvent::EntryFailed { .. }))
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::PlanCancelled {
+                completed_entries: 0,
+                error,
+                ..
+            } if error.contains("test cancellation after file start")
+        )));
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::FileCompleted { .. }
+                | DownloadProgressEvent::EntryCompleted { .. }
+                | DownloadProgressEvent::PlanCompleted { .. }
+        )));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancelled_started_file_does_not_retry_or_duplicate_file_failed() -> anyhow::Result<()>
+    {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let media_url = format!("http://{}/video.m4s", listener.local_addr()?);
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buffer = [0_u8; 1024];
+                let _ = stream.read(&mut buffer);
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n");
+                std::thread::sleep(Duration::from_millis(200));
+                let _ = stream.write_all(b"video");
+            }
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = single_video_plan(media_url);
+        let cancellation = DownloadCancellationToken::new();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress_events = Arc::clone(&events);
+        let progress_cancellation = cancellation.clone();
+        let progress = move |event: &DownloadProgressEvent| {
+            if matches!(event, DownloadProgressEvent::FileStarted { .. }) {
+                progress_cancellation.cancel_with_reason("test cancellation with default retry");
+            }
+            push_progress_event(&progress_events, event.clone());
+        };
+
+        let Err(error) = client
+            .download_plan_with_progress_and_cancellation(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().to_path_buf(),
+                    mode: DownloadMode::VideoOnly,
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        cover: false,
+                        subtitles: false,
+                    },
+                    mux: MuxOptions::Disabled,
+                    ..DownloadOptions::default()
+                },
+                &progress,
+                &cancellation,
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!(
+                "cancelled default-retry download should fail"
+            ));
+        };
+
+        assert!(error.is_cancelled());
+        let events = progress_events_snapshot(&events);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, DownloadProgressEvent::FileStarted { .. }))
+                .count(),
+            1
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    DownloadProgressEvent::FileFailed {
+                        kind: DownloadFileKind::Video,
+                        ..
+                    }
+                ))
+                .count(),
+            1
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::PlanCancelled {
+                error,
+                ..
+            } if error.contains("test cancellation with default retry")
+        )));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancelled_retry_backoff_does_not_duplicate_file_failed() -> anyhow::Result<()> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let media_url = format!("http://{}/video.m4s", listener.local_addr()?);
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buffer = [0_u8; 1024];
+                let _ = stream.read(&mut buffer);
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nbad");
+            }
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = single_video_plan(media_url);
+        let cancellation = DownloadCancellationToken::new();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress_events = Arc::clone(&events);
+        let progress_cancellation = cancellation.clone();
+        let progress = move |event: &DownloadProgressEvent| {
+            if matches!(
+                event,
+                DownloadProgressEvent::FileFailed {
+                    kind: DownloadFileKind::Video,
+                    attempt: 1,
+                    ..
+                }
+            ) {
+                progress_cancellation.cancel_with_reason("test cancellation during retry backoff");
+            }
+            push_progress_event(&progress_events, event.clone());
+        };
+
+        let Err(error) = client
+            .download_plan_with_progress_and_cancellation(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().to_path_buf(),
+                    retry: RetryPolicy {
+                        max_attempts: 2,
+                        backoff: Duration::from_millis(200),
+                    },
+                    mode: DownloadMode::VideoOnly,
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        cover: false,
+                        subtitles: false,
+                    },
+                    mux: MuxOptions::Disabled,
+                    ..DownloadOptions::default()
+                },
+                &progress,
+                &cancellation,
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!(
+                "cancelled retry-backoff download should fail"
+            ));
+        };
+
+        assert!(error.is_cancelled());
+        let events = progress_events_snapshot(&events);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    DownloadProgressEvent::FileFailed {
+                        kind: DownloadFileKind::Video,
+                        ..
+                    }
+                ))
+                .count(),
+            1
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::PlanCancelled {
+                error,
+                ..
+            } if error.contains("test cancellation during retry backoff")
+        )));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancelled_single_url_retry_backoff_does_not_duplicate_file_failed()
+    -> anyhow::Result<()> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let cover_url = format!("http://{}/cover.jpg", listener.local_addr()?);
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buffer = [0_u8; 1024];
+                let _ = stream.read(&mut buffer);
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+            }
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = single_video_plan(cover_url.clone());
+        let path = temp.path().join("cover.jpg");
+        let request =
+            DownloadFileRequest::new(&plan.entries[0], &path, DownloadFileKind::Cover, None);
+        let cancellation = DownloadCancellationToken::new();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress_events = Arc::clone(&events);
+        let progress_cancellation = cancellation.clone();
+        let progress = move |event: &DownloadProgressEvent| {
+            if matches!(
+                event,
+                DownloadProgressEvent::FileFailed {
+                    kind: DownloadFileKind::Cover,
+                    attempt: 1,
+                    ..
+                }
+            ) {
+                progress_cancellation
+                    .cancel_with_reason("test sidecar cancellation during retry backoff");
+            }
+            push_progress_event(&progress_events, event.clone());
+        };
+
+        let Err(error) = client
+            .download_url_to_file(
+                &cover_url,
+                &request,
+                &DownloadOptions {
+                    retry: RetryPolicy {
+                        max_attempts: 2,
+                        backoff: Duration::from_millis(200),
+                    },
+                    ..DownloadOptions::default()
+                },
+                &progress,
+                &cancellation,
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!(
+                "cancelled single-url retry-backoff download should fail"
+            ));
+        };
+
+        assert!(error.is_cancelled());
+        let events = progress_events_snapshot(&events);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    DownloadProgressEvent::FileFailed {
+                        kind: DownloadFileKind::Cover,
+                        ..
+                    }
+                ))
+                .count(),
+            1
+        );
+        assert!(!path.exists());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancellation_after_entry_completion_reports_completed_entries() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/video.m4s");
+            then.status(200).body("video");
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/audio.m4s");
+            then.status(200).body("audio");
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let mut plan = test_plan(&server);
+        let mut second_entry = plan.entries[0].clone();
+        second_entry.index = 2;
+        second_entry.cid = 3;
+        second_entry.title = "Second".to_owned();
+        plan.entries.push(second_entry);
+        let cancellation = DownloadCancellationToken::new();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress_events = Arc::clone(&events);
+        let progress_cancellation = cancellation.clone();
+        let progress = move |event: &DownloadProgressEvent| {
+            if matches!(
+                event,
+                DownloadProgressEvent::EntryCompleted { index: 1, .. }
+            ) {
+                progress_cancellation.cancel_with_reason("test cancellation after first entry");
+            }
+            push_progress_event(&progress_events, event.clone());
+        };
+
+        let Err(error) = client
+            .download_plan_with_progress_and_cancellation(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().to_path_buf(),
+                    retry: RetryPolicy::single_attempt(),
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        cover: false,
+                        subtitles: false,
+                    },
+                    mux: MuxOptions::Disabled,
+                    ..DownloadOptions::default()
+                },
+                &progress,
+                &cancellation,
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!(
+                "cancelled multi-entry download should fail"
+            ));
+        };
+
+        assert!(error.is_cancelled());
+        let events = progress_events_snapshot(&events);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::EntryCompleted { index: 1, .. }
+        )));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, DownloadProgressEvent::EntryStarted { index: 2, .. }))
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::PlanCancelled {
+                completed_entries: 1,
+                error,
+                ..
+            } if error.contains("test cancellation after first entry")
+        )));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn archive_cancellation_after_plan_completed_keeps_archive_record() -> anyhow::Result<()>
+    {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/video.m4s");
+            then.status(200).body("video");
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/audio.m4s");
+            then.status(200).body("audio");
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = test_plan(&server);
+        let options = DownloadOptions {
+            output_dir: temp.path().to_path_buf(),
+            retry: RetryPolicy::single_attempt(),
+            sidecars: SidecarOptions {
+                danmaku: false,
+                cover: false,
+                subtitles: false,
+            },
+            mux: MuxOptions::Disabled,
+            ..DownloadOptions::default()
+        };
+        let cancellation = DownloadCancellationToken::new();
+        let mut archive = DownloadArchive::default();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress_events = Arc::clone(&events);
+        let progress_cancellation = cancellation.clone();
+        let progress = move |event: &DownloadProgressEvent| {
+            if matches!(event, DownloadProgressEvent::PlanCompleted { .. }) {
+                progress_cancellation.cancel_with_reason("late cancellation after completion");
+            }
+            push_progress_event(&progress_events, event.clone());
+        };
+
+        let report = client
+            .download_plan_with_archive_decision_with_progress_and_cancellation(
+                &plan,
+                options,
+                &mut archive,
+                DuplicateDecision::Replace,
+                &progress,
+                &cancellation,
+            )
+            .await?;
+
+        assert!(cancellation.is_cancelled());
+        assert_eq!(report.entries.len(), 1);
+        assert_eq!(archive.records.len(), 1);
+        assert_eq!(archive.records[0].entries.len(), 1);
+        let events = progress_events_snapshot(&events);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::PlanCompleted { entry_count: 1, .. }
+        )));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, DownloadProgressEvent::PlanCancelled { .. }))
         );
         Ok(())
     }
@@ -6349,6 +7441,7 @@ mod tests {
             ..DownloadOptions::default()
         };
         let request = DownloadFileRequest::new(&entry, &path, DownloadFileKind::Video, None);
+        let cancellation = DownloadCancellationToken::new();
 
         let Err(error) = client
             .download_url_to_file(
@@ -6356,6 +7449,7 @@ mod tests {
                 &request,
                 &options,
                 &NoopDownloadProgress,
+                &cancellation,
             )
             .await
         else {
@@ -6750,6 +7844,7 @@ mod tests {
             ..DownloadOptions::default()
         };
         let request = DownloadFileRequest::new(&entry, &path, DownloadFileKind::Video, Some(0));
+        let cancellation = DownloadCancellationToken::new();
 
         let Err(error) = client
             .download_url_to_file(
@@ -6757,6 +7852,7 @@ mod tests {
                 &request,
                 &options,
                 &NoopDownloadProgress,
+                &cancellation,
             )
             .await
         else {
@@ -6890,6 +7986,7 @@ mod tests {
             ..DownloadOptions::default()
         };
         let request = DownloadFileRequest::new(&entry, &path, DownloadFileKind::Video, Some(2));
+        let cancellation = DownloadCancellationToken::new();
 
         let file = client
             .download_url_to_file(
@@ -6897,6 +7994,7 @@ mod tests {
                 &request,
                 &options,
                 &NoopDownloadProgress,
+                &cancellation,
             )
             .await?;
 
@@ -6938,6 +8036,7 @@ mod tests {
             ..DownloadOptions::default()
         };
         let request = DownloadFileRequest::new(&entry, &path, DownloadFileKind::Video, None);
+        let cancellation = DownloadCancellationToken::new();
 
         let Err(error) = client
             .download_url_to_file(
@@ -6945,6 +8044,7 @@ mod tests {
                 &request,
                 &options,
                 &NoopDownloadProgress,
+                &cancellation,
             )
             .await
         else {
@@ -6996,6 +8096,7 @@ mod tests {
             ..DownloadOptions::default()
         };
         let request = DownloadFileRequest::new(&entry, &path, DownloadFileKind::Video, None);
+        let cancellation = DownloadCancellationToken::new();
 
         let file = client
             .download_url_to_file(
@@ -7003,6 +8104,7 @@ mod tests {
                 &request,
                 &options,
                 &NoopDownloadProgress,
+                &cancellation,
             )
             .await?;
 
@@ -7059,6 +8161,94 @@ mod tests {
         assert!(mux.command.iter().any(|arg| arg == "-c"));
         assert!(mux.output_path.ends_with("Main.mp4"));
         assert_eq!(tokio::fs::read_to_string(&mux.output_path).await?, "muxed");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn ffmpeg_mux_cancel_after_process_removes_temporary_output() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let output_path = temp.path().join("Main.mp4");
+        let mux_output_path = temporary_mux_path(&output_path);
+        tokio::fs::write(&mux_output_path, "muxed").await?;
+        let cancellation = DownloadCancellationToken::new();
+        cancellation.cancel_with_reason("cancel after mux process");
+
+        let Err(error) = remove_mux_output_if_cancelled(&cancellation, &mux_output_path).await
+        else {
+            return Err(anyhow::anyhow!("cancelled mux output should fail"));
+        };
+
+        assert!(error.is_cancelled());
+        assert!(!mux_output_path.exists());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ffmpeg_mux_sigint_status_maps_to_delayed_cancellation() -> anyhow::Result<()> {
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("kill -INT $$")
+            .status()?;
+        let cancellation = DownloadCancellationToken::new();
+        let delayed_cancellation = cancellation.clone();
+        let cancel_task = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            delayed_cancellation.cancel_with_reason("test mux SIGINT cancellation");
+        });
+
+        let error = super::mux_error_for_failed_status(status, &cancellation).await;
+        cancel_task.await?;
+
+        assert!(error.is_cancelled());
+        assert!(error.to_string().contains("test mux SIGINT cancellation"));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ffmpeg_mux_sigint_exit_code_maps_to_delayed_cancellation() -> anyhow::Result<()> {
+        use std::os::unix::process::ExitStatusExt as _;
+
+        let status = std::process::ExitStatus::from_raw(255 << 8);
+        let cancellation = DownloadCancellationToken::new();
+        let delayed_cancellation = cancellation.clone();
+        let cancel_task = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            delayed_cancellation.cancel_with_reason("test mux SIGINT exit-code cancellation");
+        });
+
+        let error = super::mux_error_for_failed_status(status, &cancellation).await;
+        cancel_task.await?;
+
+        assert!(error.is_cancelled());
+        assert!(
+            error
+                .to_string()
+                .contains("test mux SIGINT exit-code cancellation")
+        );
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn ffmpeg_mux_windows_ctrl_c_status_maps_to_delayed_cancellation() -> anyhow::Result<()> {
+        use std::os::windows::process::ExitStatusExt as _;
+
+        const STATUS_CONTROL_C_EXIT: u32 = 0xC000_013A;
+        let status = std::process::ExitStatus::from_raw(STATUS_CONTROL_C_EXIT);
+        let cancellation = DownloadCancellationToken::new();
+        let delayed_cancellation = cancellation.clone();
+        let cancel_task = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            delayed_cancellation.cancel_with_reason("test mux Ctrl-C cancellation");
+        });
+
+        let error = super::mux_error_for_failed_status(status, &cancellation).await;
+        cancel_task.await?;
+
+        assert!(error.is_cancelled());
+        assert!(error.to_string().contains("test mux Ctrl-C cancellation"));
         Ok(())
     }
 

@@ -175,6 +175,15 @@ Progress 是 opt-in 的执行侧 observer。`*_with_progress` 变体接收
 `DownloadProgressEvent`。非 progress 方法会保留，并走 no-op sink。CLI 只有在传入
 `--progress-json` 时才暴露同一事件流，并把 JSON Lines 写到 stderr，因此 stdout 仍然是人类
 输出或最终 `DownloadReport` JSON。
+取消对嵌入调用方同样是 opt-in 的。`*_with_cancellation` 和
+`*_with_progress_and_cancellation` 变体接收 `DownloadCancellationToken`，调用方可以从另一
+个 task 取消该 token。executor 会在规划、条目边界、sidecar 生成、retry sleep、HTTP
+request/response streaming 和 muxing 过程中检查 token。取消会返回 `Error::Cancelled`，并
+发出与 archive duplicate 取消相同的 plan-level `PlanCancelled` 终态 progress event。已经完
+成的条目保持不变；新创建的部分文件会被删除，续传文件会截断回本次尝试前的大小。CLI 为
+下载执行时的 `Ctrl-C` 安装同一个 token，因此终端用户和嵌入调用方共享同一套取消语义。
+交互式 archive duplicate prompt 是 CLI 侧例外：终端 `stdin` 输入不能像 executor task 一样回
+滚，所以在该提示中按 `Ctrl-C` 会立即以 130 退出。
 
 执行行为由 `DownloadOptions` 控制：
 

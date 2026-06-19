@@ -146,7 +146,8 @@ episode can still match when later planned through its BV/av URL even if one for
 When the same content, entry, or
 archive output directory is seen again, non-interactive JSON mode requires `--on-duplicate replace`,
 `--on-duplicate keep-both`, or `--on-duplicate cancel`; interactive human mode prompts when no
-decision is provided. `replace` removes the existing planned output root before a fresh download and
+decision is provided, and `Ctrl-C` exits that prompt immediately with status 130. `replace` removes
+the existing planned output root before a fresh download and
 replaces stale archive records for that output path, `keep-both` writes the next suffixed output root
 while avoiding all archive record output paths, and `cancel` reports the preflight state without
 downloading. The archive file itself must not be the chosen output root or inside that root; the CLI
@@ -299,7 +300,9 @@ running, so sample behavior is driven by the manifest rather than shell state.
 - Crate API note: the publishable package is `bbdown-core`, imported as `bbdown_core`. This rewrite
   is now on the `0.5.0` development line after the published `0.4.0` release. The line is focused on
   downloader and embedding polish: progress callbacks, cancellation-aware execution, chapter metadata
-  muxing, audio language selection, and AI subtitle filtering. Embedding projects should prefer
+  muxing, audio language selection, and AI subtitle filtering. The current download APIs include
+  `DownloadProgressEvent` callbacks and `DownloadCancellationToken`-based graceful cancellation.
+  Embedding projects should prefer
   `Default`, `new`, and `with_*` constructors such as `ClientConfig::default().with_*`,
   `EndpointConfig::default().with_*`, `RestrictedAreaConfig::default().with_*`,
   `DownloadOptions::new(...).with_*`, and `RetryPolicy::new(...)` over struct literals so added
