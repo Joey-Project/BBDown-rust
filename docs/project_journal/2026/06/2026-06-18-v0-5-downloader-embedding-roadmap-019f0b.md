@@ -3,7 +3,7 @@ id: 20260618-019f0b-v0-5-downloader-embedding-roadmap
 title: v0.5.0 Downloader And Embedding Roadmap
 status: active
 created: 2026-06-18
-updated: 2026-06-18
+updated: 2026-06-19
 branch: post-release/v0.5-devline
 pr:
 supersedes: []
@@ -29,11 +29,12 @@ superseded_by:
   Completed by adding `DownloadProgressEvent`, `DownloadProgressSink`, `*_with_progress` download
   APIs, and CLI `--progress-json` JSON Lines on stderr.
 - PR 3: progress terminal events, clearer CLI `--progress-json` schema/sample docs, and
-  `DownloadReport` summary helpers for downstream UI state. Scope is limited to failure events plus
-  the currently reachable plan-level archive duplicate cancellation event; cancellable execution
-  remains PR 4.
+  `DownloadReport` summary helpers for downstream UI state. Completed with failure/cancelled
+  terminal events, clearer schema docs, embedding progress guidance, and report summary helpers.
 - PR 4: cancellation-aware download execution so embedders and CLI flows can stop work without
-  corrupting completed artifacts, using the progress terminal event model from PR 3.
+  corrupting completed artifacts, using the progress terminal event model from PR 3. Completed by
+  adding `DownloadCancellationToken`, cancellable download API variants, CLI `Ctrl-C` cancellation,
+  `Error::Cancelled`, partial-file rollback, and cancellation-focused unit/e2e coverage.
 - PR 5: chapter metadata mux support where the selected media source provides usable chapter data
   and the mux backend can carry it.
 - PR 6: audio language selection in API and CLI surfaces, including listing enough source metadata
@@ -59,3 +60,12 @@ superseded_by:
 - Published crate version: `bbdown-core` `0.4.0`.
 - Progress callback slice validation covers core callback events and CLI `--progress-json` mock e2e
   output.
+- Progress terminal/report summary validation covers terminal failure events, archive duplicate
+  cancellation progress, CLI schema samples, and `DownloadReport::summary()`.
+- Cancellation validation covers pre-start plan cancellation, mid-file rollback/removal, completed
+  entry counts after cancellation, and CLI SIGINT `--progress-json` `plan_cancelled` output.
+- Cancellation hardening validation covers cancellation reason publication before terminal
+  notification, archive duplicate prompt Ctrl-C force-exit decisions, post-ffmpeg mux temporary
+  cleanup on late cancellation, and matching CLI/user-facing documentation.
+- Local cancellation hardening gate passed with project journal validation and `just ci`, covering
+  fmt, clippy, pinned toolchain check, workspace tests, CLI e2e, and `bbdown-core` publish dry-run.

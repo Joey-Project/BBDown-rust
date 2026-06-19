@@ -333,8 +333,8 @@ async fn main() -> bbdown_core::Result<()> {
 
 嵌入应用需要进度 callback、但不想解析 CLI 输出时，使用 `*_with_progress` 下载方法。
 `DownloadProgressEvent` 会覆盖 plan 开始/完成/失败/取消、条目开始/完成/失败、文件
-开始/chunk/完成/失败，以及 mux 开始/完成/失败。callback 是同步调用，应保持
-轻量；如果 UI 更新或数据库写入可能阻塞下载任务，请把事件转发到应用自己的 channel。
+开始/chunk/完成/失败，以及 mux 开始/完成/失败。callback 是同步调用，应保持轻量；如果 UI
+更新或数据库写入可能阻塞下载任务，请把事件转发到应用自己的 channel。
 
 ```rust,no_run
 use bbdown_core::{
@@ -372,12 +372,11 @@ async fn main() -> bbdown_core::Result<()> {
 ```
 
 Archive-aware flow 也有对应的 `download_plan_with_archive_decision_with_progress` 和
-`download_plan_with_archive_preflight_decision_with_progress` 方法。已有非 progress 方法仍
-然可用，并会使用 no-op sink。
-把 `plan_completed`、`plan_failed` 和 `plan_cancelled` 视为一次下载任务互斥的终态。
-`plan_cancelled` 目前表示显式 archive duplicate 取消；后续 cancellable execution API
-会复用同一个 sink 形状：取消触发器放在 sink 外部，progress event 转发到应用 channel，
-并让 UI 从终态事件收口，而不是从 task handle 被 drop 来推断取消。
+`download_plan_with_archive_preflight_decision_with_progress` 方法。已有非 progress 方法仍然
+可用，并会使用 no-op sink。把 `plan_completed`、`plan_failed` 和 `plan_cancelled` 视为一
+次下载任务互斥的终态。显式 archive duplicate 取消和通过 `DownloadCancellationToken` 取
+消的下载都会发出 `plan_cancelled`。取消的操作会返回 `Error::Cancelled`；UI 需要区分用户停
+止和普通失败时，可以使用 `Error::is_cancelled()`。
 
 ```rust,no_run
 use bbdown_core::DownloadProgressEvent;
@@ -400,6 +399,63 @@ fn apply_progress(event: &DownloadProgressEvent) {
         _ => {}
     }
 }
+```
+
+UI、任务 supervisor 或 cache server 需要显式停止下载时，使用
+`*_with_cancellation` 或 `*_with_progress_and_cancellation` 下载变体。同一个 token 可以从任
+意 task 调用 `cancel()` 或 `cancel_with_reason(...)` 取消。执行层会在规划、开始新条目和
+sidecar 前、等待 retry backoff 时、发送 HTTP request 时、流式读取 response body 时，以及
+等待 `ffmpeg` mux 时检查取消。取消时，新创建的部分文件会被删除；续传文件会截断回本次
+尝试前的大小；已经完成的条目保持有效，并会计入终态事件。
+
+```rust,no_run
+use bbdown_core::{
+    BiliClient, ClientConfig, DownloadCancellationToken, DownloadOptions, DownloadProgressEvent,
+    DownloadProgressSink,
+};
+
+struct UiProgress;
+
+impl DownloadProgressSink for UiProgress {
+    fn on_download_progress(&self, event: &DownloadProgressEvent) {
+        // Forward the event into the application's UI or task-state channel.
+        eprintln!("{event:?}");
+    }
+}
+
+#[tokio::main]
+async fn main() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let progress = UiProgress;
+    let cancellation = DownloadCancellationToken::new();
+
+    let cancel_from_ui = cancellation.clone();
+    tokio::spawn(async move {
+        // Replace this with the application's cancel button, task shutdown, or HTTP disconnect.
+        wait_for_user_cancel().await;
+        cancel_from_ui.cancel_with_reason("user cancelled download");
+    });
+
+    let result = client
+        .download_input_with_progress_and_cancellation(
+            "BV1qt4y1X7TW",
+            None,
+            DownloadOptions::new("downloads"),
+            &progress,
+            &cancellation,
+        )
+        .await;
+
+    if let Err(error) = &result {
+        if error.is_cancelled() {
+            eprintln!("download stopped by caller: {error}");
+        }
+    }
+
+    result.map(|_| ())
+}
+
+async fn wait_for_user_cancel() {}
 ```
 
 当 UI 需要展示质量选择时，先使用 `bbdown plan` 或 `BiliClient::plan_download`。

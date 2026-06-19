@@ -204,7 +204,11 @@ stdout 上的普通人类输出或 `--json` report。事件覆盖 plan 开始/�
 开始/chunk/完成/失败、mux 开始/完成/失败，以及 plan 完成/失败/取消，因此 wrapper 可以
 流式展示进度，而不需要抓取最终 report。每个 JSON object 使用 snake_case `type` tag，例如
 `file_progress`、`file_failed` 或 `plan_cancelled`；路径会序列化为字符串。失败时 stderr
-可能同时包含 JSON Lines 和最终 CLI 错误行，因此 wrapper 应只解析 JSON object 行。
+可能同时包含 JSON Lines 和最终 CLI 错误行，因此 wrapper 应只解析 JSON object 行。按下
+`Ctrl-C` 会请求 graceful cancellation：命令以非零状态退出，启用 `--progress-json` 时发出
+`plan_cancelled`，删除新创建的部分文件，把续传文件回滚到本次尝试前的大小，并保留已经完
+成的条目。再次按下 `Ctrl-C` 会强制进程立即退出。当 CLI 正在等待交互式 archive duplicate
+提示输入时，`Ctrl-C` 会立即以 130 退出；非交互 wrapper 应传入 `--on-duplicate`。
 
 `--progress-json` 输出示例：
 
@@ -212,6 +216,7 @@ stdout 上的普通人类输出或 `--json` report。事件覆盖 plan 开始/�
 {"type":"file_progress","entry_index":1,"entry_title":"Main","kind":"video","path":"downloads/Mock video/P001-aid-170001-cid-2-Main/video-80-abcd.m4s","bytes_delta":1048576,"bytes_written":1048576,"resumed_from":0,"expected_size":5242880}
 {"type":"file_failed","entry_index":1,"entry_title":"Main","kind":"video","path":"downloads/Mock video/P001-aid-170001-cid-2-Main/video-80-abcd.m4s","attempt":1,"max_attempts":3,"error":"HTTP error: ..."}
 {"type":"plan_failed","title":"Mock video","output_dir":"downloads/Mock video","completed_entries":0,"error":"HTTP error: ..."}
+{"type":"plan_cancelled","title":"Mock video","output_dir":"downloads/Mock video","completed_entries":0,"error":"download cancelled by Ctrl-C"}
 ```
 当计划中存在对应 URL 时，封面、字幕和弹幕旁路文件默认启用。分别使用 `--no-cover`、
 `--no-subtitles` 和 `--no-danmaku` 关闭。

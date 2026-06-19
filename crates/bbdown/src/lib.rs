@@ -3,6 +3,7 @@
 
 mod app_playurl;
 mod bv;
+mod cancellation;
 mod client;
 mod credentials;
 mod danmaku;
@@ -16,6 +17,7 @@ mod playback;
 mod progress;
 mod selection;
 
+pub use cancellation::DownloadCancellationToken;
 pub use client::{
     BiliClient, ClientConfig, EndpointConfig, PlayurlMode, RestrictedArea, RestrictedAreaConfig,
     RestrictedAreaProxy, RestrictedAreaProxyKind,

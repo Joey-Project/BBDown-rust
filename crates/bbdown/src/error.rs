@@ -26,4 +26,13 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("ffmpeg mux failed with status {status}")]
     MuxFailed { status: String },
+    #[error("download cancelled: {reason}")]
+    Cancelled { reason: String },
+}
+
+impl Error {
+    #[must_use]
+    pub const fn is_cancelled(&self) -> bool {
+        matches!(self, Self::Cancelled { .. })
+    }
 }

@@ -5,10 +5,13 @@ use httpmock::prelude::*;
 use prost::Message as _;
 use serde_json::Value;
 use std::fs;
+use std::io::{Read, Write};
 use std::net::TcpListener;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
+#[cfg(unix)]
+use std::process::{Command as StdCommand, Output, Stdio};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -1682,6 +1685,88 @@ fn download_progress_json_reports_terminal_failure_events() -> anyhow::Result<()
             && event["error"]
                 .as_str()
                 .is_some_and(|error| error.contains("HTTP error"))
+    }));
+    assert!(!events.iter().any(|event| event["type"] == "plan_completed"));
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn download_progress_json_reports_cancelled_on_sigint() -> anyhow::Result<()> {
+    let api_server = MockServer::start();
+    let media_listener = TcpListener::bind("127.0.0.1:0")?;
+    let media_url = format!("http://{}/video.m4s", media_listener.local_addr()?);
+    let (media_started_tx, media_started_rx) = mpsc::channel();
+    let media_handle = thread::spawn(move || -> anyhow::Result<()> {
+        let (mut stream, _) = media_listener.accept()?;
+        let mut buffer = [0_u8; 1024];
+        let _ = stream.read(&mut buffer)?;
+        stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n")?;
+        let _ = media_started_tx.send(());
+        thread::sleep(Duration::from_millis(500));
+        let _ = stream.write_all(b"video");
+        Ok(())
+    });
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    mock_minimal_video_metadata(&api_server);
+    api_server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/playurl")
+            .query_param("avid", "170001")
+            .query_param("cid", "2")
+            .query_param("try_look", "1");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "dash": {
+                    "duration": 3,
+                    "video": [{
+                        "id": 80,
+                        "baseUrl": media_url,
+                        "base_url": media_url
+                    }]
+                }
+            }
+        }));
+    });
+
+    let mut command = bbdown_std_command();
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(api_server.base_url())
+        .arg("download")
+        .arg("av170001")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--only")
+        .arg("video")
+        .arg("--no-mux")
+        .arg("--json")
+        .arg("--progress-json")
+        .arg("--retry-attempts")
+        .arg("1");
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let child = command.spawn()?;
+    media_started_rx.recv_timeout(Duration::from_secs(5))?;
+    send_sigint(child.id())?;
+    let output = wait_with_output_timeout(child, Duration::from_secs(5))?;
+    media_handle
+        .join()
+        .map_err(|_| anyhow::anyhow!("media server thread panicked"))??;
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("download cancelled by Ctrl-C"));
+    let events = json_object_lines(&output.stderr)?;
+    assert!(events.iter().any(|event| {
+        event["type"] == "plan_cancelled"
+            && event["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("download cancelled by Ctrl-C"))
     }));
     assert!(!events.iter().any(|event| event["type"] == "plan_completed"));
     Ok(())
@@ -4228,10 +4313,79 @@ fn json_object_lines(output: &[u8]) -> anyhow::Result<Vec<Value>> {
         .collect()
 }
 
+#[cfg(unix)]
+fn send_sigint(pid: u32) -> anyhow::Result<()> {
+    let status = StdCommand::new("kill")
+        .arg("-INT")
+        .arg(pid.to_string())
+        .status()?;
+    if !status.success() {
+        return Err(anyhow::anyhow!("failed to send SIGINT to child process"));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn wait_with_output_timeout(
+    mut child: std::process::Child,
+    timeout: Duration,
+) -> anyhow::Result<Output> {
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("child stdout was not piped"))?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("child stderr was not piped"))?;
+    let stdout_reader = thread::spawn(move || -> std::io::Result<Vec<u8>> {
+        let mut output = Vec::new();
+        stdout.read_to_end(&mut output)?;
+        Ok(output)
+    });
+    let stderr_reader = thread::spawn(move || -> std::io::Result<Vec<u8>> {
+        let mut output = Vec::new();
+        stderr.read_to_end(&mut output)?;
+        Ok(output)
+    });
+    let started = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if started.elapsed() > timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(anyhow::anyhow!("child process did not exit after SIGINT"));
+        }
+        thread::sleep(Duration::from_millis(20));
+    };
+    let stdout = stdout_reader
+        .join()
+        .map_err(|_| anyhow::anyhow!("stdout reader thread panicked"))??;
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| anyhow::anyhow!("stderr reader thread panicked"))??;
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
 fn bbdown_command() -> anyhow::Result<Command> {
     let mut command = Command::cargo_bin("bbdown")?;
     for name in CLI_OVERRIDE_ENV_VARS {
         command.env_remove(name);
     }
     Ok(command)
+}
+
+#[cfg(unix)]
+fn bbdown_std_command() -> StdCommand {
+    let mut command = StdCommand::new(assert_cmd::cargo::cargo_bin("bbdown"));
+    for name in CLI_OVERRIDE_ENV_VARS {
+        command.env_remove(name);
+    }
+    command
 }

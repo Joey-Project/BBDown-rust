@@ -6,8 +6,9 @@
 `bbdown_core` 导入。它把 Bilibili 和 Bilibili intl 输入解析为 typed metadata、下载计划、
 媒体下载、单独输出下载模式、封面/字幕/XML 或 ASS 弹幕旁路文件、二维码登录凭据、下载归档预检查数
 据、播放请求规格、批量集合 metadata，以及受限区域代理诊断。下载执行也可以通过
-`MediaHostOptions` 应用显式 UPOS host 替换或 BBDown-like PCDN 规避，`*_with_progress`
-下载方法会为嵌入 UI 发出 typed `DownloadProgressEvent` callback。原始输入解析覆盖普
+`MediaHostOptions` 应用显式 UPOS host 替换或 BBDown-like PCDN 规避，`*_with_progress` /
+`*_with_cancellation` 下载方法会为嵌入 UI 发出 typed progress callback，并接收显式
+cancellation token。原始输入解析覆盖普
 通视频、PGC 和 intl 分集、PUGV/cheese 课程、B23 短链接、收藏夹、空间投稿、合集、系列、
 首页推荐、观看历史、稍后再看列表、关注视频 feed 和空间动态视频 feed。
 

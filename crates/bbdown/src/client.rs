@@ -4871,6 +4871,7 @@ fn resolver_error_message(error: &Error) -> String {
                 sanitize_diagnostic_text(status)
             )
         }
+        Error::Cancelled { reason } => format!("cancelled: {}", sanitize_diagnostic_text(reason)),
     }
 }
 

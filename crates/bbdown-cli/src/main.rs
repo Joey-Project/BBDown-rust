@@ -6,21 +6,25 @@ use bbdown_core::{
     AccessKeyLoginConfig, AccessKeyLoginCredentials, AccessKeyLoginTicketOutput, BiliClient,
     ClientConfig, CredentialHealthReport, CredentialHealthScope, CredentialHealthStatus,
     CredentialKind, CredentialProfileSelection, CredentialStore, Credentials, DanmakuFormat,
-    DanmakuUpdateOptions, DownloadArchive, DownloadMode, DownloadOptions, DownloadPathTemplates,
-    DownloadPreflight, DownloadProgressEvent, DownloadProgressSink, DownloadReport,
-    DuplicateDecision, EndpointConfig, MediaHostOptions, MediaStream, MuxOptions, PlaybackPlan,
-    PlayurlMode, QrLoginKind, QrLoginState, QrLoginTicket, QrLoginTicketOutput, ResolvedContent,
-    RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind,
-    RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet,
-    archive_entry_allows_danmaku_update,
+    DanmakuUpdateOptions, DownloadArchive, DownloadCancellationToken, DownloadMode,
+    DownloadOptions, DownloadPathTemplates, DownloadPlan, DownloadPreflight, DownloadProgressEvent,
+    DownloadProgressSink, DownloadReport, DuplicateDecision, EndpointConfig, MediaHostOptions,
+    MediaStream, MuxOptions, PlaybackPlan, PlayurlMode, QrLoginKind, QrLoginState, QrLoginTicket,
+    QrLoginTicketOutput, ResolvedContent, RestrictedArea, RestrictedAreaConfig,
+    RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection, StreamQuality,
+    StreamSelection, StreamSet, archive_entry_allows_danmaku_update,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{self, IsTerminal, Read};
 use std::path::{Component, Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::{Duration, Instant};
+use tokio::task::JoinHandle;
 
 const DEFAULT_ACCESS_KEY_AUTH_BASE: &str = "https://www.biliplus.com";
 const DEFAULT_ACCESS_KEY_CALLBACK_ORIGIN: &str = "https://www.bilibili.com";
@@ -739,6 +743,69 @@ impl DownloadProgressSink for DeferredPlanCompletedProgress {
     }
 }
 
+struct DownloadCancellationGuard {
+    handle: JoinHandle<()>,
+}
+
+impl Drop for DownloadCancellationGuard {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
+}
+
+fn install_download_cancellation_handler(
+    cancellation: DownloadCancellationToken,
+    duplicate_prompt_active: Arc<AtomicBool>,
+) -> DownloadCancellationGuard {
+    let handle = tokio::spawn(async move {
+        let mut graceful_cancel_requested = false;
+        while tokio::signal::ctrl_c().await.is_ok() {
+            match download_ctrl_c_action(&duplicate_prompt_active, graceful_cancel_requested) {
+                DownloadCtrlCAction::GracefulCancel => {
+                    cancellation.cancel_with_reason("download cancelled by Ctrl-C");
+                    graceful_cancel_requested = true;
+                }
+                DownloadCtrlCAction::ForceExit => std::process::exit(130),
+            }
+        }
+    });
+    DownloadCancellationGuard { handle }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DownloadCtrlCAction {
+    GracefulCancel,
+    ForceExit,
+}
+
+fn download_ctrl_c_action(
+    duplicate_prompt_active: &AtomicBool,
+    graceful_cancel_requested: bool,
+) -> DownloadCtrlCAction {
+    if graceful_cancel_requested || duplicate_prompt_active.load(Ordering::SeqCst) {
+        DownloadCtrlCAction::ForceExit
+    } else {
+        DownloadCtrlCAction::GracefulCancel
+    }
+}
+
+struct DuplicatePromptActiveGuard<'a> {
+    active: &'a AtomicBool,
+}
+
+impl<'a> DuplicatePromptActiveGuard<'a> {
+    fn new(active: &'a AtomicBool) -> Self {
+        active.store(true, Ordering::SeqCst);
+        Self { active }
+    }
+}
+
+impl Drop for DuplicatePromptActiveGuard<'_> {
+    fn drop(&mut self) {
+        self.active.store(false, Ordering::SeqCst);
+    }
+}
+
 fn emit_cli_plan_failed(
     progress: CliProgressReporter,
     title: &str,
@@ -747,6 +814,21 @@ fn emit_cli_plan_failed(
     error: String,
 ) {
     progress.on_download_progress(&DownloadProgressEvent::PlanFailed {
+        title: title.to_owned(),
+        output_dir: output_dir.to_path_buf(),
+        completed_entries,
+        error,
+    });
+}
+
+fn emit_cli_plan_cancelled(
+    progress: CliProgressReporter,
+    title: &str,
+    output_dir: &Path,
+    completed_entries: usize,
+    error: String,
+) {
+    progress.on_download_progress(&DownloadProgressEvent::PlanCancelled {
         title: title.to_owned(),
         output_dir: output_dir.to_path_buf(),
         completed_entries,
@@ -1001,11 +1083,24 @@ async fn handle_download(
     let progress = CliProgressReporter {
         json: args.progress_json,
     };
+    let cancellation = DownloadCancellationToken::new();
+    let duplicate_prompt_active = Arc::new(AtomicBool::new(false));
+    let _cancellation_guard = install_download_cancellation_handler(
+        cancellation.clone(),
+        Arc::clone(&duplicate_prompt_active),
+    );
     let json = args.json;
     let report = match args.archive_file.clone() {
         Some(archive_file) => {
-            let Some(report) =
-                handle_archive_download(&client, args, archive_file, progress).await?
+            let Some(report) = handle_archive_download(
+                &client,
+                args,
+                archive_file,
+                progress,
+                &cancellation,
+                &duplicate_prompt_active,
+            )
+            .await?
             else {
                 return Ok(());
             };
@@ -1013,7 +1108,13 @@ async fn handle_download(
         }
         None => {
             client
-                .download_input_with_progress(&args.url, args.select, args.options, &progress)
+                .download_input_with_progress_and_cancellation(
+                    &args.url,
+                    args.select,
+                    args.options,
+                    &progress,
+                    &cancellation,
+                )
                 .await?
         }
     };
@@ -1030,19 +1131,24 @@ async fn handle_archive_download(
     args: DownloadCommandArgs,
     archive_file: PathBuf,
     progress: CliProgressReporter,
+    cancellation: &DownloadCancellationToken,
+    duplicate_prompt_active: &AtomicBool,
 ) -> anyhow::Result<Option<DownloadReport>> {
     let input_title = args.url.clone();
     let output_dir = args.options.output_dir.clone();
-    let plan = match client
-        .plan_download_with_mode(&args.url, args.select, args.options.mode)
-        .await
-    {
-        Ok(plan) => plan,
-        Err(error) => {
-            emit_cli_plan_failed(progress, &input_title, &output_dir, 0, error.to_string());
-            return Err(error.into());
-        }
-    };
+    let plan = plan_archive_download_or_report(
+        client,
+        ArchivePlanningRequest {
+            raw: &args.url,
+            selection: args.select,
+            mode: args.options.mode,
+            input_title: &input_title,
+            output_dir: &output_dir,
+            progress,
+            cancellation,
+        },
+    )
+    .await?;
     let mut archive = load_archive_or_report(
         &archive_file,
         progress,
@@ -1069,14 +1175,16 @@ async fn handle_archive_download(
         &preflight,
         stdin_is_terminal,
     );
-    let decision = duplicate_decision_or_report(
-        args.on_duplicate,
-        args.json,
+    let decision = duplicate_decision_or_report(DuplicateDecisionRequest {
+        on_duplicate: args.on_duplicate,
+        json: args.json,
         stdin_is_terminal,
-        &preflight,
+        preflight: &preflight,
         progress,
-        &plan.title,
-    )?;
+        title: &plan.title,
+        cancellation,
+        duplicate_prompt_active,
+    })?;
     let execution_decision = if args.on_duplicate.is_none() && !preflight.requires_decision() {
         DuplicateDecision::Cancel
     } else {
@@ -1107,18 +1215,62 @@ async fn handle_archive_download(
     }
     let archive_progress = DeferredPlanCompletedProgress::new(progress);
     let report = client
-        .download_plan_with_archive_preflight_decision_with_progress(
+        .download_plan_with_archive_preflight_decision_with_progress_and_cancellation(
             &plan,
             args.options,
             &mut archive,
             &preflight,
             execution_decision,
             &archive_progress,
+            cancellation,
         )
         .await?;
     save_archive_or_report(&archive, &archive_file, &report, progress, &plan.title)?;
     archive_progress.flush_plan_completed();
     Ok(Some(report))
+}
+
+struct ArchivePlanningRequest<'a> {
+    raw: &'a str,
+    selection: Option<Selection>,
+    mode: DownloadMode,
+    input_title: &'a str,
+    output_dir: &'a Path,
+    progress: CliProgressReporter,
+    cancellation: &'a DownloadCancellationToken,
+}
+
+async fn plan_archive_download_or_report(
+    client: &BiliClient,
+    request: ArchivePlanningRequest<'_>,
+) -> anyhow::Result<DownloadPlan> {
+    let plan_result = tokio::select! {
+        result = client.plan_download_with_mode(request.raw, request.selection, request.mode) => result,
+        () = request.cancellation.cancelled() => Err(request.cancellation.cancelled_error()),
+    };
+    match plan_result {
+        Ok(plan) => Ok(plan),
+        Err(error) => {
+            if error.is_cancelled() {
+                emit_cli_plan_cancelled(
+                    request.progress,
+                    request.input_title,
+                    request.output_dir,
+                    0,
+                    error.to_string(),
+                );
+            } else {
+                emit_cli_plan_failed(
+                    request.progress,
+                    request.input_title,
+                    request.output_dir,
+                    0,
+                    error.to_string(),
+                );
+            }
+            Err(error.into())
+        }
+    }
 }
 
 fn load_archive_or_report(
@@ -1138,21 +1290,46 @@ fn load_archive_or_report(
     }
 }
 
-fn duplicate_decision_or_report(
+#[derive(Clone, Copy)]
+struct DuplicateDecisionRequest<'a> {
     on_duplicate: Option<DuplicateDecision>,
     json: bool,
     stdin_is_terminal: bool,
-    preflight: &DownloadPreflight,
+    preflight: &'a DownloadPreflight,
     progress: CliProgressReporter,
-    title: &str,
+    title: &'a str,
+    cancellation: &'a DownloadCancellationToken,
+    duplicate_prompt_active: &'a AtomicBool,
+}
+
+fn duplicate_decision_or_report(
+    request: DuplicateDecisionRequest<'_>,
 ) -> anyhow::Result<DuplicateDecision> {
-    match duplicate_decision(on_duplicate, json, stdin_is_terminal, preflight) {
+    match duplicate_decision(
+        request.on_duplicate,
+        request.json,
+        request.stdin_is_terminal,
+        request.preflight,
+        request.cancellation,
+        request.duplicate_prompt_active,
+    ) {
         Ok(decision) => Ok(decision),
         Err(error) => {
+            if request.cancellation.is_cancelled() {
+                let error = request.cancellation.cancelled_error();
+                emit_cli_plan_cancelled(
+                    request.progress,
+                    request.title,
+                    &request.preflight.planned_output_dir,
+                    0,
+                    error.to_string(),
+                );
+                return Err(error.into());
+            }
             emit_cli_plan_failed(
-                progress,
-                title,
-                &preflight.planned_output_dir,
+                request.progress,
+                request.title,
+                &request.preflight.planned_output_dir,
                 0,
                 error.to_string(),
             );
@@ -1551,7 +1728,12 @@ fn duplicate_decision(
     json: bool,
     stdin_is_terminal: bool,
     preflight: &DownloadPreflight,
+    cancellation: &DownloadCancellationToken,
+    duplicate_prompt_active: &AtomicBool,
 ) -> anyhow::Result<DuplicateDecision> {
+    if cancellation.is_cancelled() {
+        return Err(cancellation.cancelled_error().into());
+    }
     if let Some(decision) = explicit {
         return Ok(decision);
     }
@@ -1563,7 +1745,7 @@ fn duplicate_decision(
             "download archive found an existing record or output conflict; pass --on-duplicate replace, keep-both, or cancel"
         );
     }
-    prompt_duplicate_decision(preflight)
+    prompt_duplicate_decision(preflight, cancellation, duplicate_prompt_active)
 }
 
 fn should_prompt_duplicate_decision(
@@ -1575,13 +1757,21 @@ fn should_prompt_duplicate_decision(
     explicit.is_none() && preflight.requires_decision() && !json && stdin_is_terminal
 }
 
-fn prompt_duplicate_decision(preflight: &DownloadPreflight) -> anyhow::Result<DuplicateDecision> {
+fn prompt_duplicate_decision(
+    preflight: &DownloadPreflight,
+    cancellation: &DownloadCancellationToken,
+    duplicate_prompt_active: &AtomicBool,
+) -> anyhow::Result<DuplicateDecision> {
     print_duplicate_preflight(preflight);
     eprintln!("Choose action: [r]eplace, [k]eep-both, [c]ancel");
+    let _prompt_active = DuplicatePromptActiveGuard::new(duplicate_prompt_active);
     let mut answer = String::new();
     io::stdin()
         .read_line(&mut answer)
         .context("failed to read duplicate decision")?;
+    if cancellation.is_cancelled() {
+        return Err(cancellation.cancelled_error().into());
+    }
     match answer.trim().to_ascii_lowercase().as_str() {
         "r" | "replace" => Ok(DuplicateDecision::Replace),
         "k" | "keep" | "keep-both" | "keep_both" => Ok(DuplicateDecision::KeepBoth),
@@ -2390,20 +2580,24 @@ fn _assert_credentials_send_sync(_: Credentials) {}
 #[cfg(test)]
 mod tests {
     use super::{
-        Cli, CredentialRuntime, archive_sidecar_path, credential_profile_selection,
-        endpoints_from_cli, ensure_access_key_login_file_is_safe,
-        ensure_access_key_login_stdin_is_safe, ensure_archive_file_is_not_output_root,
-        next_poll_sleep, parse_access_key_login_input, remaining_until,
-        restricted_area_from_cli_with_args, restricted_area_from_cli_with_env_values,
-        save_credentials, should_prompt_duplicate_decision, validate_media_host_spec,
+        Cli, CliProgressReporter, CredentialRuntime, DownloadCtrlCAction, DuplicateDecisionRequest,
+        DuplicatePromptActiveGuard, archive_sidecar_path, credential_profile_selection,
+        download_ctrl_c_action, duplicate_decision_or_report, endpoints_from_cli,
+        ensure_access_key_login_file_is_safe, ensure_access_key_login_stdin_is_safe,
+        ensure_archive_file_is_not_output_root, next_poll_sleep, parse_access_key_login_input,
+        remaining_until, restricted_area_from_cli_with_args,
+        restricted_area_from_cli_with_env_values, save_credentials,
+        should_prompt_duplicate_decision, validate_media_host_spec,
     };
     use bbdown_core::{
         AccessKeyLoginConfig, CredentialProfileSelection, CredentialStore, Credentials,
-        DownloadOutputConflict, DownloadPreflight, DuplicateDecision, EndpointConfig,
+        DownloadCancellationToken, DownloadOutputConflict, DownloadPreflight, DuplicateDecision,
+        EndpointConfig,
     };
     use clap::Parser as _;
     use std::fs;
     use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{Duration, Instant};
 
     #[test]
@@ -2604,6 +2798,78 @@ mod tests {
             &clean_preflight,
             true
         ));
+    }
+
+    #[test]
+    fn duplicate_prompt_active_guard_restores_state() {
+        let active = AtomicBool::new(false);
+        {
+            let _guard = DuplicatePromptActiveGuard::new(&active);
+            assert!(active.load(Ordering::SeqCst));
+        }
+        assert!(!active.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn download_ctrl_c_action_forces_exit_for_prompt_or_second_signal() {
+        let active = AtomicBool::new(false);
+
+        assert_eq!(
+            download_ctrl_c_action(&active, false),
+            DownloadCtrlCAction::GracefulCancel
+        );
+        assert_eq!(
+            download_ctrl_c_action(&active, true),
+            DownloadCtrlCAction::ForceExit
+        );
+
+        active.store(true, Ordering::SeqCst);
+
+        assert_eq!(
+            download_ctrl_c_action(&active, false),
+            DownloadCtrlCAction::ForceExit
+        );
+        assert_eq!(
+            download_ctrl_c_action(&active, true),
+            DownloadCtrlCAction::ForceExit
+        );
+    }
+
+    #[test]
+    fn duplicate_decision_reports_cancelled_before_prompt() {
+        let preflight = DownloadPreflight {
+            content_key: "plan|aid=1|cid=2".to_owned(),
+            title: "Mock video".to_owned(),
+            planned_output_dir: PathBuf::from("Mock video"),
+            archived_records: Vec::new(),
+            output_conflict: Some(DownloadOutputConflict {
+                path: PathBuf::from("Mock video"),
+            }),
+            reserved_output_dirs: Vec::new(),
+        };
+        let cancellation = DownloadCancellationToken::new();
+        cancellation.cancel_with_reason("test duplicate prompt cancellation");
+        let duplicate_prompt_active = AtomicBool::new(false);
+
+        let result = duplicate_decision_or_report(DuplicateDecisionRequest {
+            on_duplicate: None,
+            json: false,
+            stdin_is_terminal: true,
+            preflight: &preflight,
+            progress: CliProgressReporter { json: false },
+            title: "Mock video",
+            cancellation: &cancellation,
+            duplicate_prompt_active: &duplicate_prompt_active,
+        });
+
+        assert!(result.is_err(), "pre-cancelled duplicate prompt succeeded");
+        if let Err(error) = result {
+            assert!(
+                error
+                    .to_string()
+                    .contains("test duplicate prompt cancellation")
+            );
+        }
     }
 
     #[test]
