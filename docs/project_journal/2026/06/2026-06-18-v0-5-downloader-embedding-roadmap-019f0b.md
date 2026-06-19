@@ -76,3 +76,6 @@ superseded_by:
 - Offline frozen diff review found that default retry cancellation could emit duplicate
   `FileFailed` progress events. The fix short-circuits cancelled file attempts before retry/backoff
   handling and adds default-retry coverage that asserts one `FileFailed` event.
+- Independent review found the same duplicate `FileFailed` risk when cancellation happens during a
+  non-zero retry backoff after a retryable file failure. The fix suppresses terminal cancellation
+  `FileFailed` for file attempts that never started and adds explicit backoff-cancellation coverage.

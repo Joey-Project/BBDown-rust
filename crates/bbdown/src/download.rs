@@ -1936,7 +1936,9 @@ impl BiliClient {
                 false,
             )
         });
-        emit_file_failed(progress, request, error.attempt, &error.error);
+        if error.started || !error.error.is_cancelled() {
+            emit_file_failed(progress, request, error.attempt, &error.error);
+        }
         Err(error.error)
     }
 
@@ -5744,6 +5746,91 @@ mod tests {
                 error,
                 ..
             } if error.contains("test cancellation with default retry")
+        )));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancelled_retry_backoff_does_not_duplicate_file_failed() -> anyhow::Result<()> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let media_url = format!("http://{}/video.m4s", listener.local_addr()?);
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buffer = [0_u8; 1024];
+                let _ = stream.read(&mut buffer);
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nbad");
+            }
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = single_video_plan(media_url);
+        let cancellation = DownloadCancellationToken::new();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress_events = Arc::clone(&events);
+        let progress_cancellation = cancellation.clone();
+        let progress = move |event: &DownloadProgressEvent| {
+            if matches!(
+                event,
+                DownloadProgressEvent::FileFailed {
+                    kind: DownloadFileKind::Video,
+                    attempt: 1,
+                    ..
+                }
+            ) {
+                progress_cancellation.cancel_with_reason("test cancellation during retry backoff");
+            }
+            push_progress_event(&progress_events, event.clone());
+        };
+
+        let Err(error) = client
+            .download_plan_with_progress_and_cancellation(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().to_path_buf(),
+                    retry: RetryPolicy {
+                        max_attempts: 2,
+                        backoff: Duration::from_millis(200),
+                    },
+                    mode: DownloadMode::VideoOnly,
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        cover: false,
+                        subtitles: false,
+                    },
+                    mux: MuxOptions::Disabled,
+                    ..DownloadOptions::default()
+                },
+                &progress,
+                &cancellation,
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!(
+                "cancelled retry-backoff download should fail"
+            ));
+        };
+
+        assert!(error.is_cancelled());
+        let events = progress_events_snapshot(&events);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    DownloadProgressEvent::FileFailed {
+                        kind: DownloadFileKind::Video,
+                        ..
+                    }
+                ))
+                .count(),
+            1
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::PlanCancelled {
+                error,
+                ..
+            } if error.contains("test cancellation during retry backoff")
         )));
         Ok(())
     }
