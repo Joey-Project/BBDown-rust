@@ -73,3 +73,6 @@ superseded_by:
   output, CLI token-cancellation exit code `130`, and embedding docs that distinguish token-driven
   cancellation from explicit archive duplicate cancel decisions. The follow-up gate passed targeted
   CLI SIGINT/duplicate tests, clippy, project journal validation, and `just ci`.
+- Offline frozen diff review found that default retry cancellation could emit duplicate
+  `FileFailed` progress events. The fix short-circuits cancelled file attempts before retry/backoff
+  handling and adds default-retry coverage that asserts one `FileFailed` event.
