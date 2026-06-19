@@ -393,8 +393,10 @@ Archive-aware flows have matching `download_plan_with_archive_decision_with_prog
 methods remain available and use a no-op sink. Treat `plan_completed`, `plan_failed`, and
 `plan_cancelled` as mutually exclusive terminal states for a download task. `plan_cancelled` is
 emitted for explicit archive duplicate cancellation and for downloads cancelled through a
-`DownloadCancellationToken`. A cancelled operation returns `Error::Cancelled`; use
-`Error::is_cancelled()` when UI code needs to separate a user stop from ordinary failures.
+`DownloadCancellationToken`. Token-triggered cancellation returns `Error::Cancelled`; use
+`Error::is_cancelled()` when UI code needs to separate a user stop from ordinary failures. Explicit
+archive duplicate cancellation is a preflight decision path, so callers should use the duplicate
+decision/report state instead of treating every `plan_cancelled` event as `Error::Cancelled`.
 
 ```rust,no_run
 use bbdown_core::DownloadProgressEvent;

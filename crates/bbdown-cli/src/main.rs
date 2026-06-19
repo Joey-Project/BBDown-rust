@@ -589,6 +589,17 @@ struct AccessKeyLoginArgs {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    if let Err(error) = run().await {
+        if anyhow_error_is_cancelled(&error) {
+            eprintln!("Error: {error:#}");
+            std::process::exit(130);
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
+async fn run() -> anyhow::Result<()> {
     let raw_args = std::env::args_os().collect::<Vec<_>>();
     let cli = Cli::parse_from(raw_args.clone());
     ensure!(
@@ -626,6 +637,14 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+fn anyhow_error_is_cancelled(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<bbdown_core::Error>()
+            .is_some_and(bbdown_core::Error::is_cancelled)
+    })
 }
 
 async fn handle_download_cli(
@@ -1762,9 +1781,9 @@ fn prompt_duplicate_decision(
     cancellation: &DownloadCancellationToken,
     duplicate_prompt_active: &AtomicBool,
 ) -> anyhow::Result<DuplicateDecision> {
+    let _prompt_active = DuplicatePromptActiveGuard::new(duplicate_prompt_active);
     print_duplicate_preflight(preflight);
     eprintln!("Choose action: [r]eplace, [k]eep-both, [c]ancel");
-    let _prompt_active = DuplicatePromptActiveGuard::new(duplicate_prompt_active);
     let mut answer = String::new();
     io::stdin()
         .read_line(&mut answer)

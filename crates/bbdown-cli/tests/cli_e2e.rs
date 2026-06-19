@@ -1758,7 +1758,7 @@ fn download_progress_json_reports_cancelled_on_sigint() -> anyhow::Result<()> {
         .join()
         .map_err(|_| anyhow::anyhow!("media server thread panicked"))??;
 
-    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(130));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("download cancelled by Ctrl-C"));
     let events = json_object_lines(&output.stderr)?;

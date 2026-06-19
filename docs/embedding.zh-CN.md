@@ -375,8 +375,10 @@ Archive-aware flow 也有对应的 `download_plan_with_archive_decision_with_pro
 `download_plan_with_archive_preflight_decision_with_progress` 方法。已有非 progress 方法仍然
 可用，并会使用 no-op sink。把 `plan_completed`、`plan_failed` 和 `plan_cancelled` 视为一
 次下载任务互斥的终态。显式 archive duplicate 取消和通过 `DownloadCancellationToken` 取
-消的下载都会发出 `plan_cancelled`。取消的操作会返回 `Error::Cancelled`；UI 需要区分用户停
-止和普通失败时，可以使用 `Error::is_cancelled()`。
+消的下载都会发出 `plan_cancelled`。由 token 触发的取消会返回 `Error::Cancelled`；UI 需要
+区分用户停止和普通失败时，可以使用 `Error::is_cancelled()`。显式 archive duplicate 取消是
+preflight decision 路径，调用方应使用 duplicate decision/report 状态，而不是把每个
+`plan_cancelled` 都当成 `Error::Cancelled`。
 
 ```rust,no_run
 use bbdown_core::DownloadProgressEvent;

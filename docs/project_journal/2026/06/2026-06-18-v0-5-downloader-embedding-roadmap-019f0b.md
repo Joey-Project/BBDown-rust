@@ -69,3 +69,7 @@ superseded_by:
   cleanup on late cancellation, and matching CLI/user-facing documentation.
 - Local cancellation hardening gate passed with project journal validation and `just ci`, covering
   fmt, clippy, pinned toolchain check, workspace tests, CLI e2e, and `bbdown-core` publish dry-run.
+- Independent cancellation review follow-up covers prompt-mode SIGINT before duplicate preflight
+  output, CLI token-cancellation exit code `130`, and embedding docs that distinguish token-driven
+  cancellation from explicit archive duplicate cancel decisions. The follow-up gate passed targeted
+  CLI SIGINT/duplicate tests, clippy, project journal validation, and `just ci`.
