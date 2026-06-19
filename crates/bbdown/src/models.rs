@@ -142,6 +142,8 @@ pub struct DownloadEntry {
     #[serde(default, skip_serializing_if = "StreamDiagnostics::is_empty")]
     pub diagnostics: StreamDiagnostics,
     pub subtitles: Vec<SubtitleTrack>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chapters: Vec<ChapterTrack>,
     pub danmaku: DanmakuTrack,
 }
 
@@ -260,6 +262,13 @@ pub struct SubtitleTrack {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ChapterTrack {
+    pub title: String,
+    pub start_seconds: u64,
+    pub end_seconds: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SubtitleFormat {
     Json,
@@ -302,6 +311,7 @@ mod tests {
         }))?;
 
         assert_eq!(entry.cover_url, None);
+        assert!(entry.chapters.is_empty());
         assert_eq!(entry.source, StreamSource::NormalWeb);
         Ok(())
     }

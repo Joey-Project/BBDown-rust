@@ -77,6 +77,8 @@ The library resolves media availability into `DownloadPlan`:
   selectable DASH quality labels, and duration.
 - `StreamDiagnostics` records non-default resolver attempts such as restricted-area proxy fallback.
 - `SubtitleTrack` records language metadata, normalized URL, and basic format classification.
+- `ChapterTrack` records title plus start/end seconds when the upstream player metadata exposes
+  usable chapter boundaries.
 - `DanmakuTrack` records the XML comment endpoint derived from `cid` and the configured comment
   endpoint base.
 
@@ -227,7 +229,9 @@ ids and fails before media writes. If DASH media is incomplete and FLV `durl` se
 downloads the FLV segments instead; explicit stream selection requires DASH media and therefore
 rejects FLV fallback. Otherwise the entry fails before media writes. Cover, subtitle, and danmaku
 files remain sidecars. When muxing is enabled, the executor invokes `ffmpeg` with explicit argv and
-returns the command plus output path in the report.
+returns the command plus output path in the report. If the plan entry carries chapters, ffmpeg muxing
+adds a temporary ffmetadata input, maps chapters from that input, and reports the included count as
+`MuxReport::chapter_count`.
 Plan entries keep the canonical danmaku XML endpoint; the executor converts that XML to ASS only
 when the selected `DanmakuFormats` set contains `DanmakuFormat::Ass`. ASS generation supports
 common scrolling, top, bottom, and reverse-scrolling comments and skips advanced positioned comments
@@ -315,7 +319,8 @@ The crate default keeps muxing disabled so embedding projects do not spawn exter
 surprise. The CLI `download` command enables ffmpeg by default and exposes `--no-mux` for users and
 mock e2e tests. Mux subprocess stdin, stdout, and stderr are isolated from CLI stdio. Muxing writes
 to a temporary output first, validates that output, and then replaces the final file, so a failed
-rerun preserves an existing muxed file and JSON reports remain parseable and accurate.
+rerun preserves an existing muxed file and JSON reports remain parseable and accurate. Temporary
+chapter ffmetadata is removed after successful, failed, or cancelled mux attempts.
 
 ## Restricted Area And Intl
 

@@ -370,7 +370,13 @@ fn plan_json_resolves_mock_video_streams() -> anyhow::Result<()> {
             .query_param("cid", "2");
         then.status(200).json_body_obj(&serde_json::json!({
             "code": 0,
-            "data": {"subtitle": {"subtitles": []}}
+            "data": {
+                "subtitle": {"subtitles": []},
+                "view_points": [
+                    {"content": "Opening", "from": 0, "to": 15},
+                    {"content": "Main", "from": 15, "to": 180}
+                ]
+            }
         }));
     });
 
@@ -392,9 +398,20 @@ fn plan_json_resolves_mock_video_streams() -> anyhow::Result<()> {
         json["entries"][0]["danmaku"]["xml_url"],
         "https://comment.bilibili.com/2.xml"
     );
+    assert_plan_chapters(&json);
 
     assert_human_plan_lists_qualities(&credential_file, &server)?;
     Ok(())
+}
+
+fn assert_plan_chapters(json: &Value) {
+    assert_eq!(
+        json["entries"][0]["chapters"].as_array().map(Vec::len),
+        Some(2)
+    );
+    assert_eq!(json["entries"][0]["chapters"][0]["title"], "Opening");
+    assert_eq!(json["entries"][0]["chapters"][0]["start_seconds"], 0);
+    assert_eq!(json["entries"][0]["chapters"][0]["end_seconds"], 15);
 }
 
 #[test]

@@ -141,6 +141,7 @@ The JSON output contains:
 - `streams.flv_segments`: legacy FLV segments when the playurl response uses `durl`.
 - `cover_url`: optional cover image URL used by download cover sidecars.
 - `subtitles`: discovered subtitle tracks.
+- `chapters`: optional chapter metadata discovered from the selected player metadata endpoint.
 - `danmaku.xml_url`: the XML comment endpoint for the entry `cid`.
 
 Planning is side-effect free. It does not create files, download media, or call ffmpeg.
@@ -332,6 +333,9 @@ Muxing is enabled by default through `ffmpeg`. Use `--ffmpeg <path>` to choose a
 `--no-mux` to keep downloaded media files as sidecars only. The reusable crate keeps external
 process execution explicit through `DownloadOptions::mux`. A mux rerun writes and validates a
 temporary output before replacing the final file, so a failed mux keeps any existing muxed file.
+When a plan entry contains chapters and ffmpeg muxing is enabled, BBDown writes those chapters into
+the muxed MP4 through a temporary ffmetadata input. The JSON download report includes
+`mux.chapter_count` for the number of chapters handed to ffmpeg.
 
 ## Credentials
 

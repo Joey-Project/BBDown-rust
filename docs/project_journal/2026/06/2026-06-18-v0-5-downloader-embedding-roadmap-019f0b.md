@@ -36,7 +36,9 @@ superseded_by:
   adding `DownloadCancellationToken`, cancellable download API variants, CLI `Ctrl-C` cancellation,
   `Error::Cancelled`, partial-file rollback, and cancellation-focused unit/e2e coverage.
 - PR 5: chapter metadata mux support where the selected media source provides usable chapter data
-  and the mux backend can carry it.
+  and the mux backend can carry it. Completed by exposing `ChapterTrack` values on
+  `DownloadEntry`, collecting web player `view_points`, mapping chapters into ffmpeg through
+  temporary ffmetadata, and reporting `MuxReport::chapter_count`.
 - PR 6: audio language selection in API and CLI surfaces, including listing enough source metadata
   for callers to make their own choice.
 - PR 7: AI subtitle filtering in API and CLI surfaces, keeping raw subtitle metadata visible while
@@ -93,3 +95,6 @@ superseded_by:
 - Final independent rerun found that real `ffmpeg` on Unix commonly handles `SIGINT` and exits
   `255` instead of reporting a signal status. The follow-up fix also treats that mux exit code as a
   cancellation candidate during the same short grace window, with Unix unit coverage.
+- Chapter mux validation covers plan JSON chapter output from player `view_points`, ffmetadata
+  escaping and invalid chapter filtering, ffmpeg `-map_chapters` command construction, mux report
+  `chapter_count`, and temporary ffmetadata cleanup after muxing.

@@ -1,6 +1,6 @@
 use crate::{
-    BiliClient, DownloadEntry, DownloadPlan, Error, FlvSegment, Input, MediaStream, Result,
-    Selection, SubtitleFormat, SubtitleTrack,
+    BiliClient, ChapterTrack, DownloadEntry, DownloadPlan, Error, FlvSegment, Input, MediaStream,
+    Result, Selection, SubtitleFormat, SubtitleTrack,
     cancellation::DownloadCancellationToken,
     danmaku::{self, DanmakuFormat, DanmakuFormats},
     progress::{DownloadProgressEvent, DownloadProgressSink, NoopDownloadProgress},
@@ -788,6 +788,8 @@ pub enum DownloadFileKind {
 pub struct MuxReport {
     pub output_path: PathBuf,
     pub command: Vec<String>,
+    #[serde(default)]
+    pub chapter_count: usize,
 }
 
 impl DownloadReport {
@@ -2193,6 +2195,21 @@ impl BiliClient {
                 args.push(media_file.as_os_str().to_os_string());
             }
         }
+        let chapter_metadata = write_ffmpeg_chapter_metadata(entry, entry_dir).await?;
+        let chapter_count = if let Some(metadata) = &chapter_metadata {
+            let input_index = if only_flv_segments(files) {
+                1
+            } else {
+                media_files.len()
+            };
+            args.push(OsString::from("-i"));
+            args.push(metadata.path.as_os_str().to_os_string());
+            args.push(OsString::from("-map_chapters"));
+            args.push(OsString::from(input_index.to_string()));
+            metadata.chapter_count
+        } else {
+            0
+        };
         args.extend([
             OsString::from("-c"),
             OsString::from("copy"),
@@ -2207,14 +2224,20 @@ impl BiliClient {
         });
         if let Err(error) = run_ffmpeg_mux(binary, &args, &mux_output_path, cancellation).await {
             let _ = fs::remove_file(&mux_output_path).await;
+            remove_optional_chapter_metadata(chapter_metadata.as_ref()).await;
             emit_mux_failed(progress, entry, &output_path, &command, &error);
             return Err(error);
         }
-        remove_mux_output_if_cancelled(cancellation, &mux_output_path).await?;
+        if let Err(error) = remove_mux_output_if_cancelled(cancellation, &mux_output_path).await {
+            remove_optional_chapter_metadata(chapter_metadata.as_ref()).await;
+            return Err(error);
+        }
         if let Err(error) = replace_file(&mux_output_path, &output_path).await {
+            remove_optional_chapter_metadata(chapter_metadata.as_ref()).await;
             emit_mux_failed(progress, entry, &output_path, &command, &error);
             return Err(error);
         }
+        remove_optional_chapter_metadata(chapter_metadata.as_ref()).await;
         progress.on_download_progress(&DownloadProgressEvent::MuxCompleted {
             entry_index: entry.index,
             entry_title: entry.title.clone(),
@@ -2223,7 +2246,83 @@ impl BiliClient {
         Ok(Some(MuxReport {
             output_path,
             command,
+            chapter_count,
         }))
+    }
+}
+
+struct FfmpegChapterMetadata {
+    path: PathBuf,
+    chapter_count: usize,
+}
+
+async fn write_ffmpeg_chapter_metadata(
+    entry: &DownloadEntry,
+    entry_dir: &Path,
+) -> Result<Option<FfmpegChapterMetadata>> {
+    let metadata = ffmpeg_chapter_metadata(&entry.chapters);
+    if metadata.chapter_count == 0 {
+        return Ok(None);
+    }
+    let path = entry_dir.join("ffmpeg-chapters.ffmetadata.bbdown-tmp");
+    fs::write(&path, metadata.body).await?;
+    Ok(Some(FfmpegChapterMetadata {
+        path,
+        chapter_count: metadata.chapter_count,
+    }))
+}
+
+struct FfmpegChapterMetadataBody {
+    body: String,
+    chapter_count: usize,
+}
+
+fn ffmpeg_chapter_metadata(chapters: &[ChapterTrack]) -> FfmpegChapterMetadataBody {
+    const TIMEBASE: u64 = 1000;
+    let mut body = String::from(";FFMETADATA1\n");
+    let mut chapter_count = 0;
+    for chapter in chapters {
+        if chapter.title.trim().is_empty() || chapter.end_seconds <= chapter.start_seconds {
+            continue;
+        }
+        chapter_count += 1;
+        body.push_str("[CHAPTER]\n");
+        let _ = writeln!(body, "TIMEBASE=1/{TIMEBASE}");
+        let _ = writeln!(
+            body,
+            "START={}",
+            chapter.start_seconds.saturating_mul(TIMEBASE)
+        );
+        let _ = writeln!(body, "END={}", chapter.end_seconds.saturating_mul(TIMEBASE));
+        body.push_str("title=");
+        body.push_str(&escape_ffmetadata_value(chapter.title.trim()));
+        body.push_str("\n\n");
+    }
+    FfmpegChapterMetadataBody {
+        body,
+        chapter_count,
+    }
+}
+
+fn escape_ffmetadata_value(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '\\' | '=' | ';' | '#' => {
+                escaped.push('\\');
+                escaped.push(character);
+            }
+            '\n' => escaped.push_str("\\n"),
+            '\r' => {}
+            _ => escaped.push(character),
+        }
+    }
+    escaped
+}
+
+async fn remove_optional_chapter_metadata(metadata: Option<&FfmpegChapterMetadata>) {
+    if let Some(metadata) = metadata {
+        let _ = fs::remove_file(&metadata.path).await;
     }
 }
 
@@ -4607,8 +4706,8 @@ mod tests {
         write_generated_text_file,
     };
     use crate::models::{
-        DanmakuTrack, DownloadEntry, DownloadPlan, FlvSegment, MediaStream, StreamDiagnostics,
-        StreamQuality, StreamSet, StreamSource, SubtitleFormat, SubtitleTrack,
+        ChapterTrack, DanmakuTrack, DownloadEntry, DownloadPlan, FlvSegment, MediaStream,
+        StreamDiagnostics, StreamQuality, StreamSet, StreamSource, SubtitleFormat, SubtitleTrack,
     };
     use crate::{
         BiliClient, ClientConfig, Credentials, DanmakuFormat, DanmakuFormats,
@@ -5357,6 +5456,7 @@ mod tests {
                     mux: Some(MuxReport {
                         output_path: PathBuf::from("downloads/first/first.mp4"),
                         command: vec!["ffmpeg".to_owned()],
+                        chapter_count: 0,
                     }),
                 },
                 EntryDownloadReport {
@@ -8164,6 +8264,94 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ffmpeg_mux_includes_chapter_metadata() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/video.m4s");
+            then.status(200).body("video");
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/audio.m4s");
+            then.status(200).body("audio");
+        });
+        let temp = tempfile::tempdir()?;
+        let ffmpeg = write_fake_ffmpeg(temp.path(), fake_ffmpeg_creates_output_body())?;
+        let client = BiliClient::new(ClientConfig::default());
+        let mut plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
+        plan.entries[0].chapters = vec![
+            ChapterTrack {
+                title: "Opening".to_owned(),
+                start_seconds: 0,
+                end_seconds: 90,
+            },
+            ChapterTrack {
+                title: "Main".to_owned(),
+                start_seconds: 90,
+                end_seconds: 180,
+            },
+        ];
+        let output_dir = temp.path().join("downloads");
+        let entry_dir = test_entry_dir(&output_dir, &plan)?;
+
+        let report = client
+            .download_plan(
+                &plan,
+                DownloadOptions {
+                    output_dir,
+                    retry: RetryPolicy::single_attempt(),
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
+                    mux: MuxOptions::Ffmpeg { binary: ffmpeg },
+                    ..DownloadOptions::default()
+                },
+            )
+            .await?;
+
+        let mux = report.entries[0]
+            .mux
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("missing mux report"))?;
+        assert_eq!(mux.chapter_count, 2);
+        assert!(mux.command.iter().any(|arg| arg == "-map_chapters"));
+        assert!(mux.command.iter().any(|arg| arg == "2"));
+        assert!(
+            !entry_dir
+                .join("ffmpeg-chapters.ffmetadata.bbdown-tmp")
+                .exists()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ffmpeg_chapter_metadata_escapes_values() {
+        let metadata = super::ffmpeg_chapter_metadata(&[
+            ChapterTrack {
+                title: "Intro = #1; back\\slash".to_owned(),
+                start_seconds: 1,
+                end_seconds: 2,
+            },
+            ChapterTrack {
+                title: "invalid".to_owned(),
+                start_seconds: 2,
+                end_seconds: 2,
+            },
+        ]);
+
+        assert_eq!(metadata.chapter_count, 1);
+        assert!(metadata.body.starts_with(";FFMETADATA1\n"));
+        assert!(metadata.body.contains("START=1000\n"));
+        assert!(metadata.body.contains("END=2000\n"));
+        assert!(
+            metadata
+                .body
+                .contains("title=Intro \\= \\#1\\; back\\\\slash")
+        );
+    }
+
     #[tokio::test]
     async fn ffmpeg_mux_cancel_after_process_removes_temporary_output() -> anyhow::Result<()> {
         let temp = tempfile::tempdir()?;
@@ -9331,6 +9519,7 @@ mod tests {
                         .join("entry")
                         .join("main.mp4"),
                     command: vec!["ffmpeg".to_owned()],
+                    chapter_count: 0,
                 }),
             }],
         };
@@ -10018,6 +10207,7 @@ mod tests {
                     url: format!("{}/subtitle.ass", server.base_url()),
                     format: SubtitleFormat::Ass,
                 }],
+                chapters: Vec::new(),
                 danmaku: DanmakuTrack {
                     cid: 2,
                     xml_url: format!("{}/danmaku.xml", server.base_url()),

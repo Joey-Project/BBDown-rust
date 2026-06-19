@@ -5,10 +5,10 @@ use crate::feed_list::{
     renumber_feed_list_items, select_feed_list_items, select_items_by_index,
 };
 use crate::models::{
-    DanmakuTrack, DownloadEntry, DownloadPlan, EpisodeMetadata, FlvSegment, MediaStream, Owner,
-    PageMetadata, ResolvedContent, SeasonMetadata, SeasonResolution, StreamDiagnostics,
-    StreamQuality, StreamResolverAttempt, StreamResolverOutcome, StreamSet, StreamSource,
-    SubtitleFormat, SubtitleTrack, Tag, VideoCollectionItem, VideoCollectionKind,
+    ChapterTrack, DanmakuTrack, DownloadEntry, DownloadPlan, EpisodeMetadata, FlvSegment,
+    MediaStream, Owner, PageMetadata, ResolvedContent, SeasonMetadata, SeasonResolution,
+    StreamDiagnostics, StreamQuality, StreamResolverAttempt, StreamResolverOutcome, StreamSet,
+    StreamSource, SubtitleFormat, SubtitleTrack, Tag, VideoCollectionItem, VideoCollectionKind,
     VideoCollectionMetadata, VideoCollectionResolution, VideoMetadata,
 };
 use crate::playback::{PlaybackPlan, header_specs_from_map};
@@ -2522,9 +2522,9 @@ impl BiliClient {
                 StreamDiagnostics::default(),
             )
         };
-        let subtitles = if seed.planning_mode.requires_subtitles() {
+        let auxiliary_metadata = if seed.planning_mode.requires_subtitles() {
             let result = self
-                .fetch_subtitles(source.clone(), seed.aid, seed.cid, seed.epid)
+                .fetch_entry_auxiliary_metadata(source.clone(), seed.aid, seed.cid, seed.epid)
                 .await;
             if matches!(seed.planning_mode, PlanningMode::SubtitlesOnly) {
                 result?
@@ -2532,7 +2532,7 @@ impl BiliClient {
                 result.unwrap_or_default()
             }
         } else {
-            Vec::new()
+            EntryAuxiliaryMetadata::default()
         };
         Ok(DownloadEntry {
             index: seed.index,
@@ -2545,7 +2545,8 @@ impl BiliClient {
             source,
             streams,
             diagnostics,
-            subtitles,
+            subtitles: auxiliary_metadata.subtitles,
+            chapters: auxiliary_metadata.chapters,
             danmaku: DanmakuTrack {
                 cid: seed.cid,
                 xml_url: Self::endpoint_url(
@@ -2979,13 +2980,13 @@ impl BiliClient {
         response.into_stream_set()
     }
 
-    async fn fetch_subtitles(
+    async fn fetch_entry_auxiliary_metadata(
         &self,
         source: StreamSource,
         aid: u64,
         cid: u64,
         epid: Option<u64>,
-    ) -> Result<Vec<SubtitleTrack>> {
+    ) -> Result<EntryAuxiliaryMetadata> {
         match source {
             StreamSource::NormalWeb
             | StreamSource::NormalTv
@@ -3000,7 +3001,7 @@ impl BiliClient {
                     .append_pair("aid", &aid.to_string())
                     .append_pair("cid", &cid.to_string());
                 let response: ApiData<PlayerV2Data> = self.get_json(url).await?;
-                Ok(response.into_data()?.into_subtitles())
+                Ok(response.into_data()?.into_auxiliary_metadata())
             }
             StreamSource::IntlWeb => {
                 let epid = epid.ok_or(Error::MissingField("epid"))?;
@@ -3019,7 +3020,10 @@ impl BiliClient {
                     }
                 }
                 let response: ApiData<IntlSubtitleData> = self.get_json(url).await?;
-                Ok(response.into_data()?.into_subtitles())
+                Ok(EntryAuxiliaryMetadata {
+                    subtitles: response.into_data()?.into_subtitles(),
+                    chapters: Vec::new(),
+                })
             }
         }
     }
@@ -4105,6 +4109,12 @@ enum PlanningMode {
     StreamsOnly,
     SubtitlesOnly,
     MetadataOnly,
+}
+
+#[derive(Default)]
+struct EntryAuxiliaryMetadata {
+    subtitles: Vec<SubtitleTrack>,
+    chapters: Vec<ChapterTrack>,
 }
 
 impl PlanningMode {
@@ -5497,13 +5507,51 @@ impl DurlSegment {
 #[derive(Debug, Deserialize)]
 struct PlayerV2Data {
     subtitle: Option<PlayerSubtitle>,
+    #[serde(default)]
+    view_points: Vec<ViewPointData>,
 }
 
 impl PlayerV2Data {
-    fn into_subtitles(self) -> Vec<SubtitleTrack> {
-        self.subtitle
+    fn into_auxiliary_metadata(self) -> EntryAuxiliaryMetadata {
+        let subtitles = self
+            .subtitle
             .map(PlayerSubtitle::into_subtitles)
-            .unwrap_or_default()
+            .unwrap_or_default();
+        let chapters = self
+            .view_points
+            .into_iter()
+            .filter_map(ViewPointData::into_chapter)
+            .collect();
+        EntryAuxiliaryMetadata {
+            subtitles,
+            chapters,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ViewPointData {
+    content: Option<String>,
+    from: Option<u64>,
+    to: Option<u64>,
+}
+
+impl ViewPointData {
+    fn into_chapter(self) -> Option<ChapterTrack> {
+        let title = self.content?.trim().to_owned();
+        if title.is_empty() {
+            return None;
+        }
+        let start_seconds = self.from?;
+        let end_seconds = self.to?;
+        if end_seconds <= start_seconds {
+            return None;
+        }
+        Some(ChapterTrack {
+            title,
+            start_seconds,
+            end_seconds,
+        })
     }
 }
 

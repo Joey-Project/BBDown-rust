@@ -72,8 +72,10 @@
 - [completed] Add a repo-local `$bbdown-live-e2e-fixtures` skill and aligned sample manifest entries
   with canonical real Bilibili URLs for opt-in normal, multi-page, and restricted-area live e2e
   validation.
-- [pending] Continue `v0.5.0` as the downloader and embedding polish line: chapter metadata muxing,
-  audio language selection, AI subtitle filtering, and final `v0.5.0` release prep.
+- [completed] Add chapter metadata mux support: plan entries expose discovered chapters, ffmpeg mux
+  maps them through temporary ffmetadata, and mux reports include `chapter_count`.
+- [pending] Continue `v0.5.0` as the downloader and embedding polish line: audio language
+  selection, AI subtitle filtering, and final `v0.5.0` release prep.
 - [pending] Plan `v0.6.0` as the credential lifecycle line: automatic credential refresh, health
   policy/reporting, profile-level status, and multi-account lifecycle UX.
 - [pending] Plan `v0.7.0` or a later feed/page release for per-video related recommendations and
