@@ -2510,8 +2510,11 @@ async fn mux_cancellation_error_for_status(
     }
     #[cfg(unix)]
     {
+        // ffmpeg often handles SIGINT itself and exits 255 instead of surfacing a signal status.
+        const FFMPEG_INTERRUPTED_EXIT_CODE: i32 = 255;
         const SIGINT_SIGNAL: i32 = 2;
-        if status.signal() == Some(SIGINT_SIGNAL)
+        if (status.signal() == Some(SIGINT_SIGNAL)
+            || status.code() == Some(FFMPEG_INTERRUPTED_EXIT_CODE))
             && let Some(error) = wait_for_mux_signal_cancellation(cancellation).await
         {
             return Some(error);
@@ -8202,13 +8205,38 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ffmpeg_mux_sigint_exit_code_maps_to_delayed_cancellation() -> anyhow::Result<()> {
+        use std::os::unix::process::ExitStatusExt as _;
+
+        let status = std::process::ExitStatus::from_raw(255 << 8);
+        let cancellation = DownloadCancellationToken::new();
+        let delayed_cancellation = cancellation.clone();
+        let cancel_task = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            delayed_cancellation.cancel_with_reason("test mux SIGINT exit-code cancellation");
+        });
+
+        let error = super::mux_error_for_failed_status(status, &cancellation).await;
+        cancel_task.await?;
+
+        assert!(error.is_cancelled());
+        assert!(
+            error
+                .to_string()
+                .contains("test mux SIGINT exit-code cancellation")
+        );
+        Ok(())
+    }
+
     #[cfg(windows)]
     #[tokio::test]
     async fn ffmpeg_mux_windows_ctrl_c_status_maps_to_delayed_cancellation() -> anyhow::Result<()> {
         use std::os::windows::process::ExitStatusExt as _;
 
         const STATUS_CONTROL_C_EXIT: u32 = 0xC000_013A;
-        let status = ExitStatus::from_raw(STATUS_CONTROL_C_EXIT);
+        let status = std::process::ExitStatus::from_raw(STATUS_CONTROL_C_EXIT);
         let cancellation = DownloadCancellationToken::new();
         let delayed_cancellation = cancellation.clone();
         let cancel_task = tokio::spawn(async move {

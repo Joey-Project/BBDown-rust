@@ -90,3 +90,6 @@ superseded_by:
 - Final follow-up review found that Windows mux Ctrl-C exits needed the same delayed cancellation
   mapping. The fix maps Windows `STATUS_CONTROL_C_EXIT` mux statuses to cancellation when the token
   is already set or arrives during the shared signal grace window, with Windows-only unit coverage.
+- Final independent rerun found that real `ffmpeg` on Unix commonly handles `SIGINT` and exits
+  `255` instead of reporting a signal status. The follow-up fix also treats that mux exit code as a
+  cancellation candidate during the same short grace window, with Unix unit coverage.
