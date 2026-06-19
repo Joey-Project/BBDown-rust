@@ -7,3 +7,5 @@
   Connector reads are acceptable when they are useful.
 - Create pull requests with `gh pr create`; use `JoeyTeng` only for human Code Owner
   approvals.
+- Use the repo-local `$bbdown-live-e2e-fixtures` skill when choosing real Bilibili URLs for
+  opt-in live e2e validation.

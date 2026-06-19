@@ -1,0 +1,4 @@
+interface:
+  display_name: "BBDown Live E2E Fixtures"
+  short_description: "Repo live URL fixtures for BBDown"
+  default_prompt: "Use $bbdown-live-e2e-fixtures to choose real Bilibili URLs for live e2e validation."
