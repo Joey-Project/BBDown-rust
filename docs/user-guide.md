@@ -137,7 +137,8 @@ The JSON output contains:
   the playurl response.
 - `streams.accept_quality`: raw accepted video quality ids retained for compatibility.
 - `streams.videos`: DASH video tracks.
-- `streams.audios`: DASH audio tracks, including available Dolby or FLAC audio.
+- `streams.audios`: DASH audio tracks, including available Dolby or FLAC audio and any upstream
+  `language` / `language_doc` metadata.
 - `streams.flv_segments`: legacy FLV segments when the playurl response uses `durl`.
 - `cover_url`: optional cover image URL used by download cover sidecars.
 - `subtitles`: discovered subtitle tracks.
@@ -205,6 +206,7 @@ bbdown download ss26801 --select latest --output-dir downloads
 bbdown download fav456 --select 1,3-5 --output-dir downloads
 bbdown download av170001 --output-dir downloads --no-mux --json
 bbdown download av170001 --video-quality 64 --audio-quality 30216 --output-dir downloads
+bbdown download av170001 --audio-language ja-JP --output-dir downloads
 bbdown download av170001 --only subtitle --output-dir downloads --json
 bbdown download av170001 --output-dir downloads --archive-file downloads/archive.json --on-duplicate keep-both
 bbdown download av170001 --output-template "{title}-{entry_count:02}" --entry-template "{index:02}-{entry_title}" --mux-template "{index:02}-{entry_title}"
@@ -215,11 +217,16 @@ bbdown download av170001 --output-dir downloads --no-mux --json --progress-json
 
 The command downloads the first complete DASH video/audio pair for each entry by default. Use
 `bbdown plan` first to inspect available ids, then pass `--video-quality <ID>` or
-`--audio-quality <ID>` to select a specific DASH video or audio stream. A requested id must exist in
-the plan for that entry; otherwise the command reports the available ids and fails before writing
-media. When DASH media is incomplete and legacy FLV `durl` segments are available, it downloads
-those segments instead. Explicit quality selection requires DASH media and therefore disables FLV
-fallback for that entry. If neither shape is complete, the download fails before writing media.
+`--audio-quality <ID>` to select a specific DASH video or audio stream. Pass
+`--audio-language <LANG>` to choose the first DASH audio stream whose `language` or `language_doc`
+matches the requested value case-insensitively; it can be combined with `--audio-quality` when the
+upstream exposes multiple language tracks with repeated ids. Requested ids or languages must exist
+in the plan for that entry; otherwise the command reports the available ids or languages and fails
+before writing media. Explicit stream selection is included in archive content keys so different
+chosen qualities or audio languages do not overwrite one another's archive records. When DASH media
+is incomplete and legacy FLV `durl` segments are available, it downloads those segments instead.
+Explicit stream selection requires DASH media and therefore disables FLV fallback for that entry. If
+neither shape is complete, the download fails before writing media.
 Pass `--progress-json` to emit `DownloadProgressEvent` JSON Lines on stderr while keeping the
 normal human output or `--json` report on stdout. Events cover plan start/completion, entry
 start/completion/failure, file start/chunk/completion/failure, mux start/completion/failure, and

@@ -423,6 +423,10 @@ pub struct MediaRequestSpec {
     pub url: String,
     pub backup_urls: Vec<String>,
     pub headers: Vec<HttpHeaderSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language_doc: Option<String>,
     pub mime_type: Option<String>,
     pub codecs: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -614,6 +618,8 @@ fn media_stream_request(
         url: stream.base_url.clone(),
         backup_urls: stream.backup_urls.clone(),
         headers: request_headers.to_vec(),
+        language: stream.language.clone(),
+        language_doc: stream.language_doc.clone(),
         mime_type: stream.mime_type.clone(),
         codecs: stream.codecs.clone(),
         codec_family: stream
@@ -646,6 +652,8 @@ fn flv_segment_request(
         url: segment.url.clone(),
         backup_urls: segment.backup_urls.clone(),
         headers: request_headers.to_vec(),
+        language: None,
+        language_doc: None,
         mime_type: Some("video/x-flv".to_owned()),
         codecs: None,
         codec_family: None,
@@ -1901,6 +1909,8 @@ mod tests {
             id,
             base_url: format!("https://video.example/{id}.m4s?token=secret"),
             backup_urls: Vec::new(),
+            language: None,
+            language_doc: None,
             codecs: Some(codecs.to_owned()),
             codec_family: None,
             bandwidth: Some(bandwidth),
@@ -1917,6 +1927,8 @@ mod tests {
             id: 30280,
             base_url: "https://audio.example/30280.m4s?token=secret".to_owned(),
             backup_urls: Vec::new(),
+            language: None,
+            language_doc: None,
             codecs: Some(codecs.to_owned()),
             codec_family: None,
             bandwidth: Some(bandwidth),

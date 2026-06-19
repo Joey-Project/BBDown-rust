@@ -30,8 +30,8 @@
   - `docs/project_journal/2026/06/2026-06-14-watch-later-feed-parsing-019eca.md`.
 - The originally planned rewrite continuation slices are complete through download archive and
   duplicate decision handling.
-- Human-facing docs now have English and Simplified Chinese versions, and the latest real live e2e
-  gate passed against the configured public and restricted-area samples.
+- Human-facing docs now have English and Simplified Chinese versions, and the opt-in real live e2e
+  harness remains available for configured public and restricted-area samples.
 - The publishable library package is named `bbdown-core`; Rust code imports it as `bbdown_core`.
 - First-release automation now uses a protected RC tag workflow followed by RC promotion to GitHub
   Release and crates.io.
@@ -41,8 +41,10 @@
   QR output, and append-only danmaku update workflows.
 - The active `0.5.0` development line is downloader and embedding polish. Progress callbacks,
   terminal progress events/report summaries, cancellation-aware download execution, and chapter
-  metadata muxing have landed; next slices add audio language selection, AI subtitle filtering, and
-  release prep.
+  metadata muxing, and audio language selection have landed; next slices add AI subtitle filtering
+  and release prep.
+- The audio language slice passed the deterministic local gate; its latest local live e2e rerun is
+  blocked by upstream restricted PGC proxy `502 Bad Gateway` responses in the ignored manifest.
 - Repo-local skill `$bbdown-live-e2e-fixtures` and `live-e2e.samples.example.json` record the current
   real Bilibili fixtures for opt-in normal, multi-page, and restricted-area live e2e validation.
 

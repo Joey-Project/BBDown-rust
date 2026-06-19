@@ -126,7 +126,8 @@ JSON 输出包含：
 - `streams.qualities`：当前可选择的 DASH 视频质量 id，并可附带 playurl 响应中的说明。
 - `streams.accept_quality`：为兼容保留的原始 accepted video quality id。
 - `streams.videos`：DASH 视频轨道。
-- `streams.audios`：DASH 音频轨道，包括可用的 Dolby 或 FLAC 音频。
+- `streams.audios`：DASH 音频轨道，包括可用的 Dolby 或 FLAC 音频，以及上游提供的
+  `language` / `language_doc` metadata。
 - `streams.flv_segments`：playurl 响应使用 `durl` 时的 legacy FLV 分段。
 - `cover_url`：可选封面图片 URL，供下载封面旁路文件使用。
 - `subtitles`：发现的字幕轨道。
@@ -187,6 +188,7 @@ bbdown download ss26801 --select latest --output-dir downloads
 bbdown download fav456 --select 1,3-5 --output-dir downloads
 bbdown download av170001 --output-dir downloads --no-mux --json
 bbdown download av170001 --video-quality 64 --audio-quality 30216 --output-dir downloads
+bbdown download av170001 --audio-language ja-JP --output-dir downloads
 bbdown download av170001 --only subtitle --output-dir downloads --json
 bbdown download av170001 --output-dir downloads --archive-file downloads/archive.json --on-duplicate keep-both
 bbdown download av170001 --output-template "{title}-{entry_count:02}" --entry-template "{index:02}-{entry_title}" --mux-template "{index:02}-{entry_title}"
@@ -197,9 +199,13 @@ bbdown download av170001 --output-dir downloads --no-mux --json --progress-json
 
 默认情况下，命令会为每个条目下载第一组完整 DASH 视频/音频。先使用 `bbdown plan` 查看可
 用 id，再传入 `--video-quality <ID>` 或 `--audio-quality <ID>` 选择特定 DASH 视频或音频流。
-请求的 id 必须存在于该条目的 plan 中；否则命令会报告可用 id，并在写入媒体前失败。当
-DASH 媒体不完整而 legacy FLV `durl` 分段可用时，会改为下载这些分段。显式质量选择要求
-DASH 媒体，因此会禁用该条目的 FLV 回退。如果两种形态都不完整，下载会在写入媒体前失败。
+传入 `--audio-language <LANG>` 可以选择第一条 `language` 或 `language_doc` 与请求值大小写
+不敏感匹配的 DASH 音频流；当上游暴露多条重复 id 的语言音轨时，它也可以和
+`--audio-quality` 组合使用。请求的 id 或语言必须存在于该条目的 plan 中；否则命令会报告可
+用 id 或语言，并在写入媒体前失败。显式 stream selection 会写入 archive content key，因此
+不同清晰度或音频语言的下载不会互相覆盖 archive 记录。当 DASH 媒体不完整而 legacy FLV
+`durl` 分段可用时，会改为下载这些分段。显式 stream selection 要求 DASH 媒体，因此会禁用
+该条目的 FLV 回退。如果两种形态都不完整，下载会在写入媒体前失败。
 传入 `--progress-json` 会把 `DownloadProgressEvent` 以 JSON Lines 写到 stderr，同时保留
 stdout 上的普通人类输出或 `--json` report。事件覆盖 plan 开始/完成、条目开始/完成、文件
 开始/chunk/完成/失败、mux 开始/完成/失败，以及 plan 完成/失败/取消，因此 wrapper 可以

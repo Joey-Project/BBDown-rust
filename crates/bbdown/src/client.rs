@@ -5397,6 +5397,18 @@ struct IntlMediaResource {
     width: Option<u32>,
     height: Option<u32>,
     size: Option<u64>,
+    language: Option<String>,
+    lang: Option<String>,
+    lan: Option<String>,
+    language_doc: Option<String>,
+    lang_doc: Option<String>,
+    lan_doc: Option<String>,
+    #[serde(rename = "languageDoc")]
+    language_doc_camel: Option<String>,
+    #[serde(rename = "langDoc")]
+    lang_doc_camel: Option<String>,
+    #[serde(rename = "lanDoc")]
+    lan_doc_camel: Option<String>,
 }
 
 impl IntlMediaResource {
@@ -5406,6 +5418,15 @@ impl IntlMediaResource {
             id: self.id.unwrap_or(fallback_id),
             base_url: normalize_media_url(&base_url),
             backup_urls: normalize_media_urls([self.backup_url, self.backup_url_camel]),
+            language: first_non_empty([self.language, self.lang, self.lan]),
+            language_doc: first_non_empty([
+                self.language_doc,
+                self.lang_doc,
+                self.lan_doc,
+                self.language_doc_camel,
+                self.lang_doc_camel,
+                self.lan_doc_camel,
+            ]),
             codecs: self.codecs,
             codec_family: None,
             bandwidth: self.bandwidth,
@@ -5457,6 +5478,18 @@ struct DashTrack {
     #[serde(rename = "mimeType")]
     mime_type_camel: Option<String>,
     size: Option<u64>,
+    language: Option<String>,
+    lang: Option<String>,
+    lan: Option<String>,
+    language_doc: Option<String>,
+    lang_doc: Option<String>,
+    lan_doc: Option<String>,
+    #[serde(rename = "languageDoc")]
+    language_doc_camel: Option<String>,
+    #[serde(rename = "langDoc")]
+    lang_doc_camel: Option<String>,
+    #[serde(rename = "lanDoc")]
+    lan_doc_camel: Option<String>,
 }
 
 impl DashTrack {
@@ -5466,6 +5499,15 @@ impl DashTrack {
             id: self.id?,
             base_url: normalize_media_url(&base_url),
             backup_urls: normalize_media_urls([self.backup_url, self.backup_url_camel]),
+            language: first_non_empty([self.language, self.lang, self.lan]),
+            language_doc: first_non_empty([
+                self.language_doc,
+                self.lang_doc,
+                self.lan_doc,
+                self.language_doc_camel,
+                self.lang_doc_camel,
+                self.lan_doc_camel,
+            ]),
             codecs: self.codecs,
             codec_family: None,
             bandwidth: self.bandwidth,
@@ -6426,7 +6468,9 @@ mod tests {
                 "audio": [{
                     "id": 30280,
                     "baseUrl": "//audio.example/30280.m4s",
-                    "codecs": "mp4a.40.2"
+                    "codecs": "mp4a.40.2",
+                    "language": "ja-JP",
+                    "language_doc": "Japanese"
                 }]
             }
         }))?;
@@ -6435,6 +6479,8 @@ mod tests {
 
         assert_eq!(streams.videos[0].id, 80);
         assert_eq!(streams.audios[0].id, 30280);
+        assert_eq!(streams.audios[0].language.as_deref(), Some("ja-JP"));
+        assert_eq!(streams.audios[0].language_doc.as_deref(), Some("Japanese"));
         assert_eq!(streams.accept_quality, vec![80]);
         assert_eq!(streams.qualities[0].id, 80);
         assert_eq!(
@@ -6506,7 +6552,9 @@ mod tests {
                         "id": 30280,
                         "base_url": "https://intl.example/audio.m4s",
                         "bandwidth": 128_000,
-                        "codecs": "mp4a.40.2"
+                        "codecs": "mp4a.40.2",
+                        "lan": "ja-JP",
+                        "lanDoc": "Japanese"
                     }]
                 }
             }
@@ -6517,6 +6565,8 @@ mod tests {
         assert_eq!(streams.duration_seconds, Some(42));
         assert_eq!(streams.videos[0].id, 80);
         assert_eq!(streams.audios[0].id, 30280);
+        assert_eq!(streams.audios[0].language.as_deref(), Some("ja-JP"));
+        assert_eq!(streams.audios[0].language_doc.as_deref(), Some("Japanese"));
         Ok(())
     }
 

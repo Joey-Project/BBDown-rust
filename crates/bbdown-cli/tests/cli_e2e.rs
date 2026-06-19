@@ -308,6 +308,41 @@ fn plan_json_resolves_mock_video_streams() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;
     let credential_file = temp.path().join("credentials.json");
+    mock_video_stream_plan_endpoints(&server);
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("plan")
+        .arg("av170001")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    assert_eq!(json["title"], "Mock video");
+    assert_eq!(json["entries"][0]["streams"]["videos"][0]["id"], 80);
+    assert_eq!(
+        json["entries"][0]["streams"]["audios"][0]["language"],
+        "ja-JP"
+    );
+    assert_eq!(
+        json["entries"][0]["streams"]["audios"][0]["language_doc"],
+        "Japanese"
+    );
+    assert_plan_stream_qualities(&json);
+    assert_eq!(
+        json["entries"][0]["danmaku"]["xml_url"],
+        "https://comment.bilibili.com/2.xml"
+    );
+    assert_plan_chapters(&json);
+
+    assert_human_plan_lists_qualities(&credential_file, &server)?;
+    Ok(())
+}
+
+fn mock_video_stream_plan_endpoints(server: &MockServer) {
     server.mock(|when, then| {
         when.method(GET)
             .path("/x/web-interface/view")
@@ -357,7 +392,9 @@ fn plan_json_resolves_mock_video_streams() -> anyhow::Result<()> {
                     "audio": [{
                         "id": 30280,
                         "baseUrl": "https://audio.example/30280.m4s",
-                        "base_url": "https://audio.example/30280.m4s"
+                        "base_url": "https://audio.example/30280.m4s",
+                        "language": "ja-JP",
+                        "language_doc": "Japanese"
                     }]
                 }
             }
@@ -379,29 +416,6 @@ fn plan_json_resolves_mock_video_streams() -> anyhow::Result<()> {
             }
         }));
     });
-
-    let mut command = bbdown_command()?;
-    command
-        .arg("--credential-file")
-        .arg(&credential_file)
-        .arg("--api-base")
-        .arg(server.base_url())
-        .arg("plan")
-        .arg("av170001")
-        .arg("--json");
-    let output = command.assert().success().get_output().stdout.clone();
-    let json: Value = serde_json::from_slice(&output)?;
-    assert_eq!(json["title"], "Mock video");
-    assert_eq!(json["entries"][0]["streams"]["videos"][0]["id"], 80);
-    assert_plan_stream_qualities(&json);
-    assert_eq!(
-        json["entries"][0]["danmaku"]["xml_url"],
-        "https://comment.bilibili.com/2.xml"
-    );
-    assert_plan_chapters(&json);
-
-    assert_human_plan_lists_qualities(&credential_file, &server)?;
-    Ok(())
 }
 
 fn assert_plan_chapters(json: &Value) {
@@ -486,6 +500,8 @@ fn playback_json_resolves_media_request_specs() -> anyhow::Result<()> {
         variant["audio"]["url"],
         "https://audio.example/30280.m4s?token=secret"
     );
+    assert_eq!(variant["audio"]["language"], "ja-JP");
+    assert_eq!(variant["audio"]["language_doc"], "Japanese");
     assert_eq!(variant["audio"]["cache_key"]["media_kind"], "audio");
 
     let mut human = bbdown_command()?;
@@ -500,6 +516,7 @@ fn playback_json_resolves_media_request_specs() -> anyhow::Result<()> {
     assert!(text.contains("variants: 3"));
     assert!(text.contains("kind=dash"));
     assert!(text.contains("abr=1/1 switchable=false"));
+    assert!(text.contains("audio_lang=ja-JP"));
     assert!(text.contains("format=h264+aac"));
     assert!(text.contains("avc1.640028+mp4a.40.2"));
     assert!(text.contains("avplayer=preferred"));
@@ -878,7 +895,9 @@ fn mock_playback_streams(server: &MockServer) {
                         "codecs": "mp4a.40.2",
                         "bandwidth": 128_000,
                         "mimeType": "audio/mp4",
-                        "size": 2000
+                        "size": 2000,
+                        "language": "ja-JP",
+                        "language_doc": "Japanese"
                     }]
                 }
             }
@@ -1090,6 +1109,8 @@ fn assert_human_plan_lists_qualities(
     assert!(!text.contains("64 (720P)"));
     assert!(text.contains("videos: 1"));
     assert!(text.contains("q=80"));
+    assert!(text.contains("lang=ja-JP"));
+    assert!(text.contains("lang_doc=Japanese"));
     Ok(())
 }
 
@@ -1476,12 +1497,16 @@ fn download_json_writes_mock_media_files() -> anyhow::Result<()> {
                         {
                             "id": 30280,
                             "baseUrl": format!("{}/audio.m4s", server.base_url()),
-                            "base_url": format!("{}/audio.m4s", server.base_url())
+                            "base_url": format!("{}/audio.m4s", server.base_url()),
+                            "language": "ja-JP",
+                            "language_doc": "Japanese"
                         },
                         {
                             "id": 30216,
                             "baseUrl": format!("{}/audio-30216.m4s", server.base_url()),
-                            "base_url": format!("{}/audio-30216.m4s", server.base_url())
+                            "base_url": format!("{}/audio-30216.m4s", server.base_url()),
+                            "language": "en-US",
+                            "language_doc": "English"
                         }
                     ]
                 }
@@ -1551,6 +1576,8 @@ fn download_json_writes_mock_media_files() -> anyhow::Result<()> {
         .arg("64")
         .arg("--audio-quality")
         .arg("30216")
+        .arg("--audio-language")
+        .arg("English")
         .arg("--no-mux")
         .arg("--json");
     let output = command.assert().success().get_output().stdout.clone();

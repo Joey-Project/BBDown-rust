@@ -218,6 +218,10 @@ pub struct MediaStream {
     pub id: u32,
     pub base_url: String,
     pub backup_urls: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language_doc: Option<String>,
     pub codecs: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codec_family: Option<CodecFamily>,

@@ -191,6 +191,8 @@ struct DownloadCliArgs {
     video_quality: Option<u32>,
     #[arg(long, value_name = "ID")]
     audio_quality: Option<u32>,
+    #[arg(long, value_name = "LANG")]
+    audio_language: Option<String>,
     #[arg(long, value_name = "TEMPLATE")]
     output_template: Option<String>,
     #[arg(long, value_name = "TEMPLATE")]
@@ -343,6 +345,7 @@ fn validate_single_download_args(
     no_danmaku: bool,
     video_quality: Option<u32>,
     audio_quality: Option<u32>,
+    audio_language: Option<&str>,
 ) -> anyhow::Result<()> {
     let Some(only) = only else {
         return Ok(());
@@ -364,13 +367,17 @@ fn validate_single_download_args(
         "--only video conflicts with --audio-quality"
     );
     ensure!(
+        !(matches!(only, DownloadOnlyArg::Video) && audio_language.is_some()),
+        "--only video conflicts with --audio-language"
+    );
+    ensure!(
         !(matches!(only, DownloadOnlyArg::Audio) && video_quality.is_some()),
         "--only audio conflicts with --video-quality"
     );
     ensure!(
         matches!(only, DownloadOnlyArg::Video | DownloadOnlyArg::Audio)
-            || (video_quality.is_none() && audio_quality.is_none()),
-        "stream quality selection requires --only video, --only audio, or the default download mode"
+            || (video_quality.is_none() && audio_quality.is_none() && audio_language.is_none()),
+        "stream selection requires --only video, --only audio, or the default download mode"
     );
     Ok(())
 }
@@ -387,6 +394,7 @@ struct DownloadOptionCliArgs {
     danmaku_formats: Vec<DanmakuFormatArg>,
     video_quality: Option<u32>,
     audio_quality: Option<u32>,
+    audio_language: Option<String>,
     templates: DownloadTemplateCliFlags,
     ffmpeg: PathBuf,
 }
@@ -426,6 +434,7 @@ fn download_options_from_cli(args: DownloadOptionCliArgs) -> anyhow::Result<Down
         args.sidecars.no_danmaku,
         args.video_quality,
         args.audio_quality,
+        args.audio_language.as_deref(),
     )?;
     let download_idle_timeout = if args.download_idle_timeout_seconds == 0 {
         None
@@ -445,7 +454,10 @@ fn download_options_from_cli(args: DownloadOptionCliArgs) -> anyhow::Result<Down
             args.retry_attempts,
             Duration::from_millis(args.retry_backoff_ms),
         ))
-        .with_stream_selection(StreamSelection::new(args.video_quality, args.audio_quality))
+        .with_stream_selection(
+            StreamSelection::new(args.video_quality, args.audio_quality)
+                .with_audio_language(args.audio_language.unwrap_or_default()),
+        )
         .with_path_templates(path_templates)
         .with_download_idle_timeout(download_idle_timeout)
         .with_resume(!args.execution.no_resume)
@@ -679,6 +691,7 @@ async fn handle_download_cli(
         danmaku_formats: args.danmaku_formats,
         video_quality: args.video_quality,
         audio_quality: args.audio_quality,
+        audio_language: args.audio_language,
         templates: DownloadTemplateCliFlags {
             output: args.output_template,
             entry: args.entry_template,
@@ -1020,6 +1033,13 @@ fn print_playback_summary(plan: &PlaybackPlan) {
             if let Some(frame_rate) = variant.frame_rate.as_deref() {
                 parts.push(format!("{frame_rate}fps"));
             }
+            if let Some(audio_language) = variant
+                .audio
+                .as_ref()
+                .and_then(|audio| audio.language.as_deref())
+            {
+                parts.push(format!("audio_lang={audio_language}"));
+            }
             if !variant.codecs.is_empty() {
                 parts.push(variant.codecs.join("+"));
             }
@@ -1078,6 +1098,12 @@ fn quality_list(qualities: &[StreamQuality]) -> String {
 
 fn media_stream_summary(label: &str, stream: &MediaStream) -> String {
     let mut parts = vec![format!("{label}={}", stream.id)];
+    if let Some(language) = stream.language.as_deref() {
+        parts.push(format!("lang={language}"));
+    }
+    if let Some(language_doc) = stream.language_doc.as_deref() {
+        parts.push(format!("lang_doc={language_doc}"));
+    }
     if let (Some(width), Some(height)) = (stream.width, stream.height) {
         parts.push(format!("{width}x{height}"));
     }
@@ -2599,14 +2625,15 @@ fn _assert_credentials_send_sync(_: Credentials) {}
 #[cfg(test)]
 mod tests {
     use super::{
-        Cli, CliProgressReporter, CredentialRuntime, DownloadCtrlCAction, DuplicateDecisionRequest,
-        DuplicatePromptActiveGuard, archive_sidecar_path, credential_profile_selection,
-        download_ctrl_c_action, duplicate_decision_or_report, endpoints_from_cli,
-        ensure_access_key_login_file_is_safe, ensure_access_key_login_stdin_is_safe,
-        ensure_archive_file_is_not_output_root, next_poll_sleep, parse_access_key_login_input,
-        remaining_until, restricted_area_from_cli_with_args,
-        restricted_area_from_cli_with_env_values, save_credentials,
-        should_prompt_duplicate_decision, validate_media_host_spec,
+        Cli, CliProgressReporter, CredentialRuntime, DownloadCtrlCAction, DownloadOnlyArg,
+        DuplicateDecisionRequest, DuplicatePromptActiveGuard, archive_sidecar_path,
+        credential_profile_selection, download_ctrl_c_action, duplicate_decision_or_report,
+        endpoints_from_cli, ensure_access_key_login_file_is_safe,
+        ensure_access_key_login_stdin_is_safe, ensure_archive_file_is_not_output_root,
+        next_poll_sleep, parse_access_key_login_input, remaining_until,
+        restricted_area_from_cli_with_args, restricted_area_from_cli_with_env_values,
+        save_credentials, should_prompt_duplicate_decision, validate_media_host_spec,
+        validate_single_download_args,
     };
     use bbdown_core::{
         AccessKeyLoginConfig, CredentialProfileSelection, CredentialStore, Credentials,
@@ -2642,6 +2669,28 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn download_arg_validation_rejects_audio_language_for_video_only() -> anyhow::Result<()> {
+        let error = match validate_single_download_args(
+            Some(DownloadOnlyArg::Video),
+            false,
+            false,
+            false,
+            None,
+            None,
+            Some("ja-JP"),
+        ) {
+            Ok(()) => anyhow::bail!("audio language should conflict with video-only mode"),
+            Err(error) => error,
+        };
+
+        assert_eq!(
+            error.to_string(),
+            "--only video conflicts with --audio-language"
+        );
+        Ok(())
     }
 
     #[test]
