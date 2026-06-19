@@ -83,3 +83,7 @@ superseded_by:
   cancellation duplicate `FileFailed` risk after the candidate-URL path was fixed. The follow-up fix
   applies the same terminal-event guard to single-URL downloads and adds cover-sidecar retry-backoff
   cancellation coverage.
+- Final independent review found that terminal `SIGINT` can reach `ffmpeg` before the CLI
+  cancellation token wins the mux wait race, causing mux cancellation to be reported as
+  `MuxFailed`. The fix maps SIGINT-killed mux statuses to cancellation when the token is already set
+  or arrives during a short Unix signal grace window, with unit coverage for the delayed-token case.

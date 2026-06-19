@@ -14,8 +14,10 @@ use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::future::Future;
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::process::{ExitStatus, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::fs::{self, OpenOptions};
 use tokio::io::AsyncWriteExt;
@@ -25,6 +27,7 @@ const MAX_FILE_NAME_BYTES: usize = 80;
 const MAX_FILE_COMPONENT_BYTES: usize = 240;
 const MAX_SUBTITLE_EXTENSION_BYTES: usize = 16;
 const MAX_COVER_EXTENSION_BYTES: usize = 16;
+const MUX_SIGNAL_CANCELLATION_GRACE: Duration = Duration::from_millis(100);
 const DEFAULT_UPOS_REPLACEMENT_HOST: &str = "upos-sz-mirrorcoso1.bilivideo.com";
 const DEFAULT_OUTPUT_DIR_TEMPLATE: &str = "{title}";
 const DEFAULT_ENTRY_DIR_TEMPLATE: &str = "P{index:03}-{content_id}-{entry_title}";
@@ -2465,12 +2468,7 @@ async fn run_ffmpeg_mux(
         }
     };
     if !status.success() {
-        return Err(Error::MuxFailed {
-            status: status.code().map_or_else(
-                || "terminated by signal".to_owned(),
-                |code| code.to_string(),
-            ),
-        });
+        return Err(mux_error_for_failed_status(status, cancellation).await);
     }
     let metadata = fs::metadata(mux_output_path)
         .await
@@ -2488,6 +2486,49 @@ async fn run_ffmpeg_mux(
         });
     }
     Ok(())
+}
+
+async fn mux_error_for_failed_status(
+    status: ExitStatus,
+    cancellation: &DownloadCancellationToken,
+) -> Error {
+    if let Some(error) = mux_cancellation_error_for_status(status, cancellation).await {
+        return error;
+    }
+    Error::MuxFailed {
+        status: mux_status_message(status),
+    }
+}
+
+async fn mux_cancellation_error_for_status(
+    status: ExitStatus,
+    cancellation: &DownloadCancellationToken,
+) -> Option<Error> {
+    if cancellation.is_cancelled() {
+        return Some(cancellation.cancelled_error());
+    }
+    #[cfg(unix)]
+    {
+        const SIGINT_SIGNAL: i32 = 2;
+        if status.signal() == Some(SIGINT_SIGNAL) {
+            tokio::select! {
+                () = cancellation.cancelled() => return Some(cancellation.cancelled_error()),
+                () = tokio::time::sleep(MUX_SIGNAL_CANCELLATION_GRACE) => {}
+            }
+        }
+    }
+    if cancellation.is_cancelled() {
+        Some(cancellation.cancelled_error())
+    } else {
+        None
+    }
+}
+
+fn mux_status_message(status: ExitStatus) -> String {
+    status.code().map_or_else(
+        || "terminated by signal".to_owned(),
+        |code| code.to_string(),
+    )
 }
 
 fn already_complete_resume_result<P>(
@@ -4535,11 +4576,11 @@ mod tests {
         comparable_output_path, cover_file_name, default_plan_output_dir,
         download_entry_content_key, download_entry_content_key_for_options,
         download_plan_content_key, download_plan_content_key_for_options, entry_dir_name,
-        media_file_name, mux_file_stem, path_is_occupied, remove_mux_output_if_cancelled,
-        render_template_component, safe_file_name, safe_file_name_with_budget, select_media_stream,
-        subtitle_dedup_key, subtitle_extension, subtitle_file_name, temporary_download_path,
-        temporary_generated_path, temporary_mux_path, temporary_replace_path,
-        write_generated_text_file,
+        media_file_name, mux_error_for_failed_status, mux_file_stem, path_is_occupied,
+        remove_mux_output_if_cancelled, render_template_component, safe_file_name,
+        safe_file_name_with_budget, select_media_stream, subtitle_dedup_key, subtitle_extension,
+        subtitle_file_name, temporary_download_path, temporary_generated_path, temporary_mux_path,
+        temporary_replace_path, write_generated_text_file,
     };
     use crate::models::{
         DanmakuTrack, DownloadEntry, DownloadPlan, FlvSegment, MediaStream, StreamDiagnostics,
@@ -8115,6 +8156,28 @@ mod tests {
 
         assert!(error.is_cancelled());
         assert!(!mux_output_path.exists());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ffmpeg_mux_sigint_status_maps_to_delayed_cancellation() -> anyhow::Result<()> {
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("kill -INT $$")
+            .status()?;
+        let cancellation = DownloadCancellationToken::new();
+        let delayed_cancellation = cancellation.clone();
+        let cancel_task = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            delayed_cancellation.cancel_with_reason("test mux SIGINT cancellation");
+        });
+
+        let error = mux_error_for_failed_status(status, &cancellation).await;
+        cancel_task.await?;
+
+        assert!(error.is_cancelled());
+        assert!(error.to_string().contains("test mux SIGINT cancellation"));
         Ok(())
     }
 
