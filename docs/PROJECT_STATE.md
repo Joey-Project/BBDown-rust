@@ -40,8 +40,8 @@
 - The `0.4.0` line shipped credential lifecycle improvements, access-key acquisition, unified login
   QR output, and append-only danmaku update workflows.
 - The active `0.5.0` development line is downloader and embedding polish. The progress callback
-  slice has landed; cancellation-aware download execution, chapter metadata muxing, audio language
-  selection, and AI subtitle filtering remain in the line.
+  slice has landed; next slices add progress terminal events/report summaries, cancellation-aware
+  download execution, chapter metadata muxing, audio language selection, and AI subtitle filtering.
 
 ## Recovery Pointers
 

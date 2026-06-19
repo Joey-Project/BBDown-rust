@@ -19,6 +19,7 @@ use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{self, IsTerminal, Read};
 use std::path::{Component, Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 const DEFAULT_ACCESS_KEY_AUTH_BASE: &str = "https://www.biliplus.com";
@@ -700,6 +701,59 @@ impl DownloadProgressSink for CliProgressReporter {
     }
 }
 
+#[derive(Debug)]
+struct DeferredPlanCompletedProgress {
+    inner: CliProgressReporter,
+    plan_completed: Mutex<Option<DownloadProgressEvent>>,
+}
+
+impl DeferredPlanCompletedProgress {
+    fn new(inner: CliProgressReporter) -> Self {
+        Self {
+            inner,
+            plan_completed: Mutex::new(None),
+        }
+    }
+
+    fn flush_plan_completed(&self) {
+        let event = match self.plan_completed.lock() {
+            Ok(mut event) => event.take(),
+            Err(poisoned) => poisoned.into_inner().take(),
+        };
+        if let Some(event) = event {
+            self.inner.on_download_progress(&event);
+        }
+    }
+}
+
+impl DownloadProgressSink for DeferredPlanCompletedProgress {
+    fn on_download_progress(&self, event: &DownloadProgressEvent) {
+        if matches!(event, DownloadProgressEvent::PlanCompleted { .. }) {
+            match self.plan_completed.lock() {
+                Ok(mut stored) => *stored = Some(event.clone()),
+                Err(poisoned) => *poisoned.into_inner() = Some(event.clone()),
+            }
+            return;
+        }
+        self.inner.on_download_progress(event);
+    }
+}
+
+fn emit_cli_plan_failed(
+    progress: CliProgressReporter,
+    title: &str,
+    output_dir: &Path,
+    completed_entries: usize,
+    error: String,
+) {
+    progress.on_download_progress(&DownloadProgressEvent::PlanFailed {
+        title: title.to_owned(),
+        output_dir: output_dir.to_path_buf(),
+        completed_entries,
+        error,
+    });
+}
+
 #[derive(Clone, Debug)]
 struct ClientRuntimeConfig {
     endpoints: EndpointConfig,
@@ -947,70 +1001,246 @@ async fn handle_download(
     let progress = CliProgressReporter {
         json: args.progress_json,
     };
-    let report = if let Some(archive_file) = args.archive_file {
-        let plan = client
-            .plan_download_with_mode(&args.url, args.select, args.options.mode)
-            .await?;
-        let mut archive = DownloadArchive::load(&archive_file)
-            .with_context(|| format!("failed to load archive {}", archive_file.display()))?;
-        let preflight = DownloadPreflight::inspect(&plan, &args.options, Some(&archive))?;
-        let stdin_is_terminal = io::stdin().is_terminal();
-        let duplicate_prompt_printed_preflight = should_prompt_duplicate_decision(
-            args.on_duplicate,
-            args.json,
-            &preflight,
-            stdin_is_terminal,
-        );
-        let decision =
-            duplicate_decision(args.on_duplicate, args.json, stdin_is_terminal, &preflight)?;
-        let execution_decision = if args.on_duplicate.is_none() && !preflight.requires_decision() {
-            DuplicateDecision::Cancel
-        } else {
-            decision
-        };
-        if preflight.requires_decision() && decision == DuplicateDecision::Cancel {
-            if args.json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&serde_json::json!({
-                        "status": "canceled",
-                        "preflight": preflight,
-                    }))?
-                );
-            } else {
-                if !duplicate_prompt_printed_preflight {
-                    print_duplicate_preflight(&preflight);
-                }
-                println!("download canceled");
-            }
-            return Ok(());
+    let json = args.json;
+    let report = match args.archive_file.clone() {
+        Some(archive_file) => {
+            let Some(report) =
+                handle_archive_download(&client, args, archive_file, progress).await?
+            else {
+                return Ok(());
+            };
+            report
         }
-        let decision_output_dir = preflight.output_dir_for_decision(decision)?;
-        ensure_archive_file_is_not_output_root(&archive_file, &decision_output_dir)?;
-        let report = client
-            .download_plan_with_archive_preflight_decision_with_progress(
-                &plan,
-                args.options,
-                &mut archive,
-                &preflight,
-                execution_decision,
-                &progress,
-            )
-            .await?;
-        ensure_archive_file_is_not_output_root(&archive_file, &report.output_dir)?;
-        archive
-            .save(&archive_file)
-            .with_context(|| format!("failed to save archive {}", archive_file.display()))?;
-        report
-    } else {
-        client
-            .download_input_with_progress(&args.url, args.select, args.options, &progress)
-            .await?
+        None => {
+            client
+                .download_input_with_progress(&args.url, args.select, args.options, &progress)
+                .await?
+        }
     };
-    if args.json {
+    if json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
         print_download_report(&report);
+    }
+    Ok(())
+}
+
+async fn handle_archive_download(
+    client: &BiliClient,
+    args: DownloadCommandArgs,
+    archive_file: PathBuf,
+    progress: CliProgressReporter,
+) -> anyhow::Result<Option<DownloadReport>> {
+    let input_title = args.url.clone();
+    let output_dir = args.options.output_dir.clone();
+    let plan = match client
+        .plan_download_with_mode(&args.url, args.select, args.options.mode)
+        .await
+    {
+        Ok(plan) => plan,
+        Err(error) => {
+            emit_cli_plan_failed(progress, &input_title, &output_dir, 0, error.to_string());
+            return Err(error.into());
+        }
+    };
+    let mut archive = load_archive_or_report(
+        &archive_file,
+        progress,
+        &plan.title,
+        &args.options.output_dir,
+    )?;
+    let preflight = match DownloadPreflight::inspect(&plan, &args.options, Some(&archive)) {
+        Ok(preflight) => preflight,
+        Err(error) => {
+            emit_cli_plan_failed(
+                progress,
+                &plan.title,
+                &args.options.output_dir,
+                0,
+                error.to_string(),
+            );
+            return Err(error.into());
+        }
+    };
+    let stdin_is_terminal = io::stdin().is_terminal();
+    let duplicate_prompt_printed_preflight = should_prompt_duplicate_decision(
+        args.on_duplicate,
+        args.json,
+        &preflight,
+        stdin_is_terminal,
+    );
+    let decision = duplicate_decision_or_report(
+        args.on_duplicate,
+        args.json,
+        stdin_is_terminal,
+        &preflight,
+        progress,
+        &plan.title,
+    )?;
+    let execution_decision = if args.on_duplicate.is_none() && !preflight.requires_decision() {
+        DuplicateDecision::Cancel
+    } else {
+        decision
+    };
+    if preflight.requires_decision() && decision == DuplicateDecision::Cancel {
+        report_archive_duplicate_cancel(
+            args.json,
+            duplicate_prompt_printed_preflight,
+            progress,
+            &plan.title,
+            &preflight,
+        )?;
+        return Ok(None);
+    }
+    let decision_output_dir =
+        decision_output_dir_or_report(&preflight, decision, progress, &plan.title)?;
+    if let Err(error) = ensure_archive_file_is_not_output_root(&archive_file, &decision_output_dir)
+    {
+        emit_cli_plan_failed(
+            progress,
+            &plan.title,
+            &decision_output_dir,
+            0,
+            error.to_string(),
+        );
+        return Err(error);
+    }
+    let archive_progress = DeferredPlanCompletedProgress::new(progress);
+    let report = client
+        .download_plan_with_archive_preflight_decision_with_progress(
+            &plan,
+            args.options,
+            &mut archive,
+            &preflight,
+            execution_decision,
+            &archive_progress,
+        )
+        .await?;
+    save_archive_or_report(&archive, &archive_file, &report, progress, &plan.title)?;
+    archive_progress.flush_plan_completed();
+    Ok(Some(report))
+}
+
+fn load_archive_or_report(
+    archive_file: &Path,
+    progress: CliProgressReporter,
+    title: &str,
+    output_dir: &Path,
+) -> anyhow::Result<DownloadArchive> {
+    match DownloadArchive::load(archive_file)
+        .with_context(|| format!("failed to load archive {}", archive_file.display()))
+    {
+        Ok(archive) => Ok(archive),
+        Err(error) => {
+            emit_cli_plan_failed(progress, title, output_dir, 0, error.to_string());
+            Err(error)
+        }
+    }
+}
+
+fn duplicate_decision_or_report(
+    on_duplicate: Option<DuplicateDecision>,
+    json: bool,
+    stdin_is_terminal: bool,
+    preflight: &DownloadPreflight,
+    progress: CliProgressReporter,
+    title: &str,
+) -> anyhow::Result<DuplicateDecision> {
+    match duplicate_decision(on_duplicate, json, stdin_is_terminal, preflight) {
+        Ok(decision) => Ok(decision),
+        Err(error) => {
+            emit_cli_plan_failed(
+                progress,
+                title,
+                &preflight.planned_output_dir,
+                0,
+                error.to_string(),
+            );
+            Err(error)
+        }
+    }
+}
+
+fn decision_output_dir_or_report(
+    preflight: &DownloadPreflight,
+    decision: DuplicateDecision,
+    progress: CliProgressReporter,
+    title: &str,
+) -> anyhow::Result<PathBuf> {
+    match preflight.output_dir_for_decision(decision) {
+        Ok(output_dir) => Ok(output_dir),
+        Err(error) => {
+            emit_cli_plan_failed(
+                progress,
+                title,
+                &preflight.planned_output_dir,
+                0,
+                error.to_string(),
+            );
+            Err(error.into())
+        }
+    }
+}
+
+fn save_archive_or_report(
+    archive: &DownloadArchive,
+    archive_file: &Path,
+    report: &DownloadReport,
+    progress: CliProgressReporter,
+    title: &str,
+) -> anyhow::Result<()> {
+    if let Err(error) = ensure_archive_file_is_not_output_root(archive_file, &report.output_dir) {
+        emit_cli_plan_failed(
+            progress,
+            title,
+            &report.output_dir,
+            report.entries.len(),
+            error.to_string(),
+        );
+        return Err(error);
+    }
+    if let Err(error) = archive
+        .save(archive_file)
+        .with_context(|| format!("failed to save archive {}", archive_file.display()))
+    {
+        emit_cli_plan_failed(
+            progress,
+            title,
+            &report.output_dir,
+            report.entries.len(),
+            error.to_string(),
+        );
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn report_archive_duplicate_cancel(
+    json: bool,
+    duplicate_prompt_printed_preflight: bool,
+    progress: CliProgressReporter,
+    title: &str,
+    preflight: &DownloadPreflight,
+) -> anyhow::Result<()> {
+    progress.on_download_progress(&DownloadProgressEvent::PlanCancelled {
+        title: title.to_owned(),
+        output_dir: preflight.planned_output_dir.clone(),
+        completed_entries: 0,
+        error: "archive or output conflict requires a decision".to_owned(),
+    });
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "canceled",
+                "preflight": preflight,
+            }))?
+        );
+    } else {
+        if !duplicate_prompt_printed_preflight {
+            print_duplicate_preflight(preflight);
+        }
+        println!("download canceled");
     }
     Ok(())
 }

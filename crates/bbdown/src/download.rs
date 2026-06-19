@@ -705,6 +705,18 @@ pub struct DownloadReport {
     pub entries: Vec<EntryDownloadReport>,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DownloadReportSummary {
+    pub entry_count: usize,
+    pub file_count: usize,
+    pub media_file_count: usize,
+    pub sidecar_file_count: usize,
+    pub mux_count: usize,
+    pub bytes_written: u64,
+    pub resumed_bytes: u64,
+    pub total_bytes: u64,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct EntryDownloadReport {
     pub index: u32,
@@ -712,6 +724,17 @@ pub struct EntryDownloadReport {
     pub directory: PathBuf,
     pub files: Vec<DownloadedFile>,
     pub mux: Option<MuxReport>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct EntryDownloadSummary {
+    pub file_count: usize,
+    pub media_file_count: usize,
+    pub sidecar_file_count: usize,
+    pub has_mux: bool,
+    pub bytes_written: u64,
+    pub resumed_bytes: u64,
+    pub total_bytes: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -761,6 +784,54 @@ pub struct MuxReport {
     pub command: Vec<String>,
 }
 
+impl DownloadReport {
+    #[must_use]
+    pub fn summary(&self) -> DownloadReportSummary {
+        self.entries.iter().map(EntryDownloadReport::summary).fold(
+            DownloadReportSummary {
+                entry_count: self.entries.len(),
+                ..DownloadReportSummary::default()
+            },
+            |mut summary, entry| {
+                summary.file_count += entry.file_count;
+                summary.media_file_count += entry.media_file_count;
+                summary.sidecar_file_count += entry.sidecar_file_count;
+                summary.mux_count += usize::from(entry.has_mux);
+                summary.bytes_written = summary.bytes_written.saturating_add(entry.bytes_written);
+                summary.resumed_bytes = summary.resumed_bytes.saturating_add(entry.resumed_bytes);
+                summary.total_bytes = summary.total_bytes.saturating_add(entry.total_bytes);
+                summary
+            },
+        )
+    }
+}
+
+impl EntryDownloadReport {
+    #[must_use]
+    pub fn summary(&self) -> EntryDownloadSummary {
+        self.files.iter().fold(
+            EntryDownloadSummary {
+                file_count: self.files.len(),
+                has_mux: self.mux.is_some(),
+                ..EntryDownloadSummary::default()
+            },
+            |mut summary, file| {
+                if file.kind.is_media() {
+                    summary.media_file_count += 1;
+                } else {
+                    summary.sidecar_file_count += 1;
+                }
+                summary.bytes_written = summary.bytes_written.saturating_add(file.bytes_written);
+                summary.resumed_bytes = summary.resumed_bytes.saturating_add(file.resumed_from);
+                summary.total_bytes = summary
+                    .total_bytes
+                    .saturating_add(file.resumed_from.saturating_add(file.bytes_written));
+                summary
+            },
+        )
+    }
+}
+
 impl BiliClient {
     pub async fn download_input(
         &self,
@@ -783,7 +854,13 @@ impl BiliClient {
     where
         P: DownloadProgressSink + ?Sized,
     {
-        let input = Input::parse(raw)?;
+        let input = match Input::parse(raw) {
+            Ok(input) => input,
+            Err(error) => {
+                emit_plan_failed_title(progress, raw.to_owned(), &options.output_dir, 0, &error);
+                return Err(error);
+            }
+        };
         self.download_with_progress(input, selection, options, progress)
             .await
     }
@@ -809,9 +886,14 @@ impl BiliClient {
     where
         P: DownloadProgressSink + ?Sized,
     {
-        let plan = self
-            .plan_for_download(input, selection, options.mode)
-            .await?;
+        let title = input_progress_title(&input);
+        let plan = match self.plan_for_download(input, selection, options.mode).await {
+            Ok(plan) => plan,
+            Err(error) => {
+                emit_plan_failed_title(progress, title, &options.output_dir, 0, &error);
+                return Err(error);
+            }
+        };
         self.download_plan_with_progress(&plan, options, progress)
             .await
     }
@@ -835,8 +917,13 @@ impl BiliClient {
     where
         P: DownloadProgressSink + ?Sized,
     {
-        validate_download_plan_options(plan, &options)?;
-        let output_dir = default_plan_output_dir(plan, &options)?;
+        if let Err(error) = validate_download_plan_options(plan, &options) {
+            return plan_failed(progress, plan, &options.output_dir, 0, error);
+        }
+        let output_dir = match default_plan_output_dir(plan, &options) {
+            Ok(output_dir) => output_dir,
+            Err(error) => return plan_failed(progress, plan, &options.output_dir, 0, error),
+        };
         self.download_plan_to_output_dir(plan, options, output_dir, progress)
             .await
     }
@@ -866,7 +953,10 @@ impl BiliClient {
     where
         P: DownloadProgressSink + ?Sized,
     {
-        let preflight = DownloadPreflight::inspect(plan, &options, Some(archive))?;
+        let preflight = match DownloadPreflight::inspect(plan, &options, Some(archive)) {
+            Ok(preflight) => preflight,
+            Err(error) => return plan_failed(progress, plan, &options.output_dir, 0, error),
+        };
         self.download_plan_with_archive_preflight_decision_with_progress(
             plan, options, archive, &preflight, decision, progress,
         )
@@ -900,32 +990,95 @@ impl BiliClient {
     where
         P: DownloadProgressSink + ?Sized,
     {
-        validate_download_path_templates(plan, &options)?;
-        validate_archive_preflight(plan, &options, archive, preflight)?;
+        if let Err(error) = validate_download_path_templates(plan, &options) {
+            return plan_failed(progress, plan, &preflight.planned_output_dir, 0, error);
+        }
+        if let Err(error) = validate_archive_preflight(plan, &options, archive, preflight) {
+            return plan_failed(progress, plan, &preflight.planned_output_dir, 0, error);
+        }
         let mut effective_options = options;
         let output_dir = match decision {
             DuplicateDecision::Cancel if preflight.requires_decision() => {
+                progress.on_download_progress(&DownloadProgressEvent::PlanCancelled {
+                    title: plan.title.clone(),
+                    output_dir: preflight.planned_output_dir.clone(),
+                    completed_entries: 0,
+                    error: "archive or output conflict requires a decision".to_owned(),
+                });
                 return Err(Error::InvalidInput(
                     "download canceled because archive or output conflict requires a decision"
                         .to_owned(),
                 ));
             }
-            DuplicateDecision::Cancel => default_plan_output_dir(plan, &effective_options)?,
+            DuplicateDecision::Cancel => match default_plan_output_dir(plan, &effective_options) {
+                Ok(output_dir) => output_dir,
+                Err(error) => {
+                    return plan_failed(progress, plan, &preflight.planned_output_dir, 0, error);
+                }
+            },
             DuplicateDecision::Replace => {
-                if path_is_occupied(&preflight.planned_output_dir)? {
-                    validate_plan_stream_selection(plan, &effective_options)?;
-                    remove_output_root_if_exists(&preflight.planned_output_dir).await?;
-                    effective_options.resume = false;
+                match path_is_occupied(&preflight.planned_output_dir) {
+                    Ok(true) => {
+                        if let Err(error) = validate_plan_stream_selection(plan, &effective_options)
+                        {
+                            return plan_failed(
+                                progress,
+                                plan,
+                                &preflight.planned_output_dir,
+                                0,
+                                error,
+                            );
+                        }
+                        if let Err(error) =
+                            remove_output_root_if_exists(&preflight.planned_output_dir).await
+                        {
+                            return plan_failed(
+                                progress,
+                                plan,
+                                &preflight.planned_output_dir,
+                                0,
+                                error,
+                            );
+                        }
+                        effective_options.resume = false;
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        return plan_failed(
+                            progress,
+                            plan,
+                            &preflight.planned_output_dir,
+                            0,
+                            error,
+                        );
+                    }
                 }
                 preflight.planned_output_dir.clone()
             }
-            DuplicateDecision::KeepBoth => preflight.output_dir_for_decision(decision)?,
+            DuplicateDecision::KeepBoth => match preflight.output_dir_for_decision(decision) {
+                Ok(output_dir) => output_dir,
+                Err(error) => {
+                    return plan_failed(progress, plan, &preflight.planned_output_dir, 0, error);
+                }
+            },
         };
-        if decision != DuplicateDecision::Replace && path_is_occupied(&output_dir)? {
-            return Err(Error::InvalidInput(format!(
-                "output directory appeared after duplicate preflight: {}",
-                output_dir.display()
-            )));
+        if decision != DuplicateDecision::Replace {
+            match path_is_occupied(&output_dir) {
+                Ok(true) => {
+                    return plan_failed(
+                        progress,
+                        plan,
+                        &output_dir,
+                        0,
+                        Error::InvalidInput(format!(
+                            "output directory appeared after duplicate preflight: {}",
+                            output_dir.display()
+                        )),
+                    );
+                }
+                Ok(false) => {}
+                Err(error) => return plan_failed(progress, plan, &output_dir, 0, error),
+            }
         }
         let report = self
             .download_plan_to_output_dir(plan, effective_options.clone(), output_dir, progress)
@@ -1046,8 +1199,12 @@ impl BiliClient {
     where
         P: DownloadProgressSink + ?Sized,
     {
-        validate_download_plan_options(plan, &options)?;
-        fs::create_dir_all(&output_dir).await?;
+        if let Err(error) = validate_download_plan_options(plan, &options) {
+            return plan_failed(progress, plan, &output_dir, 0, error);
+        }
+        if let Err(error) = fs::create_dir_all(&output_dir).await {
+            return plan_failed(progress, plan, &output_dir, 0, error.into());
+        }
         progress.on_download_progress(&DownloadProgressEvent::PlanStarted {
             title: plan.title.clone(),
             output_dir: output_dir.clone(),
@@ -1055,10 +1212,16 @@ impl BiliClient {
         });
         let mut entries = Vec::new();
         for entry in &plan.entries {
-            entries.push(
-                self.download_entry(plan, entry, &output_dir, &options, progress)
-                    .await?,
-            );
+            match self
+                .download_entry(plan, entry, &output_dir, &options, progress)
+                .await
+            {
+                Ok(entry_report) => entries.push(entry_report),
+                Err(error) => {
+                    emit_plan_failed(progress, plan, &output_dir, entries.len(), &error);
+                    return Err(error);
+                }
+            }
         }
         progress.on_download_progress(&DownloadProgressEvent::PlanCompleted {
             title: plan.title.clone(),
@@ -1084,20 +1247,41 @@ impl BiliClient {
         P: DownloadProgressSink + ?Sized,
     {
         let entry_dir = output_dir.join(entry_dir_name(&plan.title, entry, options)?);
-        fs::create_dir_all(&entry_dir).await?;
+        if let Err(error) = fs::create_dir_all(&entry_dir).await {
+            let error = Error::Io(error);
+            emit_entry_failed(progress, entry, &entry_dir, &error);
+            return Err(error);
+        }
         progress.on_download_progress(&DownloadProgressEvent::EntryStarted {
             index: entry.index,
             title: entry.title.clone(),
             directory: entry_dir.clone(),
         });
         let mut files = Vec::new();
-        self.download_entry_media(entry, &entry_dir, options, &mut files, progress)
-            .await?;
-        self.download_entry_sidecars(entry, &entry_dir, options, &mut files, progress)
-            .await?;
-        let mux = self
+        if let Err(error) = self
+            .download_entry_media(entry, &entry_dir, options, &mut files, progress)
+            .await
+        {
+            emit_entry_failed(progress, entry, &entry_dir, &error);
+            return Err(error);
+        }
+        if let Err(error) = self
+            .download_entry_sidecars(entry, &entry_dir, options, &mut files, progress)
+            .await
+        {
+            emit_entry_failed(progress, entry, &entry_dir, &error);
+            return Err(error);
+        }
+        let mux = match self
             .mux_entry(&plan.title, entry, &entry_dir, &files, options, progress)
-            .await?;
+            .await
+        {
+            Ok(mux) => mux,
+            Err(error) => {
+                emit_entry_failed(progress, entry, &entry_dir, &error);
+                return Err(error);
+            }
+        };
         let report = EntryDownloadReport {
             index: entry.index,
             title: entry.title.clone(),
@@ -1407,6 +1591,28 @@ impl BiliClient {
     where
         P: DownloadProgressSink + ?Sized,
     {
+        let result = self
+            .download_url_to_file_without_terminal(url, request, options, progress)
+            .await;
+        match result {
+            Ok(file) => Ok(file),
+            Err(error) => {
+                emit_file_failed(progress, request, error.attempt, &error.error);
+                Err(error.error)
+            }
+        }
+    }
+
+    async fn download_url_to_file_without_terminal<P>(
+        &self,
+        url: &str,
+        request: &DownloadFileRequest<'_>,
+        options: &DownloadOptions,
+        progress: &P,
+    ) -> std::result::Result<DownloadedFile, DownloadFileAttemptError>
+    where
+        P: DownloadProgressSink + ?Sized,
+    {
         let attempts = options.retry.max_attempts.max(1);
         let mut last_error = None;
         for attempt in 1..=attempts {
@@ -1420,6 +1626,9 @@ impl BiliClient {
             {
                 Ok(file) => return Ok(file),
                 Err(error) if attempt.current < attempts => {
+                    if error.started {
+                        emit_file_failed(progress, request, error.attempt, &error.error);
+                    }
                     last_error = Some(error);
                     if !options.retry.backoff.is_zero() {
                         tokio::time::sleep(options.retry.backoff).await;
@@ -1428,7 +1637,13 @@ impl BiliClient {
                 Err(error) => return Err(error),
             }
         }
-        Err(last_error.unwrap_or_else(|| Error::InvalidInput("download retry failed".to_owned())))
+        Err(last_error.unwrap_or_else(|| {
+            DownloadFileAttemptError::new(
+                Error::InvalidInput("download retry failed".to_owned()),
+                terminal_download_attempt(options),
+                false,
+            )
+        }))
     }
 
     async fn download_candidate_urls_to_file<P>(
@@ -1442,16 +1657,29 @@ impl BiliClient {
         P: DownloadProgressSink + ?Sized,
     {
         let mut last_error = None;
-        for url in urls {
+        for (index, url) in urls.iter().enumerate() {
             match self
-                .download_url_to_file(url, request, options, progress)
+                .download_url_to_file_without_terminal(url, request, options, progress)
                 .await
             {
                 Ok(file) => return Ok(file),
-                Err(error) => last_error = Some(error),
+                Err(error) => {
+                    if error.started && index + 1 < urls.len() {
+                        emit_file_failed(progress, request, error.attempt, &error.error);
+                    }
+                    last_error = Some(error);
+                }
             }
         }
-        Err(last_error.unwrap_or_else(|| Error::InvalidInput("empty download URL list".to_owned())))
+        let error = last_error.unwrap_or_else(|| {
+            DownloadFileAttemptError::new(
+                Error::InvalidInput("empty download URL list".to_owned()),
+                terminal_download_attempt(options),
+                false,
+            )
+        });
+        emit_file_failed(progress, request, error.attempt, &error.error);
+        Err(error.error)
     }
 
     async fn try_download_url_to_file<P>(
@@ -1461,34 +1689,49 @@ impl BiliClient {
         options: &DownloadOptions,
         attempt: DownloadAttempt,
         progress: &P,
-    ) -> Result<DownloadedFile>
+    ) -> std::result::Result<DownloadedFile, DownloadFileAttemptError>
     where
         P: DownloadProgressSink + ?Sized,
     {
+        let started = false;
         if let Some(parent) = request.path.parent() {
-            fs::create_dir_all(parent).await?;
+            map_attempt_error(
+                fs::create_dir_all(parent).await.map_err(Error::from),
+                attempt,
+                started,
+            )?;
         }
-        let existing_len = existing_file_len(request.path).await?;
+        let existing_len =
+            map_attempt_error(existing_file_len(request.path).await, attempt, started)?;
         let resume_from = if options.resume { existing_len } else { 0 };
-        let response = self.send_download_request(url, resume_from).await?;
+        let response = map_attempt_error(
+            self.send_download_request(url, resume_from).await,
+            attempt,
+            started,
+        )?;
         let status = response.status();
         if resume_from > 0 && status == StatusCode::RANGE_NOT_SATISFIABLE {
-            return already_complete_resume_result(
-                &response,
-                request,
-                resume_from,
+            return map_attempt_error(
+                already_complete_resume_result(&response, request, resume_from, attempt, progress),
                 attempt,
-                progress,
+                started,
             );
         }
-        let response = response
-            .error_for_status()
-            .map_err(BiliClient::http_error_without_url)?;
+        let response = map_attempt_error(
+            response
+                .error_for_status()
+                .map_err(BiliClient::http_error_without_url),
+            attempt,
+            started,
+        )?;
         let has_content_range = response.headers().contains_key(CONTENT_RANGE);
-        let content_range = content_range(response.headers())?;
+        let content_range = map_attempt_error(content_range(response.headers()), attempt, started)?;
         let response_content_len = response.content_length();
-        let append =
-            validate_resume_response(status, resume_from, has_content_range, content_range)?;
+        let append = map_attempt_error(
+            validate_resume_response(status, resume_from, has_content_range, content_range),
+            attempt,
+            started,
+        )?;
         let start_offset = if append { resume_from } else { 0 };
         let full_retry_after_ignored_range = resume_from > 0 && !append;
         let validation_expected_size = validation_size_for_full_retry(
@@ -1498,8 +1741,13 @@ impl BiliClient {
             full_retry_after_ignored_range,
         );
         if full_retry_after_ignored_range && validation_expected_size.is_none() {
-            return Err(Error::InvalidInput(
-                "server ignored resume range without a verifiable full response length".to_owned(),
+            return Err(DownloadFileAttemptError::new(
+                Error::InvalidInput(
+                    "server ignored resume range without a verifiable full response length"
+                        .to_owned(),
+                ),
+                attempt,
+                started,
             ));
         }
         emit_file_started(
@@ -1509,21 +1757,8 @@ impl BiliClient {
             validation_expected_size,
             attempt,
         );
-        let replace_existing = existing_len > 0 && !append;
-        let write_path = if replace_existing {
-            temporary_download_path(request.path)
-        } else {
-            request.path.to_path_buf()
-        };
-        let mut file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .append(append)
-            .truncate(!append)
-            .open(&write_path)
-            .await?;
-        let write_result = write_response_body_to_file(
-            &mut file,
+        Self::finish_started_download_attempt(
+            request,
             response,
             WriteResponseRequest {
                 content_range,
@@ -1531,10 +1766,47 @@ impl BiliClient {
                 expected_size: validation_expected_size,
                 idle_timeout: options.download_idle_timeout,
             },
+            existing_len,
+            append,
+            attempt,
             progress,
-            request,
         )
-        .await;
+        .await
+    }
+
+    async fn finish_started_download_attempt<P>(
+        request: &DownloadFileRequest<'_>,
+        response: reqwest::Response,
+        write_request: WriteResponseRequest,
+        existing_len: u64,
+        append: bool,
+        attempt: DownloadAttempt,
+        progress: &P,
+    ) -> std::result::Result<DownloadedFile, DownloadFileAttemptError>
+    where
+        P: DownloadProgressSink + ?Sized,
+    {
+        let replace_existing = existing_len > 0 && !append;
+        let write_path = if replace_existing {
+            temporary_download_path(request.path)
+        } else {
+            request.path.to_path_buf()
+        };
+        let mut file = map_attempt_error(
+            OpenOptions::new()
+                .create(true)
+                .write(true)
+                .append(append)
+                .truncate(!append)
+                .open(&write_path)
+                .await
+                .map_err(Error::from),
+            attempt,
+            true,
+        )?;
+        let write_result =
+            write_response_body_to_file(&mut file, response, write_request, progress, request)
+                .await;
         drop(file);
         let bytes_written = match write_result {
             Ok(bytes_written) => bytes_written,
@@ -1542,24 +1814,28 @@ impl BiliClient {
                 if replace_existing {
                     let _ = fs::remove_file(&write_path).await;
                 }
-                return Err(error);
+                return Err(DownloadFileAttemptError::new(error, attempt, true));
             }
         };
         if is_unexpected_empty_response(&request.kind, bytes_written) {
             if !append {
                 let _ = fs::remove_file(&write_path).await;
             }
-            return Err(Error::InvalidInput("empty media response".to_owned()));
+            return Err(DownloadFileAttemptError::new(
+                Error::InvalidInput("empty media response".to_owned()),
+                attempt,
+                true,
+            ));
         }
         if replace_existing {
-            replace_file(&write_path, request.path).await?;
+            map_attempt_error(replace_file(&write_path, request.path).await, attempt, true)?;
         }
-        emit_file_completed(progress, request, bytes_written, start_offset);
+        emit_file_completed(progress, request, bytes_written, write_request.start_offset);
         Ok(DownloadedFile {
             kind: request.kind.clone(),
             path: request.path.to_path_buf(),
             bytes_written,
-            resumed_from: start_offset,
+            resumed_from: write_request.start_offset,
         })
     }
 
@@ -1642,41 +1918,15 @@ impl BiliClient {
             output_path: output_path.clone(),
             command: command.clone(),
         });
-        let status = Command::new(binary)
-            .args(&args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .await?;
-        if !status.success() {
+        if let Err(error) = run_ffmpeg_mux(binary, &args, &mux_output_path).await {
             let _ = fs::remove_file(&mux_output_path).await;
-            return Err(Error::MuxFailed {
-                status: status.code().map_or_else(
-                    || "terminated by signal".to_owned(),
-                    |code| code.to_string(),
-                ),
-            });
+            emit_mux_failed(progress, entry, &output_path, &command, &error);
+            return Err(error);
         }
-        let Ok(metadata) = fs::metadata(&mux_output_path).await else {
-            let _ = fs::remove_file(&mux_output_path).await;
-            return Err(Error::MuxFailed {
-                status: "missing output file".to_owned(),
-            });
-        };
-        if !metadata.is_file() {
-            let _ = fs::remove_file(&mux_output_path).await;
-            return Err(Error::MuxFailed {
-                status: "missing output file".to_owned(),
-            });
+        if let Err(error) = replace_file(&mux_output_path, &output_path).await {
+            emit_mux_failed(progress, entry, &output_path, &command, &error);
+            return Err(error);
         }
-        if metadata.len() == 0 {
-            let _ = fs::remove_file(&mux_output_path).await;
-            return Err(Error::MuxFailed {
-                status: "empty output file".to_owned(),
-            });
-        }
-        replace_file(&mux_output_path, &output_path).await?;
         progress.on_download_progress(&DownloadProgressEvent::MuxCompleted {
             entry_index: entry.index,
             entry_title: entry.title.clone(),
@@ -1690,8 +1940,14 @@ impl BiliClient {
 }
 
 impl DownloadFileKind {
-    fn is_media(&self) -> bool {
+    #[must_use]
+    pub const fn is_media(&self) -> bool {
         matches!(self, Self::Video | Self::Audio | Self::FlvSegment)
+    }
+
+    #[must_use]
+    pub const fn is_sidecar(&self) -> bool {
+        !self.is_media()
     }
 
     fn expects_non_empty_response(&self) -> bool {
@@ -1731,6 +1987,31 @@ struct DownloadAttempt {
     max: u32,
 }
 
+#[derive(Debug)]
+struct DownloadFileAttemptError {
+    error: Error,
+    attempt: DownloadAttempt,
+    started: bool,
+}
+
+impl DownloadFileAttemptError {
+    fn new(error: Error, attempt: DownloadAttempt, started: bool) -> Self {
+        Self {
+            error,
+            attempt,
+            started,
+        }
+    }
+}
+
+fn map_attempt_error<T>(
+    result: Result<T>,
+    attempt: DownloadAttempt,
+    started: bool,
+) -> std::result::Result<T, DownloadFileAttemptError> {
+    result.map_err(|error| DownloadFileAttemptError::new(error, attempt, started))
+}
+
 #[derive(Clone, Copy, Debug)]
 struct WriteResponseRequest {
     content_range: Option<ParsedContentRange>,
@@ -1744,6 +2025,40 @@ fn command_report(binary: &Path, args: &[OsString]) -> Vec<String> {
     command.push(binary.to_string_lossy().into_owned());
     command.extend(args.iter().map(|arg| arg.to_string_lossy().into_owned()));
     command
+}
+
+async fn run_ffmpeg_mux(binary: &Path, args: &[OsString], mux_output_path: &Path) -> Result<()> {
+    let status = Command::new(binary)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await?;
+    if !status.success() {
+        return Err(Error::MuxFailed {
+            status: status.code().map_or_else(
+                || "terminated by signal".to_owned(),
+                |code| code.to_string(),
+            ),
+        });
+    }
+    let metadata = fs::metadata(mux_output_path)
+        .await
+        .map_err(|_| Error::MuxFailed {
+            status: "missing output file".to_owned(),
+        })?;
+    if !metadata.is_file() {
+        return Err(Error::MuxFailed {
+            status: "missing output file".to_owned(),
+        });
+    }
+    if metadata.len() == 0 {
+        return Err(Error::MuxFailed {
+            status: "empty output file".to_owned(),
+        });
+    }
+    Ok(())
 }
 
 fn already_complete_resume_result<P>(
@@ -1891,6 +2206,148 @@ fn emit_file_completed<P>(
         resumed_from,
         total_bytes: resumed_from.saturating_add(bytes_written),
     });
+}
+
+fn emit_file_failed<P>(
+    progress: &P,
+    request: &DownloadFileRequest<'_>,
+    attempt: DownloadAttempt,
+    error: &Error,
+) where
+    P: DownloadProgressSink + ?Sized,
+{
+    progress.on_download_progress(&DownloadProgressEvent::FileFailed {
+        entry_index: request.entry.index,
+        entry_title: request.entry.title.clone(),
+        kind: request.kind.clone(),
+        path: request.path.to_path_buf(),
+        attempt: attempt.current,
+        max_attempts: attempt.max,
+        error: error.to_string(),
+    });
+}
+
+fn terminal_download_attempt(options: &DownloadOptions) -> DownloadAttempt {
+    let attempts = options.retry.max_attempts.max(1);
+    DownloadAttempt {
+        current: attempts,
+        max: attempts,
+    }
+}
+
+fn emit_mux_failed<P>(
+    progress: &P,
+    entry: &DownloadEntry,
+    output_path: &Path,
+    command: &[String],
+    error: &Error,
+) where
+    P: DownloadProgressSink + ?Sized,
+{
+    progress.on_download_progress(&DownloadProgressEvent::MuxFailed {
+        entry_index: entry.index,
+        entry_title: entry.title.clone(),
+        output_path: output_path.to_path_buf(),
+        command: command.to_vec(),
+        error: error.to_string(),
+    });
+}
+
+fn emit_entry_failed<P>(progress: &P, entry: &DownloadEntry, directory: &Path, error: &Error)
+where
+    P: DownloadProgressSink + ?Sized,
+{
+    progress.on_download_progress(&DownloadProgressEvent::EntryFailed {
+        index: entry.index,
+        title: entry.title.clone(),
+        directory: directory.to_path_buf(),
+        error: error.to_string(),
+    });
+}
+
+fn emit_plan_failed<P>(
+    progress: &P,
+    plan: &DownloadPlan,
+    output_dir: &Path,
+    completed_entries: usize,
+    error: &Error,
+) where
+    P: DownloadProgressSink + ?Sized,
+{
+    emit_plan_failed_title(
+        progress,
+        plan.title.clone(),
+        output_dir,
+        completed_entries,
+        error,
+    );
+}
+
+fn emit_plan_failed_title<P>(
+    progress: &P,
+    title: String,
+    output_dir: &Path,
+    completed_entries: usize,
+    error: &Error,
+) where
+    P: DownloadProgressSink + ?Sized,
+{
+    progress.on_download_progress(&DownloadProgressEvent::PlanFailed {
+        title,
+        output_dir: output_dir.to_path_buf(),
+        completed_entries,
+        error: error.to_string(),
+    });
+}
+
+fn plan_failed<T, P>(
+    progress: &P,
+    plan: &DownloadPlan,
+    output_dir: &Path,
+    completed_entries: usize,
+    error: Error,
+) -> Result<T>
+where
+    P: DownloadProgressSink + ?Sized,
+{
+    emit_plan_failed(progress, plan, output_dir, completed_entries, &error);
+    Err(error)
+}
+
+fn input_progress_title(input: &Input) -> String {
+    match input {
+        Input::Aid(aid) => format!("av{aid}"),
+        Input::Bvid(bvid) => bvid.clone(),
+        Input::Episode(epid) => format!("ep{epid}"),
+        Input::Season(season_id) => format!("ss{season_id}"),
+        Input::Media(media_id) => format!("md{media_id}"),
+        Input::CheeseEpisode(epid) => format!("cheese/ep{epid}"),
+        Input::CheeseSeason(season_id) => format!("cheese/ss{season_id}"),
+        Input::SpaceVideos(mid) => format!("mid{mid}"),
+        Input::FavoriteList {
+            media_id,
+            owner_mid,
+        } => match (media_id, owner_mid) {
+            (Some(media_id), _) => format!("fav{media_id}"),
+            (None, Some(owner_mid)) => format!("fav/mid{owner_mid}"),
+            (None, None) => "favorite".to_owned(),
+        },
+        Input::CollectionList(id) => format!("collection{id}"),
+        Input::SeriesList(id) => format!("series{id}"),
+        Input::SpaceCollectionList { list_id, owner_mid } => {
+            format!("space/{owner_mid}/collection/{list_id}")
+        }
+        Input::SpaceSeriesList { list_id, owner_mid } => {
+            format!("space/{owner_mid}/series/{list_id}")
+        }
+        Input::RecommendationFeed => "recommendations".to_owned(),
+        Input::FollowingFeed => "following".to_owned(),
+        Input::SpaceDynamic(mid) => format!("space/{mid}/dynamic"),
+        Input::History => "history".to_owned(),
+        Input::WatchLater => "watchlater".to_owned(),
+        Input::IntlEpisode(epid) => format!("intl/ep{epid}"),
+        Input::ShortLink(url) => url.clone(),
+    }
 }
 
 async fn existing_file_len(path: &Path) -> Result<u64> {
@@ -2049,7 +2506,18 @@ where
         Some(expected_size),
         DownloadAttempt { current: 1, max: 1 },
     );
-    let file = write_generated_text_file(path, contents, request.kind.clone()).await?;
+    let file = match write_generated_text_file(path, contents, request.kind.clone()).await {
+        Ok(file) => file,
+        Err(error) => {
+            emit_file_failed(
+                progress,
+                &request,
+                DownloadAttempt { current: 1, max: 1 },
+                &error,
+            );
+            return Err(error);
+        }
+    };
     emit_file_completed(progress, &request, file.bytes_written, 0);
     Ok(file)
 }
@@ -3551,10 +4019,11 @@ mod tests {
     use super::{
         DEFAULT_UPOS_REPLACEMENT_HOST, DanmakuUpdateOptions, DownloadArchive,
         DownloadArchiveEntryRecord, DownloadArchiveRecord, DownloadFileRequest, DownloadMode,
-        DownloadOptions, DownloadPathTemplates, DownloadPreflight, DownloadReport, DownloadedFile,
-        DuplicateDecision, EntryDownloadReport, MAX_FILE_COMPONENT_BYTES, MAX_FILE_NAME_BYTES,
-        MAX_SUBTITLE_EXTENSION_BYTES, MediaHostOptions, MuxOptions, RetryPolicy, SidecarOptions,
-        StreamSelection, TemplateContext, archive_sidecar_path, candidate_urls,
+        DownloadOptions, DownloadPathTemplates, DownloadPreflight, DownloadReport,
+        DownloadReportSummary, DownloadedFile, DuplicateDecision, EntryDownloadReport,
+        EntryDownloadSummary, MAX_FILE_COMPONENT_BYTES, MAX_FILE_NAME_BYTES,
+        MAX_SUBTITLE_EXTENSION_BYTES, MediaHostOptions, MuxOptions, MuxReport, RetryPolicy,
+        SidecarOptions, StreamSelection, TemplateContext, archive_sidecar_path, candidate_urls,
         comparable_output_path, cover_file_name, default_plan_output_dir,
         download_entry_content_key, download_entry_content_key_for_options,
         download_plan_content_key, download_plan_content_key_for_options, entry_dir_name,
@@ -3575,7 +4044,7 @@ mod tests {
     use httpmock::prelude::*;
     use std::io::{Read, Write};
     use std::net::TcpListener;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
     #[cfg(unix)]
@@ -4287,6 +4756,336 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn download_report_summary_counts_files_mux_and_bytes() {
+        let report = DownloadReport {
+            title: "Summary".to_owned(),
+            output_dir: PathBuf::from("downloads"),
+            entries: vec![
+                EntryDownloadReport {
+                    index: 1,
+                    title: "First".to_owned(),
+                    directory: PathBuf::from("downloads/first"),
+                    files: vec![
+                        DownloadedFile {
+                            kind: DownloadFileKind::Video,
+                            path: PathBuf::from("downloads/first/video.m4s"),
+                            bytes_written: 10,
+                            resumed_from: 5,
+                        },
+                        DownloadedFile {
+                            kind: DownloadFileKind::Danmaku,
+                            path: PathBuf::from("downloads/first/danmaku.xml"),
+                            bytes_written: 3,
+                            resumed_from: 0,
+                        },
+                    ],
+                    mux: Some(MuxReport {
+                        output_path: PathBuf::from("downloads/first/first.mp4"),
+                        command: vec!["ffmpeg".to_owned()],
+                    }),
+                },
+                EntryDownloadReport {
+                    index: 2,
+                    title: "Second".to_owned(),
+                    directory: PathBuf::from("downloads/second"),
+                    files: vec![DownloadedFile {
+                        kind: DownloadFileKind::Audio,
+                        path: PathBuf::from("downloads/second/audio.m4s"),
+                        bytes_written: 7,
+                        resumed_from: 1,
+                    }],
+                    mux: None,
+                },
+            ],
+        };
+
+        assert_eq!(
+            report.summary(),
+            DownloadReportSummary {
+                entry_count: 2,
+                file_count: 3,
+                media_file_count: 2,
+                sidecar_file_count: 1,
+                mux_count: 1,
+                bytes_written: 20,
+                resumed_bytes: 6,
+                total_bytes: 26,
+            }
+        );
+        assert_eq!(
+            report.entries[0].summary(),
+            EntryDownloadSummary {
+                file_count: 2,
+                media_file_count: 1,
+                sidecar_file_count: 1,
+                has_mux: true,
+                bytes_written: 13,
+                resumed_bytes: 5,
+                total_bytes: 18,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn download_plan_reports_failure_terminal_events() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/video.m4s");
+            then.status(500).body("fail");
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = test_plan(&server);
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress_events = Arc::clone(&events);
+        let progress = move |event: &DownloadProgressEvent| {
+            push_progress_event(&progress_events, event.clone());
+        };
+
+        let Err(error) = client
+            .download_plan_with_progress(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().to_path_buf(),
+                    retry: RetryPolicy::single_attempt(),
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
+                    mux: MuxOptions::Disabled,
+                    ..DownloadOptions::default()
+                },
+                &progress,
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!("media failure should fail the download"));
+        };
+
+        assert!(error.to_string().contains("HTTP error"));
+        let events = progress_events_snapshot(&events);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::FileFailed {
+                kind: DownloadFileKind::Video,
+                attempt: 1,
+                max_attempts: 1,
+                error,
+                ..
+            } if error.contains("HTTP error")
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::EntryFailed {
+                index: 1,
+                error,
+                ..
+            } if error.contains("HTTP error")
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::PlanFailed {
+                completed_entries: 0,
+                error,
+                ..
+            } if error.contains("HTTP error")
+        )));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, DownloadProgressEvent::PlanCompleted { .. }))
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn download_plan_reports_setup_failure_terminal_event() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = test_plan(&server);
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress_events = Arc::clone(&events);
+        let progress = move |event: &DownloadProgressEvent| {
+            push_progress_event(&progress_events, event.clone());
+        };
+
+        let Err(error) = client
+            .download_plan_with_progress(
+                &plan,
+                DownloadOptions::new(temp.path()).with_output_template("{unknown}"),
+                &progress,
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!("invalid output template should fail"));
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("unknown download path template placeholder")
+        );
+        assert_eq!(
+            progress_events_snapshot(&events),
+            vec![DownloadProgressEvent::PlanFailed {
+                title: plan.title.clone(),
+                output_dir: temp.path().to_path_buf(),
+                completed_entries: 0,
+                error: error.to_string(),
+            }]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn download_plan_reports_entry_setup_failure_terminal_event() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = test_plan(&server);
+        let entry_dir = test_entry_dir(temp.path(), &plan)?;
+        if let Some(parent) = entry_dir.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        tokio::fs::write(&entry_dir, b"not a directory").await?;
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress_events = Arc::clone(&events);
+        let progress = move |event: &DownloadProgressEvent| {
+            push_progress_event(&progress_events, event.clone());
+        };
+
+        let Err(error) = client
+            .download_plan_with_progress(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().to_path_buf(),
+                    retry: RetryPolicy::single_attempt(),
+                    mux: MuxOptions::Disabled,
+                    ..DownloadOptions::default()
+                },
+                &progress,
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!("entry setup conflict should fail"));
+        };
+
+        let events = progress_events_snapshot(&events);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::EntryFailed {
+                index: 1,
+                directory,
+                error: event_error,
+                ..
+            } if directory == &entry_dir && event_error == &error.to_string()
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::PlanFailed {
+                completed_entries: 0,
+                error: event_error,
+                ..
+            } if event_error == &error.to_string()
+        )));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, DownloadProgressEvent::EntryStarted { .. }))
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn download_input_reports_parse_failure_terminal_event() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress_events = Arc::clone(&events);
+        let progress = move |event: &DownloadProgressEvent| {
+            push_progress_event(&progress_events, event.clone());
+        };
+
+        let Err(error) = client
+            .download_input_with_progress(
+                "not-a-valid-input",
+                None,
+                DownloadOptions::new(temp.path()),
+                &progress,
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!("invalid raw input should fail"));
+        };
+
+        assert_eq!(
+            progress_events_snapshot(&events),
+            vec![DownloadProgressEvent::PlanFailed {
+                title: "not-a-valid-input".to_owned(),
+                output_dir: temp.path().to_path_buf(),
+                completed_entries: 0,
+                error: error.to_string(),
+            }]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn duplicate_cancel_reports_plan_cancelled_progress() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = test_plan(&server);
+        let options = DownloadOptions {
+            output_dir: temp.path().to_path_buf(),
+            retry: RetryPolicy::single_attempt(),
+            sidecars: SidecarOptions {
+                danmaku: false,
+                ..SidecarOptions::default()
+            },
+            mux: MuxOptions::Disabled,
+            ..DownloadOptions::default()
+        };
+        let mut archive = DownloadArchive::default();
+        let preflight = DownloadPreflight::inspect(&plan, &options, Some(&archive))?;
+        std::fs::create_dir_all(&preflight.planned_output_dir)?;
+        let preflight = DownloadPreflight::inspect(&plan, &options, Some(&archive))?;
+        assert!(preflight.requires_decision());
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress_events = Arc::clone(&events);
+        let progress = move |event: &DownloadProgressEvent| {
+            push_progress_event(&progress_events, event.clone());
+        };
+
+        let Err(error) = client
+            .download_plan_with_archive_preflight_decision_with_progress(
+                &plan,
+                options,
+                &mut archive,
+                &preflight,
+                DuplicateDecision::Cancel,
+                &progress,
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!("duplicate cancel should fail the download"));
+        };
+
+        assert!(error.to_string().contains("download canceled"));
+        assert_eq!(
+            progress_events_snapshot(&events),
+            vec![DownloadProgressEvent::PlanCancelled {
+                title: plan.title.clone(),
+                output_dir: preflight.planned_output_dir.clone(),
+                completed_entries: 0,
+                error: "archive or output conflict requires a decision".to_owned(),
+            }]
+        );
+        Ok(())
+    }
+
     #[tokio::test]
     async fn ass_only_danmaku_progress_excludes_internal_source_file() -> anyhow::Result<()> {
         let server = MockServer::start();
@@ -4346,6 +5145,79 @@ mod tests {
                 path.to_string_lossy().contains(".bbdown-source"),
             _ => false,
         }));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn generated_danmaku_failure_reports_file_failed_progress() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/danmaku.xml");
+            then.status(200)
+                .body(r#"<i><d p="1,1,25,16777215,1,0,0,0">hello</d></i>"#);
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = test_plan(&server);
+        let entry_dir = test_entry_dir(temp.path(), &plan)?;
+        tokio::fs::create_dir_all(temporary_generated_path(&entry_dir.join("danmaku.ass"))).await?;
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress_events = Arc::clone(&events);
+        let progress = move |event: &DownloadProgressEvent| {
+            push_progress_event(&progress_events, event.clone());
+        };
+
+        let Err(error) = client
+            .download_plan_with_progress(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().to_path_buf(),
+                    retry: RetryPolicy::single_attempt(),
+                    mode: DownloadMode::DanmakuOnly,
+                    danmaku_formats: DanmakuFormats::new([DanmakuFormat::Ass]),
+                    mux: MuxOptions::Disabled,
+                    ..DownloadOptions::default()
+                },
+                &progress,
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!("generated ASS sidecar write should fail"));
+        };
+
+        let events = progress_events_snapshot(&events);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::FileStarted {
+                kind: DownloadFileKind::DanmakuAss,
+                ..
+            }
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::FileFailed {
+                kind: DownloadFileKind::DanmakuAss,
+                error: event_error,
+                ..
+            } if event_error == &error.to_string()
+        )));
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::FileCompleted {
+                kind: DownloadFileKind::DanmakuAss,
+                ..
+            }
+        )));
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, DownloadProgressEvent::EntryFailed { .. }))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, DownloadProgressEvent::PlanFailed { .. }))
+        );
         Ok(())
     }
 
@@ -4961,6 +5833,82 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn started_primary_candidate_failure_is_closed_before_backup() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/primary.m4s");
+            then.status(200).body("bad");
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/backup.m4s");
+            then.status(200).body("backup");
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/audio.m4s");
+            then.status(200).body("audio");
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let mut plan = single_video_plan(format!("{}/primary.m4s", server.base_url()));
+        plan.entries[0].streams.videos[0].size = Some(6);
+        plan.entries[0].streams.videos[0]
+            .backup_urls
+            .push(format!("{}/backup.m4s", server.base_url()));
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress_events = Arc::clone(&events);
+        let progress = move |event: &DownloadProgressEvent| {
+            push_progress_event(&progress_events, event.clone());
+        };
+
+        let report = client
+            .download_plan_with_progress(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().to_path_buf(),
+                    retry: RetryPolicy::single_attempt(),
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
+                    mux: MuxOptions::Disabled,
+                    ..DownloadOptions::default()
+                },
+                &progress,
+            )
+            .await?;
+
+        assert_eq!(
+            tokio::fs::read_to_string(&report.entries[0].files[0].path).await?,
+            "backup"
+        );
+        let events = progress_events_snapshot(&events);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::FileFailed {
+                kind: DownloadFileKind::Video,
+                attempt: 1,
+                max_attempts: 1,
+                error,
+                ..
+            } if error.contains("downloaded file length did not match expected media size")
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::FileCompleted {
+                kind: DownloadFileKind::Video,
+                total_bytes: 6,
+                ..
+            }
+        )));
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, DownloadProgressEvent::PlanCompleted { .. }))
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn falls_back_to_backup_media_url() -> anyhow::Result<()> {
         let server = MockServer::start();
         server.mock(|when, then| {
@@ -4981,9 +5929,14 @@ mod tests {
         plan.entries[0].streams.videos[0]
             .backup_urls
             .push(format!("{}/backup.m4s", server.base_url()));
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress_events = Arc::clone(&events);
+        let progress = move |event: &DownloadProgressEvent| {
+            push_progress_event(&progress_events, event.clone());
+        };
 
         let report = client
-            .download_plan(
+            .download_plan_with_progress(
                 &plan,
                 DownloadOptions {
                     output_dir: temp.path().to_path_buf(),
@@ -4995,12 +5948,31 @@ mod tests {
                     mux: MuxOptions::Disabled,
                     ..DownloadOptions::default()
                 },
+                &progress,
             )
             .await?;
 
         assert_eq!(
             tokio::fs::read_to_string(&report.entries[0].files[0].path).await?,
             "backup"
+        );
+        let events = progress_events_snapshot(&events);
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, DownloadProgressEvent::FileFailed { .. }))
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::FileCompleted {
+                kind: DownloadFileKind::Video,
+                ..
+            }
+        )));
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, DownloadProgressEvent::PlanCompleted { .. }))
         );
         Ok(())
     }

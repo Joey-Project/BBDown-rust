@@ -45,6 +45,15 @@ pub enum DownloadProgressEvent {
         resumed_from: u64,
         total_bytes: u64,
     },
+    FileFailed {
+        entry_index: u32,
+        entry_title: String,
+        kind: DownloadFileKind,
+        path: PathBuf,
+        attempt: u32,
+        max_attempts: u32,
+        error: String,
+    },
     MuxStarted {
         entry_index: u32,
         entry_title: String,
@@ -56,6 +65,13 @@ pub enum DownloadProgressEvent {
         entry_title: String,
         output_path: PathBuf,
     },
+    MuxFailed {
+        entry_index: u32,
+        entry_title: String,
+        output_path: PathBuf,
+        command: Vec<String>,
+        error: String,
+    },
     EntryCompleted {
         index: u32,
         title: String,
@@ -63,10 +79,28 @@ pub enum DownloadProgressEvent {
         file_count: usize,
         mux_output: Option<PathBuf>,
     },
+    EntryFailed {
+        index: u32,
+        title: String,
+        directory: PathBuf,
+        error: String,
+    },
     PlanCompleted {
         title: String,
         output_dir: PathBuf,
         entry_count: usize,
+    },
+    PlanFailed {
+        title: String,
+        output_dir: PathBuf,
+        completed_entries: usize,
+        error: String,
+    },
+    PlanCancelled {
+        title: String,
+        output_dir: PathBuf,
+        completed_entries: usize,
+        error: String,
     },
 }
 

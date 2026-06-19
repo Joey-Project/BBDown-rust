@@ -1606,6 +1606,88 @@ fn download_progress_json_writes_events_to_stderr() -> anyhow::Result<()> {
 }
 
 #[test]
+fn download_progress_json_reports_terminal_failure_events() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    mock_minimal_video_metadata(&server);
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/playurl")
+            .query_param("avid", "170001")
+            .query_param("cid", "2")
+            .query_param("try_look", "1");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "dash": {
+                    "duration": 3,
+                    "video": [{
+                        "id": 80,
+                        "baseUrl": format!("{}/video.m4s", server.base_url()),
+                        "base_url": format!("{}/video.m4s", server.base_url())
+                    }],
+                    "audio": [{
+                        "id": 30280,
+                        "baseUrl": format!("{}/audio.m4s", server.base_url()),
+                        "base_url": format!("{}/audio.m4s", server.base_url())
+                    }]
+                }
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET).path("/video.m4s");
+        then.status(500).body("fail");
+    });
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("download")
+        .arg("av170001")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--no-cover")
+        .arg("--no-subtitles")
+        .arg("--no-danmaku")
+        .arg("--no-mux")
+        .arg("--json")
+        .arg("--progress-json")
+        .arg("--retry-attempts")
+        .arg("1");
+    let output = command.assert().failure().get_output().stderr.clone();
+    let stderr = String::from_utf8_lossy(&output);
+    assert!(stderr.contains("HTTP error"));
+    let events = json_object_lines(&output)?;
+    assert!(events.iter().any(|event| {
+        event["type"] == "file_failed"
+            && event["kind"] == "video"
+            && event["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("HTTP error"))
+    }));
+    assert!(events.iter().any(|event| {
+        event["type"] == "entry_failed"
+            && event["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("HTTP error"))
+    }));
+    assert!(events.iter().any(|event| {
+        event["type"] == "plan_failed"
+            && event["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("HTTP error"))
+    }));
+    assert!(!events.iter().any(|event| event["type"] == "plan_completed"));
+    Ok(())
+}
+
+#[test]
 fn download_json_applies_path_templates() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;
@@ -2062,19 +2144,16 @@ fn download_archive_cancel_reports_preflight_json() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    let output = archive_download_command(
+    let mut command = archive_download_command(
         &credential_file,
         &server,
         &output_dir,
         &archive_file,
         Some("cancel"),
-    )?
-    .assert()
-    .success()
-    .get_output()
-    .stdout
-    .clone();
-    let json: Value = serde_json::from_slice(&output)?;
+    )?;
+    command.arg("--progress-json");
+    let output = command.assert().success().get_output().clone();
+    let json: Value = serde_json::from_slice(&output.stdout)?;
 
     assert_eq!(json["status"], "canceled");
     assert_eq!(
@@ -2088,6 +2167,75 @@ fn download_archive_cancel_reports_preflight_json() -> anyhow::Result<()> {
             .as_str()
             .is_some_and(|path| path.ends_with("Mock video"))
     );
+    let events = json_lines(&output.stderr)?;
+    assert!(events.iter().any(|event| {
+        event["type"] == "plan_cancelled"
+            && event["completed_entries"] == 0
+            && event["error"] == "archive or output conflict requires a decision"
+    }));
+    Ok(())
+}
+
+#[test]
+fn download_archive_progress_json_reports_preflight_failure() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    mock_minimal_download(&server);
+
+    let mut command =
+        archive_download_command(&credential_file, &server, &output_dir, &archive_file, None)?;
+    command
+        .arg("--progress-json")
+        .arg("--output-template")
+        .arg("{unknown}");
+    let output = command.assert().failure().get_output().stderr.clone();
+    let stderr = String::from_utf8_lossy(&output);
+    assert!(stderr.contains("unknown download path template placeholder"));
+    let events = json_object_lines(&output)?;
+    assert!(events.iter().any(|event| {
+        event["type"] == "plan_failed"
+            && event["completed_entries"] == 0
+            && event["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("unknown download path template placeholder"))
+    }));
+    Ok(())
+}
+
+#[test]
+fn download_archive_progress_json_reports_plan_failure() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("download")
+        .arg("not-a-valid-input")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--json")
+        .arg("--progress-json");
+    let stderr = command.assert().failure().get_output().stderr.clone();
+    let stderr_text = String::from_utf8_lossy(&stderr);
+    assert!(stderr_text.contains("not-a-valid-input"));
+    let events = json_object_lines(&stderr)?;
+    assert!(events.iter().any(|event| {
+        event["type"] == "plan_failed"
+            && event["title"] == "not-a-valid-input"
+            && event["completed_entries"] == 0
+    }));
     Ok(())
 }
 
@@ -2104,16 +2252,69 @@ fn download_archive_json_requires_explicit_duplicate_decision() -> anyhow::Resul
         .assert()
         .success();
 
-    let stderr =
-        archive_download_command(&credential_file, &server, &output_dir, &archive_file, None)?
-            .assert()
-            .failure()
-            .get_output()
-            .stderr
-            .clone();
+    let mut command =
+        archive_download_command(&credential_file, &server, &output_dir, &archive_file, None)?;
+    command.arg("--progress-json");
+    let stderr = command.assert().failure().get_output().stderr.clone();
 
     assert!(
         String::from_utf8_lossy(&stderr).contains("--on-duplicate replace, keep-both, or cancel")
+    );
+    let events = json_object_lines(&stderr)?;
+    assert!(events.iter().any(|event| {
+        event["type"] == "plan_failed"
+            && event["completed_entries"] == 0
+            && event["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("--on-duplicate replace, keep-both, or cancel"))
+    }));
+    Ok(())
+}
+
+#[test]
+fn download_archive_progress_json_reports_save_failure_without_completion() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    let archive_temp_file = temp.path().join("archive.json.bbdown-archive-tmp");
+    mock_minimal_download(&server);
+    fs::create_dir(&archive_temp_file)?;
+
+    let mut command =
+        archive_download_command(&credential_file, &server, &output_dir, &archive_file, None)?;
+    command.arg("--progress-json");
+    let output = command.output()?;
+    assert!(!output.status.success());
+    let stderr = output.stderr;
+
+    let stderr_text = String::from_utf8_lossy(&stderr);
+    assert!(stderr_text.contains("failed to save archive"));
+    let events = json_object_lines(&stderr)?;
+    let terminal_events = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event["type"].as_str(),
+                Some("plan_completed" | "plan_failed" | "plan_cancelled")
+            )
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !terminal_events
+            .iter()
+            .any(|event| event["type"] == "plan_completed")
+    );
+    let last_terminal = terminal_events
+        .last()
+        .ok_or_else(|| anyhow::anyhow!("missing terminal progress events"))?;
+    assert_eq!(last_terminal["type"], "plan_failed");
+    assert_eq!(last_terminal["completed_entries"], 1);
+    assert!(
+        last_terminal["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("failed to save archive"))
     );
     Ok(())
 }
@@ -4015,6 +4216,14 @@ fn server_authority(server: &MockServer) -> anyhow::Result<String> {
 fn json_lines(output: &[u8]) -> anyhow::Result<Vec<Value>> {
     String::from_utf8(output.to_vec())?
         .lines()
+        .map(|line| serde_json::from_str(line).map_err(Into::into))
+        .collect()
+}
+
+fn json_object_lines(output: &[u8]) -> anyhow::Result<Vec<Value>> {
+    String::from_utf8(output.to_vec())?
+        .lines()
+        .filter(|line| line.trim_start().starts_with('{'))
         .map(|line| serde_json::from_str(line).map_err(Into::into))
         .collect()
 }

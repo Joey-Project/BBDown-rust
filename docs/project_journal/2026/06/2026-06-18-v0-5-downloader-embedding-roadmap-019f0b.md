@@ -28,14 +28,20 @@ superseded_by:
 - PR 2: embedder progress callbacks and a stable progress event model for download execution.
   Completed by adding `DownloadProgressEvent`, `DownloadProgressSink`, `*_with_progress` download
   APIs, and CLI `--progress-json` JSON Lines on stderr.
-- PR 3: cancellation-aware download execution so embedders and CLI flows can stop work without
-  corrupting completed artifacts.
-- PR 4: chapter metadata mux support where the selected media source provides usable chapter data
+- PR 3: progress terminal events, clearer CLI `--progress-json` schema/sample docs, and
+  `DownloadReport` summary helpers for downstream UI state. Scope is limited to failure events plus
+  the currently reachable plan-level archive duplicate cancellation event; cancellable execution
+  remains PR 4.
+- PR 4: cancellation-aware download execution so embedders and CLI flows can stop work without
+  corrupting completed artifacts, using the progress terminal event model from PR 3.
+- PR 5: chapter metadata mux support where the selected media source provides usable chapter data
   and the mux backend can carry it.
-- PR 5: audio language selection in API and CLI surfaces, including listing enough source metadata
+- PR 6: audio language selection in API and CLI surfaces, including listing enough source metadata
   for callers to make their own choice.
-- PR 6: AI subtitle filtering in API and CLI surfaces, keeping raw subtitle metadata visible while
+- PR 7: AI subtitle filtering in API and CLI surfaces, keeping raw subtitle metadata visible while
   allowing callers to prefer or exclude AI-generated subtitles.
+- PR 8: `v0.5.0` release prep, release notes, full CI/live-e2e validation, and protected RC
+  creation.
 
 ## Out Of Scope For This Line
 

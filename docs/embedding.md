@@ -349,7 +349,8 @@ async fn main() -> bbdown_core::Result<()> {
 
 Use the `*_with_progress` download methods when an embedding application needs progress callbacks
 without parsing CLI output. `DownloadProgressEvent` is emitted for plan start/completion, entry
-start/completion, file start/chunk/completion, and mux start/completion. The callback is
+start/completion/failure, file start/chunk/completion/failure, mux start/completion/failure, and
+plan completion/failure/cancellation. The callback is
 synchronous and should stay lightweight; send events into an application channel if UI updates or
 database writes may block the download task.
 
@@ -379,7 +380,11 @@ async fn main() -> bbdown_core::Result<()> {
         )
         .await?;
 
-    println!("wrote {} entries", report.entries.len());
+    let summary = report.summary();
+    println!(
+        "wrote {} files across {} entries ({} bytes newly written)",
+        summary.file_count, summary.entry_count, summary.bytes_written
+    );
     Ok(())
 }
 ```
@@ -387,6 +392,34 @@ async fn main() -> bbdown_core::Result<()> {
 Archive-aware flows have matching `download_plan_with_archive_decision_with_progress` and
 `download_plan_with_archive_preflight_decision_with_progress` methods. The existing non-progress
 methods remain available and use a no-op sink.
+Treat `plan_completed`, `plan_failed`, and `plan_cancelled` as mutually exclusive terminal states
+for a download task. `plan_cancelled` currently represents explicit archive duplicate cancellation;
+the planned cancellable execution API will reuse the same sink shape, with the cancellation trigger
+outside the sink and UI state closing itself from the terminal event instead of inferring
+cancellation from a dropped task handle.
+
+```rust,no_run
+use bbdown_core::DownloadProgressEvent;
+
+fn apply_progress(event: &DownloadProgressEvent) {
+    match event {
+        DownloadProgressEvent::FileProgress {
+            path,
+            bytes_written,
+            expected_size,
+            ..
+        } => {
+            eprintln!("{path:?}: {bytes_written}/{expected_size:?}");
+        }
+        DownloadProgressEvent::PlanCompleted { .. } => eprintln!("download completed"),
+        DownloadProgressEvent::PlanFailed { error, .. } => eprintln!("download failed: {error}"),
+        DownloadProgressEvent::PlanCancelled { error, .. } => {
+            eprintln!("download cancelled: {error}");
+        }
+        _ => {}
+    }
+}
+```
 
 Use `bbdown plan` or `BiliClient::plan_download` first when a UI needs to present quality choices.
 `StreamSelection::video`, `StreamSelection::audio`, and `StreamSelection::new` select exact DASH
