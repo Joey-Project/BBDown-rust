@@ -34,6 +34,7 @@ async fn main() -> bbdown_core::Result<()> {
 
     for entry in &plan.entries {
         println!("{}: {} streams", entry.title, entry.streams.videos.len());
+        println!("chapters: {}", entry.chapters.len());
     }
 
     Ok(())
@@ -310,6 +311,11 @@ Diagnostic endpoints are reduced to origins and diagnostic messages redact commo
 
 Downloads are explicit. The library default keeps muxing disabled so embedding applications do not
 spawn `ffmpeg` unless they opt in.
+Plan entries may include `ChapterTrack` values when the selected upstream player metadata exposes
+usable chapter boundaries. When muxing through `MuxOptions::ffmpeg(...)`, those chapters are handed
+to ffmpeg as temporary ffmetadata and the returned `MuxReport::chapter_count` records how many
+chapters were included. With muxing disabled, chapters remain metadata on the plan entry and no
+chapter sidecar is written.
 
 ```rust,no_run
 use bbdown_core::{

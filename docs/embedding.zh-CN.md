@@ -294,6 +294,10 @@ origin，诊断消息会脱敏常见密钥模式。
 ## 下载执行
 
 下载是显式动作。library 默认禁用 mux，因此嵌入应用不会在未选择的情况下启动 `ffmpeg`。
+当选中的上游播放器 metadata 暴露可用章节边界时，plan 条目可能包含 `ChapterTrack`。通过
+`MuxOptions::ffmpeg(...)` 启用 mux 时，这些章节会以临时 ffmetadata 交给 ffmpeg，返回的
+`MuxReport::chapter_count` 会记录写入的章节数量。禁用 mux 时，章节只保留为 plan 条目上的
+metadata，不会写出章节 sidecar。
 
 ```rust,no_run
 use bbdown_core::{

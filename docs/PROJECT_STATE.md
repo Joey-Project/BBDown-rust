@@ -40,8 +40,8 @@
 - The `0.4.0` line shipped credential lifecycle improvements, access-key acquisition, unified login
   QR output, and append-only danmaku update workflows.
 - The active `0.5.0` development line is downloader and embedding polish. Progress callbacks,
-  terminal progress events/report summaries, and cancellation-aware download execution have landed;
-  next slices add chapter metadata muxing, audio language selection, AI subtitle filtering, and
+  terminal progress events/report summaries, cancellation-aware download execution, and chapter
+  metadata muxing have landed; next slices add audio language selection, AI subtitle filtering, and
   release prep.
 - Repo-local skill `$bbdown-live-e2e-fixtures` and `live-e2e.samples.example.json` record the current
   real Bilibili fixtures for opt-in normal, multi-page, and restricted-area live e2e validation.

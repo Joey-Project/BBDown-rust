@@ -1887,6 +1887,7 @@ mod tests {
                 streams,
                 diagnostics: StreamDiagnostics::default(),
                 subtitles: Vec::new(),
+                chapters: Vec::new(),
                 danmaku: DanmakuTrack {
                     cid: 2,
                     xml_url: "https://comment.example/2.xml".to_owned(),

@@ -43,11 +43,12 @@ pub use login::{
     AccessKeyLoginTicketOutput, QrLoginKind, QrLoginState, QrLoginTicket, QrLoginTicketOutput,
 };
 pub use models::{
-    CodecFamily, DanmakuTrack, DownloadEntry, DownloadPlan, EpisodeMetadata, FlvSegment,
-    MediaStream, Owner, PageMetadata, ResolvedContent, SeasonMetadata, SeasonResolution,
-    StreamDiagnostics, StreamQuality, StreamResolverAttempt, StreamResolverOutcome, StreamSet,
-    StreamSource, SubtitleFormat, SubtitleTrack, Tag, VideoCollectionItem, VideoCollectionKind,
-    VideoCollectionMetadata, VideoCollectionResolution, VideoMetadata,
+    ChapterTrack, CodecFamily, DanmakuTrack, DownloadEntry, DownloadPlan, EpisodeMetadata,
+    FlvSegment, MediaStream, Owner, PageMetadata, ResolvedContent, SeasonMetadata,
+    SeasonResolution, StreamDiagnostics, StreamQuality, StreamResolverAttempt,
+    StreamResolverOutcome, StreamSet, StreamSource, SubtitleFormat, SubtitleTrack, Tag,
+    VideoCollectionItem, VideoCollectionKind, VideoCollectionMetadata, VideoCollectionResolution,
+    VideoMetadata,
 };
 pub use playback::{
     HttpHeaderSpec, MediaCacheKey, MediaRequestKind, MediaRequestSpec, PlaybackAbrGroup,

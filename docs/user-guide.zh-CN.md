@@ -130,6 +130,7 @@ JSON 输出包含：
 - `streams.flv_segments`：playurl 响应使用 `durl` 时的 legacy FLV 分段。
 - `cover_url`：可选封面图片 URL，供下载封面旁路文件使用。
 - `subtitles`：发现的字幕轨道。
+- `chapters`：从选中播放器 metadata endpoint 发现的可选章节 metadata。
 - `danmaku.xml_url`：条目 `cid` 对应的 XML 弹幕端点。
 
 规划没有副作用。它不会创建文件、下载媒体或调用 ffmpeg。对于批量输入，规划只抓取并输
@@ -296,6 +297,8 @@ XML 始终是 canonical 更新目标，即使只请求 `--danmaku-format ass` �
 默认通过 `ffmpeg` 启用 mux。使用 `--ffmpeg <path>` 选择二进制，或使用 `--no-mux` 仅保留
 下载的媒体旁路文件。可复用 crate 通过 `DownloadOptions::mux` 让外部进程执行保持显式。
 重新 mux 会先写入并校验临时输出，然后替换最终文件，因此失败的 mux 会保留已有 mux 文件。
+当 plan 条目包含章节且启用 ffmpeg mux 时，BBDown 会通过临时 ffmetadata 输入把这些章节写
+入 mux 后 MP4。JSON 下载报告会用 `mux.chapter_count` 报告交给 ffmpeg 的章节数量。
 
 ## 凭据
 

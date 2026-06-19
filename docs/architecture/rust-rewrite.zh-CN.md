@@ -70,6 +70,7 @@ library 会把媒体可用性解析为 `DownloadPlan`：
   DASH 质量标签和时长。
 - `StreamDiagnostics` 记录非默认解析尝试，例如受限区域代理回退。
 - `SubtitleTrack` 记录语言元数据、规范化 URL 和基本格式分类。
+- `ChapterTrack` 在上游播放器 metadata 暴露可用章节边界时记录标题和开始/结束秒数。
 - `DanmakuTrack` 记录从 `cid` 和配置的 comment endpoint base 推导出的 XML 弹幕端点。
 
 `ss`、`md` 和 `cheese/ss` 在非交互上下文中需要 `Selection`。批量集合和 feed/list 输入默
@@ -204,7 +205,9 @@ request/response streaming 和 muxing 过程中检查 token。取消会返回 `E
 id。如果请求的 id 不可用，executor 会报告可用 id，并在媒体写入前失败。如果 DASH 媒体不
 完整且 FLV `durl` 分段可用，则下载 FLV 分段；显式 stream selection 要求 DASH 媒体，因此
 会拒绝 FLV 回退。否则条目会在媒体写入前失败。封面、字幕和弹幕文件保持为 sidecar。当启
-用 mux 时，executor 使用显式 argv 调用 `ffmpeg`，并在 report 中返回命令和输出路径。
+用 mux 时，executor 使用显式 argv 调用 `ffmpeg`，并在 report 中返回命令和输出路径。如果
+plan 条目携带章节，ffmpeg mux 会加入临时 ffmetadata 输入，从该输入映射章节，并用
+`MuxReport::chapter_count` 报告写入数量。
 
 Plan 条目保留 canonical 弹幕 XML 端点；只有当执行层选择的 `DanmakuFormats` 集合包含
 `DanmakuFormat::Ass` 时，executor 才会把 XML 转为 ASS。ASS 生成支持常见滚动、顶部、底
@@ -278,7 +281,8 @@ replacement cleanup 一致处理；metadata error（例如不可访问 parent）
 crate 默认禁用 mux，因此嵌入项目不会意外启动外部进程。CLI `download` 命令默认启用
 ffmpeg，并为用户和 mock e2e 测试暴露 `--no-mux`。Mux subprocess 的 stdin、stdout 和
 stderr 与 CLI stdio 隔离。Mux 会先写入临时输出，校验后再替换最终文件，因此失败的 rerun
-会保留已有 mux 文件，并保持 JSON report 可解析且准确。
+会保留已有 mux 文件，并保持 JSON report 可解析且准确。临时章节 ffmetadata 会在成功、失
+败或取消 mux 后移除。
 
 ## 受限区域和 Intl
 
