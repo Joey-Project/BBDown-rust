@@ -87,3 +87,6 @@ superseded_by:
   cancellation token wins the mux wait race, causing mux cancellation to be reported as
   `MuxFailed`. The fix maps SIGINT-killed mux statuses to cancellation when the token is already set
   or arrives during a short Unix signal grace window, with unit coverage for the delayed-token case.
+- Final follow-up review found that Windows mux Ctrl-C exits needed the same delayed cancellation
+  mapping. The fix maps Windows `STATUS_CONTROL_C_EXIT` mux statuses to cancellation when the token
+  is already set or arrives during the shared signal grace window, with Windows-only unit coverage.

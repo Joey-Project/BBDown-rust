@@ -27,7 +27,7 @@ const MAX_FILE_NAME_BYTES: usize = 80;
 const MAX_FILE_COMPONENT_BYTES: usize = 240;
 const MAX_SUBTITLE_EXTENSION_BYTES: usize = 16;
 const MAX_COVER_EXTENSION_BYTES: usize = 16;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const MUX_SIGNAL_CANCELLATION_GRACE: Duration = Duration::from_millis(100);
 const DEFAULT_UPOS_REPLACEMENT_HOST: &str = "upos-sz-mirrorcoso1.bilivideo.com";
 const DEFAULT_OUTPUT_DIR_TEMPLATE: &str = "{title}";
@@ -2511,17 +2511,37 @@ async fn mux_cancellation_error_for_status(
     #[cfg(unix)]
     {
         const SIGINT_SIGNAL: i32 = 2;
-        if status.signal() == Some(SIGINT_SIGNAL) {
-            tokio::select! {
-                () = cancellation.cancelled() => return Some(cancellation.cancelled_error()),
-                () = tokio::time::sleep(MUX_SIGNAL_CANCELLATION_GRACE) => {}
-            }
+        if status.signal() == Some(SIGINT_SIGNAL)
+            && let Some(error) = wait_for_mux_signal_cancellation(cancellation).await
+        {
+            return Some(error);
+        }
+    }
+    #[cfg(windows)]
+    {
+        const STATUS_CONTROL_C_EXIT: u32 = 0xC000_013A;
+        if status
+            .code()
+            .is_some_and(|code| code as u32 == STATUS_CONTROL_C_EXIT)
+            && let Some(error) = wait_for_mux_signal_cancellation(cancellation).await
+        {
+            return Some(error);
         }
     }
     if cancellation.is_cancelled() {
         Some(cancellation.cancelled_error())
     } else {
         None
+    }
+}
+
+#[cfg(any(unix, windows))]
+async fn wait_for_mux_signal_cancellation(
+    cancellation: &DownloadCancellationToken,
+) -> Option<Error> {
+    tokio::select! {
+        () = cancellation.cancelled() => Some(cancellation.cancelled_error()),
+        () = tokio::time::sleep(MUX_SIGNAL_CANCELLATION_GRACE) => None,
     }
 }
 
@@ -8179,6 +8199,28 @@ mod tests {
 
         assert!(error.is_cancelled());
         assert!(error.to_string().contains("test mux SIGINT cancellation"));
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn ffmpeg_mux_windows_ctrl_c_status_maps_to_delayed_cancellation() -> anyhow::Result<()> {
+        use std::os::windows::process::ExitStatusExt as _;
+
+        const STATUS_CONTROL_C_EXIT: u32 = 0xC000_013A;
+        let status = ExitStatus::from_raw(STATUS_CONTROL_C_EXIT);
+        let cancellation = DownloadCancellationToken::new();
+        let delayed_cancellation = cancellation.clone();
+        let cancel_task = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            delayed_cancellation.cancel_with_reason("test mux Ctrl-C cancellation");
+        });
+
+        let error = super::mux_error_for_failed_status(status, &cancellation).await;
+        cancel_task.await?;
+
+        assert!(error.is_cancelled());
+        assert!(error.to_string().contains("test mux Ctrl-C cancellation"));
         Ok(())
     }
 
