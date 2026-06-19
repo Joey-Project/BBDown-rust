@@ -18,6 +18,8 @@ superseded_by:
   opt-in live e2e validation.
 - Recorded canonical public, multi-page, restricted bangumi series, and restricted bangumi episode
   fixtures in `.agents/skills/bbdown-live-e2e-fixtures/references/live-fixtures.md`.
+- Aligned `live-e2e.samples.example.json` with the same fixture set so operators copying the sample
+  manifest start from the current URLs.
 - Added a short `AGENTS.md` pointer and updated project state/TODO entrypoints.
 
 ## Evidence

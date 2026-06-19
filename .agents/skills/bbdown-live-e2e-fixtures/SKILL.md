@@ -8,8 +8,8 @@ description: Use when BBDown-rust work needs real Bilibili live e2e URLs, fixtur
 ## Overview
 
 Use this repo-local skill when validating BBDown-rust behavior against real Bilibili pages instead
-of mock fixtures. It keeps the canonical live URLs in one place so future feature PRs can reuse the
-same normal-video and restricted-area samples.
+of mock fixtures. It keeps a curated live URL reference so future feature PRs can reuse the same
+normal-video and restricted-area samples.
 
 ## Workflow
 

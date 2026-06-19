@@ -5,9 +5,9 @@
   "restricted_api_proxy_all_areas": ["https://proxy.example"],
   "cases": [
     {
-      "name": "normal-public",
+      "name": "normal-playlist-video",
       "kind": "normal",
-      "url": "https://www.bilibili.com/video/BV15hdwBKEMG",
+      "url": "https://www.bilibili.com/video/BV1QtjA6BEB8/",
       "actions": ["info", "plan"],
       "expect": {
         "info": "video",
@@ -17,10 +17,23 @@
       }
     },
     {
-      "name": "pgc-hk-mo-tw",
+      "name": "normal-multipage-video",
+      "kind": "normal",
+      "url": "https://www.bilibili.com/video/BV1uW4y1s7zN/",
+      "selection": "page:2",
+      "actions": ["info", "plan"],
+      "expect": {
+        "info": "video",
+        "allowed_plan_sources": ["normal_web"],
+        "min_entries": 1,
+        "require_streams": true
+      }
+    },
+    {
+      "name": "restricted-bangumi-series",
       "kind": "restricted_pgc",
-      "url": "https://www.bilibili.com/bangumi/play/ep664928",
-      "selection": "current",
+      "url": "https://www.bilibili.com/bangumi/media/md28338980",
+      "selection": "latest",
       "restricted_area": "hk",
       "actions": ["info", "plan"],
       "expect": {
@@ -37,11 +50,11 @@
       }
     },
     {
-      "name": "pgc-cn",
+      "name": "restricted-bangumi-episode",
       "kind": "restricted_pgc",
-      "url": "https://www.bilibili.com/bangumi/play/ep323085",
+      "url": "https://www.bilibili.com/bangumi/play/ep664928",
       "selection": "current",
-      "restricted_area": "cn",
+      "restricted_area": "hk",
       "actions": ["info", "plan"],
       "expect": {
         "info": "season",
@@ -50,7 +63,7 @@
         "plan_error_contains": [
           "restricted-area resolver failed",
           "PgcWeb Failed",
-          "PgcProxy area=cn Failed (API code"
+          "PgcProxy area=hk Failed (API code"
         ],
         "min_entries": 1,
         "require_streams": true

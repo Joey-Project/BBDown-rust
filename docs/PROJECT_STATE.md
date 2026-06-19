@@ -43,8 +43,8 @@
   terminal progress events/report summaries, and cancellation-aware download execution have landed;
   next slices add chapter metadata muxing, audio language selection, AI subtitle filtering, and
   release prep.
-- Repo-local skill `$bbdown-live-e2e-fixtures` records canonical real Bilibili fixtures for opt-in
-  normal, multi-page, and restricted-area live e2e validation.
+- Repo-local skill `$bbdown-live-e2e-fixtures` and `live-e2e.samples.example.json` record the current
+  real Bilibili fixtures for opt-in normal, multi-page, and restricted-area live e2e validation.
 
 ## Recovery Pointers
 
