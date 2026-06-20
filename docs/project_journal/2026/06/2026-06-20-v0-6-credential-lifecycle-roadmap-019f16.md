@@ -56,6 +56,10 @@ superseded_by:
     token is present without duplicating raw credential values.
   - Empty metadata is omitted, orphan metadata is normalized away on save, and legacy flat
     credential stores continue to load without lifecycle metadata.
+  - Unknown or malformed optional metadata is ignored on load, while malformed required profile data
+    still fails fast.
+  - Replacing a credential value drops lifecycle metadata for that credential kind so old token
+    expiry/source hints are not rebound to a new token.
 
 ## Out Of Scope For This Line
 
@@ -77,6 +81,7 @@ superseded_by:
 - PR 2 local validation:
   - `cargo test -p bbdown-core credentials --locked`.
   - `cargo test -p bbdown-core --test public_api --locked`.
+  - `just ci`.
 
 ## Next Steps
 

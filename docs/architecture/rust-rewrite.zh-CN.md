@@ -352,7 +352,8 @@ CLI 通过全局 `--credential-profile` flag 和 `BBDOWN_CREDENTIAL_PROFILE` 暴
 profile document 可以包含按 profile 和 credential kind 索引的可选 lifecycle metadata。metadata
 会记录来源、获取/检查/过期时间戳，以及 `refresh_token_present` 布尔提示，但不会在 metadata
 map 中复制原始 token 值。normalize 时会丢弃空 metadata；当 profile 没有 credentials 时，
-orphan metadata 也会被移除；旧的 flat credential 文件仍会在没有 lifecycle metadata 的情况下加载。
+orphan metadata 也会被移除；未知或 malformed 的可选 metadata 会在加载时被忽略，因此旧的
+flat credential 文件和有效 profile document 仍可在没有 lifecycle metadata 的情况下加载。
 credential health diagnostics 是同一 credential model 上的只读层。crate 暴露
 `CredentialHealthReport` 和 `BiliClient::check_credential_health()`，让嵌入调用方可以在选
 择登录或 fallback flow 之前，分别检查 WEB cookie、通用 `access_key` 和 TV `tv_access_key`。
