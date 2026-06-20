@@ -35,16 +35,16 @@
 - The publishable library package is named `bbdown-core`; Rust code imports it as `bbdown_core`.
 - First-release automation now uses a protected RC tag workflow followed by RC promotion to GitHub
   Release and crates.io.
-- Versions `0.1.0`, `0.2.0`, `0.3.0`, and `0.4.0` have shipped through that flow as GitHub Releases and
-  crates.io package versions for `bbdown-core`.
+- Versions `0.1.0`, `0.2.0`, `0.3.0`, `0.4.0`, and `0.5.0` have shipped through that flow as GitHub
+  Releases and crates.io package versions for `bbdown-core`.
 - The `0.4.0` line shipped credential lifecycle improvements, access-key acquisition, unified login
   QR output, and append-only danmaku update workflows.
-- The active `0.5.0` development line is downloader and embedding polish. Progress callbacks,
-  terminal progress events/report summaries, cancellation-aware download execution, chapter
-  metadata muxing, audio language selection, AI subtitle filtering, and release-prep notes have
-  landed; the docs now include a bilingual release-note archive for `v0.1.0` through `v0.5.0`, and
-  release archives package those linked notes; the next action is protected RC creation from
-  `master`.
+- The completed `0.5.0` development line shipped downloader and embedding polish. Progress
+  callbacks, terminal progress events/report summaries, cancellation-aware download execution,
+  chapter metadata muxing, audio language selection, AI subtitle filtering, and release-note
+  archive packaging are now published.
+- The active `0.6.0` planning line is credential lifecycle work: automatic credential refresh,
+  health policy/reporting, profile-level lifecycle status, and multi-account lifecycle UX.
 - The release-prep deterministic gate passed. The latest local live e2e rerun is still blocked by
   upstream restricted PGC proxy `502 Bad Gateway` responses in the ignored manifest.
 - Repo-local skill `$bbdown-live-e2e-fixtures` and `live-e2e.samples.example.json` record the current
@@ -58,8 +58,10 @@
   `docs/project_journal/2026/06/2026-06-15-v0-4-credential-danmaku-roadmap-019ecf.md`.
 - Completed v0.4.0 release prep:
   `docs/project_journal/2026/06/2026-06-18-v0-4-release-prep-019f0a.md`.
-- Active v0.5.0 roadmap:
+- Completed v0.5.0 roadmap:
   `docs/project_journal/2026/06/2026-06-18-v0-5-downloader-embedding-roadmap-019f0b.md`.
+- Active v0.6.0 roadmap:
+  `docs/project_journal/2026/06/2026-06-20-v0-6-credential-lifecycle-roadmap-019f16.md`.
 - Repo-local live e2e fixture skill:
   `.agents/skills/bbdown-live-e2e-fixtures/SKILL.md`.
 - User-facing CLI behavior is documented in `docs/user-guide.md`.

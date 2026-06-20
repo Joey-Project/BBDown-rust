@@ -1,7 +1,7 @@
 ---
 id: 20260618-019f0b-v0-5-downloader-embedding-roadmap
 title: v0.5.0 Downloader And Embedding Roadmap
-status: active
+status: completed
 created: 2026-06-18
 updated: 2026-06-20
 branch: post-release/v0.5-devline
@@ -53,6 +53,8 @@ superseded_by:
   `v0.1.0` through `v0.5.0`, README links, CODEOWNERS coverage for release notes, a compact
   embedding example that combines progress, cancellation, audio-language selection, and AI subtitle
   filtering, plus a compile-time public API re-export regression test.
+- Release: completed through the protected RC and promotion workflow as GitHub Release `v0.5.0` and
+  crates.io package `bbdown-core` `0.5.0`.
 
 ## Out Of Scope For This Line
 
@@ -173,9 +175,13 @@ superseded_by:
   `pgc-hk-mo-tw` case because all configured restricted-area proxy candidates returned
   `502 Bad Gateway` while the manifest expected an API-code proxy diagnostic. This remains an
   upstream proxy/fixture caveat rather than a deterministic release gate failure.
+- Release candidate workflow `27882887144` created `v0.5.0-rc.1` from
+  `b5dde066561fc39c6387198f6e9a61513ee44eee`.
+- Promotion workflow `27883242286` completed successfully from `v0.5.0-rc.1`.
+- GitHub Release `v0.5.0` was published on 2026-06-20 with linux, macOS aarch64, macOS x86_64, and
+  Windows x86_64 artifacts plus SHA256 sidecars.
+- `cargo search bbdown-core --limit 5` showed `bbdown-core = "0.5.0"` on crates.io.
 
 ## Next Steps
 
-- Merge the release-prep PR after review and CI gates are clean.
-- Run `Create Release Candidate` from `master` with `version=0.5.0`.
-- Promote the latest `v0.5.0-rc.N` tag after the protected production and crates.io approvals.
+- Continue with the `v0.6.0` credential lifecycle roadmap.
