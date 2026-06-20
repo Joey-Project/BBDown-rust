@@ -1,7 +1,8 @@
 use bbdown_core::{
-    BiliClient, ClientConfig, DownloadCancellationToken, DownloadOptions, DownloadProgressEvent,
-    DownloadProgressSink, DownloadReportSummary, NoopDownloadProgress, StreamSelection,
-    SubtitleAiPolicy,
+    BiliClient, ClientConfig, CredentialKind, CredentialLifecycleMetadata,
+    CredentialLifecycleSource, CredentialProfileMetadata, DownloadCancellationToken,
+    DownloadOptions, DownloadProgressEvent, DownloadProgressSink, DownloadReportSummary,
+    NoopDownloadProgress, StreamSelection, SubtitleAiPolicy,
 };
 use std::path::PathBuf;
 
@@ -29,4 +30,17 @@ fn v0_5_embedding_surface_is_reexported() {
     let sink = NoopDownloadProgress;
     sink.on_download_progress(&event);
     accepts_progress_sink(&sink);
+
+    let mut credential_metadata = CredentialProfileMetadata::default();
+    credential_metadata.set_credential(
+        CredentialKind::AccessKey,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_refresh_token_present(true),
+    );
+    assert!(
+        credential_metadata
+            .credential(CredentialKind::AccessKey)
+            .is_some()
+    );
 }

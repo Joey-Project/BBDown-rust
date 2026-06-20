@@ -210,6 +210,11 @@ migrates the store to the versioned profile document without dropping the defaul
 `CredentialProfileSelection` and the selected-profile store helpers provide the same default-profile
 versus named-profile routing used by the CLI, so embedders can bind user-selected accounts without
 duplicating the migration behavior.
+Profile documents can also carry optional lifecycle metadata through `CredentialProfileMetadata` and
+`CredentialLifecycleMetadata`. This metadata records provenance, checked-at/expiry timestamps, and
+whether a refresh token was present without storing raw refresh-token values in the metadata map.
+Legacy flat stores keep the old shape, empty metadata is omitted from serialized profile documents,
+and automatic refresh remains a separate policy layer.
 For QR login, convert `QrLoginTicket` to `QrLoginTicketOutput` when a downstream application needs a
 stable serialized scan URL and `qr_payload`; current WEB and TV login flows use the scan URL itself
 as the QR payload.

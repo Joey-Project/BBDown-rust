@@ -198,6 +198,10 @@ profile API 读取时会表现为 `default` profile；保存命名 profile 时�
 versioned profile document，同时保留默认凭据。
 `CredentialProfileSelection` 和 selected-profile store helper 提供与 CLI 相同的默认
 profile / 命名 profile 路由语义，因此嵌入方可以绑定用户选择的账号，而不必重复实现迁移行为。
+profile document 也可以通过 `CredentialProfileMetadata` 和 `CredentialLifecycleMetadata`
+携带可选 lifecycle metadata。该 metadata 会记录来源、检查时间/过期时间戳，以及是否曾有
+refresh token，但不会在 metadata map 中保存原始 refresh token 值。旧 flat store 仍保持原形
+态；空 metadata 在序列化 profile document 时会被省略，自动续期仍然属于独立策略层。
 对于二维码登录，如果下游应用需要稳定的可序列化扫码 URL 和 `qr_payload`，可以把
 `QrLoginTicket` 转换成 `QrLoginTicketOutput`；当前 WEB 和 TV 登录流程会直接使用扫码 URL
 作为 QR payload。

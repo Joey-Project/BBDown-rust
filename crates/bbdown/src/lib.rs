@@ -24,7 +24,8 @@ pub use client::{
 };
 pub use credentials::{
     CredentialHealthProbe, CredentialHealthReport, CredentialHealthScope, CredentialHealthStatus,
-    CredentialKind, CredentialProfileSelection, CredentialProfiles, CredentialSource,
+    CredentialKind, CredentialLifecycleMetadata, CredentialLifecycleSource,
+    CredentialProfileMetadata, CredentialProfileSelection, CredentialProfiles, CredentialSource,
     CredentialStore, Credentials, DEFAULT_CREDENTIAL_PROFILE,
 };
 pub use danmaku::{DanmakuFormat, DanmakuFormats, DanmakuXmlMerge, merge_xml_append_only};
