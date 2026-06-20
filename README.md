@@ -323,13 +323,13 @@ running, so sample behavior is driven by the manifest rather than shell state.
 - User guide: [docs/user-guide.md](docs/user-guide.md)
 - Embedding guide: [docs/embedding.md](docs/embedding.md)
 - Architecture: [docs/architecture/rust-rewrite.md](docs/architecture/rust-rewrite.md)
-- Release notes: [docs/release-notes/v0.5.0.md](docs/release-notes/v0.5.0.md)
+- Release notes: [docs/release-notes/README.md](docs/release-notes/README.md)
 - Simplified Chinese README: [README.zh-CN.md](README.zh-CN.md)
 - Simplified Chinese user guide: [docs/user-guide.zh-CN.md](docs/user-guide.zh-CN.md)
 - Simplified Chinese embedding guide: [docs/embedding.zh-CN.md](docs/embedding.zh-CN.md)
 - Simplified Chinese architecture guide:
   [docs/architecture/rust-rewrite.zh-CN.md](docs/architecture/rust-rewrite.zh-CN.md)
 - Simplified Chinese release notes:
-  [docs/release-notes/v0.5.0.zh-CN.md](docs/release-notes/v0.5.0.zh-CN.md)
+  [docs/release-notes/README.zh-CN.md](docs/release-notes/README.zh-CN.md)
 - Agent-facing project tracking, not localized: [Project state](docs/PROJECT_STATE.md),
   [Project TODO](docs/PROJECT_TODO.md), and [workstream journals](docs/project_journal/).

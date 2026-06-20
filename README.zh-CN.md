@@ -304,11 +304,11 @@ just ci
 - 用户指南：[docs/user-guide.zh-CN.md](docs/user-guide.zh-CN.md)
 - 嵌入指南：[docs/embedding.zh-CN.md](docs/embedding.zh-CN.md)
 - 架构：[docs/architecture/rust-rewrite.zh-CN.md](docs/architecture/rust-rewrite.zh-CN.md)
-- 版本说明：[docs/release-notes/v0.5.0.zh-CN.md](docs/release-notes/v0.5.0.zh-CN.md)
+- 版本说明：[docs/release-notes/README.zh-CN.md](docs/release-notes/README.zh-CN.md)
 - 英文 README：[README.md](README.md)
 - 英文用户指南：[docs/user-guide.md](docs/user-guide.md)
 - 英文嵌入指南：[docs/embedding.md](docs/embedding.md)
 - 英文架构指南：[docs/architecture/rust-rewrite.md](docs/architecture/rust-rewrite.md)
-- 英文版本说明：[docs/release-notes/v0.5.0.md](docs/release-notes/v0.5.0.md)
+- 英文版本说明：[docs/release-notes/README.md](docs/release-notes/README.md)
 - 面向 agent 的项目跟踪文档，不做本地化：[项目状态](docs/PROJECT_STATE.md)、
   [项目 TODO](docs/PROJECT_TODO.md)、[工作流日志](docs/project_journal/)。

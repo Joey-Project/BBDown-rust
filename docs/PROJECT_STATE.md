@@ -42,8 +42,9 @@
 - The active `0.5.0` development line is downloader and embedding polish. Progress callbacks,
   terminal progress events/report summaries, cancellation-aware download execution, chapter
   metadata muxing, audio language selection, AI subtitle filtering, and release-prep notes have
-  landed; release archives also package the linked release notes; the next action is protected RC
-  creation from `master`.
+  landed; the docs now include a bilingual release-note archive for `v0.1.0` through `v0.5.0`, and
+  release archives package those linked notes; the next action is protected RC creation from
+  `master`.
 - The release-prep deterministic gate passed. The latest local live e2e rerun is still blocked by
   upstream restricted PGC proxy `502 Bad Gateway` responses in the ignored manifest.
 - Repo-local skill `$bbdown-live-e2e-fixtures` and `live-e2e.samples.example.json` record the current

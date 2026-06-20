@@ -49,10 +49,10 @@ superseded_by:
   `DownloadOptions::with_subtitle_ai_policy(...)`, CLI `--subtitle-ai`, filtered subtitle sidecar
   downloads, and subtitle-policy archive key tokens.
 - PR 8: `v0.5.0` release prep, release notes, public API/rustdoc validation, full deterministic CI,
-  and protected RC readiness. Completed by adding bilingual release notes, README links,
-  CODEOWNERS coverage for release notes, a compact embedding example that combines progress,
-  cancellation, audio-language selection, and AI subtitle filtering, plus a compile-time public API
-  re-export regression test.
+  and protected RC readiness. Completed by adding a bilingual release-note archive covering
+  `v0.1.0` through `v0.5.0`, README links, CODEOWNERS coverage for release notes, a compact
+  embedding example that combines progress, cancellation, audio-language selection, and AI subtitle
+  filtering, plus a compile-time public API re-export regression test.
 
 ## Out Of Scope For This Line
 
@@ -165,6 +165,10 @@ superseded_by:
   `shellcheck scripts/release/package-release.sh`, a Unix package smoke, exact tar member checks for
   both `v0.5.0` release-note files, checksum sidecar verification, project journal validation, and
   a full `just ci` rerun.
+- The release-prep PR was expanded to add human-written bilingual notes for the previously shipped
+  `v0.1.0`, `v0.2.0`, `v0.3.0`, and `v0.4.0` releases, plus English and Simplified Chinese
+  `docs/release-notes/` indexes. The README release-note links now point to the index files instead
+  of only the latest single-version note.
 - Local `just live-e2e` was attempted with the ignored manifest. It failed on the restricted
   `pgc-hk-mo-tw` case because all configured restricted-area proxy candidates returned
   `502 Bad Gateway` while the manifest expected an API-code proxy diagnostic. This remains an
