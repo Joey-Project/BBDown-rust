@@ -74,8 +74,11 @@
   validation.
 - [completed] Add chapter metadata mux support: plan entries expose discovered chapters, ffmpeg mux
   maps them through temporary ffmetadata, and mux reports include `chapter_count`.
-- [pending] Continue `v0.5.0` as the downloader and embedding polish line: audio language
-  selection, AI subtitle filtering, and final `v0.5.0` release prep.
+- [completed] Add `v0.5.0` audio language selection: expose optional audio language metadata on
+  plan/playback streams, support CLI/API language selection, and keep explicit stream choices
+  distinct in archive keys.
+- [pending] Continue `v0.5.0` as the downloader and embedding polish line: AI subtitle filtering
+  and final `v0.5.0` release prep.
 - [pending] Plan `v0.6.0` as the credential lifecycle line: automatic credential refresh, health
   policy/reporting, profile-level status, and multi-account lifecycle UX.
 - [pending] Plan `v0.7.0` or a later feed/page release for per-video related recommendations and

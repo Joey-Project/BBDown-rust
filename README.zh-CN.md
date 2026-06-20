@@ -110,6 +110,7 @@ bbdown download av170001 --output-dir downloads
 bbdown download ss26801 --select latest --output-dir downloads
 bbdown download fav456 --select page:1 --output-dir downloads
 bbdown download av170001 --output-dir downloads --no-mux --json
+bbdown download av170001 --audio-language ja-JP --output-dir downloads
 bbdown download av170001 --only cover --output-dir downloads --json
 bbdown download av170001 --output-dir downloads --archive-file downloads/archive.json --on-duplicate keep-both
 bbdown download av170001 --output-template "{title}-{entry_count:02}" --entry-template "{index:02}-{entry_title}" --no-mux
@@ -126,6 +127,9 @@ bbdown download av170001 --output-dir downloads --no-mux --json --progress-json
 `--danmaku-format xml,ass` 可同时保留 XML 和 ASS 旁路文件。
 使用 `--only video`、`--only audio`、`--only subtitle`、`--only danmaku` 或
 `--only cover` 可只写入一种输出；single-output 模式会跳过 mux。
+使用 `bbdown plan` 查看 `streams.audios[*].language` 和 `language_doc` 后，可以传入
+`--audio-language <LANG>` 选择第一条匹配的 DASH 音频流。显式视频/音频清晰度或语言选择
+会写入 archive key，因此不同媒体 variant 不会互相满足 duplicate preflight。
 使用 `--output-template`、`--entry-template` 和 `--mux-template` 可定制输出根目录、条目
 目录和 mux 文件名 stem。模板输出会按文件名组件清洗；媒体、封面、字幕和弹幕旁路文件名
 仍保持稳定，以保证续传和重复轨道处理安全。条目模板必须在选中条目之间渲染出唯一目录名。

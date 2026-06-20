@@ -40,7 +40,9 @@ superseded_by:
   `DownloadEntry`, collecting web player `view_points`, mapping chapters into ffmpeg through
   temporary ffmetadata, and reporting `MuxReport::chapter_count`.
 - PR 6: audio language selection in API and CLI surfaces, including listing enough source metadata
-  for callers to make their own choice.
+  for callers to make their own choice. Completed by exposing optional audio language metadata on
+  `MediaStream` / `MediaRequestSpec`, adding `StreamSelection::with_audio_language(...)`, adding
+  CLI `--audio-language`, and distinguishing explicit stream choices in archive content keys.
 - PR 7: AI subtitle filtering in API and CLI surfaces, keeping raw subtitle metadata visible while
   allowing callers to prefer or exclude AI-generated subtitles.
 - PR 8: `v0.5.0` release prep, release notes, full CI/live-e2e validation, and protected RC
@@ -98,3 +100,35 @@ superseded_by:
 - Chapter mux validation covers plan JSON chapter output from player `view_points`, ffmetadata
   escaping and invalid chapter filtering, ffmpeg `-map_chapters` command construction, mux report
   `chapter_count`, and temporary ffmetadata cleanup after muxing.
+- Audio language validation covers playurl language metadata parsing, plan/playback JSON propagation,
+  human plan/playback summaries, core audio-language selection, CLI `--audio-language` download
+  selection, video-only conflict validation, and archive content keys for explicit stream choices.
+- Audio language local gate passed `just ci`, covering fmt, clippy, pinned toolchain check,
+  workspace tests, CLI e2e, and `bbdown-core` publish dry-run. Local `just live-e2e` was attempted
+  twice with the ignored manifest and reached the restricted `pgc-hk-mo-tw` case, but the configured
+  PGC proxy candidates returned `502 Bad Gateway` while the manifest expected an API-code proxy
+  diagnostic, so the live gate is currently blocked by upstream proxy/manifest state rather than the
+  deterministic test suite.
+- Internal readonly review found that normalized language archive tokens could collide for distinct
+  raw selectors such as `en-US` and `en US`; the fix appends the raw selector hash to readable
+  language tokens and adds a collision regression test.
+- Follow-up readonly review found two archive edge cases for stream-specific keys: same-output
+  variant records could evict each other even when their files still existed, and danmaku archive
+  refresh could drop `stream=...` tokens. The fixes retain same-output variant records while their
+  recorded outputs remain present, prune them after replace-style output cleanup removes those
+  files, and preserve non-danmaku prefix tokens during danmaku format refresh.
+- The follow-up fixes passed targeted archive/danmaku tests and a full `just ci` rerun.
+- Final readonly review found that media filename identity still dropped non-ASCII `language_doc`
+  values when no `language` field was present. The fix gives identity parts a hash fallback when
+  the readable token is empty and adds a `language_doc`-only non-ASCII dual-audio filename test.
+- The next readonly pass found that audio-language archive keys still used the raw selector hash
+  even though selection matching is ASCII case-insensitive. The fix canonicalizes archive language
+  selectors with trim plus ASCII lowercase before hashing and adds an `English`/`english`
+  duplicate-key regression assertion.
+- The following readonly pass found that `language` and `language_doc` aliases such as `en-US` and
+  `English` could still select the same audio stream while producing different archive keys. The
+  fix makes stream-selection archive keys prefer the plan entry's selected audio stream identity and
+  adds an alias duplicate-preflight regression test.
+- The next readonly pass found intl mobile audio resources did not accept camelCase
+  `languageDoc` / `langDoc` / `lanDoc` aliases even though Web DASH tracks did. The fix adds those
+  aliases to `IntlMediaResource` and extends the intl mobile playurl shape test.

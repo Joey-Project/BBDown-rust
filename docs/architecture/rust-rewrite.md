@@ -154,10 +154,11 @@ variants carry ordered segment specs.
 
 `MediaRequestSpec` is deliberately serializable and transport-neutral. It contains the primary URL,
 backup URLs, media headers, mime type, exact codec string when known, codec-family metadata,
-bandwidth, dimensions, duration, size, and a structured cache key. The cache key is based on content
-identity, media kind, stream id, exact codec string when present, and a hash of the source URL with
-fragments removed but query identity preserved. This avoids exposing the URL in plaintext while
-preventing collisions for proxy URLs whose query string identifies the resource. Playback planning
+optional audio language metadata, bandwidth, dimensions, duration, size, and a structured cache key.
+The cache key is based on content identity, media kind, stream id, exact codec string when present,
+and a hash of the source URL with fragments removed but query identity preserved. This avoids
+exposing the URL in plaintext while preventing collisions for proxy URLs whose query string
+identifies the resource. Playback planning
 also exposes `PlaybackEntry.cache_key`, `PlaybackVariant.cache_key`,
 `PlaybackEntry.abr.groups`, and `PlaybackVariant.abr` so a downstream cache server can store media
 by request key, retain completed variants by variant key, and map ABR level changes back to the same
@@ -224,12 +225,14 @@ Execution behavior is controlled by `DownloadOptions`:
 
 For each entry, execution prefers a complete DASH video/audio pair from the plan. By default this is
 the first video and first audio stream; callers can set `StreamSelection::new(...)` to request exact
-DASH video or audio stream ids. If a requested id is unavailable, the executor reports the available
-ids and fails before media writes. If DASH media is incomplete and FLV `durl` segments are available, it
-downloads the FLV segments instead; explicit stream selection requires DASH media and therefore
-rejects FLV fallback. Otherwise the entry fails before media writes. Cover, subtitle, and danmaku
-files remain sidecars. When muxing is enabled, the executor invokes `ffmpeg` with explicit argv and
-returns the command plus output path in the report. If the plan entry carries chapters, ffmpeg muxing
+DASH video or audio stream ids, and can attach `StreamSelection::with_audio_language(...)` to select
+the first audio stream whose `MediaStream.language` or `language_doc` matches. If a requested id or
+language is unavailable, the executor reports the available ids or languages and fails before media
+writes. If DASH media is incomplete and FLV `durl` segments are available, it downloads the FLV
+segments instead; explicit stream selection requires DASH media and therefore rejects FLV fallback.
+Otherwise the entry fails before media writes. Cover, subtitle, and danmaku files remain sidecars.
+When muxing is enabled, the executor invokes `ffmpeg` with explicit argv and returns the command plus
+output path in the report. If the plan entry carries chapters, ffmpeg muxing
 adds a temporary ffmetadata input, maps chapters from that input, and reports the included count as
 `MuxReport::chapter_count`.
 Plan entries keep the canonical danmaku XML endpoint; the executor converts that XML to ASS only
@@ -260,7 +263,9 @@ and `AudioOnly` download one matching DASH stream and skip sidecars and muxing. 
 reject stream-quality selection because no media stream is selected.
 Archive content keys are also mode-aware for single-output downloads while preserving the legacy key
 for full downloads, so existing archives still match full downloads and single-output records do not
-claim that a complete entry is already downloaded.
+claim that a complete entry is already downloaded. Explicit stream selection adds stream tokens to
+the archive key, preventing different selected qualities or audio languages from satisfying one
+another's duplicate preflight.
 
 Media and sidecar downloads use media headers without account cookies, because media URLs come from
 API payloads and can target CDN or proxy hosts. DASH and FLV backup URLs are part of the candidate

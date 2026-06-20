@@ -77,8 +77,9 @@ async fn main() -> bbdown_core::Result<()> {
 
 Each `PlaybackVariant` contains selected DASH video/audio request specs or FLV segment request specs.
 `MediaRequestSpec` includes primary and backup URLs, HTTP headers, mime type, exact codec string
-when the upstream surface provides one, codec-family metadata, bandwidth, dimensions, duration, size,
-and a cache key. `PlaybackVariant.selection_hints` includes an `avplayer` profile with `playable`,
+when the upstream surface provides one, codec-family metadata, optional audio `language` /
+`language_doc` metadata, bandwidth, dimensions, duration, size, and a cache key.
+`PlaybackVariant.selection_hints` includes an `avplayer` profile with `playable`,
 `preferred`, `score`, exact `video_codec` / `audio_codec` strings when known, codec-family fields, a
 `format_key`, and machine-readable reason codes. Downstream clients can use
 `PlaybackCodecPreference` to rank variants by their own H.264, HEVC, AV1, or other codec order, then
@@ -487,7 +488,11 @@ async fn wait_for_user_cancel() {}
 
 Use `bbdown plan` or `BiliClient::plan_download` first when a UI needs to present quality choices.
 `StreamSelection::video`, `StreamSelection::audio`, and `StreamSelection::new` select exact DASH
-stream ids from the plan.
+stream ids from the plan. `StreamSelection::audio_language("ja-JP")` or
+`StreamSelection::new(None, Some(30280)).with_audio_language("Japanese")` selects the first DASH
+audio stream whose `MediaStream.language` or `language_doc` matches the requested value
+case-insensitively. Explicit stream selection is included in archive content keys, so different
+chosen qualities or audio languages do not satisfy one another's duplicate preflight.
 Use `DownloadMode::VideoOnly`, `AudioOnly`, `SubtitleOnly`, `DanmakuOnly`, or `CoverOnly` when an
 embedding caller wants one output kind. Sidecar-only modes do not require media streams and never
 spawn muxing; video-only and audio-only modes select only the matching DASH stream. Use the

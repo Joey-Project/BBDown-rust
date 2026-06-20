@@ -135,8 +135,8 @@ CLI 通过 `bbdown plan` 暴露这一层。该命令被有意设计为规划表�
 `MediaRequestSpec`；FLV variant 携带有序的 segment spec。
 
 `MediaRequestSpec` 被设计为可序列化且与传输层解耦。它包含主 URL、备用 URL、媒体
-headers、mime type、已知时的 exact codec 字符串、codec-family metadata、码率、尺寸、时长、
-大小和结构化 cache key。cache key 基于内容身份、媒体种类、stream id、存在时的 exact codec
+headers、mime type、已知时的 exact codec 字符串、codec-family metadata、可选音频语言
+metadata、码率、尺寸、时长、大小和结构化 cache key。cache key 基于内容身份、媒体种类、stream id、存在时的 exact codec
 字符串，以及去掉 fragment 但保留 query 身份的 source URL hash。这样既避免暴露 URL 明文，
 也避免让 query string 区分资源的 proxy URL 发生碰撞。
 playback planning 还会暴露 `PlaybackEntry.cache_key`、`PlaybackVariant.cache_key`、
@@ -202,11 +202,12 @@ request/response streaming 和 muxing 过程中检查 token。取消会返回 `E
 
 对每个条目，执行优先使用 plan 中完整的 DASH 视频/音频组合。默认是第一个视频流和第一个
 音频流；调用方可以设置 `StreamSelection::new(...)` 请求精确的 DASH video 或 audio stream
-id。如果请求的 id 不可用，executor 会报告可用 id，并在媒体写入前失败。如果 DASH 媒体不
-完整且 FLV `durl` 分段可用，则下载 FLV 分段；显式 stream selection 要求 DASH 媒体，因此
-会拒绝 FLV 回退。否则条目会在媒体写入前失败。封面、字幕和弹幕文件保持为 sidecar。当启
-用 mux 时，executor 使用显式 argv 调用 `ffmpeg`，并在 report 中返回命令和输出路径。如果
-plan 条目携带章节，ffmpeg mux 会加入临时 ffmetadata 输入，从该输入映射章节，并用
+id，也可以附加 `StreamSelection::with_audio_language(...)` 来选择第一条 `MediaStream.language`
+或 `language_doc` 匹配的音频流。如果请求的 id 或语言不可用，executor 会报告可用 id 或语
+言，并在媒体写入前失败。如果 DASH 媒体不完整且 FLV `durl` 分段可用，则下载 FLV 分段；
+显式 stream selection 要求 DASH 媒体，因此会拒绝 FLV 回退。否则条目会在媒体写入前失败。
+封面、字幕和弹幕文件保持为 sidecar。当启用 mux 时，executor 使用显式 argv 调用 `ffmpeg`，
+并在 report 中返回命令和输出路径。如果 plan 条目携带章节，ffmpeg mux 会加入临时 ffmetadata 输入，从该输入映射章节，并用
 `MuxReport::chapter_count` 报告写入数量。
 
 Plan 条目保留 canonical 弹幕 XML 端点；只有当执行层选择的 `DanmakuFormats` 集合包含
@@ -233,6 +234,8 @@ Append-only 弹幕刷新被建模为单独的 archive-backed 执行路径，而�
 为这些模式不选择媒体 stream。
 single-output 下载的 archive content key 也会包含 mode，而完整下载继续保留 legacy key；
 因此现有归档仍能匹配完整下载，single-output 记录不会宣称完整条目已经下载完成。
+显式 stream selection 会把 stream token 写入 archive key，避免不同清晰度或音频语言互相满
+足 duplicate preflight。
 
 媒体和 sidecar 下载使用不含账号 cookie 的媒体 headers，因为媒体 URL 来自 API payload，
 可能指向 CDN 或代理主机。DASH 和 FLV backup URL 是候选列表的一部分。媒体正文读取使用独

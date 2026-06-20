@@ -73,7 +73,8 @@ async fn main() -> bbdown_core::Result<()> {
 
 每个 `PlaybackVariant` 包含选中的 DASH 视频/音频请求规格，或 FLV 分段请求规格。
 `MediaRequestSpec` 包含主 URL、备用 URL、HTTP headers、mime type、上游提供时的 exact
-codec 字符串、codec-family metadata、码率、尺寸、时长、大小和 cache key。
+codec 字符串、codec-family metadata、可选音频 `language` / `language_doc` metadata、码率、
+尺寸、时长、大小和 cache key。
 `PlaybackVariant.selection_hints` 包含 `avplayer` profile，其中有 `playable`、`preferred`、
 `score`、已知时的 exact `video_codec` / `audio_codec` 字符串、codec-family 字段、
 `format_key` 和机器可读 reason code。下游客户端可以用 `PlaybackCodecPreference` 按自己的
@@ -466,7 +467,11 @@ async fn wait_for_user_cancel() {}
 
 当 UI 需要展示质量选择时，先使用 `bbdown plan` 或 `BiliClient::plan_download`。
 `StreamSelection::video`、`StreamSelection::audio` 和 `StreamSelection::new` 会从 plan 中
-选择精确的 DASH stream id。
+选择精确的 DASH stream id。`StreamSelection::audio_language("ja-JP")` 或
+`StreamSelection::new(None, Some(30280)).with_audio_language("Japanese")` 会选择第一条
+`MediaStream.language` 或 `language_doc` 与请求值大小写不敏感匹配的 DASH 音频流。显式
+stream selection 会写入 archive content key，因此不同清晰度或音频语言不会互相满足 duplicate
+preflight。
 嵌入调用方需要单独输出某一种文件时，使用 `DownloadMode::VideoOnly`、`AudioOnly`、
 `SubtitleOnly`、`DanmakuOnly` 或 `CoverOnly`。sidecar-only 模式不要求媒体 stream，且不
 会启动 mux；video-only 和 audio-only 模式只选择对应 DASH stream。当后续 download

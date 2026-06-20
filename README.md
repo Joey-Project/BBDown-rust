@@ -112,6 +112,7 @@ bbdown download av170001 --output-dir downloads
 bbdown download ss26801 --select latest --output-dir downloads
 bbdown download fav456 --select page:1 --output-dir downloads
 bbdown download av170001 --output-dir downloads --no-mux --json
+bbdown download av170001 --audio-language ja-JP --output-dir downloads
 bbdown download av170001 --only cover --output-dir downloads --json
 bbdown download av170001 --output-dir downloads --archive-file downloads/archive.json --on-duplicate keep-both
 bbdown download av170001 --output-template "{title}-{entry_count:02}" --entry-template "{index:02}-{entry_title}" --no-mux
@@ -129,6 +130,10 @@ XML; pass `--danmaku-format ass` for ASS-only output or `--danmaku-format xml,as
 XML and ASS sidecars.
 Use `--only video`, `--only audio`, `--only subtitle`, `--only danmaku`, or `--only cover` for a
 single output kind; single-output modes skip muxing.
+Use `bbdown plan` to inspect `streams.audios[*].language` and `language_doc`, then pass
+`--audio-language <LANG>` to select the first matching DASH audio stream. Explicit video/audio
+quality or language selections are included in archive keys so different selected media variants do
+not satisfy one another's duplicate preflight.
 Use `--output-template`, `--entry-template`, and `--mux-template` to customize the output root,
 entry directory, and muxed file stem. Template output is sanitized as a filename component; media,
 cover, subtitle, and danmaku sidecar filenames remain stable for resume and duplicate-track safety.

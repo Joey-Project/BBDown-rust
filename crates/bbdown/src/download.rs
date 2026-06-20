@@ -378,10 +378,11 @@ impl MediaHostOptions {
 }
 
 #[non_exhaustive]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct StreamSelection {
     pub video_quality: Option<u32>,
     pub audio_quality: Option<u32>,
+    pub audio_language: Option<String>,
 }
 
 impl StreamSelection {
@@ -390,6 +391,7 @@ impl StreamSelection {
         Self {
             video_quality,
             audio_quality,
+            audio_language: None,
         }
     }
 
@@ -398,6 +400,7 @@ impl StreamSelection {
         Self {
             video_quality: Some(video_quality),
             audio_quality: None,
+            audio_language: None,
         }
     }
 
@@ -406,13 +409,38 @@ impl StreamSelection {
         Self {
             video_quality: None,
             audio_quality: Some(audio_quality),
+            audio_language: None,
         }
     }
 
     #[must_use]
-    pub const fn has_selection(self) -> bool {
-        self.video_quality.is_some() || self.audio_quality.is_some()
+    pub fn audio_language(audio_language: impl Into<String>) -> Self {
+        Self::default().with_audio_language(audio_language)
     }
+
+    #[must_use]
+    pub fn with_audio_language(mut self, audio_language: impl Into<String>) -> Self {
+        let audio_language = audio_language.into();
+        self.audio_language = non_empty_trimmed_string(&audio_language);
+        self
+    }
+
+    #[must_use]
+    pub fn has_selection(&self) -> bool {
+        self.video_quality.is_some()
+            || self.audio_quality.is_some()
+            || self.audio_language.is_some()
+    }
+
+    #[must_use]
+    pub fn has_audio_selection(&self) -> bool {
+        self.audio_quality.is_some() || self.audio_language.is_some()
+    }
+}
+
+fn non_empty_trimmed_string(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_owned())
 }
 
 #[non_exhaustive]
@@ -525,7 +553,11 @@ impl DownloadArchive {
             DownloadArchiveRecord::from_report(plan, options, report, current_unix_seconds());
         let record_output_key = comparable_output_path_key(&record.output_dir);
         self.records.retain(|existing| {
-            comparable_output_path_key(&existing.output_dir) != record_output_key
+            if comparable_output_path_key(&existing.output_dir) != record_output_key {
+                return true;
+            }
+            existing.content_key != record.content_key
+                && archive_record_outputs_are_present(existing)
         });
         self.records.push(record);
     }
@@ -1528,11 +1560,8 @@ impl BiliClient {
                         options.stream_selection.video_quality,
                         "video",
                     )?;
-                    let audio = select_media_stream(
-                        &entry.streams.audios,
-                        options.stream_selection.audio_quality,
-                        "audio",
-                    )?;
+                    let audio =
+                        select_audio_stream(&entry.streams.audios, &options.stream_selection)?;
                     files.push(
                         self.download_media_stream(
                             entry,
@@ -1557,7 +1586,7 @@ impl BiliClient {
                 } else if use_flv_fallback {
                     if options.stream_selection.has_selection() {
                         return Err(Error::InvalidInput(
-                            "stream quality selection requires DASH media; selected entry only has FLV segments"
+                            "stream selection requires DASH media; selected entry only has FLV segments"
                                 .to_owned(),
                         ));
                     }
@@ -1590,11 +1619,7 @@ impl BiliClient {
                 );
             }
             DownloadMode::AudioOnly => {
-                let audio = select_media_stream(
-                    &entry.streams.audios,
-                    options.stream_selection.audio_quality,
-                    "audio",
-                )?;
+                let audio = select_audio_stream(&entry.streams.audios, &options.stream_selection)?;
                 files.push(
                     self.download_media_stream(
                         entry,
@@ -3465,9 +3490,10 @@ fn refresh_danmaku_archive_content_key(key: &str, formats: &DanmakuFormats) -> O
     if !matches!(mode, "all" | "danmaku") {
         return None;
     }
+    let refreshed_prefix = archive_key_prefix_for_danmaku_update(prefix, mode, formats);
     Some(apply_archive_key_prefix(
         base.to_owned(),
-        archive_key_prefix_for_danmaku_update(mode, formats).as_deref(),
+        refreshed_prefix.as_deref(),
     ))
 }
 
@@ -3865,7 +3891,11 @@ fn archive_records_for_preflight(
 struct ArchivePlanMatch {
     content: HashSet<String>,
     entries: HashSet<String>,
+    base_content: String,
+    base_entries: HashSet<String>,
+    mode_token: Option<&'static str>,
     accepts_legacy_keys: bool,
+    accepts_same_mode_prefixed_keys: bool,
 }
 
 fn archive_plan_matches_for_all_modes(plan: &DownloadPlan) -> Vec<ArchivePlanMatch> {
@@ -3899,38 +3929,74 @@ impl ArchivePlanMatch {
                     })
                 })
                 .collect(),
+            base_content: download_plan_content_key(plan),
+            base_entries: plan
+                .entries
+                .iter()
+                .map(download_entry_content_key)
+                .collect(),
+            mode_token: Some(mode.archive_key_token()),
             accepts_legacy_keys: matches!(mode, DownloadMode::All),
+            accepts_same_mode_prefixed_keys: true,
         }
     }
 
     fn from_options(plan: &DownloadPlan, options: &DownloadOptions) -> Self {
-        let prefix = archive_key_prefix_for_options(options);
         Self {
-            content: [download_plan_content_key_with_prefix(
-                plan,
-                prefix.as_deref(),
-            )]
-            .into_iter()
-            .collect(),
+            content: [download_plan_content_key_for_options(plan, options)]
+                .into_iter()
+                .collect(),
             entries: plan
                 .entries
                 .iter()
-                .map(|entry| download_entry_content_key_with_prefix(entry, prefix.as_deref()))
+                .map(|entry| download_entry_content_key_for_options(entry, options))
                 .collect(),
-            accepts_legacy_keys: prefix.is_none() && matches!(options.mode, DownloadMode::All),
+            base_content: download_plan_content_key(plan),
+            base_entries: plan
+                .entries
+                .iter()
+                .map(download_entry_content_key)
+                .collect(),
+            mode_token: Some(options.mode.archive_key_token()),
+            accepts_legacy_keys: archive_key_prefix_for_options(options).is_none()
+                && matches!(options.mode, DownloadMode::All),
+            accepts_same_mode_prefixed_keys: false,
         }
     }
 
     fn matches_record(&self, record: &DownloadArchiveRecord) -> bool {
         self.content.contains(&record.content_key)
+            || self.matches_same_mode_prefixed_key(&record.content_key, ArchiveKeyScope::Content)
             || record.entries.iter().any(|entry| {
                 self.entries.contains(&entry.content_key)
                     || (self.accepts_legacy_keys
                         && !archive_content_key_has_mode(&record.content_key)
                         && !archive_content_key_has_mode(&entry.content_key)
                         && self.entries.contains(&archive_entry_content_key(entry)))
+                    || self
+                        .matches_same_mode_prefixed_key(&entry.content_key, ArchiveKeyScope::Entry)
             })
     }
+
+    fn matches_same_mode_prefixed_key(&self, key: &str, scope: ArchiveKeyScope) -> bool {
+        if !self.accepts_same_mode_prefixed_keys {
+            return false;
+        }
+        let (prefix, base) = split_archive_content_key_prefix(key);
+        if prefix.is_none() || archive_content_key_mode(prefix) != self.mode_token {
+            return false;
+        }
+        match scope {
+            ArchiveKeyScope::Content => base == self.base_content,
+            ArchiveKeyScope::Entry => self.base_entries.contains(base),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ArchiveKeyScope {
+    Content,
+    Entry,
 }
 
 fn archive_content_key_has_mode(key: &str) -> bool {
@@ -3939,6 +4005,25 @@ fn archive_content_key_has_mode(key: &str) -> bool {
 
 fn archive_record_path(path: &Path) -> PathBuf {
     comparable_output_path(path)
+}
+
+fn archive_record_outputs_are_present(record: &DownloadArchiveRecord) -> bool {
+    let mut output_count = 0usize;
+    for entry in &record.entries {
+        for path in &entry.files {
+            output_count += 1;
+            if !path.is_file() {
+                return false;
+            }
+        }
+        if let Some(mux_output) = &entry.mux_output {
+            output_count += 1;
+            if !mux_output.is_file() {
+                return false;
+            }
+        }
+    }
+    output_count > 0
 }
 
 fn comparable_output_path_key(path: &Path) -> String {
@@ -4019,7 +4104,10 @@ fn download_plan_content_key(plan: &DownloadPlan) -> String {
 }
 
 fn download_plan_content_key_for_options(plan: &DownloadPlan, options: &DownloadOptions) -> String {
-    download_plan_content_key_with_prefix(plan, archive_key_prefix_for_options(options).as_deref())
+    download_plan_content_key_with_prefix(
+        plan,
+        archive_key_prefix_for_plan_options(plan, options).as_deref(),
+    )
 }
 
 fn download_plan_content_key_with_prefix(plan: &DownloadPlan, prefix: Option<&str>) -> String {
@@ -4036,7 +4124,7 @@ fn download_entry_content_key_for_options(
 ) -> String {
     download_entry_content_key_with_prefix(
         entry,
-        archive_key_prefix_for_options(options).as_deref(),
+        archive_key_prefix_for_entry_options(entry, options).as_deref(),
     )
 }
 
@@ -4052,13 +4140,154 @@ fn apply_archive_key_prefix(key: String, prefix: Option<&str>) -> String {
 }
 
 fn archive_key_prefix_for_options(options: &DownloadOptions) -> Option<String> {
+    archive_key_prefix_with_stream_token(
+        options,
+        archive_stream_selection_token(&options.stream_selection),
+    )
+}
+
+fn archive_key_prefix_for_plan_options(
+    plan: &DownloadPlan,
+    options: &DownloadOptions,
+) -> Option<String> {
+    archive_key_prefix_with_stream_token(
+        options,
+        archive_stream_selection_token_for_plan(plan, &options.stream_selection),
+    )
+}
+
+fn archive_key_prefix_for_entry_options(
+    entry: &DownloadEntry,
+    options: &DownloadOptions,
+) -> Option<String> {
+    archive_key_prefix_with_stream_token(
+        options,
+        archive_stream_selection_token_for_entry(entry, &options.stream_selection),
+    )
+}
+
+fn archive_key_prefix_with_stream_token(
+    options: &DownloadOptions,
+    stream_token: Option<String>,
+) -> Option<String> {
+    let mut tokens = Vec::new();
+    if !matches!(options.mode, DownloadMode::All)
+        || (should_download_danmaku(options) && !options.danmaku_formats.is_default())
+        || options.stream_selection.has_selection()
+    {
+        tokens.push(format!("mode={}", options.mode.archive_key_token()));
+    }
     if should_download_danmaku(options) && !options.danmaku_formats.is_default() {
-        return Some(archive_key_prefix_for_danmaku_formats(
-            options.mode,
-            &options.danmaku_formats,
+        tokens.push(format!(
+            "danmaku={}",
+            options.danmaku_formats.archive_key_token()
         ));
     }
-    archive_key_prefix_for_mode(options.mode)
+    if let Some(stream_token) =
+        stream_token.or_else(|| archive_stream_selection_token(&options.stream_selection))
+    {
+        tokens.push(stream_token);
+    }
+    (!tokens.is_empty()).then(|| tokens.join(";"))
+}
+
+fn archive_stream_selection_token_for_plan(
+    plan: &DownloadPlan,
+    selection: &StreamSelection,
+) -> Option<String> {
+    if !selection.has_selection() {
+        return None;
+    }
+    let mut entry_tokens = Vec::new();
+    for entry in &plan.entries {
+        entry_tokens.push(archive_stream_selection_token_for_entry(entry, selection)?);
+    }
+    if entry_tokens.is_empty() || entry_tokens.iter().all(|token| token == &entry_tokens[0]) {
+        return entry_tokens
+            .into_iter()
+            .next()
+            .or_else(|| archive_stream_selection_token(selection));
+    }
+    let mut identity = String::new();
+    for (entry, token) in plan.entries.iter().zip(&entry_tokens) {
+        if !identity.is_empty() {
+            identity.push('|');
+        }
+        identity.push_str(&download_entry_content_key(entry));
+        identity.push('=');
+        identity.push_str(token);
+    }
+    Some(format!("stream=set{}", short_identity_hash(&identity)))
+}
+
+fn archive_stream_selection_token_for_entry(
+    entry: &DownloadEntry,
+    selection: &StreamSelection,
+) -> Option<String> {
+    if !selection.has_selection() {
+        return None;
+    }
+    let mut parts = Vec::new();
+    if selection.video_quality.is_some() {
+        let stream =
+            select_media_stream(&entry.streams.videos, selection.video_quality, "video").ok()?;
+        parts.push(format!("video{}", stream.id));
+    }
+    if selection.has_audio_selection() {
+        let stream = select_audio_stream(&entry.streams.audios, selection).ok()?;
+        parts.push(archive_selected_audio_stream_token(stream, selection));
+    }
+    (!parts.is_empty()).then(|| format!("stream={}", parts.join(",")))
+}
+
+fn archive_selected_audio_stream_token(
+    stream: &MediaStream,
+    selection: &StreamSelection,
+) -> String {
+    if selection.audio_language.is_none() {
+        return format!("audio{}", stream.id);
+    }
+    format!(
+        "audio{}-{}",
+        stream.id,
+        archive_stream_selection_text_token(&media_stream_identity(stream))
+    )
+}
+
+fn archive_stream_selection_token(selection: &StreamSelection) -> Option<String> {
+    if !selection.has_selection() {
+        return None;
+    }
+    let mut parts = Vec::new();
+    if let Some(video_quality) = selection.video_quality {
+        parts.push(format!("video{video_quality}"));
+    }
+    if let Some(audio_quality) = selection.audio_quality {
+        parts.push(format!("audio{audio_quality}"));
+    }
+    if let Some(audio_language) = selection.audio_language.as_deref() {
+        parts.push(format!(
+            "alang{}",
+            archive_stream_selection_text_token(audio_language)
+        ));
+    }
+    Some(format!("stream={}", parts.join(",")))
+}
+
+fn archive_stream_selection_text_token(value: &str) -> String {
+    let value = canonical_archive_audio_language(value);
+    let token = file_name_token(&value);
+    if token.is_empty() {
+        short_identity_hash(&value)
+    } else {
+        format!("{token}-{}", short_identity_hash(&value))
+    }
+}
+
+fn canonical_archive_audio_language(value: &str) -> String {
+    let mut value = value.trim().to_owned();
+    value.make_ascii_lowercase();
+    value
 }
 
 fn archive_key_prefixes_for_mode(mode: DownloadMode) -> Vec<Option<String>> {
@@ -4081,20 +4310,30 @@ fn archive_key_prefix_for_danmaku_formats(
 }
 
 fn archive_key_prefix_for_danmaku_update(
+    prefix: Option<&str>,
     mode: &str,
     danmaku_formats: &DanmakuFormats,
 ) -> Option<String> {
-    if mode == "all" && danmaku_formats.is_default() {
-        return None;
+    let preserved_tokens = prefix
+        .into_iter()
+        .flat_map(|prefix| prefix.split(';'))
+        .filter(|token| {
+            !token.is_empty() && !token.starts_with("mode=") && !token.starts_with("danmaku=")
+        });
+    let mut tokens = Vec::new();
+    for token in preserved_tokens {
+        tokens.push(token.to_owned());
     }
-    let mode_prefix = format!("mode={mode}");
-    if danmaku_formats.is_default() {
-        return Some(mode_prefix);
+    if mode != "all" || !danmaku_formats.is_default() || !tokens.is_empty() {
+        tokens.insert(0, format!("mode={mode}"));
     }
-    Some(archive_key_prefix_for_danmaku_formats_token(
-        mode,
-        danmaku_formats,
-    ))
+    if !danmaku_formats.is_default() {
+        tokens.insert(
+            1,
+            format!("danmaku={}", danmaku_formats.archive_key_token()),
+        );
+    }
+    (!tokens.is_empty()).then(|| tokens.join(";"))
 }
 
 fn archive_key_prefix_for_danmaku_formats_token(
@@ -4460,13 +4699,60 @@ fn select_media_stream<'a>(
         .ok_or(Error::MissingField("selected media stream"))
 }
 
+fn select_audio_stream<'a>(
+    streams: &'a [MediaStream],
+    selection: &StreamSelection,
+) -> Result<&'a MediaStream> {
+    streams
+        .iter()
+        .find(|stream| {
+            selection.audio_quality.is_none_or(|id| stream.id == id)
+                && selection
+                    .audio_language
+                    .as_deref()
+                    .is_none_or(|language| audio_language_matches(stream, language))
+        })
+        .ok_or_else(|| audio_selection_error(streams, selection))
+}
+
+fn audio_selection_error(streams: &[MediaStream], selection: &StreamSelection) -> Error {
+    match (selection.audio_quality, selection.audio_language.as_deref()) {
+        (Some(id), Some(language)) => Error::InvalidInput(format!(
+            "requested audio quality {id} with language {language} is not available; available audio streams: {}",
+            available_audio_streams(streams)
+        )),
+        (Some(id), None) => Error::InvalidInput(format!(
+            "requested audio quality {id} is not available; available audio qualities: {}",
+            available_stream_ids(streams)
+        )),
+        (None, Some(language)) => Error::InvalidInput(format!(
+            "requested audio language {language} is not available; available audio languages: {}",
+            available_audio_languages(streams)
+        )),
+        (None, None) => Error::MissingField("selected media stream"),
+    }
+}
+
+fn audio_language_matches(stream: &MediaStream, requested: &str) -> bool {
+    let requested = requested.trim();
+    [stream.language.as_deref(), stream.language_doc.as_deref()]
+        .into_iter()
+        .flatten()
+        .any(|candidate| string_matches_audio_language(candidate, requested))
+}
+
+fn string_matches_audio_language(candidate: &str, requested: &str) -> bool {
+    let candidate = candidate.trim();
+    candidate == requested || candidate.eq_ignore_ascii_case(requested)
+}
+
 fn validate_download_plan_options(plan: &DownloadPlan, options: &DownloadOptions) -> Result<()> {
     validate_plan_stream_selection(plan, options)?;
     validate_download_path_templates(plan, options)
 }
 
 fn validate_plan_stream_selection(plan: &DownloadPlan, options: &DownloadOptions) -> Result<()> {
-    let selection = options.stream_selection;
+    let selection = &options.stream_selection;
     if !selection.has_selection() {
         return Ok(());
     }
@@ -4494,10 +4780,10 @@ fn validate_download_path_templates(plan: &DownloadPlan, options: &DownloadOptio
     Ok(())
 }
 
-fn validate_stream_selection_mode(selection: StreamSelection, mode: DownloadMode) -> Result<()> {
+fn validate_stream_selection_mode(selection: &StreamSelection, mode: DownloadMode) -> Result<()> {
     match mode {
-        DownloadMode::VideoOnly if selection.audio_quality.is_some() => Err(Error::InvalidInput(
-            "audio quality selection requires all or audio-only download mode".to_owned(),
+        DownloadMode::VideoOnly if selection.has_audio_selection() => Err(Error::InvalidInput(
+            "audio selection requires all or audio-only download mode".to_owned(),
         )),
         DownloadMode::AudioOnly if selection.video_quality.is_some() => Err(Error::InvalidInput(
             "video quality selection requires all or video-only download mode".to_owned(),
@@ -4513,7 +4799,7 @@ fn validate_stream_selection_mode(selection: StreamSelection, mode: DownloadMode
 
 fn validate_entry_stream_selection(
     entry: &DownloadEntry,
-    selection: StreamSelection,
+    selection: &StreamSelection,
     mode: DownloadMode,
 ) -> Result<()> {
     match mode {
@@ -4524,11 +4810,10 @@ fn validate_entry_stream_selection(
             if has_dash_pair {
                 let _ =
                     select_media_stream(&entry.streams.videos, selection.video_quality, "video")?;
-                let _ =
-                    select_media_stream(&entry.streams.audios, selection.audio_quality, "audio")?;
+                let _ = select_audio_stream(&entry.streams.audios, selection)?;
             } else if use_flv_fallback {
                 return Err(Error::InvalidInput(
-                    "stream quality selection requires DASH media; selected entry only has FLV segments"
+                    "stream selection requires DASH media; selected entry only has FLV segments"
                         .to_owned(),
                 ));
             } else {
@@ -4539,7 +4824,7 @@ fn validate_entry_stream_selection(
             let _ = select_media_stream(&entry.streams.videos, selection.video_quality, "video")?;
         }
         DownloadMode::AudioOnly => {
-            let _ = select_media_stream(&entry.streams.audios, selection.audio_quality, "audio")?;
+            let _ = select_audio_stream(&entry.streams.audios, selection)?;
         }
         DownloadMode::SubtitleOnly | DownloadMode::DanmakuOnly | DownloadMode::CoverOnly => {}
     }
@@ -4562,8 +4847,44 @@ fn available_stream_ids(streams: &[MediaStream]) -> String {
         .join(", ")
 }
 
+fn available_audio_languages(streams: &[MediaStream]) -> String {
+    if streams.is_empty() {
+        return "none".to_owned();
+    }
+    let mut labels = Vec::new();
+    for stream in streams {
+        let label = audio_language_label(stream);
+        if !labels.iter().any(|existing| existing == &label) {
+            labels.push(label);
+        }
+    }
+    labels.join(", ")
+}
+
+fn available_audio_streams(streams: &[MediaStream]) -> String {
+    if streams.is_empty() {
+        return "none".to_owned();
+    }
+    streams
+        .iter()
+        .map(|stream| format!("{} ({})", stream.id, audio_language_label(stream)))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn audio_language_label(stream: &MediaStream) -> String {
+    match (stream.language.as_deref(), stream.language_doc.as_deref()) {
+        (Some(language), Some(language_doc)) => format!("{language} {language_doc}"),
+        (Some(language), None) => language.to_owned(),
+        (None, Some(language_doc)) => language_doc.to_owned(),
+        (None, None) => "und".to_owned(),
+    }
+}
+
 fn media_stream_identity(stream: &MediaStream) -> String {
     let mut parts = Vec::new();
+    push_identity_part(&mut parts, stream.language.as_deref());
+    push_identity_part(&mut parts, stream.language_doc.as_deref());
     push_identity_part(&mut parts, stream.codecs.as_deref());
     push_identity_part(&mut parts, stream.mime_type.as_deref());
     if let Some(bandwidth) = stream.bandwidth {
@@ -4583,8 +4904,13 @@ fn media_stream_identity(stream: &MediaStream) -> String {
 }
 
 fn push_identity_part(parts: &mut Vec<String>, value: Option<&str>) {
-    if let Some(token) = value.map(file_name_token).filter(|token| !token.is_empty()) {
-        parts.push(token);
+    if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
+        let token = file_name_token(value);
+        if token.is_empty() {
+            parts.push(short_identity_hash(value));
+        } else {
+            parts.push(token);
+        }
     }
 }
 
@@ -4700,10 +5026,10 @@ mod tests {
         download_entry_content_key, download_entry_content_key_for_options,
         download_plan_content_key, download_plan_content_key_for_options, entry_dir_name,
         media_file_name, mux_file_stem, path_is_occupied, remove_mux_output_if_cancelled,
-        render_template_component, safe_file_name, safe_file_name_with_budget, select_media_stream,
-        subtitle_dedup_key, subtitle_extension, subtitle_file_name, temporary_download_path,
-        temporary_generated_path, temporary_mux_path, temporary_replace_path,
-        write_generated_text_file,
+        render_template_component, safe_file_name, safe_file_name_with_budget, select_audio_stream,
+        select_media_stream, subtitle_dedup_key, subtitle_extension, subtitle_file_name,
+        temporary_download_path, temporary_generated_path, temporary_mux_path,
+        temporary_replace_path, write_generated_text_file,
     };
     use crate::models::{
         ChapterTrack, DanmakuTrack, DownloadEntry, DownloadPlan, FlvSegment, MediaStream,
@@ -4729,6 +5055,8 @@ mod tests {
             id: 80,
             base_url: "https://cdn.example/path/video.m4s?token=first".to_owned(),
             backup_urls: Vec::new(),
+            language: None,
+            language_doc: None,
             codecs: Some("avc1.640028".to_owned()),
             codec_family: None,
             bandwidth: None,
@@ -4748,6 +5076,24 @@ mod tests {
         stream.codecs = None;
         stream.mime_type = None;
         assert!(media_file_name("video", &stream).starts_with("video-80-h"));
+    }
+
+    #[test]
+    fn media_file_name_distinguishes_non_ascii_language_doc_only_streams() {
+        let mut first = media_stream(30280, "https://cdn.example/audio-ja.m4s");
+        first.language_doc = Some("日本語".to_owned());
+        first.codecs = Some("mp4a.40.2".to_owned());
+        first.mime_type = Some("audio/mp4".to_owned());
+        let mut second = first.clone();
+        second.base_url = "https://cdn.example/audio-zh.m4s".to_owned();
+        second.language_doc = Some("中文".to_owned());
+
+        let first_name = media_file_name("audio", &first);
+        let second_name = media_file_name("audio", &second);
+
+        assert_ne!(first_name, second_name);
+        assert!(first_name.contains(&super::short_identity_hash("日本語")));
+        assert!(second_name.contains(&super::short_identity_hash("中文")));
     }
 
     #[test]
@@ -4774,10 +5120,48 @@ mod tests {
     }
 
     #[test]
+    fn select_audio_stream_supports_language_metadata() -> crate::Result<()> {
+        let mut ja = media_stream(30280, "https://cdn.example/audio-ja.m4s");
+        ja.language = Some("ja-JP".to_owned());
+        ja.language_doc = Some("Japanese".to_owned());
+        let mut en = media_stream(30280, "https://cdn.example/audio-en.m4s");
+        en.language = Some("en-US".to_owned());
+        en.language_doc = Some("English".to_owned());
+        let streams = vec![ja, en];
+
+        let selected = select_audio_stream(&streams, &StreamSelection::audio_language("english"))?;
+        assert_eq!(selected.base_url, "https://cdn.example/audio-en.m4s");
+
+        let selected = select_audio_stream(&streams, &StreamSelection::audio_language("JA-jp"))?;
+        assert_eq!(selected.base_url, "https://cdn.example/audio-ja.m4s");
+        Ok(())
+    }
+
+    #[test]
+    fn select_audio_stream_reports_available_languages() -> crate::Result<()> {
+        let mut stream = media_stream(30280, "https://cdn.example/audio-ja.m4s");
+        stream.language = Some("ja-JP".to_owned());
+        stream.language_doc = Some("Japanese".to_owned());
+        let streams = vec![stream];
+
+        let selection = StreamSelection::audio(30216).with_audio_language("en-US");
+        let Err(error) = select_audio_stream(&streams, &selection) else {
+            return Err(crate::Error::InvalidInput(
+                "unexpectedly selected missing audio stream".to_owned(),
+            ));
+        };
+        assert_eq!(
+            error.to_string(),
+            "invalid input: requested audio quality 30216 with language en-US is not available; available audio streams: 30280 (ja-JP Japanese)"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn download_options_builders_configure_embedding_controls() -> anyhow::Result<()> {
         let options = DownloadOptions::new("downloads")
             .with_retry_policy(RetryPolicy::new(5, Duration::from_secs(2)))
-            .with_stream_selection(super::StreamSelection::video(80))
+            .with_stream_selection(super::StreamSelection::video(80).with_audio_language("ja-JP"))
             .with_download_idle_timeout(None)
             .with_resume(false)
             .with_cover(true)
@@ -4797,6 +5181,10 @@ mod tests {
         assert_eq!(options.retry.backoff, Duration::from_secs(2));
         assert_eq!(options.stream_selection.video_quality, Some(80));
         assert_eq!(options.stream_selection.audio_quality, None);
+        assert_eq!(
+            options.stream_selection.audio_language.as_deref(),
+            Some("ja-JP")
+        );
         assert_eq!(options.download_idle_timeout, None);
         assert!(!options.resume);
         assert!(!options.include_subtitles);
@@ -5207,6 +5595,79 @@ mod tests {
             download_entry_content_key(&video_entry),
             download_entry_content_key(&episode_entry)
         );
+    }
+
+    #[test]
+    fn download_content_key_distinguishes_explicit_audio_language_selection() {
+        let server = MockServer::start();
+        let plan = test_plan(&server);
+        let default_key = download_plan_content_key_for_options(&plan, &DownloadOptions::default());
+        let language_options = DownloadOptions::default()
+            .with_stream_selection(StreamSelection::audio_language("ja-JP"));
+        let language_key = download_plan_content_key_for_options(&plan, &language_options);
+        let non_ascii_language_options = DownloadOptions::default()
+            .with_stream_selection(StreamSelection::audio_language("日本語"));
+        let non_ascii_language_key =
+            download_plan_content_key_for_options(&plan, &non_ascii_language_options);
+        let hyphenated_language_key = download_plan_content_key_for_options(
+            &plan,
+            &DownloadOptions::default()
+                .with_stream_selection(StreamSelection::audio_language("en-US")),
+        );
+        let spaced_language_key = download_plan_content_key_for_options(
+            &plan,
+            &DownloadOptions::default()
+                .with_stream_selection(StreamSelection::audio_language("en US")),
+        );
+        let uppercase_language_key = download_plan_content_key_for_options(
+            &plan,
+            &DownloadOptions::default()
+                .with_stream_selection(StreamSelection::audio_language("English")),
+        );
+        let lowercase_language_key = download_plan_content_key_for_options(
+            &plan,
+            &DownloadOptions::default()
+                .with_stream_selection(StreamSelection::audio_language("english")),
+        );
+
+        assert_eq!(default_key, "plan|aid=170001;cid=2");
+        assert_eq!(
+            language_key,
+            format!(
+                "mode=all;stream=alangja-jp-{};plan|aid=170001;cid=2",
+                super::short_identity_hash("ja-jp")
+            )
+        );
+        assert_ne!(non_ascii_language_key, language_key);
+        assert!(non_ascii_language_key.starts_with("mode=all;stream=alangh"));
+        assert_ne!(hyphenated_language_key, spaced_language_key);
+        assert_eq!(uppercase_language_key, lowercase_language_key);
+    }
+
+    #[test]
+    fn danmaku_archive_key_refresh_preserves_stream_selection_prefix() -> anyhow::Result<()> {
+        let stream_token = format!(
+            "stream=alang{}",
+            super::archive_stream_selection_text_token("ja-JP")
+        );
+        let stream_key = format!("mode=all;{stream_token};plan|aid=170001;cid=2");
+        let ass_stream_key = format!("mode=all;danmaku=ass;{stream_token};plan|aid=170001;cid=2");
+
+        let refreshed = super::refresh_danmaku_archive_content_key(
+            &stream_key,
+            &DanmakuFormats::new([DanmakuFormat::Xml, DanmakuFormat::Ass]),
+        )
+        .ok_or_else(|| anyhow::anyhow!("stream key did not refresh"))?;
+        assert_eq!(
+            refreshed,
+            format!("mode=all;danmaku=xml+ass;{stream_token};plan|aid=170001;cid=2")
+        );
+
+        let refreshed_default =
+            super::refresh_danmaku_archive_content_key(&ass_stream_key, &DanmakuFormats::default())
+                .ok_or_else(|| anyhow::anyhow!("stream key did not refresh to default"))?;
+        assert_eq!(refreshed_default, stream_key);
+        Ok(())
     }
 
     #[test]
@@ -6806,6 +7267,7 @@ mod tests {
                     stream_selection: super::StreamSelection {
                         video_quality: Some(80),
                         audio_quality: Some(30216),
+                        audio_language: None,
                     },
                     mux: MuxOptions::Disabled,
                     ..DownloadOptions::default()
@@ -6852,6 +7314,7 @@ mod tests {
                     stream_selection: super::StreamSelection {
                         video_quality: Some(80),
                         audio_quality: Some(30280),
+                        audio_language: None,
                     },
                     sidecars: SidecarOptions {
                         subtitles: false,
@@ -9608,6 +10071,181 @@ mod tests {
     }
 
     #[test]
+    fn download_archive_records_can_be_queried_by_stream_selection_variant() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let plan = test_plan(&server);
+        let report = DownloadReport {
+            title: plan.title.clone(),
+            output_dir: Path::new("downloads").join("Mock video"),
+            entries: vec![EntryDownloadReport {
+                index: 1,
+                title: "Main".to_owned(),
+                directory: Path::new("downloads").join("Mock video").join("entry"),
+                files: vec![DownloadedFile {
+                    kind: DownloadFileKind::Audio,
+                    path: Path::new("downloads")
+                        .join("Mock video")
+                        .join("entry")
+                        .join("audio-ja-JP.m4a"),
+                    bytes_written: 5,
+                    resumed_from: 0,
+                }],
+                mux: None,
+            }],
+        };
+        let language_options = DownloadOptions::default()
+            .with_stream_selection(StreamSelection::audio_language("ja-JP"));
+        let mut archive = DownloadArchive::default();
+
+        archive.record_download(&plan, &language_options, &report);
+
+        assert_eq!(archive.records_for_plan(&plan).len(), 1);
+        assert_eq!(
+            archive
+                .records_for_plan_with_mode(&plan, DownloadMode::All)
+                .len(),
+            1
+        );
+        assert!(
+            archive
+                .records_for_plan_with_mode(&plan, DownloadMode::AudioOnly)
+                .is_empty()
+        );
+        let temp = tempfile::tempdir()?;
+        let default_preflight =
+            DownloadPreflight::inspect(&plan, &DownloadOptions::new(temp.path()), Some(&archive))?;
+        assert!(default_preflight.archived_records.is_empty());
+        let language_preflight = DownloadPreflight::inspect(
+            &plan,
+            &DownloadOptions::new(temp.path())
+                .with_stream_selection(StreamSelection::audio_language("ja-JP")),
+            Some(&archive),
+        )?;
+        assert_eq!(language_preflight.archived_records.len(), 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn download_archive_matches_audio_language_aliases_by_selected_stream() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let mut plan = test_plan(&server);
+        let audio = &mut plan.entries[0].streams.audios[0];
+        audio.language = Some("en-US".to_owned());
+        audio.language_doc = Some("English".to_owned());
+        audio.codecs = Some("mp4a.40.2".to_owned());
+        let output_dir = Path::new("downloads").join("Mock video");
+        let audio_file = output_dir.join("entry").join("audio-en-US.m4a");
+        let language_options = DownloadOptions::default()
+            .with_stream_selection(StreamSelection::audio_language("en-US"));
+        let doc_options = DownloadOptions::default()
+            .with_stream_selection(StreamSelection::audio_language("English"));
+        let language_key = download_plan_content_key_for_options(&plan, &language_options);
+        let doc_key = download_plan_content_key_for_options(&plan, &doc_options);
+        let language_entry_key =
+            download_entry_content_key_for_options(&plan.entries[0], &language_options);
+        let doc_entry_key = download_entry_content_key_for_options(&plan.entries[0], &doc_options);
+
+        assert_eq!(language_key, doc_key);
+        assert_eq!(language_entry_key, doc_entry_key);
+        assert!(language_key.contains("stream=audio30280-"));
+
+        let mut archive = DownloadArchive::default();
+        archive.record_download(
+            &plan,
+            &language_options,
+            &archive_audio_report(&plan, &output_dir, &audio_file),
+        );
+        let temp = tempfile::tempdir()?;
+        let doc_preflight = DownloadPreflight::inspect(
+            &plan,
+            &DownloadOptions::new(temp.path())
+                .with_stream_selection(StreamSelection::audio_language("English")),
+            Some(&archive),
+        )?;
+
+        assert_eq!(doc_preflight.archived_records.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn download_archive_keeps_same_output_stream_variants_when_files_remain() -> anyhow::Result<()>
+    {
+        let server = MockServer::start();
+        let plan = test_plan(&server);
+        let temp = tempfile::tempdir()?;
+        let output_dir = temp.path().join("downloads").join("Mock video");
+        let entry_dir = output_dir.join("entry");
+        std::fs::create_dir_all(&entry_dir)?;
+        let ja_file = entry_dir.join("audio-ja-JP.m4a");
+        let en_file = entry_dir.join("audio-en-US.m4a");
+        let fr_file = entry_dir.join("audio-fr-FR.m4a");
+        std::fs::write(&ja_file, "ja")?;
+        std::fs::write(&en_file, "en")?;
+        let ja_options = DownloadOptions::default()
+            .with_stream_selection(StreamSelection::audio_language("ja-JP"));
+        let en_options = DownloadOptions::default()
+            .with_stream_selection(StreamSelection::audio_language("en-US"));
+        let fr_options = DownloadOptions::default()
+            .with_stream_selection(StreamSelection::audio_language("fr-FR"));
+        let mut archive = DownloadArchive::default();
+
+        archive.record_download(
+            &plan,
+            &ja_options,
+            &archive_audio_report(&plan, &output_dir, &ja_file),
+        );
+        archive.record_download(
+            &plan,
+            &en_options,
+            &archive_audio_report(&plan, &output_dir, &en_file),
+        );
+        assert_eq!(archive.records.len(), 2);
+
+        std::fs::remove_file(&ja_file)?;
+        std::fs::remove_file(&en_file)?;
+        std::fs::write(&fr_file, "fr")?;
+        archive.record_download(
+            &plan,
+            &fr_options,
+            &archive_audio_report(&plan, &output_dir, &fr_file),
+        );
+
+        assert_eq!(archive.records.len(), 1);
+        assert_eq!(
+            archive.records[0].content_key,
+            format!(
+                "mode=all;stream=alangfr-fr-{};plan|aid=170001;cid=2",
+                super::short_identity_hash("fr-fr")
+            )
+        );
+        Ok(())
+    }
+
+    fn archive_audio_report(
+        plan: &DownloadPlan,
+        output_dir: &Path,
+        file_path: &Path,
+    ) -> DownloadReport {
+        DownloadReport {
+            title: plan.title.clone(),
+            output_dir: output_dir.to_path_buf(),
+            entries: vec![EntryDownloadReport {
+                index: 1,
+                title: "Main".to_owned(),
+                directory: file_path.parent().unwrap_or(output_dir).to_path_buf(),
+                files: vec![DownloadedFile {
+                    kind: DownloadFileKind::Audio,
+                    path: file_path.to_path_buf(),
+                    bytes_written: 2,
+                    resumed_from: 0,
+                }],
+                mux: None,
+            }],
+        }
+    }
+
+    #[test]
     fn download_archive_distinguishes_danmaku_format_outputs() -> anyhow::Result<()> {
         let server = MockServer::start();
         let plan = test_plan(&server);
@@ -10142,6 +10780,8 @@ mod tests {
             id,
             base_url: base_url.to_owned(),
             backup_urls: Vec::new(),
+            language: None,
+            language_doc: None,
             codecs: None,
             codec_family: None,
             bandwidth: None,
@@ -10170,6 +10810,8 @@ mod tests {
                         id: 80,
                         base_url: format!("{}/video.m4s", server.base_url()),
                         backup_urls: Vec::new(),
+                        language: None,
+                        language_doc: None,
                         codecs: None,
                         codec_family: None,
                         bandwidth: None,
@@ -10183,6 +10825,8 @@ mod tests {
                         id: 30280,
                         base_url: format!("{}/audio.m4s", server.base_url()),
                         backup_urls: Vec::new(),
+                        language: None,
+                        language_doc: None,
                         codecs: None,
                         codec_family: None,
                         bandwidth: None,
