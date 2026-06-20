@@ -148,3 +148,7 @@ superseded_by:
   `zh-CN`/`ai-zh` regression test.
 - The review follow-up passed the expanded `subtitle_ai_policy` core test set and a full `just ci`
   rerun.
+- Independent PR review found that danmaku archive refresh could reorder `subtitle_ai` and
+  `danmaku` archive tokens differently from normal downloads. The fix canonicalizes refreshed token
+  order as `mode`, `subtitle_ai`, `danmaku`, then trailing tokens and adds a regression comparing
+  direct download keys with refreshed danmaku keys.

@@ -4421,18 +4421,24 @@ fn archive_key_prefix_for_danmaku_update(
             !token.is_empty() && !token.starts_with("mode=") && !token.starts_with("danmaku=")
         });
     let mut tokens = Vec::new();
+    let mut subtitle_tokens = Vec::new();
+    let mut trailing_tokens = Vec::new();
     for token in preserved_tokens {
-        tokens.push(token.to_owned());
+        if token.starts_with("subtitle_ai=") {
+            subtitle_tokens.push(token.to_owned());
+        } else {
+            trailing_tokens.push(token.to_owned());
+        }
     }
-    if mode != "all" || !danmaku_formats.is_default() || !tokens.is_empty() {
-        tokens.insert(0, format!("mode={mode}"));
+    let has_preserved_tokens = !subtitle_tokens.is_empty() || !trailing_tokens.is_empty();
+    if mode != "all" || !danmaku_formats.is_default() || has_preserved_tokens {
+        tokens.push(format!("mode={mode}"));
     }
+    tokens.extend(subtitle_tokens);
     if !danmaku_formats.is_default() {
-        tokens.insert(
-            1,
-            format!("danmaku={}", danmaku_formats.archive_key_token()),
-        );
+        tokens.push(format!("danmaku={}", danmaku_formats.archive_key_token()));
     }
+    tokens.extend(trailing_tokens);
     (!tokens.is_empty()).then(|| tokens.join(";"))
 }
 
@@ -5877,6 +5883,34 @@ mod tests {
             super::refresh_danmaku_archive_content_key(&ass_stream_key, &DanmakuFormats::default())
                 .ok_or_else(|| anyhow::anyhow!("stream key did not refresh to default"))?;
         assert_eq!(refreshed_default, stream_key);
+        Ok(())
+    }
+
+    #[test]
+    fn danmaku_archive_key_refresh_preserves_subtitle_ai_token_order() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let plan = test_plan(&server);
+        let subtitle_options =
+            DownloadOptions::default().with_subtitle_ai_policy(SubtitleAiPolicy::ExcludeAi);
+        let subtitle_ass_options = subtitle_options
+            .clone()
+            .with_danmaku_formats([DanmakuFormat::Xml, DanmakuFormat::Ass]);
+        let subtitle_key = download_plan_content_key_for_options(&plan, &subtitle_options);
+        let subtitle_ass_key = download_plan_content_key_for_options(&plan, &subtitle_ass_options);
+
+        let refreshed = super::refresh_danmaku_archive_content_key(
+            &subtitle_key,
+            &DanmakuFormats::new([DanmakuFormat::Xml, DanmakuFormat::Ass]),
+        )
+        .ok_or_else(|| anyhow::anyhow!("subtitle AI key did not refresh"))?;
+        assert_eq!(refreshed, subtitle_ass_key);
+
+        let refreshed_default = super::refresh_danmaku_archive_content_key(
+            &subtitle_ass_key,
+            &DanmakuFormats::default(),
+        )
+        .ok_or_else(|| anyhow::anyhow!("subtitle AI key did not refresh to default"))?;
+        assert_eq!(refreshed_default, subtitle_key);
         Ok(())
     }
 
