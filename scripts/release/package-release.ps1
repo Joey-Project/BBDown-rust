@@ -32,6 +32,7 @@ $checksumPath = "$archivePath.sha256"
 
 try {
     New-Item -ItemType Directory -Path (Join-Path $stagingDir "docs/architecture") -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $stagingDir "docs/release-notes") -Force | Out-Null
     Copy-Item -LiteralPath $BinaryPath -Destination (Join-Path $stagingDir "bbdown.exe")
     Copy-Item -LiteralPath (Join-Path $repoRoot "README.md") -Destination (Join-Path $stagingDir "README.md")
     Copy-Item -LiteralPath (Join-Path $repoRoot "README.zh-CN.md") -Destination (Join-Path $stagingDir "README.zh-CN.md")
@@ -41,6 +42,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $repoRoot "docs/user-guide.zh-CN.md") -Destination (Join-Path $stagingDir "docs/user-guide.zh-CN.md")
     Copy-Item -LiteralPath (Join-Path $repoRoot "docs/release.md") -Destination (Join-Path $stagingDir "docs/release.md")
     Copy-Item -LiteralPath (Join-Path $repoRoot "docs/release.zh-CN.md") -Destination (Join-Path $stagingDir "docs/release.zh-CN.md")
+    Copy-Item -Path (Join-Path $repoRoot "docs/release-notes/*.md") -Destination (Join-Path $stagingDir "docs/release-notes/")
     Copy-Item -LiteralPath (Join-Path $repoRoot "docs/architecture/rust-rewrite.md") -Destination (Join-Path $stagingDir "docs/architecture/rust-rewrite.md")
     Copy-Item -LiteralPath (Join-Path $repoRoot "docs/architecture/rust-rewrite.zh-CN.md") -Destination (Join-Path $stagingDir "docs/architecture/rust-rewrite.zh-CN.md")
     $licensePath = Join-Path $repoRoot "LICENSE"

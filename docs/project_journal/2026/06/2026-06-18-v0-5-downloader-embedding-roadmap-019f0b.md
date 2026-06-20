@@ -159,6 +159,12 @@ superseded_by:
   `cargo test -p bbdown-core --test public_api --locked`,
   `cargo doc --no-deps -p bbdown-core --locked`, and `just ci`, covering formatter, clippy, Rust
   1.95 check, workspace tests, mock CLI e2e, and `bbdown-core` publish dry-run.
+- GitHub Codex review found that README release-note links would be broken inside release archives
+  because the package scripts did not stage `docs/release-notes/`. The follow-up copies release
+  notes into Unix and Windows release archives and passed `bash -n`,
+  `shellcheck scripts/release/package-release.sh`, a Unix package smoke, exact tar member checks for
+  both `v0.5.0` release-note files, checksum sidecar verification, project journal validation, and
+  a full `just ci` rerun.
 - Local `just live-e2e` was attempted with the ignored manifest. It failed on the restricted
   `pgc-hk-mo-tw` case because all configured restricted-area proxy candidates returned
   `502 Bad Gateway` while the manifest expected an API-code proxy diagnostic. This remains an
