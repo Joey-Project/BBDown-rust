@@ -156,7 +156,7 @@ superseded_by:
   order as `mode`, `subtitle_ai`, `danmaku`, then trailing tokens and adds a regression comparing
   direct download keys with refreshed danmaku keys.
 - Release-prep validation passed
-  `cargo test -p bbdown-core --locked v0_5_embedding_surface_is_reexported`,
+  `cargo test -p bbdown-core --test public_api --locked`,
   `cargo doc --no-deps -p bbdown-core --locked`, and `just ci`, covering formatter, clippy, Rust
   1.95 check, workspace tests, mock CLI e2e, and `bbdown-core` publish dry-run.
 - Local `just live-e2e` was attempted with the ignored manifest. It failed on the restricted
