@@ -41,10 +41,12 @@
   QR output, and append-only danmaku update workflows.
 - The active `0.5.0` development line is downloader and embedding polish. Progress callbacks,
   terminal progress events/report summaries, cancellation-aware download execution, chapter
-  metadata muxing, audio language selection, and AI subtitle filtering have landed; the next slice
-  is final release prep.
-- The audio language slice passed the deterministic local gate; its latest local live e2e rerun is
-  blocked by upstream restricted PGC proxy `502 Bad Gateway` responses in the ignored manifest.
+  metadata muxing, audio language selection, AI subtitle filtering, and release-prep notes have
+  landed; the docs now include a bilingual release-note archive for `v0.1.0` through `v0.5.0`, and
+  release archives package those linked notes; the next action is protected RC creation from
+  `master`.
+- The release-prep deterministic gate passed. The latest local live e2e rerun is still blocked by
+  upstream restricted PGC proxy `502 Bad Gateway` responses in the ignored manifest.
 - Repo-local skill `$bbdown-live-e2e-fixtures` and `live-e2e.samples.example.json` record the current
   real Bilibili fixtures for opt-in normal, multi-page, and restricted-area live e2e validation.
 
@@ -67,4 +69,5 @@
 
 ## Global Blockers
 
-- None currently recorded.
+- None for deterministic release validation. Opt-in restricted PGC live e2e remains dependent on
+  upstream proxy/fixture health.

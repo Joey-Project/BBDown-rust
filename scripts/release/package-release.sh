@@ -40,7 +40,7 @@ archive_path="$output_dir/$package_name.tar.gz"
 checksum_path="$archive_path.sha256"
 archive_name=$(basename "$archive_path")
 
-mkdir -p "$staging_dir/docs/architecture"
+mkdir -p "$staging_dir/docs/architecture" "$staging_dir/docs/release-notes"
 cp "$binary_path" "$staging_dir/bbdown"
 chmod 0755 "$staging_dir/bbdown"
 cp "$repo_root/README.md" "$staging_dir/README.md"
@@ -51,6 +51,7 @@ cp "$repo_root/docs/user-guide.md" "$staging_dir/docs/user-guide.md"
 cp "$repo_root/docs/user-guide.zh-CN.md" "$staging_dir/docs/user-guide.zh-CN.md"
 cp "$repo_root/docs/release.md" "$staging_dir/docs/release.md"
 cp "$repo_root/docs/release.zh-CN.md" "$staging_dir/docs/release.zh-CN.md"
+cp "$repo_root/docs/release-notes/"*.md "$staging_dir/docs/release-notes/"
 cp "$repo_root/docs/architecture/rust-rewrite.md" "$staging_dir/docs/architecture/rust-rewrite.md"
 cp "$repo_root/docs/architecture/rust-rewrite.zh-CN.md" "$staging_dir/docs/architecture/rust-rewrite.zh-CN.md"
 if [[ -f "$repo_root/LICENSE" ]]; then

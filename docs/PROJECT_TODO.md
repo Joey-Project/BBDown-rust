@@ -80,8 +80,11 @@
 - [completed] Add `v0.5.0` AI subtitle filtering: preserve subtitle AI metadata in plans, support
   CLI/API policies for including, preferring, excluding, or selecting only AI-generated subtitles,
   and keep non-default subtitle policies distinct in archive keys.
-- [pending] Finish `v0.5.0` release prep with release notes, full CI/live-e2e validation, protected
-  RC creation, and promotion readiness.
+- [completed] Finish `v0.5.0` release prep with bilingual release notes for `v0.1.0` through
+  `v0.5.0`, release-archive release-note packaging, public API/rustdoc validation, deterministic
+  `just ci`, and documented live-e2e restricted-proxy caveat.
+- [pending] Create the protected `v0.5.0` release candidate from `master`, then promote it after the
+  release-candidate, production-release, and crates.io environment approvals.
 - [pending] Plan `v0.6.0` as the credential lifecycle line: automatic credential refresh, health
   policy/reporting, profile-level status, and multi-account lifecycle UX.
 - [pending] Plan `v0.7.0` or a later feed/page release for per-video related recommendations and

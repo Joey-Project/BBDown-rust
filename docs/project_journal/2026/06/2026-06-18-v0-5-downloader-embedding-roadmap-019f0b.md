@@ -48,8 +48,11 @@ superseded_by:
   `SubtitleTrack::is_ai_generated`, raw `ai_type` / `ai_status` fields,
   `DownloadOptions::with_subtitle_ai_policy(...)`, CLI `--subtitle-ai`, filtered subtitle sidecar
   downloads, and subtitle-policy archive key tokens.
-- PR 8: `v0.5.0` release prep, release notes, full CI/live-e2e validation, and protected RC
-  creation.
+- PR 8: `v0.5.0` release prep, release notes, public API/rustdoc validation, full deterministic CI,
+  and protected RC readiness. Completed by adding a bilingual release-note archive covering
+  `v0.1.0` through `v0.5.0`, README links, CODEOWNERS coverage for release notes, a compact
+  embedding example that combines progress, cancellation, audio-language selection, and AI subtitle
+  filtering, plus a compile-time public API re-export regression test.
 
 ## Out Of Scope For This Line
 
@@ -152,3 +155,27 @@ superseded_by:
   `danmaku` archive tokens differently from normal downloads. The fix canonicalizes refreshed token
   order as `mode`, `subtitle_ai`, `danmaku`, then trailing tokens and adds a regression comparing
   direct download keys with refreshed danmaku keys.
+- Release-prep validation passed
+  `cargo test -p bbdown-core --test public_api --locked`,
+  `cargo doc --no-deps -p bbdown-core --locked`, and `just ci`, covering formatter, clippy, Rust
+  1.95 check, workspace tests, mock CLI e2e, and `bbdown-core` publish dry-run.
+- GitHub Codex review found that README release-note links would be broken inside release archives
+  because the package scripts did not stage `docs/release-notes/`. The follow-up copies release
+  notes into Unix and Windows release archives and passed `bash -n`,
+  `shellcheck scripts/release/package-release.sh`, a Unix package smoke, exact tar member checks for
+  both `v0.5.0` release-note files, checksum sidecar verification, project journal validation, and
+  a full `just ci` rerun.
+- The release-prep PR was expanded to add human-written bilingual notes for the previously shipped
+  `v0.1.0`, `v0.2.0`, `v0.3.0`, and `v0.4.0` releases, plus English and Simplified Chinese
+  `docs/release-notes/` indexes. The README release-note links now point to the index files instead
+  of only the latest single-version note.
+- Local `just live-e2e` was attempted with the ignored manifest. It failed on the restricted
+  `pgc-hk-mo-tw` case because all configured restricted-area proxy candidates returned
+  `502 Bad Gateway` while the manifest expected an API-code proxy diagnostic. This remains an
+  upstream proxy/fixture caveat rather than a deterministic release gate failure.
+
+## Next Steps
+
+- Merge the release-prep PR after review and CI gates are clean.
+- Run `Create Release Candidate` from `master` with `version=0.5.0`.
+- Promote the latest `v0.5.0-rc.N` tag after the protected production and crates.io approvals.
