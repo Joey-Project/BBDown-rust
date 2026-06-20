@@ -141,7 +141,8 @@ The JSON output contains:
   `language` / `language_doc` metadata.
 - `streams.flv_segments`: legacy FLV segments when the playurl response uses `durl`.
 - `cover_url`: optional cover image URL used by download cover sidecars.
-- `subtitles`: discovered subtitle tracks.
+- `subtitles`: discovered subtitle tracks, including `is_ai_generated`, `ai_type`, and `ai_status`
+  metadata when the upstream response exposes AI-generated subtitles.
 - `chapters`: optional chapter metadata discovered from the selected player metadata endpoint.
 - `danmaku.xml_url`: the XML comment endpoint for the entry `cid`.
 
@@ -252,6 +253,11 @@ Cover, subtitle, and danmaku sidecars are enabled by default when the plan has t
 them individually with `--no-cover`, `--no-subtitles`, and `--no-danmaku`.
 Danmaku sidecars default to XML. Use `--danmaku-format ass` to generate only `danmaku.ass`, or
 `--danmaku-format xml,ass` to keep both `danmaku.xml` and `danmaku.ass`.
+Use `--subtitle-ai include|prefer-non-ai|exclude-ai|only-ai` to keep all AI-generated subtitles,
+drop AI-generated subtitles when a non-AI track for the same language exists, exclude AI-generated
+subtitles entirely, or download only AI-generated subtitles. Non-default subtitle AI policies are
+included in archive keys so different subtitle sidecar sets do not satisfy one another's duplicate
+preflight.
 
 Use `--only video`, `--only audio`, `--only subtitle`, `--only danmaku`, or `--only cover` to write
 one output kind for each planned entry. `video` and `audio` modes select DASH streams and accept the

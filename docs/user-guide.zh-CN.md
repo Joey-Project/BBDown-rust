@@ -130,7 +130,8 @@ JSON 输出包含：
   `language` / `language_doc` metadata。
 - `streams.flv_segments`：playurl 响应使用 `durl` 时的 legacy FLV 分段。
 - `cover_url`：可选封面图片 URL，供下载封面旁路文件使用。
-- `subtitles`：发现的字幕轨道。
+- `subtitles`：发现的字幕轨道；当上游返回 AI 生成字幕信息时，会包含
+  `is_ai_generated`、`ai_type` 和 `ai_status` metadata。
 - `chapters`：从选中播放器 metadata endpoint 发现的可选章节 metadata。
 - `danmaku.xml_url`：条目 `cid` 对应的 XML 弹幕端点。
 
@@ -229,6 +230,9 @@ stdout 上的普通人类输出或 `--json` report。事件覆盖 plan 开始/�
 `--no-subtitles` 和 `--no-danmaku` 关闭。
 弹幕旁路文件默认写为 XML。使用 `--danmaku-format ass` 可只生成 `danmaku.ass`，或使用
 `--danmaku-format xml,ass` 同时保留 `danmaku.xml` 和 `danmaku.ass`。
+使用 `--subtitle-ai include|prefer-non-ai|exclude-ai|only-ai` 可以保留全部 AI 生成字幕、
+在同语言存在人工字幕时跳过 AI 字幕、完全排除 AI 字幕，或只下载 AI 字幕。非默认 subtitle
+AI policy 会写入 archive key，因此不同字幕旁路集合不会互相满足 duplicate preflight。
 
 使用 `--only video`、`--only audio`、`--only subtitle`、`--only danmaku` 或
 `--only cover` 可让每个计划条目只写入一种输出。`video` 和 `audio` 模式选择 DASH stream，

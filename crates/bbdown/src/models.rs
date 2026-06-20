@@ -261,6 +261,12 @@ pub struct FlvSegment {
 pub struct SubtitleTrack {
     pub language: String,
     pub language_doc: Option<String>,
+    #[serde(default)]
+    pub is_ai_generated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_type: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_status: Option<i64>,
     pub url: String,
     pub format: SubtitleFormat,
 }

@@ -3,7 +3,7 @@ id: 20260618-019f0b-v0-5-downloader-embedding-roadmap
 title: v0.5.0 Downloader And Embedding Roadmap
 status: active
 created: 2026-06-18
-updated: 2026-06-19
+updated: 2026-06-20
 branch: post-release/v0.5-devline
 pr:
 supersedes: []
@@ -44,7 +44,10 @@ superseded_by:
   `MediaStream` / `MediaRequestSpec`, adding `StreamSelection::with_audio_language(...)`, adding
   CLI `--audio-language`, and distinguishing explicit stream choices in archive content keys.
 - PR 7: AI subtitle filtering in API and CLI surfaces, keeping raw subtitle metadata visible while
-  allowing callers to prefer or exclude AI-generated subtitles.
+  allowing callers to prefer or exclude AI-generated subtitles. Completed by exposing
+  `SubtitleTrack::is_ai_generated`, raw `ai_type` / `ai_status` fields,
+  `DownloadOptions::with_subtitle_ai_policy(...)`, CLI `--subtitle-ai`, filtered subtitle sidecar
+  downloads, and subtitle-policy archive key tokens.
 - PR 8: `v0.5.0` release prep, release notes, full CI/live-e2e validation, and protected RC
   creation.
 
@@ -132,3 +135,16 @@ superseded_by:
 - The next readonly pass found intl mobile audio resources did not accept camelCase
   `languageDoc` / `langDoc` / `lanDoc` aliases even though Web DASH tracks did. The fix adds those
   aliases to `IntlMediaResource` and extends the intl mobile playurl shape test.
+- AI subtitle filtering implementation keeps raw AI subtitle metadata visible in planning output,
+  adds include/prefer-non-ai/exclude-ai/only-ai policy controls for the API and CLI, filters only at
+  sidecar download time so embedders can still inspect all tracks, and keys archive records by
+  non-default subtitle AI policy.
+- AI subtitle filtering local gate passed targeted core/CLI tests, project journal validation, and
+  `just ci`, covering fmt, clippy, pinned toolchain check, workspace tests, CLI e2e, and
+  `bbdown-core` publish dry-run.
+- Internal readonly review found that `prefer-non-ai` could keep `ai-zh` when a manual `zh-CN`
+  subtitle existed because the policy compared full language tags. The fix compares subtitle
+  preference keys by primary language subtag after stripping the `ai-` prefix and adds a
+  `zh-CN`/`ai-zh` regression test.
+- The review follow-up passed the expanded `subtitle_ai_policy` core test set and a full `just ci`
+  rerun.

@@ -332,6 +332,10 @@ fn plan_json_resolves_mock_video_streams() -> anyhow::Result<()> {
         "Japanese"
     );
     assert_plan_stream_qualities(&json);
+    assert_eq!(json["entries"][0]["subtitles"][0]["language"], "ai-en");
+    assert_eq!(json["entries"][0]["subtitles"][0]["is_ai_generated"], true);
+    assert_eq!(json["entries"][0]["subtitles"][0]["ai_type"], 1);
+    assert_eq!(json["entries"][0]["subtitles"][0]["ai_status"], 2);
     assert_eq!(
         json["entries"][0]["danmaku"]["xml_url"],
         "https://comment.bilibili.com/2.xml"
@@ -408,7 +412,13 @@ fn mock_video_stream_plan_endpoints(server: &MockServer) {
         then.status(200).json_body_obj(&serde_json::json!({
             "code": 0,
             "data": {
-                "subtitle": {"subtitles": []},
+                "subtitle": {"subtitles": [{
+                    "lan": "ai-en",
+                    "lan_doc": "English (AI)",
+                    "subtitle_url": "https://subtitle.example/ai-en.json",
+                    "ai_type": 1,
+                    "ai_status": 2
+                }]},
                 "view_points": [
                     {"content": "Opening", "from": 0, "to": 15},
                     {"content": "Main", "from": 15, "to": 180}
@@ -1111,6 +1121,12 @@ fn assert_human_plan_lists_qualities(
     assert!(text.contains("q=80"));
     assert!(text.contains("lang=ja-JP"));
     assert!(text.contains("lang_doc=Japanese"));
+    assert!(text.contains("subtitles: 1"));
+    assert!(text.contains("lang=ai-en"));
+    assert!(text.contains("lang_doc=English (AI)"));
+    assert!(text.contains("ai=true"));
+    assert!(text.contains("ai_type=1"));
+    assert!(text.contains("ai_status=2"));
     Ok(())
 }
 
@@ -1605,6 +1621,90 @@ fn download_json_writes_mock_media_files() -> anyhow::Result<()> {
     assert_eq!(
         fs::read_to_string(downloaded_file_path(&json, "danmaku")?)?,
         "<i/>"
+    );
+    Ok(())
+}
+
+#[test]
+fn download_subtitle_ai_policy_excludes_ai_tracks() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/view")
+            .query_param("aid", "170001");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "aid": 170_001,
+                "bvid": "BV1xx411c7mD",
+                "title": "Mock video",
+                "pages": [{"page": 1, "cid": 2, "part": "Main"}]
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/v2")
+            .query_param("aid", "170001")
+            .query_param("cid", "2");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "subtitle": {
+                    "subtitles": [{
+                        "lan": "en",
+                        "lan_doc": "English",
+                        "subtitle_url": format!("{}/subtitle.ass", server.base_url())
+                    }, {
+                        "lan": "ai-en",
+                        "lan_doc": "English (AI)",
+                        "subtitle_url": format!("{}/subtitle-ai.ass", server.base_url()),
+                        "ai_type": 1,
+                        "ai_status": 2
+                    }]
+                }
+            }
+        }));
+    });
+    let manual_subtitle = server.mock(|when, then| {
+        when.method(GET).path("/subtitle.ass");
+        then.status(200).body("manual");
+    });
+    let ai_subtitle = server.mock(|when, then| {
+        when.method(GET).path("/subtitle-ai.ass");
+        then.status(200).body("ai");
+    });
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("download")
+        .arg("av170001")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--only")
+        .arg("subtitle")
+        .arg("--subtitle-ai")
+        .arg("exclude-ai")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+
+    assert_eq!(manual_subtitle.calls(), 1);
+    assert_eq!(ai_subtitle.calls(), 0);
+    assert_eq!(
+        json["entries"][0]["files"].as_array().map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(
+        fs::read_to_string(downloaded_file_path(&json, "subtitle")?)?,
+        "manual"
     );
     Ok(())
 }
@@ -2113,6 +2213,27 @@ fn download_only_rejects_conflicting_disable_flag() -> anyhow::Result<()> {
 
     command.assert().failure().stderr(predicates::str::contains(
         "--only cover conflicts with --no-cover",
+    ));
+    Ok(())
+}
+
+#[test]
+fn download_subtitle_ai_policy_requires_subtitles() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("download")
+        .arg("av170001")
+        .arg("--no-subtitles")
+        .arg("--subtitle-ai")
+        .arg("exclude-ai");
+
+    command.assert().failure().stderr(predicates::str::contains(
+        "--subtitle-ai requires downloadable subtitles",
     ));
     Ok(())
 }

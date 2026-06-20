@@ -40,9 +40,9 @@
 - The `0.4.0` line shipped credential lifecycle improvements, access-key acquisition, unified login
   QR output, and append-only danmaku update workflows.
 - The active `0.5.0` development line is downloader and embedding polish. Progress callbacks,
-  terminal progress events/report summaries, cancellation-aware download execution, and chapter
-  metadata muxing, and audio language selection have landed; next slices add AI subtitle filtering
-  and release prep.
+  terminal progress events/report summaries, cancellation-aware download execution, chapter
+  metadata muxing, audio language selection, and AI subtitle filtering have landed; the next slice
+  is final release prep.
 - The audio language slice passed the deterministic local gate; its latest local live e2e rerun is
   blocked by upstream restricted PGC proxy `502 Bad Gateway` responses in the ignored manifest.
 - Repo-local skill `$bbdown-live-e2e-fixtures` and `live-e2e.samples.example.json` record the current

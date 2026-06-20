@@ -12,7 +12,7 @@ use bbdown_core::{
     MediaStream, MuxOptions, PlaybackPlan, PlayurlMode, QrLoginKind, QrLoginState, QrLoginTicket,
     QrLoginTicketOutput, ResolvedContent, RestrictedArea, RestrictedAreaConfig,
     RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection, StreamQuality,
-    StreamSelection, StreamSet, archive_entry_allows_danmaku_update,
+    StreamSelection, StreamSet, SubtitleAiPolicy, archive_entry_allows_danmaku_update,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::ffi::{OsStr, OsString};
@@ -175,6 +175,8 @@ struct DownloadCliArgs {
     no_cover: bool,
     #[arg(long)]
     no_subtitles: bool,
+    #[arg(long, value_enum, default_value = "include", value_name = "POLICY")]
+    subtitle_ai: SubtitleAiPolicyArg,
     #[arg(long)]
     no_danmaku: bool,
     #[arg(
@@ -310,6 +312,26 @@ impl From<DanmakuFormatArg> for DanmakuFormat {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 #[value(rename_all = "kebab-case")]
+enum SubtitleAiPolicyArg {
+    Include,
+    PreferNonAi,
+    ExcludeAi,
+    OnlyAi,
+}
+
+impl From<SubtitleAiPolicyArg> for SubtitleAiPolicy {
+    fn from(value: SubtitleAiPolicyArg) -> Self {
+        match value {
+            SubtitleAiPolicyArg::Include => Self::Include,
+            SubtitleAiPolicyArg::PreferNonAi => Self::PreferNonAi,
+            SubtitleAiPolicyArg::ExcludeAi => Self::ExcludeAi,
+            SubtitleAiPolicyArg::OnlyAi => Self::OnlyAi,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
 enum PlayurlModeArg {
     Web,
     Tv,
@@ -338,15 +360,35 @@ impl From<DownloadOnlyArg> for DownloadMode {
     }
 }
 
-fn validate_single_download_args(
+#[derive(Clone, Copy, Debug)]
+struct SingleDownloadValidationArgs<'a> {
     only: Option<DownloadOnlyArg>,
     no_cover: bool,
     no_subtitles: bool,
     no_danmaku: bool,
+    subtitle_ai: SubtitleAiPolicyArg,
     video_quality: Option<u32>,
     audio_quality: Option<u32>,
-    audio_language: Option<&str>,
-) -> anyhow::Result<()> {
+    audio_language: Option<&'a str>,
+}
+
+fn validate_single_download_args(args: SingleDownloadValidationArgs<'_>) -> anyhow::Result<()> {
+    let SingleDownloadValidationArgs {
+        only,
+        no_cover,
+        no_subtitles,
+        no_danmaku,
+        subtitle_ai,
+        video_quality,
+        audio_quality,
+        audio_language,
+    } = args;
+    ensure!(
+        subtitle_ai == SubtitleAiPolicyArg::Include
+            || (!no_subtitles
+                && (matches!(only, Some(DownloadOnlyArg::Subtitle)) || only.is_none())),
+        "--subtitle-ai requires downloadable subtitles"
+    );
     let Some(only) = only else {
         return Ok(());
     };
@@ -408,6 +450,7 @@ struct DownloadSidecarCliFlags {
     no_cover: bool,
     no_subtitles: bool,
     no_danmaku: bool,
+    subtitle_ai: SubtitleAiPolicyArg,
 }
 
 struct DownloadMediaHostCliFlags {
@@ -427,15 +470,16 @@ fn download_options_from_cli(args: DownloadOptionCliArgs) -> anyhow::Result<Down
         args.retry_attempts > 0,
         "--retry-attempts must be greater than 0"
     );
-    validate_single_download_args(
-        args.only,
-        args.sidecars.no_cover,
-        args.sidecars.no_subtitles,
-        args.sidecars.no_danmaku,
-        args.video_quality,
-        args.audio_quality,
-        args.audio_language.as_deref(),
-    )?;
+    validate_single_download_args(SingleDownloadValidationArgs {
+        only: args.only,
+        no_cover: args.sidecars.no_cover,
+        no_subtitles: args.sidecars.no_subtitles,
+        no_danmaku: args.sidecars.no_danmaku,
+        subtitle_ai: args.sidecars.subtitle_ai,
+        video_quality: args.video_quality,
+        audio_quality: args.audio_quality,
+        audio_language: args.audio_language.as_deref(),
+    })?;
     let download_idle_timeout = if args.download_idle_timeout_seconds == 0 {
         None
     } else {
@@ -464,6 +508,7 @@ fn download_options_from_cli(args: DownloadOptionCliArgs) -> anyhow::Result<Down
         .with_download_mode(mode)
         .with_cover(!args.sidecars.no_cover)
         .with_subtitles(!args.sidecars.no_subtitles)
+        .with_subtitle_ai_policy(args.sidecars.subtitle_ai.into())
         .with_danmaku(!args.sidecars.no_danmaku)
         .with_danmaku_formats(args.danmaku_formats.into_iter().map(Into::into))
         .with_media_hosts(media_hosts)
@@ -682,6 +727,7 @@ async fn handle_download_cli(
             no_cover: args.no_cover,
             no_subtitles: args.no_subtitles,
             no_danmaku: args.no_danmaku,
+            subtitle_ai: args.subtitle_ai,
         },
         media_hosts: DownloadMediaHostCliFlags {
             upos_host: args.upos_host,
@@ -1010,6 +1056,9 @@ fn print_plan_summary(plan: &bbdown_core::DownloadPlan) {
         );
         print_streams(&entry.streams);
         println!("  subtitles: {}", entry.subtitles.len());
+        for subtitle in &entry.subtitles {
+            println!("    - {}", subtitle_summary(subtitle));
+        }
         println!("  danmaku: {}", entry.danmaku.xml_url);
     }
 }
@@ -1080,6 +1129,24 @@ fn print_streams(streams: &StreamSet) {
         println!("    - {}", media_stream_summary("id", stream));
     }
     println!("  flv_segments: {}", streams.flv_segments.len());
+}
+
+fn subtitle_summary(subtitle: &bbdown_core::SubtitleTrack) -> String {
+    let mut parts = vec![format!("lang={}", subtitle.language)];
+    if let Some(language_doc) = subtitle.language_doc.as_deref() {
+        parts.push(format!("lang_doc={language_doc}"));
+    }
+    parts.push(format!("{:?}", subtitle.format).to_ascii_lowercase());
+    if subtitle.is_ai_generated {
+        parts.push("ai=true".to_owned());
+    }
+    if let Some(ai_type) = subtitle.ai_type {
+        parts.push(format!("ai_type={ai_type}"));
+    }
+    if let Some(ai_status) = subtitle.ai_status {
+        parts.push(format!("ai_status={ai_status}"));
+    }
+    parts.join(" ")
 }
 
 fn quality_list(qualities: &[StreamQuality]) -> String {
@@ -2626,14 +2693,14 @@ fn _assert_credentials_send_sync(_: Credentials) {}
 mod tests {
     use super::{
         Cli, CliProgressReporter, CredentialRuntime, DownloadCtrlCAction, DownloadOnlyArg,
-        DuplicateDecisionRequest, DuplicatePromptActiveGuard, archive_sidecar_path,
-        credential_profile_selection, download_ctrl_c_action, duplicate_decision_or_report,
-        endpoints_from_cli, ensure_access_key_login_file_is_safe,
-        ensure_access_key_login_stdin_is_safe, ensure_archive_file_is_not_output_root,
-        next_poll_sleep, parse_access_key_login_input, remaining_until,
-        restricted_area_from_cli_with_args, restricted_area_from_cli_with_env_values,
-        save_credentials, should_prompt_duplicate_decision, validate_media_host_spec,
-        validate_single_download_args,
+        DuplicateDecisionRequest, DuplicatePromptActiveGuard, SingleDownloadValidationArgs,
+        SubtitleAiPolicyArg, archive_sidecar_path, credential_profile_selection,
+        download_ctrl_c_action, duplicate_decision_or_report, endpoints_from_cli,
+        ensure_access_key_login_file_is_safe, ensure_access_key_login_stdin_is_safe,
+        ensure_archive_file_is_not_output_root, next_poll_sleep, parse_access_key_login_input,
+        remaining_until, restricted_area_from_cli_with_args,
+        restricted_area_from_cli_with_env_values, save_credentials,
+        should_prompt_duplicate_decision, validate_media_host_spec, validate_single_download_args,
     };
     use bbdown_core::{
         AccessKeyLoginConfig, CredentialProfileSelection, CredentialStore, Credentials,
@@ -2673,15 +2740,16 @@ mod tests {
 
     #[test]
     fn download_arg_validation_rejects_audio_language_for_video_only() -> anyhow::Result<()> {
-        let error = match validate_single_download_args(
-            Some(DownloadOnlyArg::Video),
-            false,
-            false,
-            false,
-            None,
-            None,
-            Some("ja-JP"),
-        ) {
+        let error = match validate_single_download_args(SingleDownloadValidationArgs {
+            only: Some(DownloadOnlyArg::Video),
+            no_cover: false,
+            no_subtitles: false,
+            no_danmaku: false,
+            subtitle_ai: SubtitleAiPolicyArg::Include,
+            video_quality: None,
+            audio_quality: None,
+            audio_language: Some("ja-JP"),
+        }) {
             Ok(()) => anyhow::bail!("audio language should conflict with video-only mode"),
             Err(error) => error,
         };

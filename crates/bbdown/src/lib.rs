@@ -34,7 +34,7 @@ pub use download::{
     DownloadPathTemplates, DownloadPreflight, DownloadReport, DownloadReportSummary,
     DownloadedFile, DuplicateDecision, EntryDanmakuUpdateReport, EntryDownloadReport,
     EntryDownloadSummary, MediaHostOptions, MuxOptions, MuxReport, RetryPolicy, SidecarOptions,
-    StreamSelection, archive_entry_allows_danmaku_update,
+    StreamSelection, SubtitleAiPolicy, archive_entry_allows_danmaku_update,
 };
 pub use error::{Error, Result};
 pub use input::Input;

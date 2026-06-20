@@ -5638,6 +5638,10 @@ struct SubtitleData {
     lan_doc: Option<String>,
     #[serde(alias = "url")]
     subtitle_url: Option<String>,
+    #[serde(alias = "aiType")]
+    ai_type: Option<i64>,
+    #[serde(alias = "aiStatus")]
+    ai_status: Option<i64>,
 }
 
 impl SubtitleData {
@@ -5646,9 +5650,18 @@ impl SubtitleData {
         if url.is_empty() {
             return None;
         }
+        let language = self.lan.unwrap_or_else(|| "und".to_owned());
+        let is_ai_generated = language
+            .trim_start()
+            .get(..3)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("ai-"))
+            || self.ai_type.is_some_and(|ai_type| ai_type != 0);
         Some(SubtitleTrack {
-            language: self.lan.unwrap_or_else(|| "und".to_owned()),
+            language,
             language_doc: self.lan_doc,
+            is_ai_generated,
+            ai_type: self.ai_type,
+            ai_status: self.ai_status,
             format: subtitle_format(&url),
             url,
         })
@@ -6686,6 +6699,12 @@ mod tests {
                             "lan": "zh-CN",
                             "lan_doc": "中文（简体）",
                             "subtitle_url": "//subtitle.example/zh.json"
+                        }, {
+                            "lan": "ai-zh",
+                            "lan_doc": "中文（自动生成）",
+                            "subtitle_url": "//subtitle.example/ai-zh.json",
+                            "ai_type": 1,
+                            "ai_status": 2
                         }]
                     }
                 }
@@ -6734,6 +6753,15 @@ mod tests {
             Some("1080P 高码率")
         );
         assert_eq!(entry.subtitles[0].url, "https://subtitle.example/zh.json");
+        assert!(!entry.subtitles[0].is_ai_generated);
+        assert_eq!(entry.subtitles[1].language, "ai-zh");
+        assert_eq!(
+            entry.subtitles[1].url,
+            "https://subtitle.example/ai-zh.json"
+        );
+        assert!(entry.subtitles[1].is_ai_generated);
+        assert_eq!(entry.subtitles[1].ai_type, Some(1));
+        assert_eq!(entry.subtitles[1].ai_status, Some(2));
         assert_eq!(
             entry.danmaku.xml_url,
             format!("{}/9988.xml", server.base_url())

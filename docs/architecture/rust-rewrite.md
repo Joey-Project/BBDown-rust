@@ -76,7 +76,8 @@ The library resolves media availability into `DownloadPlan`:
 - `StreamSet` keeps DASH video/audio tracks, FLV segments, raw accepted quality ids, structured
   selectable DASH quality labels, and duration.
 - `StreamDiagnostics` records non-default resolver attempts such as restricted-area proxy fallback.
-- `SubtitleTrack` records language metadata, normalized URL, and basic format classification.
+- `SubtitleTrack` records language metadata, normalized URL, basic format classification, and
+  upstream AI subtitle metadata when present.
 - `ChapterTrack` records title plus start/end seconds when the upstream player metadata exposes
   usable chapter boundaries.
 - `DanmakuTrack` records the XML comment endpoint derived from `cid` and the configured comment
@@ -265,7 +266,8 @@ Archive content keys are also mode-aware for single-output downloads while prese
 for full downloads, so existing archives still match full downloads and single-output records do not
 claim that a complete entry is already downloaded. Explicit stream selection adds stream tokens to
 the archive key, preventing different selected qualities or audio languages from satisfying one
-another's duplicate preflight.
+another's duplicate preflight. Non-default subtitle AI policies also add archive-key tokens because
+they change which subtitle sidecars are downloaded.
 
 Media and sidecar downloads use media headers without account cookies, because media URLs come from
 API payloads and can target CDN or proxy hosts. DASH and FLV backup URLs are part of the candidate
