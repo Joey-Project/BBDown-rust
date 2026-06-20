@@ -59,3 +59,39 @@ pub use playback::{
 };
 pub use progress::{DownloadProgressEvent, DownloadProgressSink, NoopDownloadProgress};
 pub use selection::{IndexSelection, IndexSelector, Selection};
+
+#[cfg(test)]
+mod public_api_tests {
+    use super::{
+        BiliClient, ClientConfig, DownloadCancellationToken, DownloadOptions,
+        DownloadProgressEvent, DownloadProgressSink, DownloadReportSummary, NoopDownloadProgress,
+        StreamSelection, SubtitleAiPolicy,
+    };
+    use std::path::PathBuf;
+
+    #[test]
+    fn v0_5_embedding_surface_is_reexported() {
+        fn accepts_progress_sink(_sink: &dyn DownloadProgressSink) {}
+
+        let _client = BiliClient::new(ClientConfig::default());
+        let _options = DownloadOptions::new("downloads")
+            .with_stream_selection(StreamSelection::audio_language("Japanese"))
+            .with_subtitles(true)
+            .with_subtitle_ai_policy(SubtitleAiPolicy::PreferNonAi);
+        let _summary = DownloadReportSummary::default();
+
+        let cancellation = DownloadCancellationToken::new();
+        cancellation.cancel_with_reason("stopped by test");
+        assert!(cancellation.cancelled_error().is_cancelled());
+
+        let event = DownloadProgressEvent::PlanCancelled {
+            title: "example".to_owned(),
+            output_dir: PathBuf::from("downloads"),
+            completed_entries: 0,
+            error: "stopped by test".to_owned(),
+        };
+        let sink = NoopDownloadProgress;
+        sink.on_download_progress(&event);
+        accepts_progress_sink(&sink);
+    }
+}

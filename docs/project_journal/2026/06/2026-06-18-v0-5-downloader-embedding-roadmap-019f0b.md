@@ -48,8 +48,11 @@ superseded_by:
   `SubtitleTrack::is_ai_generated`, raw `ai_type` / `ai_status` fields,
   `DownloadOptions::with_subtitle_ai_policy(...)`, CLI `--subtitle-ai`, filtered subtitle sidecar
   downloads, and subtitle-policy archive key tokens.
-- PR 8: `v0.5.0` release prep, release notes, full CI/live-e2e validation, and protected RC
-  creation.
+- PR 8: `v0.5.0` release prep, release notes, public API/rustdoc validation, full deterministic CI,
+  and protected RC readiness. Completed by adding bilingual release notes, README links,
+  CODEOWNERS coverage for release notes, a compact embedding example that combines progress,
+  cancellation, audio-language selection, and AI subtitle filtering, plus a compile-time public API
+  re-export regression test.
 
 ## Out Of Scope For This Line
 
@@ -152,3 +155,17 @@ superseded_by:
   `danmaku` archive tokens differently from normal downloads. The fix canonicalizes refreshed token
   order as `mode`, `subtitle_ai`, `danmaku`, then trailing tokens and adds a regression comparing
   direct download keys with refreshed danmaku keys.
+- Release-prep validation passed
+  `cargo test -p bbdown-core --locked v0_5_embedding_surface_is_reexported`,
+  `cargo doc --no-deps -p bbdown-core --locked`, and `just ci`, covering formatter, clippy, Rust
+  1.95 check, workspace tests, mock CLI e2e, and `bbdown-core` publish dry-run.
+- Local `just live-e2e` was attempted with the ignored manifest. It failed on the restricted
+  `pgc-hk-mo-tw` case because all configured restricted-area proxy candidates returned
+  `502 Bad Gateway` while the manifest expected an API-code proxy diagnostic. This remains an
+  upstream proxy/fixture caveat rather than a deterministic release gate failure.
+
+## Next Steps
+
+- Merge the release-prep PR after review and CI gates are clean.
+- Run `Create Release Candidate` from `master` with `version=0.5.0`.
+- Promote the latest `v0.5.0-rc.N` tag after the protected production and crates.io approvals.

@@ -487,6 +487,55 @@ async fn main() -> bbdown_core::Result<()> {
 async fn wait_for_user_cancel() {}
 ```
 
+The same configuration surface can be combined when a downstream task needs stable UI state,
+explicit cancellation, preferred audio, and subtitle filtering:
+
+```rust,no_run
+use bbdown_core::{
+    BiliClient, ClientConfig, DownloadCancellationToken, DownloadOptions, DownloadProgressEvent,
+    DownloadProgressSink, StreamSelection, SubtitleAiPolicy,
+};
+
+struct TaskProgress;
+
+impl DownloadProgressSink for TaskProgress {
+    fn on_download_progress(&self, event: &DownloadProgressEvent) {
+        match event {
+            DownloadProgressEvent::PlanCompleted { .. }
+            | DownloadProgressEvent::PlanFailed { .. }
+            | DownloadProgressEvent::PlanCancelled { .. } => {
+                eprintln!("terminal task state: {event:?}");
+            }
+            _ => {}
+        }
+    }
+}
+
+#[tokio::main]
+async fn main() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let cancellation = DownloadCancellationToken::new();
+    let options = DownloadOptions::new("downloads")
+        .with_stream_selection(StreamSelection::audio_language("Japanese"))
+        .with_subtitles(true)
+        .with_subtitle_ai_policy(SubtitleAiPolicy::PreferNonAi);
+
+    let report = client
+        .download_input_with_progress_and_cancellation(
+            "BV1qt4y1X7TW",
+            None,
+            options,
+            &TaskProgress,
+            &cancellation,
+        )
+        .await?;
+
+    let summary = report.summary();
+    eprintln!("{} files, {} bytes", summary.file_count, summary.total_bytes);
+    Ok(())
+}
+```
+
 Use `bbdown plan` or `BiliClient::plan_download` first when a UI needs to present quality choices.
 `StreamSelection::video`, `StreamSelection::audio`, and `StreamSelection::new` select exact DASH
 stream ids from the plan. `StreamSelection::audio_language("ja-JP")` or

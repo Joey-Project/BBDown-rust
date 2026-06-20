@@ -466,6 +466,54 @@ async fn main() -> bbdown_core::Result<()> {
 async fn wait_for_user_cancel() {}
 ```
 
+当下游任务需要稳定 UI 状态、显式取消、首选音频和字幕筛选时，可以组合使用同一组配置表面：
+
+```rust,no_run
+use bbdown_core::{
+    BiliClient, ClientConfig, DownloadCancellationToken, DownloadOptions, DownloadProgressEvent,
+    DownloadProgressSink, StreamSelection, SubtitleAiPolicy,
+};
+
+struct TaskProgress;
+
+impl DownloadProgressSink for TaskProgress {
+    fn on_download_progress(&self, event: &DownloadProgressEvent) {
+        match event {
+            DownloadProgressEvent::PlanCompleted { .. }
+            | DownloadProgressEvent::PlanFailed { .. }
+            | DownloadProgressEvent::PlanCancelled { .. } => {
+                eprintln!("terminal task state: {event:?}");
+            }
+            _ => {}
+        }
+    }
+}
+
+#[tokio::main]
+async fn main() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let cancellation = DownloadCancellationToken::new();
+    let options = DownloadOptions::new("downloads")
+        .with_stream_selection(StreamSelection::audio_language("Japanese"))
+        .with_subtitles(true)
+        .with_subtitle_ai_policy(SubtitleAiPolicy::PreferNonAi);
+
+    let report = client
+        .download_input_with_progress_and_cancellation(
+            "BV1qt4y1X7TW",
+            None,
+            options,
+            &TaskProgress,
+            &cancellation,
+        )
+        .await?;
+
+    let summary = report.summary();
+    eprintln!("{} files, {} bytes", summary.file_count, summary.total_bytes);
+    Ok(())
+}
+```
+
 当 UI 需要展示质量选择时，先使用 `bbdown plan` 或 `BiliClient::plan_download`。
 `StreamSelection::video`、`StreamSelection::audio` 和 `StreamSelection::new` 会从 plan 中
 选择精确的 DASH stream id。`StreamSelection::audio_language("ja-JP")` 或
