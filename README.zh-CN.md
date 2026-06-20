@@ -125,6 +125,8 @@ bbdown download av170001 --output-dir downloads --no-mux --json --progress-json
 `ffmpeg`。使用 `--no-cover`、`--no-subtitles` 或 `--no-danmaku` 可以跳过对应旁路文件。
 弹幕输出默认是 XML；传入 `--danmaku-format ass` 会只生成 ASS，传入
 `--danmaku-format xml,ass` 可同时保留 XML 和 ASS 旁路文件。
+使用 `--subtitle-ai include|prefer-non-ai|exclude-ai|only-ai` 控制 AI 生成字幕旁路文件。
+默认 `include` 会保留所有发现的字幕轨道。
 使用 `--only video`、`--only audio`、`--only subtitle`、`--only danmaku` 或
 `--only cover` 可只写入一种输出；single-output 模式会跳过 mux。
 使用 `bbdown plan` 查看 `streams.audios[*].language` 和 `language_doc` 后，可以传入

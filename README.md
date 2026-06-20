@@ -128,6 +128,8 @@ incomplete media shapes, and runs `ffmpeg` unless `--no-mux` is supplied. Use `-
 `--no-subtitles`, or `--no-danmaku` to skip individual sidecar families. Danmaku output defaults to
 XML; pass `--danmaku-format ass` for ASS-only output or `--danmaku-format xml,ass` to keep both
 XML and ASS sidecars.
+Use `--subtitle-ai include|prefer-non-ai|exclude-ai|only-ai` to control AI-generated subtitle
+sidecars. The default `include` preserves all discovered subtitle tracks.
 Use `--only video`, `--only audio`, `--only subtitle`, `--only danmaku`, or `--only cover` for a
 single output kind; single-output modes skip muxing.
 Use `bbdown plan` to inspect `streams.audios[*].language` and `language_doc`, then pass

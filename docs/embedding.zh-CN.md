@@ -303,7 +303,7 @@ metadata，不会写出章节 sidecar。
 ```rust,no_run
 use bbdown_core::{
     BiliClient, ClientConfig, DanmakuFormat, DownloadMode, DownloadOptions, DownloadPathTemplates,
-    MuxOptions, RetryPolicy, StreamSelection,
+    MuxOptions, RetryPolicy, StreamSelection, SubtitleAiPolicy,
 };
 use std::time::Duration;
 
@@ -317,6 +317,7 @@ async fn main() -> bbdown_core::Result<()> {
         .with_download_idle_timeout(Some(Duration::from_secs(30)))
         .with_cover(true)
         .with_subtitles(true)
+        .with_subtitle_ai_policy(SubtitleAiPolicy::PreferNonAi)
         .with_danmaku(true)
         .with_danmaku_format(DanmakuFormat::Ass)
         .with_path_templates(
@@ -477,6 +478,10 @@ preflight。
 会启动 mux；video-only 和 audio-only 模式只选择对应 DASH stream。当后续 download
 options 使用非默认 mode 时，应先用 mode-aware planning API 再调用
 `DownloadPreflight::inspect`。
+`DownloadPlan` 会通过 `SubtitleTrack::is_ai_generated`、`ai_type` 和 `ai_status` 保留原始
+字幕 AI metadata。使用 `DownloadOptions::with_subtitle_ai_policy(...)` 可以保留全部字幕、
+在同语言存在非 AI 字幕时优先非 AI 字幕、排除 AI 字幕，或只下载 AI 字幕。非默认 subtitle
+AI policy 会参与 archive key，因为它会改变旁路文件集合。
 弹幕旁路文件默认使用 `DanmakuFormat::Xml`；当嵌入 UI 需要 ASS-only 输出时，使用
 `DanmakuFormat::Ass`；需要同时保留 XML 和 ASS 时，使用
 `DownloadOptions::with_danmaku_formats([DanmakuFormat::Xml, DanmakuFormat::Ass])`。

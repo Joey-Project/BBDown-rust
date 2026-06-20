@@ -321,7 +321,7 @@ chapter sidecar is written.
 ```rust,no_run
 use bbdown_core::{
     BiliClient, ClientConfig, DanmakuFormat, DownloadMode, DownloadOptions, DownloadPathTemplates,
-    MuxOptions, RetryPolicy, StreamSelection,
+    MuxOptions, RetryPolicy, StreamSelection, SubtitleAiPolicy,
 };
 use std::time::Duration;
 
@@ -335,6 +335,7 @@ async fn main() -> bbdown_core::Result<()> {
         .with_download_idle_timeout(Some(Duration::from_secs(30)))
         .with_cover(true)
         .with_subtitles(true)
+        .with_subtitle_ai_policy(SubtitleAiPolicy::PreferNonAi)
         .with_danmaku(true)
         .with_danmaku_format(DanmakuFormat::Ass)
         .with_path_templates(
@@ -498,6 +499,11 @@ embedding caller wants one output kind. Sidecar-only modes do not require media 
 spawn muxing; video-only and audio-only modes select only the matching DASH stream. Use the
 mode-aware planning APIs before `DownloadPreflight::inspect` when the later download options use a
 non-default mode.
+`DownloadPlan` preserves raw subtitle AI metadata through `SubtitleTrack::is_ai_generated`,
+`ai_type`, and `ai_status`. Use `DownloadOptions::with_subtitle_ai_policy(...)` to include all
+subtitle tracks, prefer non-AI tracks for the same language, exclude AI tracks, or download only AI
+tracks. Non-default subtitle AI policies participate in archive keys because they change the
+sidecar set.
 Danmaku sidecars default to `DanmakuFormat::Xml`; use `DanmakuFormat::Ass` for ASS-only output, or
 `DownloadOptions::with_danmaku_formats([DanmakuFormat::Xml, DanmakuFormat::Ass])` when the
 embedding UI needs to keep both XML and ASS sidecars.

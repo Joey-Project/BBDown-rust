@@ -69,7 +69,8 @@ library 会把媒体可用性解析为 `DownloadPlan`：
 - `StreamSet` 保存 DASH video/audio 轨道、FLV 分段、原始 accepted quality id、结构化可选
   DASH 质量标签和时长。
 - `StreamDiagnostics` 记录非默认解析尝试，例如受限区域代理回退。
-- `SubtitleTrack` 记录语言元数据、规范化 URL 和基本格式分类。
+- `SubtitleTrack` 记录语言元数据、规范化 URL、基本格式分类，以及上游存在时的 AI 字幕
+  metadata。
 - `ChapterTrack` 在上游播放器 metadata 暴露可用章节边界时记录标题和开始/结束秒数。
 - `DanmakuTrack` 记录从 `cid` 和配置的 comment endpoint base 推导出的 XML 弹幕端点。
 
@@ -235,7 +236,8 @@ Append-only 弹幕刷新被建模为单独的 archive-backed 执行路径，而�
 single-output 下载的 archive content key 也会包含 mode，而完整下载继续保留 legacy key；
 因此现有归档仍能匹配完整下载，single-output 记录不会宣称完整条目已经下载完成。
 显式 stream selection 会把 stream token 写入 archive key，避免不同清晰度或音频语言互相满
-足 duplicate preflight。
+足 duplicate preflight。非默认 subtitle AI policy 也会写入 archive-key token，因为它会改变
+要下载的字幕旁路文件集合。
 
 媒体和 sidecar 下载使用不含账号 cookie 的媒体 headers，因为媒体 URL 来自 API payload，
 可能指向 CDN 或代理主机。DASH 和 FLV backup URL 是候选列表的一部分。媒体正文读取使用独

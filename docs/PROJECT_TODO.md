@@ -77,8 +77,11 @@
 - [completed] Add `v0.5.0` audio language selection: expose optional audio language metadata on
   plan/playback streams, support CLI/API language selection, and keep explicit stream choices
   distinct in archive keys.
-- [pending] Continue `v0.5.0` as the downloader and embedding polish line: AI subtitle filtering
-  and final `v0.5.0` release prep.
+- [completed] Add `v0.5.0` AI subtitle filtering: preserve subtitle AI metadata in plans, support
+  CLI/API policies for including, preferring, excluding, or selecting only AI-generated subtitles,
+  and keep non-default subtitle policies distinct in archive keys.
+- [pending] Finish `v0.5.0` release prep with release notes, full CI/live-e2e validation, protected
+  RC creation, and promotion readiness.
 - [pending] Plan `v0.6.0` as the credential lifecycle line: automatic credential refresh, health
   policy/reporting, profile-level status, and multi-account lifecycle UX.
 - [pending] Plan `v0.7.0` or a later feed/page release for per-video related recommendations and

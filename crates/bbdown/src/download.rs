@@ -73,6 +73,7 @@ pub struct DownloadOptions {
     pub resume: bool,
     pub mode: DownloadMode,
     pub include_subtitles: bool,
+    pub subtitle_ai_policy: SubtitleAiPolicy,
     pub include_danmaku: bool,
     pub danmaku_formats: DanmakuFormats,
     pub sidecars: SidecarOptions,
@@ -91,6 +92,7 @@ impl Default for DownloadOptions {
             resume: true,
             mode: DownloadMode::All,
             include_subtitles: true,
+            subtitle_ai_policy: SubtitleAiPolicy::default(),
             include_danmaku: true,
             danmaku_formats: DanmakuFormats::default(),
             sidecars: SidecarOptions::default(),
@@ -172,6 +174,12 @@ impl DownloadOptions {
     }
 
     #[must_use]
+    pub fn with_subtitle_ai_policy(mut self, subtitle_ai_policy: SubtitleAiPolicy) -> Self {
+        self.subtitle_ai_policy = subtitle_ai_policy;
+        self
+    }
+
+    #[must_use]
     pub fn with_danmaku(mut self, include_danmaku: bool) -> Self {
         self.include_danmaku = include_danmaku;
         self.sidecars.danmaku = include_danmaku;
@@ -209,6 +217,26 @@ impl DownloadOptions {
     pub fn with_download_idle_timeout(mut self, download_idle_timeout: Option<Duration>) -> Self {
         self.download_idle_timeout = download_idle_timeout;
         self
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SubtitleAiPolicy {
+    #[default]
+    Include,
+    PreferNonAi,
+    ExcludeAi,
+    OnlyAi,
+}
+
+impl SubtitleAiPolicy {
+    const fn archive_key_token(self) -> Option<&'static str> {
+        match self {
+            Self::Include => None,
+            Self::PreferNonAi => Some("prefer-non-ai"),
+            Self::ExcludeAi => Some("exclude-ai"),
+            Self::OnlyAi => Some("only-ai"),
+        }
     }
 }
 
@@ -1665,7 +1693,8 @@ impl BiliClient {
         }
         if should_download_subtitles(options) {
             let mut seen_subtitles = HashSet::new();
-            for (index, subtitle) in entry.subtitles.iter().enumerate() {
+            let subtitles = selected_subtitles(&entry.subtitles, options.subtitle_ai_policy);
+            for (index, subtitle) in subtitles.iter().copied() {
                 if !seen_subtitles.insert(subtitle_dedup_key(&subtitle.url)) {
                     continue;
                 }
@@ -1676,7 +1705,7 @@ impl BiliClient {
                 );
             }
             if matches!(options.mode, DownloadMode::SubtitleOnly) && seen_subtitles.is_empty() {
-                return Err(Error::MissingField("subtitle tracks"));
+                return Err(Error::MissingField("subtitle tracks matching AI policy"));
             }
         }
         if should_download_danmaku(options) {
@@ -3761,6 +3790,70 @@ fn should_download_subtitles(options: &DownloadOptions) -> bool {
     }
 }
 
+fn selected_subtitles(
+    subtitles: &[SubtitleTrack],
+    policy: SubtitleAiPolicy,
+) -> Vec<(usize, &SubtitleTrack)> {
+    match policy {
+        SubtitleAiPolicy::Include => subtitles.iter().enumerate().collect(),
+        SubtitleAiPolicy::ExcludeAi => subtitles
+            .iter()
+            .enumerate()
+            .filter(|(_, subtitle)| !subtitle_track_is_ai_generated(subtitle))
+            .collect(),
+        SubtitleAiPolicy::OnlyAi => subtitles
+            .iter()
+            .enumerate()
+            .filter(|(_, subtitle)| subtitle_track_is_ai_generated(subtitle))
+            .collect(),
+        SubtitleAiPolicy::PreferNonAi => {
+            let non_ai_languages = subtitles
+                .iter()
+                .filter(|subtitle| !subtitle_track_is_ai_generated(subtitle))
+                .map(subtitle_language_preference_key)
+                .collect::<HashSet<_>>();
+            subtitles
+                .iter()
+                .enumerate()
+                .filter(|(_, subtitle)| {
+                    !subtitle_track_is_ai_generated(subtitle)
+                        || !non_ai_languages.contains(&subtitle_language_preference_key(subtitle))
+                })
+                .collect()
+        }
+    }
+}
+
+fn subtitle_track_is_ai_generated(subtitle: &SubtitleTrack) -> bool {
+    subtitle.is_ai_generated
+        || subtitle.ai_type.is_some_and(|ai_type| ai_type != 0)
+        || subtitle_language_without_ai_prefix(&subtitle.language)
+            .is_some_and(|without_prefix| without_prefix != subtitle.language.trim())
+}
+
+fn subtitle_language_preference_key(subtitle: &SubtitleTrack) -> String {
+    let language = subtitle_language_without_ai_prefix(&subtitle.language)
+        .unwrap_or_else(|| subtitle.language.trim())
+        .to_ascii_lowercase();
+    language
+        .split(['-', '_'])
+        .next()
+        .unwrap_or(language.as_str())
+        .to_owned()
+}
+
+fn subtitle_language_without_ai_prefix(language: &str) -> Option<&str> {
+    let trimmed = language.trim();
+    if trimmed
+        .get(..3)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("ai-"))
+    {
+        Some(trimmed[3..].trim())
+    } else {
+        None
+    }
+}
+
 fn should_download_danmaku(options: &DownloadOptions) -> bool {
     match options.mode {
         DownloadMode::All => options.include_danmaku && options.sidecars.danmaku,
@@ -4173,9 +4266,16 @@ fn archive_key_prefix_with_stream_token(
     let mut tokens = Vec::new();
     if !matches!(options.mode, DownloadMode::All)
         || (should_download_danmaku(options) && !options.danmaku_formats.is_default())
+        || (should_download_subtitles(options)
+            && options.subtitle_ai_policy.archive_key_token().is_some())
         || options.stream_selection.has_selection()
     {
         tokens.push(format!("mode={}", options.mode.archive_key_token()));
+    }
+    if should_download_subtitles(options)
+        && let Some(policy_token) = options.subtitle_ai_policy.archive_key_token()
+    {
+        tokens.push(format!("subtitle_ai={policy_token}"));
     }
     if should_download_danmaku(options) && !options.danmaku_formats.is_default() {
         tokens.push(format!(
@@ -4321,18 +4421,24 @@ fn archive_key_prefix_for_danmaku_update(
             !token.is_empty() && !token.starts_with("mode=") && !token.starts_with("danmaku=")
         });
     let mut tokens = Vec::new();
+    let mut subtitle_tokens = Vec::new();
+    let mut trailing_tokens = Vec::new();
     for token in preserved_tokens {
-        tokens.push(token.to_owned());
+        if token.starts_with("subtitle_ai=") {
+            subtitle_tokens.push(token.to_owned());
+        } else {
+            trailing_tokens.push(token.to_owned());
+        }
     }
-    if mode != "all" || !danmaku_formats.is_default() || !tokens.is_empty() {
-        tokens.insert(0, format!("mode={mode}"));
+    let has_preserved_tokens = !subtitle_tokens.is_empty() || !trailing_tokens.is_empty();
+    if mode != "all" || !danmaku_formats.is_default() || has_preserved_tokens {
+        tokens.push(format!("mode={mode}"));
     }
+    tokens.extend(subtitle_tokens);
     if !danmaku_formats.is_default() {
-        tokens.insert(
-            1,
-            format!("danmaku={}", danmaku_formats.archive_key_token()),
-        );
+        tokens.push(format!("danmaku={}", danmaku_formats.archive_key_token()));
     }
+    tokens.extend(trailing_tokens);
     (!tokens.is_empty()).then(|| tokens.join(";"))
 }
 
@@ -5021,14 +5127,14 @@ mod tests {
         DownloadReportSummary, DownloadedFile, DuplicateDecision, EntryDownloadReport,
         EntryDownloadSummary, MAX_FILE_COMPONENT_BYTES, MAX_FILE_NAME_BYTES,
         MAX_SUBTITLE_EXTENSION_BYTES, MediaHostOptions, MuxOptions, MuxReport, RetryPolicy,
-        SidecarOptions, StreamSelection, TemplateContext, archive_sidecar_path, candidate_urls,
-        comparable_output_path, cover_file_name, default_plan_output_dir,
+        SidecarOptions, StreamSelection, SubtitleAiPolicy, TemplateContext, archive_sidecar_path,
+        candidate_urls, comparable_output_path, cover_file_name, default_plan_output_dir,
         download_entry_content_key, download_entry_content_key_for_options,
         download_plan_content_key, download_plan_content_key_for_options, entry_dir_name,
         media_file_name, mux_file_stem, path_is_occupied, remove_mux_output_if_cancelled,
         render_template_component, safe_file_name, safe_file_name_with_budget, select_audio_stream,
-        select_media_stream, subtitle_dedup_key, subtitle_extension, subtitle_file_name,
-        temporary_download_path, temporary_generated_path, temporary_mux_path,
+        select_media_stream, selected_subtitles, subtitle_dedup_key, subtitle_extension,
+        subtitle_file_name, temporary_download_path, temporary_generated_path, temporary_mux_path,
         temporary_replace_path, write_generated_text_file,
     };
     use crate::models::{
@@ -5538,12 +5644,18 @@ mod tests {
         let first = SubtitleTrack {
             language: "en".to_owned(),
             language_doc: Some("English".to_owned()),
+            is_ai_generated: false,
+            ai_type: None,
+            ai_status: None,
             url: "https://subtitle.example/first.ass".to_owned(),
             format: SubtitleFormat::Ass,
         };
         let second = SubtitleTrack {
             language: "en".to_owned(),
             language_doc: Some("English".to_owned()),
+            is_ai_generated: false,
+            ai_type: None,
+            ai_status: None,
             url: "https://subtitle.example/second.ass".to_owned(),
             format: SubtitleFormat::Ass,
         };
@@ -5559,12 +5671,97 @@ mod tests {
         let subtitle = SubtitleTrack {
             language: "en".to_owned(),
             language_doc: Some("English".to_owned()),
+            is_ai_generated: false,
+            ai_type: None,
+            ai_status: None,
             url: format!("https://subtitle.example/file.{}", "x".repeat(200)),
             format: SubtitleFormat::Unknown,
         };
 
         assert!(subtitle_extension(&subtitle).len() <= MAX_SUBTITLE_EXTENSION_BYTES);
         assert!(subtitle_file_name(0, &subtitle).len() <= MAX_FILE_COMPONENT_BYTES);
+    }
+
+    #[test]
+    fn subtitle_ai_policy_filters_tracks() {
+        let subtitles = vec![
+            SubtitleTrack {
+                language: "en".to_owned(),
+                language_doc: Some("English".to_owned()),
+                is_ai_generated: false,
+                ai_type: None,
+                ai_status: None,
+                url: "https://subtitle.example/en.ass".to_owned(),
+                format: SubtitleFormat::Ass,
+            },
+            SubtitleTrack {
+                language: "ai-en".to_owned(),
+                language_doc: Some("English (AI)".to_owned()),
+                is_ai_generated: true,
+                ai_type: Some(1),
+                ai_status: Some(2),
+                url: "https://subtitle.example/ai-en.ass".to_owned(),
+                format: SubtitleFormat::Ass,
+            },
+            SubtitleTrack {
+                language: "ai-ja".to_owned(),
+                language_doc: Some("Japanese (AI)".to_owned()),
+                is_ai_generated: false,
+                ai_type: Some(1),
+                ai_status: None,
+                url: "https://subtitle.example/ai-ja.ass".to_owned(),
+                format: SubtitleFormat::Ass,
+            },
+        ];
+
+        let languages = |policy| {
+            selected_subtitles(&subtitles, policy)
+                .into_iter()
+                .map(|(_, subtitle)| subtitle.language.as_str())
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            languages(SubtitleAiPolicy::Include),
+            vec!["en", "ai-en", "ai-ja"]
+        );
+        assert_eq!(languages(SubtitleAiPolicy::ExcludeAi), vec!["en"]);
+        assert_eq!(languages(SubtitleAiPolicy::OnlyAi), vec!["ai-en", "ai-ja"]);
+        assert_eq!(
+            languages(SubtitleAiPolicy::PreferNonAi),
+            vec!["en", "ai-ja"]
+        );
+    }
+
+    #[test]
+    fn subtitle_ai_policy_prefers_regioned_manual_track_over_generic_ai_track() {
+        let subtitles = vec![
+            SubtitleTrack {
+                language: "zh-CN".to_owned(),
+                language_doc: Some("Chinese".to_owned()),
+                is_ai_generated: false,
+                ai_type: None,
+                ai_status: None,
+                url: "https://subtitle.example/zh-cn.ass".to_owned(),
+                format: SubtitleFormat::Ass,
+            },
+            SubtitleTrack {
+                language: "ai-zh".to_owned(),
+                language_doc: Some("Chinese (AI)".to_owned()),
+                is_ai_generated: true,
+                ai_type: Some(1),
+                ai_status: Some(2),
+                url: "https://subtitle.example/ai-zh.ass".to_owned(),
+                format: SubtitleFormat::Ass,
+            },
+        ];
+
+        let languages = selected_subtitles(&subtitles, SubtitleAiPolicy::PreferNonAi)
+            .into_iter()
+            .map(|(_, subtitle)| subtitle.language.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(languages, vec!["zh-CN"]);
     }
 
     #[test]
@@ -5595,6 +5792,25 @@ mod tests {
             download_entry_content_key(&video_entry),
             download_entry_content_key(&episode_entry)
         );
+    }
+
+    #[test]
+    fn download_content_key_distinguishes_subtitle_ai_policy() {
+        let server = MockServer::start();
+        let plan = test_plan(&server);
+        let default_key = download_plan_content_key_for_options(&plan, &DownloadOptions::default());
+        let exclude_ai_key = download_plan_content_key_for_options(
+            &plan,
+            &DownloadOptions::default().with_subtitle_ai_policy(SubtitleAiPolicy::ExcludeAi),
+        );
+        let prefer_non_ai_key = download_plan_content_key_for_options(
+            &plan,
+            &DownloadOptions::default().with_subtitle_ai_policy(SubtitleAiPolicy::PreferNonAi),
+        );
+
+        assert_ne!(default_key, exclude_ai_key);
+        assert!(exclude_ai_key.contains("subtitle_ai=exclude-ai"));
+        assert!(prefer_non_ai_key.contains("subtitle_ai=prefer-non-ai"));
     }
 
     #[test]
@@ -5667,6 +5883,34 @@ mod tests {
             super::refresh_danmaku_archive_content_key(&ass_stream_key, &DanmakuFormats::default())
                 .ok_or_else(|| anyhow::anyhow!("stream key did not refresh to default"))?;
         assert_eq!(refreshed_default, stream_key);
+        Ok(())
+    }
+
+    #[test]
+    fn danmaku_archive_key_refresh_preserves_subtitle_ai_token_order() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let plan = test_plan(&server);
+        let subtitle_options =
+            DownloadOptions::default().with_subtitle_ai_policy(SubtitleAiPolicy::ExcludeAi);
+        let subtitle_ass_options = subtitle_options
+            .clone()
+            .with_danmaku_formats([DanmakuFormat::Xml, DanmakuFormat::Ass]);
+        let subtitle_key = download_plan_content_key_for_options(&plan, &subtitle_options);
+        let subtitle_ass_key = download_plan_content_key_for_options(&plan, &subtitle_ass_options);
+
+        let refreshed = super::refresh_danmaku_archive_content_key(
+            &subtitle_key,
+            &DanmakuFormats::new([DanmakuFormat::Xml, DanmakuFormat::Ass]),
+        )
+        .ok_or_else(|| anyhow::anyhow!("subtitle AI key did not refresh"))?;
+        assert_eq!(refreshed, subtitle_ass_key);
+
+        let refreshed_default = super::refresh_danmaku_archive_content_key(
+            &subtitle_ass_key,
+            &DanmakuFormats::default(),
+        )
+        .ok_or_else(|| anyhow::anyhow!("subtitle AI key did not refresh to default"))?;
+        assert_eq!(refreshed_default, subtitle_key);
         Ok(())
     }
 
@@ -7360,6 +7604,9 @@ mod tests {
         plan.entries[0].subtitles.push(SubtitleTrack {
             language: "en".to_owned(),
             language_doc: Some("English duplicate".to_owned()),
+            is_ai_generated: false,
+            ai_type: None,
+            ai_status: None,
             url: format!("{}/subtitle.ass#duplicate", server.base_url()),
             format: SubtitleFormat::Ass,
         });
@@ -7385,6 +7632,75 @@ mod tests {
                 .count(),
             1
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn subtitle_ai_policy_prefers_non_ai_tracks() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let english_mock = server.mock(|when, then| {
+            when.method(GET).path("/subtitle.ass");
+            then.status(200).body("manual-en");
+        });
+        let ai_english_mock = server.mock(|when, then| {
+            when.method(GET).path("/ai-en.ass");
+            then.status(200).body("ai-en");
+        });
+        let ai_japanese_mock = server.mock(|when, then| {
+            when.method(GET).path("/ai-ja.ass");
+            then.status(200).body("ai-ja");
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let mut plan = test_plan(&server);
+        plan.entries[0].subtitles.push(SubtitleTrack {
+            language: "ai-en".to_owned(),
+            language_doc: Some("English (AI)".to_owned()),
+            is_ai_generated: true,
+            ai_type: Some(1),
+            ai_status: Some(2),
+            url: format!("{}/ai-en.ass", server.base_url()),
+            format: SubtitleFormat::Ass,
+        });
+        plan.entries[0].subtitles.push(SubtitleTrack {
+            language: "ai-ja".to_owned(),
+            language_doc: Some("Japanese (AI)".to_owned()),
+            is_ai_generated: false,
+            ai_type: Some(1),
+            ai_status: Some(2),
+            url: format!("{}/ai-ja.ass", server.base_url()),
+            format: SubtitleFormat::Ass,
+        });
+
+        let report = client
+            .download_plan(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().to_path_buf(),
+                    retry: RetryPolicy::single_attempt(),
+                    mode: DownloadMode::SubtitleOnly,
+                    subtitle_ai_policy: SubtitleAiPolicy::PreferNonAi,
+                    mux: MuxOptions::Disabled,
+                    ..DownloadOptions::default()
+                },
+            )
+            .await?;
+
+        assert_eq!(english_mock.calls(), 1);
+        assert_eq!(ai_english_mock.calls(), 0);
+        assert_eq!(ai_japanese_mock.calls(), 1);
+        let subtitle_files = report.entries[0]
+            .files
+            .iter()
+            .filter(|file| file.kind == DownloadFileKind::Subtitle)
+            .collect::<Vec<_>>();
+        assert_eq!(subtitle_files.len(), 2);
+        let mut bodies = Vec::new();
+        for file in subtitle_files {
+            bodies.push(tokio::fs::read_to_string(&file.path).await?);
+        }
+        bodies.sort();
+        assert_eq!(bodies, vec!["ai-ja", "manual-en"]);
         Ok(())
     }
 
@@ -10848,6 +11164,9 @@ mod tests {
                 subtitles: vec![SubtitleTrack {
                     language: "en".to_owned(),
                     language_doc: Some("English".to_owned()),
+                    is_ai_generated: false,
+                    ai_type: None,
+                    ai_status: None,
                     url: format!("{}/subtitle.ass", server.base_url()),
                     format: SubtitleFormat::Ass,
                 }],
