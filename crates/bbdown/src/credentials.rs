@@ -107,6 +107,15 @@ impl Credentials {
 }
 
 impl CredentialKind {
+    fn from_metadata_key(key: &str) -> Option<Self> {
+        match key {
+            "cookie" => Some(Self::Cookie),
+            "access_key" => Some(Self::AccessKey),
+            "tv_access_key" => Some(Self::TvAccessKey),
+            _ => None,
+        }
+    }
+
     fn is_present_in(self, credentials: &Credentials) -> bool {
         match self {
             Self::Cookie => credentials
@@ -190,6 +199,12 @@ impl CredentialProfiles {
             self.profiles.remove(&name);
             self.profile_metadata.remove(&name);
         } else {
+            if let Some(metadata) = self.profile_metadata.remove(&name) {
+                let metadata = metadata.normalize_for_credentials(&credentials);
+                if !metadata.is_empty() {
+                    self.profile_metadata.insert(name.clone(), metadata);
+                }
+            }
             self.profiles.insert(name, credentials);
         }
         Ok(())
@@ -268,7 +283,11 @@ impl CredentialProfiles {
 #[non_exhaustive]
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CredentialProfileMetadata {
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "BTreeMap::is_empty",
+        deserialize_with = "deserialize_credential_lifecycle_metadata"
+    )]
     pub credentials: BTreeMap<CredentialKind, CredentialLifecycleMetadata>,
 }
 
@@ -298,6 +317,21 @@ impl CredentialProfileMetadata {
             .retain(|kind, metadata| !metadata.is_empty() && kind.is_present_in(credentials));
         self
     }
+}
+
+fn deserialize_credential_lifecycle_metadata<'de, D>(
+    deserializer: D,
+) -> std::result::Result<BTreeMap<CredentialKind, CredentialLifecycleMetadata>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = BTreeMap::<String, CredentialLifecycleMetadata>::deserialize(deserializer)?;
+    Ok(raw
+        .into_iter()
+        .filter_map(|(key, metadata)| {
+            CredentialKind::from_metadata_key(&key).map(|kind| (kind, metadata))
+        })
+        .collect())
 }
 
 #[non_exhaustive]
@@ -1147,6 +1181,39 @@ mod tests {
     }
 
     #[test]
+    fn set_profile_prunes_in_memory_metadata_for_removed_credential_kind() -> anyhow::Result<()> {
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "intl",
+            Credentials {
+                cookie: Some("SESSDATA=old".to_owned()),
+                access_key: Some("access-token".to_owned()),
+                tv_access_key: None,
+            },
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_refresh_token_present(true),
+        );
+        profiles.set_profile_metadata("intl", metadata)?;
+
+        profiles.set_profile(
+            "intl",
+            Credentials {
+                cookie: Some("SESSDATA=new".to_owned()),
+                access_key: None,
+                tv_access_key: None,
+            },
+        )?;
+
+        assert!(profiles.profile_metadata("intl")?.is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn unknown_lifecycle_source_deserializes_as_unknown() -> anyhow::Result<()> {
         let temp = tempfile::tempdir()?;
         let path = temp.path().join("credentials.json");
@@ -1181,6 +1248,51 @@ mod tests {
                 .and_then(|lifecycle| lifecycle.source),
             Some(CredentialLifecycleSource::Unknown)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_metadata_credential_kind_is_ignored() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        std::fs::write(
+            &path,
+            r#"{
+  "version": 1,
+  "default_profile": "intl",
+  "profiles": {
+    "intl": {
+      "access_key": "access-token"
+    }
+  },
+  "profile_metadata": {
+    "intl": {
+      "credentials": {
+        "access_key": {
+          "source": "access_key_login"
+        },
+        "future_key": {
+          "source": "future_login"
+        }
+      }
+    }
+  }
+}"#,
+        )?;
+
+        let profiles = store.load_profiles()?;
+        assert_eq!(
+            profiles
+                .profile_metadata("intl")?
+                .credential(CredentialKind::AccessKey)
+                .and_then(|lifecycle| lifecycle.source),
+            Some(CredentialLifecycleSource::AccessKeyLogin)
+        );
+        store.save_profiles(&profiles)?;
+
+        let value = std::fs::read_to_string(path)?;
+        assert!(!value.contains("future_key"));
         Ok(())
     }
 
