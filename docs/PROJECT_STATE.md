@@ -62,6 +62,8 @@
   `docs/project_journal/2026/06/2026-06-18-v0-5-downloader-embedding-roadmap-019f0b.md`.
 - Active v0.6.0 roadmap:
   `docs/project_journal/2026/06/2026-06-20-v0-6-credential-lifecycle-roadmap-019f16.md`.
+- High-priority overseas playback/CDN routing backlog:
+  `docs/project_journal/2026/06/2026-06-21-overseas-cdn-routing-roadmap-019f17.md`.
 - Repo-local live e2e fixture skill:
   `.agents/skills/bbdown-live-e2e-fixtures/SKILL.md`.
 - User-facing CLI behavior is documented in `docs/user-guide.md`.
