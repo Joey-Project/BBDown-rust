@@ -2186,11 +2186,19 @@ fn print_profile_health_header(
     };
     print_human_line(format_args!(
         "profile {}{}: lifecycle={} health={}",
-        status.profile,
+        display_profile_name(&status.profile),
         suffix,
         credential_lifecycle_status_label(status.status),
         credential_health_summary_status_label(report.summary().status)
     ))
+}
+
+fn display_profile_name(profile: &str) -> String {
+    if profile.chars().any(char::is_control) {
+        format!("{profile:?}")
+    } else {
+        profile.to_owned()
+    }
 }
 
 fn print_credential_guidance(guidance: &[String]) -> anyhow::Result<()> {

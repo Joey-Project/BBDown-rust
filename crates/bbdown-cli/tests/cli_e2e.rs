@@ -3846,6 +3846,51 @@ fn auth_health_all_profiles_reports_profile_summaries_and_guidance() -> anyhow::
     Ok(())
 }
 
+#[test]
+fn auth_health_all_profiles_escapes_control_characters_in_human_profile_names() -> anyhow::Result<()>
+{
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let profile_name = "bad\n\u{1b}[31m";
+    let store = CredentialStore::new(credential_file.clone());
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_default_profile(profile_name)?;
+    profiles.set_profile(
+        profile_name,
+        Credentials::default().with_cookie("SESSDATA=COOKIE_SECRET"),
+    )?;
+    let mut profile_metadata = CredentialProfileMetadata::default();
+    profile_metadata.set_credential(
+        CredentialKind::Cookie,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+    );
+    profiles.set_profile_metadata(profile_name, profile_metadata)?;
+    store.save_profiles(&profiles)?;
+
+    let cookie_mock = mock_valid_cookie_health(&server);
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .args(["auth", "health", "--all-profiles"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let output_text = String::from_utf8(output)?;
+
+    assert!(output_text.contains(r#"profile "bad\n\u{1b}[31m" (default, selected):"#));
+    assert!(!output_text.contains(profile_name));
+    cookie_mock.assert_calls(1);
+    Ok(())
+}
+
 fn save_lifecycle_cli_profiles(
     credential_file: &Path,
     cookie_metadata: CredentialLifecycleMetadata,

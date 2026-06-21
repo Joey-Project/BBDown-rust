@@ -122,6 +122,7 @@ superseded_by:
   - `cargo fmt --all -- --check`.
   - `cargo test -p bbdown-cli auth_status_profiles --test cli_e2e --locked`.
   - `cargo test -p bbdown-cli auth_health_all_profiles --test cli_e2e --locked`.
+  - `cargo test -p bbdown-cli auth_health_all_profiles_escapes_control_characters_in_human_profile_names --test cli_e2e --locked -- --exact`.
   - `cargo test -p bbdown-cli auth_health_reports_redacted_credential_probe_statuses --test cli_e2e --locked`.
   - `cargo clippy -p bbdown-cli --all-targets --locked -- -D warnings`.
   - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/07780f1c323453fd738330fbf8fd70e2899d4409/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.
