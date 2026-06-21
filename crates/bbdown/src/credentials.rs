@@ -625,7 +625,6 @@ impl CredentialLifecycleStatus {
             {
                 return Self::Expiring;
             }
-            return Self::Fresh;
         }
 
         if let Some(last_seen) = metadata
@@ -641,7 +640,11 @@ impl CredentialLifecycleStatus {
             return Self::Fresh;
         }
 
-        Self::Unknown
+        if metadata.expires_at_unix_millis.is_some() {
+            Self::Fresh
+        } else {
+            Self::Unknown
+        }
     }
 
     fn overall(statuses: impl IntoIterator<Item = Self>) -> Self {
@@ -1876,6 +1879,21 @@ mod tests {
             ]
         );
         Ok(())
+    }
+
+    #[test]
+    fn lifecycle_status_treats_far_future_expiry_as_stale_when_last_seen_is_old() {
+        let now = 1_700_000_000_000;
+        let metadata = CredentialLifecycleMetadata::default()
+            .with_checked_at_unix_millis(now - 5_000)
+            .with_expires_at_unix_millis(now + 60_000);
+        let policy = CredentialLifecyclePolicy::at_unix_millis(now)
+            .with_stale_after_millis(Some(1_000))
+            .with_expiring_within_millis(Some(500));
+
+        let status = CredentialLifecycleStatus::from_metadata(&metadata, &policy);
+
+        assert_eq!(status, CredentialLifecycleStatus::Stale);
     }
 
     #[test]
