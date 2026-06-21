@@ -1897,7 +1897,7 @@ mod tests {
     }
 
     #[test]
-    fn credential_health_report_summary_counts_probe_statuses() {
+    fn credential_health_report_summary_counts_probe_statuses() -> anyhow::Result<()> {
         let report = CredentialHealthReport {
             credentials: super::CredentialSource {
                 has_cookie: true,
@@ -1930,6 +1930,10 @@ mod tests {
         assert_eq!(summary.missing_count, 1);
         assert_eq!(summary.request_failed_count, 1);
         assert_eq!(
+            serde_json::to_value(summary)?.get("status"),
+            Some(&serde_json::json!("request_failed"))
+        );
+        assert_eq!(
             report
                 .probe(CredentialKind::Cookie, CredentialHealthScope::WebCookie)
                 .map(|probe| probe.status),
@@ -1940,6 +1944,7 @@ mod tests {
                 .probe(CredentialKind::AccessKey, CredentialHealthScope::Tv)
                 .is_none()
         );
+        Ok(())
     }
 
     #[test]
