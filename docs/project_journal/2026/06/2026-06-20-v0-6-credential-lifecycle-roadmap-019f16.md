@@ -5,7 +5,7 @@ status: active
 created: 2026-06-20
 updated: 2026-06-21
 branch: feature/v0.6-credential-lifecycle-status
-pr:
+pr: 63
 supersedes: []
 superseded_by:
 ---
