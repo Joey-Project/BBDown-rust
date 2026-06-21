@@ -362,7 +362,11 @@ bbdown auth login-access-key --file balh-callback.txt
 bbdown auth login-web
 bbdown auth login-tv
 bbdown auth status
+bbdown auth status --profiles
+bbdown auth status --profiles --all-profiles
 bbdown auth health --json
+bbdown auth health --all-profiles
+bbdown auth health --json --all-profiles
 bbdown auth logout
 ```
 
@@ -392,6 +396,13 @@ status or the `saved` JSON event.
 WEB and TV QR login record lifecycle source and acquisition time, but only record an expiry when the
 upstream response provides a reliable expiry field.
 
+`auth status` keeps the legacy selected-profile JSON shape and only reports redacted credential
+booleans. Add `--profiles` to include the selected credential profile name, whether each reported
+profile is the default or selected profile, local lifecycle status, per-credential lifecycle
+metadata, and non-secret guidance. Add `--all-profiles` to report every saved profile; without it,
+the profile output is limited to the selected profile. `--stale-after-seconds` and
+`--expiring-within-seconds` tune the local lifecycle policy for status and human health guidance.
+
 Use `auth health` to diagnose configured credentials without exposing secret values. The command
 checks the WEB cookie against the web nav endpoint and checks both the generic `access_key` and TV
 `tv_access_key` through the OAuth info endpoint as signed `access_key` app query values. JSON output
@@ -401,6 +412,11 @@ codes/messages. Generic token probes currently cover the intl/Bstar scope and us
 `--passport-base`; they do not prove the same token is usable for every APP gRPC or proxy consumer.
 TV token probes use `--tv-passport-poll-base`, which follows `--tv-passport-base` when only that TV
 override is supplied.
+For human-readable output, `auth health` also prints lifecycle and health guidance when a configured
+credential is stale, expired, rejected, or could not be checked. Use `auth health --all-profiles` to
+run the same network probes for every saved profile. With `--json --all-profiles`, the output wraps
+each profile's redacted lifecycle status, health report, compact health summary, and guidance in a
+single `profiles` array for downstream UI.
 
 ## Endpoint Overrides
 

@@ -322,7 +322,11 @@ bbdown auth login-access-key --file balh-callback.txt
 bbdown auth login-web
 bbdown auth login-tv
 bbdown auth status
+bbdown auth status --profiles
+bbdown auth status --profiles --all-profiles
 bbdown auth health --json
+bbdown auth health --all-profiles
+bbdown auth health --json --all-profiles
 bbdown auth logout
 ```
 
@@ -349,6 +353,13 @@ cookie。`auth login-tv` 使用 TV 二维码流程，保存 TV 专用 access key
 WEB 和 TV 二维码登录会记录 lifecycle source 和获取时间；只有上游响应提供可靠过期字段时
 才会记录 expiry。
 
+`auth status` 会保留旧的 selected-profile JSON 形态，只报告脱敏凭据布尔值。加
+`--profiles` 后，会输出所选 credential profile 名称、每个返回 profile 是否为默认或当前选
+中 profile、本地 lifecycle status、逐 credential lifecycle metadata，以及不含密钥的操作建
+议。再加 `--all-profiles` 会报告所有已保存 profile；不加时，profile 输出只包含当前选中
+profile。`--stale-after-seconds` 和 `--expiring-within-seconds` 可调整 status 与人类可读
+health guidance 使用的本地 lifecycle policy。
+
 使用 `auth health` 可以在不暴露密钥值的情况下诊断已配置凭据。该命令会用 web nav 端点检
 查 WEB cookie，并通过 OAuth info 端点把通用 `access_key` 与 TV `tv_access_key` 作为
 signed `access_key` app query 值检查。JSON 输出是 typed report，会用 `kind` 表示凭据槽
@@ -357,6 +368,11 @@ signed `access_key` app query 值检查。JSON 输出是 typed report，会用 `
 intl/Bstar scope，并使用 `--passport-base`；它不会证明同一 token 对所有 APP gRPC 或 proxy
 消费者都可用。TV token probe 使用 `--tv-passport-poll-base`；如果只提供
 `--tv-passport-base`，poll base 会跟随该 TV 覆盖。
+在人类可读输出中，如果已配置凭据已经 stale、expired、被上游 rejected，或健康检查请求失
+败，`auth health` 也会打印 lifecycle/health guidance。使用 `auth health --all-profiles`
+可以对所有已保存 profile 运行同样的网络探测。配合 `--json --all-profiles` 时，输出会在
+同一个 `profiles` array 中包含每个 profile 的脱敏 lifecycle status、health report、紧凑
+health summary 和 guidance，方便下游 UI 展示。
 
 ## 端点覆盖
 

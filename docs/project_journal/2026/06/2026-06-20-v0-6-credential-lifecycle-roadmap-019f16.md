@@ -4,8 +4,8 @@ title: v0.6.0 Credential Lifecycle Roadmap
 status: active
 created: 2026-06-20
 updated: 2026-06-21
-branch: feature/v0.6-credential-lifecycle-status
-pr: 63
+branch:
+pr:
 supersedes: []
 superseded_by:
 ---
@@ -72,6 +72,17 @@ superseded_by:
     the selected credential profile.
   - Embedding and architecture docs now describe the difference between local lifecycle evaluation
     metadata, saved login provenance, and network-backed credential health probes.
+- PR 4 implemented CLI lifecycle UX:
+  - `auth status` keeps the legacy no-flag selected-profile redacted summary, while
+    `auth status --profiles` reports selected/default profile markers, lifecycle status,
+    per-credential lifecycle metadata, and guidance.
+  - `auth status --profiles --all-profiles` expands the same local lifecycle evaluation across all
+    saved profiles without printing raw credentials.
+  - `auth health --all-profiles` checks every saved profile with network health probes, and
+    `--json --all-profiles` returns each profile's redacted lifecycle status, raw health report,
+    compact summary, and guidance for downstream UI.
+  - Human `auth health` output now adds guidance when credentials are stale, expired, rejected, or
+    failed by request, while preserving the raw `auth health --json` schema for single-profile use.
 
 ## Out Of Scope For This Line
 
@@ -107,7 +118,17 @@ superseded_by:
   - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/07780f1c323453fd738330fbf8fd70e2899d4409/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.
   - `git diff --check`.
   - `just ci`.
+- PR 4 local validation:
+  - `cargo fmt --all -- --check`.
+  - `cargo test -p bbdown-cli auth_status_profiles --test cli_e2e --locked`.
+  - `cargo test -p bbdown-cli auth_health_all_profiles --test cli_e2e --locked`.
+  - `cargo test -p bbdown-cli auth_health_reports_redacted_credential_probe_statuses --test cli_e2e --locked`.
+  - `cargo clippy -p bbdown-cli --all-targets --locked -- -D warnings`.
+  - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/07780f1c323453fd738330fbf8fd70e2899d4409/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.
+  - `git diff --check`.
+  - `just ci`.
 
 ## Next Steps
 
-- Cut PR 4 from updated `master` for CLI lifecycle UX after PR 3 lands.
+- Cut PR 5 from updated `master` for access-key refresh or reacquisition orchestration after PR 4
+  lands.
