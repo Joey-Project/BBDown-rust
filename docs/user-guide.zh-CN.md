@@ -335,7 +335,10 @@ scrollback 中；`--stdin` 必须来自 pipe 或 redirect，并会拒绝 termina
 拒绝 terminal-backed path。命令不会隐式消费 stdin；pipe 或 redirect 必须显式传
 `--stdin`。如果输入来自浏览器 `postMessage`，请使用 `--message-origin`，这样 CLI 会把
 sender origin 与本次 login ticket 校验；可信的手工 callback URL/query 输入不需要该标志。
-兼容 mock 或部署可以使用 `--auth-base` 和 `--callback-origin`。`auth login-web` 打印二维码登录 URL，轮询到扫码确认，并保存得到的
+兼容 mock 或部署可以使用 `--auth-base` 和 `--callback-origin`。当 access-key callback 带有
+`oauth_expires_at`、`expires_at` 或 `expires_in` 时，CLI 会把派生出的 lifecycle expiry
+metadata 记录到当前选择的 credential profile 中；它也会记录是否出现过 refresh token，但不
+会把 refresh token 值保存进 lifecycle metadata。`auth login-web` 打印二维码登录 URL，轮询到扫码确认，并保存得到的
 cookie。`auth login-tv` 使用 TV 二维码流程，保存 TV 专用 access key 供未来 TV/app 流程使
 用，不会覆盖由通用 access-key 命令导入或获取的 intl/Bstar access key。使用 `--json` 时，
 登录命令会打印换行分隔 JSON 事件：`ticket` 在轮询或 handoff 前包含登录 URL 和
@@ -343,6 +346,8 @@ cookie。`auth login-tv` 使用 TV 二维码流程，保存 TV 专用 access key
 与扫码 URL 相同，嵌入项目可以直接把它渲染成二维码。请把登录 URL 和 QR payload 当成临
 时登录密钥，因为它们包含登录 handoff 状态。状态输出或 `saved` JSON 事件不会打印 token
 值。
+WEB 和 TV 二维码登录会记录 lifecycle source 和获取时间；只有上游响应提供可靠过期字段时
+才会记录 expiry。
 
 使用 `auth health` 可以在不暴露密钥值的情况下诊断已配置凭据。该命令会用 web nav 端点检
 查 WEB cookie，并通过 OAuth info 端点把通用 `access_key` 与 TV `tv_access_key` 作为

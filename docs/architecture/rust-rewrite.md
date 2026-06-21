@@ -408,6 +408,10 @@ metadata records provenance, acquisition/check/expiry timestamps, and a boolean
 is dropped during normalization, orphan metadata is removed when its profile has no credentials, and
 unknown or malformed optional metadata is ignored so legacy flat credential files and valid profile
 documents still load without lifecycle metadata.
+`CredentialLifecyclePolicy` turns that persisted metadata into deterministic stale/expiring/expired
+status output without network I/O. The policy requires an explicit `now_unix_millis` value and lets
+embedders choose stale and expiring windows, so UI preflight, background jobs, and tests can make the
+same lifecycle decision without reading wall-clock time inside the model.
 Credential health diagnostics are a read-only layer over the same credential model. The crate exposes
 `CredentialHealthReport` and `BiliClient::check_credential_health()` so embedding callers can check
 the WEB cookie, generic `access_key`, and TV `tv_access_key` independently before choosing a login or
@@ -419,6 +423,8 @@ configured `passport_base`; this does not claim APP gRPC or restricted-area prox
 same stored `access_key`. TV token probes use the configured `tv_passport_poll_base`. Probe failures
 are contained per credential as `missing`, `valid`, `rejected`, or `request_failed` rather than
 failing the whole report.
+`CredentialHealthReport::summary()` gives downstream UI a compact aggregate status while preserving
+the per-kind probes for exact policy decisions.
 
 Generic access-key acquisition is modeled as a BiliPlus/BALH-compatible browser handoff rather than
 an official Bilibili poller. `AccessKeyLoginConfig` builds the authorization URL with
@@ -427,14 +433,19 @@ payload, expected message origin, and callback origin for embedding UIs. The par
 historical `balh-login-credentials:` message prefix with either JSON credentials or a URL/query
 callback using `access_key` or `access_token`. `AccessKeyLoginCredentials` preserves optional
 `refresh_token`, absolute `oauth_expires_at`, and relative `expires_in` metadata, but conversion back
-to `Credentials` stores only the generic `access_key`. Refresh scheduling, token rotation, and CLI
-persistence are intentionally separate lifecycle work so embedders can choose their own policy.
+to `Credentials` stores only the generic `access_key`. Embedding callers that own storage should
+copy expiration and refresh-token presence into `CredentialLifecycleMetadata` explicitly. The CLI
+login path does that when it saves the selected profile: absolute expiry values are stored directly,
+relative `expires_in` values are computed from the acquisition time, and only refresh-token presence
+is recorded in lifecycle metadata. Refresh scheduling and token rotation remain separate lifecycle
+work so embedders can choose their own policy.
 Browser `postMessage` consumers should parse through the ticket/output `credentials_from_message`
 helpers, which validate the sender origin against the trusted auth or callback origin before using
 the raw BALH payload parser.
 The CLI wraps this core API in `auth login-access-key`: it prints the same authorization URL and QR
-payload, accepts pasted message or callback data through `--stdin` or `--file`, then merges only the
-resulting generic `access_key` into the currently selected credential profile. It deliberately avoids
+payload, accepts pasted message or callback data through `--stdin` or `--file`, then merges the
+resulting generic `access_key` and safe lifecycle metadata into the currently selected credential
+profile. It deliberately avoids
 interactive secret paste prompts because terminal echo can leak callback tokens into scrollback.
 `--stdin` requires piped or redirected input for the same reason, `--file` rejects terminal-backed
 paths, and the command rejects implicit stdin so callers must opt in before pipe or redirect input is

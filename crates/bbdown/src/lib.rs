@@ -24,7 +24,9 @@ pub use client::{
 };
 pub use credentials::{
     CredentialHealthProbe, CredentialHealthReport, CredentialHealthScope, CredentialHealthStatus,
-    CredentialKind, CredentialLifecycleMetadata, CredentialLifecycleSource,
+    CredentialHealthSummary, CredentialHealthSummaryStatus, CredentialKind,
+    CredentialLifecycleCredentialStatus, CredentialLifecycleMetadata, CredentialLifecyclePolicy,
+    CredentialLifecycleSource, CredentialLifecycleStatus, CredentialProfileLifecycleStatus,
     CredentialProfileMetadata, CredentialProfileSelection, CredentialProfiles, CredentialSource,
     CredentialStore, Credentials, DEFAULT_CREDENTIAL_PROFILE,
 };

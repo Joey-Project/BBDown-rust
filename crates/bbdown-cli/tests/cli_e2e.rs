@@ -1,5 +1,5 @@
 use assert_cmd::Command;
-use bbdown_core::{CredentialStore, Credentials};
+use bbdown_core::{CredentialKind, CredentialLifecycleSource, CredentialStore, Credentials};
 use httpmock::MockServer;
 use httpmock::prelude::*;
 use prost::Message as _;
@@ -3732,9 +3732,30 @@ fn auth_qr_login_web_and_tv_use_local_store() -> anyhow::Result<()> {
     assert_eq!(events[1]["saved"]["has_access_key"], false);
     assert_eq!(events[1]["saved"]["has_tv_access_key"], true);
     assert!(!String::from_utf8_lossy(&output).contains("ACCESS"));
-    let saved: Value = serde_json::from_slice(&fs::read(&credential_file)?)?;
-    assert_eq!(saved["access_key"], Value::Null);
-    assert_eq!(saved["tv_access_key"], "ACCESS");
+    let store = CredentialStore::new(credential_file);
+    let saved = store.load()?;
+    assert_eq!(saved.access_key, None);
+    assert_eq!(saved.tv_access_key.as_deref(), Some("ACCESS"));
+    let profiles = store.load_profiles()?;
+    let metadata = profiles.profile_metadata("default")?;
+    let cookie_metadata = metadata
+        .credential(CredentialKind::Cookie)
+        .ok_or_else(|| anyhow::anyhow!("missing cookie lifecycle metadata"))?;
+    assert_eq!(
+        cookie_metadata.source,
+        Some(CredentialLifecycleSource::WebQrLogin)
+    );
+    assert!(cookie_metadata.acquired_at_unix_millis.is_some());
+    assert_eq!(cookie_metadata.expires_at_unix_millis, None);
+    let tv_metadata = metadata
+        .credential(CredentialKind::TvAccessKey)
+        .ok_or_else(|| anyhow::anyhow!("missing TV lifecycle metadata"))?;
+    assert_eq!(
+        tv_metadata.source,
+        Some(CredentialLifecycleSource::TvQrLogin)
+    );
+    assert!(tv_metadata.acquired_at_unix_millis.is_some());
+    assert_eq!(tv_metadata.expires_at_unix_millis, None);
     Ok(())
 }
 
@@ -3754,7 +3775,7 @@ fn auth_login_access_key_message_saves_redacted_credentials() -> anyhow::Result<
             "https://www.biliplus.com/login",
         ])
         .write_stdin(
-            r#"balh-login-credentials: {"access_key":"ACCESS_SECRET","refresh_token":"REFRESH_SECRET"}"#,
+            r#"balh-login-credentials: {"access_key":"ACCESS_SECRET","refresh_token":"REFRESH_SECRET","oauth_expires_at":1710000000}"#,
         )
         .assert()
         .success()
@@ -3775,10 +3796,25 @@ fn auth_login_access_key_message_saves_redacted_credentials() -> anyhow::Result<
     for secret in ["ACCESS_SECRET", "REFRESH_SECRET"] {
         assert!(!output_text.contains(secret));
     }
-    let saved = CredentialStore::new(credential_file).load()?;
+    let store = CredentialStore::new(credential_file);
+    let saved = store.load()?;
     assert_eq!(saved.access_key.as_deref(), Some("ACCESS_SECRET"));
     assert_eq!(saved.cookie, None);
     assert_eq!(saved.tv_access_key, None);
+    let metadata = store.load_profiles()?.profile_metadata("default")?;
+    let access_key_metadata = metadata
+        .credential(CredentialKind::AccessKey)
+        .ok_or_else(|| anyhow::anyhow!("missing access-key lifecycle metadata"))?;
+    assert_eq!(
+        access_key_metadata.source,
+        Some(CredentialLifecycleSource::AccessKeyLogin)
+    );
+    assert!(access_key_metadata.acquired_at_unix_millis.is_some());
+    assert_eq!(
+        access_key_metadata.expires_at_unix_millis,
+        Some(1_710_000_000_000)
+    );
+    assert_eq!(access_key_metadata.refresh_token_present, Some(true));
     Ok(())
 }
 
@@ -3805,7 +3841,7 @@ fn auth_login_access_key_callback_url_saves_selected_profile() -> anyhow::Result
             "https://m.bilibili.com/watch",
         ])
         .write_stdin(
-            "https://www.bilibili.com/callback?access_token=PROFILE_SECRET&refresh_token=PROFILE_REFRESH",
+            "https://www.bilibili.com/callback?access_token=PROFILE_SECRET&refresh_token=PROFILE_REFRESH&expires_in=60",
         )
         .assert()
         .success()
@@ -3826,6 +3862,22 @@ fn auth_login_access_key_callback_url_saves_selected_profile() -> anyhow::Result
     assert_eq!(
         store.load_profile("intl")?.access_key.as_deref(),
         Some("PROFILE_SECRET")
+    );
+    let metadata = store.load_profiles()?.profile_metadata("intl")?;
+    let access_key_metadata = metadata
+        .credential(CredentialKind::AccessKey)
+        .ok_or_else(|| anyhow::anyhow!("missing access-key lifecycle metadata"))?;
+    assert_eq!(
+        access_key_metadata.source,
+        Some(CredentialLifecycleSource::AccessKeyLogin)
+    );
+    assert_eq!(access_key_metadata.refresh_token_present, Some(true));
+    let acquired_at = access_key_metadata
+        .acquired_at_unix_millis
+        .ok_or_else(|| anyhow::anyhow!("missing access-key acquired_at metadata"))?;
+    assert_eq!(
+        access_key_metadata.expires_at_unix_millis,
+        Some(acquired_at + 60_000)
     );
     Ok(())
 }

@@ -211,7 +211,11 @@ BiliPlus/BALH-compatible browser handoff URL；`AccessKeyLoginTicketOutput::qr_p
 直接渲染成二维码。parser 接受历史 `balh-login-credentials:` message shape，payload 可以是
 JSON，也可以是 URL/query callback；返回的 `AccessKeyLoginCredentials` 包含通用
 `access_key` 以及可选的 refresh/expiration metadata。调用 `credentials()` 只会把通用
-access key 转成现有 `Credentials` model；自动续期和 CLI 持久化属于独立 lifecycle 事项。
+access key 转成现有 `Credentials` model，因此自行管理存储的嵌入应用需要显式保存来自
+`oauth_expires_at`、`expires_at`、`expires_in` 和 `refresh_token` 的 lifecycle metadata。
+CLI 登录路径会把这些 metadata 记录到当前选择的 credential profile：绝对 expiry 字段会直接
+保存，相对 `expires_in` 会按获取时间换算，refresh token 只记录是否存在，不会把 token 值
+复制进 lifecycle metadata。
 在 browser `postMessage` flow 中，应优先使用
 `AccessKeyLoginTicketOutput::credentials_from_message(event_origin, data)`，让 sender origin
 先按 ticket 的可信 auth origin 或 callback origin 校验后再解析。只有当嵌入应用已经自行验证
@@ -220,12 +224,20 @@ message provenance 时，才直接使用 raw `AccessKeyLoginCredentials::from_ba
 `BiliClient::check_credential_health()`。报告会分别包含 WEB cookie、通用 `access_key` 和
 TV `tv_access_key` 的 probe；`kind` 表示凭据槽位，`scope` 表示实际检查的消费场景。通用
 `access_key` probe 当前只覆盖 intl/Bstar OAuth-info scope，因此如果下游需要 APP gRPC 或
-proxy-specific assurance，应把它作为单独策略判断。probe message 在序列化前会先脱敏。
+proxy-specific assurance，应把它作为单独策略判断。probe message 在序列化前会先脱敏。使用
+`CredentialHealthReport::summary()` 可以得到适合 JSON/UI 展示的汇总状态；当 UI 或 preflight
+policy 只需要某一个检查时，使用 `CredentialHealthReport::probe(kind, scope)`。
+profile document 也可以在不发网络请求的情况下通过
+`CredentialProfiles::profile_lifecycle_status(profile, policy)` 或
+`CredentialProfiles::lifecycle_statuses(policy)` 做 lifecycle 评估。`CredentialLifecyclePolicy`
+要求调用方显式传入 `now_unix_millis`，方便 embedding app 在 UI、后台任务和测试中得到确定
+的 stale/expiring 结果。
 
 ```rust,no_run
 use bbdown_core::{
     AccessKeyLoginConfig, AccessKeyLoginCredentials, AccessKeyLoginTicketOutput, BiliClient,
-    ClientConfig, CredentialProfileSelection, CredentialStore, Credentials,
+    ClientConfig, CredentialKind, CredentialLifecyclePolicy, CredentialLifecycleStatus,
+    CredentialProfileSelection, CredentialStore, Credentials,
 };
 
 async fn check_credentials() {
@@ -235,12 +247,28 @@ async fn check_credentials() {
 
     let config = ClientConfig::default().with_credentials(credentials);
     let client = BiliClient::new(config);
-    let _health = client.check_credential_health().await;
+    let health = client.check_credential_health().await;
+    let _summary = health.summary();
 }
 
 fn load_named_profile(store: &CredentialStore, profile: &str) -> bbdown_core::Result<Credentials> {
     let selection = CredentialProfileSelection::named(profile)?;
     store.load_selected_profile(&selection)
+}
+
+fn access_key_lifecycle_status(
+    store: &CredentialStore,
+    profile: &str,
+    now_unix_millis: u64,
+) -> bbdown_core::Result<Option<CredentialLifecycleStatus>> {
+    let profiles = store.load_profiles()?;
+    let policy = CredentialLifecyclePolicy::at_unix_millis(now_unix_millis);
+    let status = profiles.profile_lifecycle_status(profile, &policy)?;
+    Ok(status
+        .credential_statuses
+        .into_iter()
+        .find(|status| status.kind == CredentialKind::AccessKey)
+        .map(|status| status.status))
 }
 
 fn access_key_login_ticket() -> bbdown_core::Result<AccessKeyLoginTicketOutput> {

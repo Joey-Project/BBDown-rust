@@ -377,6 +377,9 @@ paths. The command never consumes implicit stdin; pass `--stdin` for pipes or re
 `--message-origin` when ingesting browser `postMessage` data so the sender origin is checked against
 the login ticket; trusted manual callback URL/query input does not need that flag. Use `--auth-base`
 and `--callback-origin` for compatible mocks or deployments.
+When the access-key callback includes `oauth_expires_at`, `expires_at`, or `expires_in`, the CLI
+records the derived lifecycle expiry metadata in the selected credential profile. It also records
+whether a refresh token was present without storing that token value in lifecycle metadata.
 `auth login-web` prints a QR login URL, polls until scan confirmation, and saves the resulting
 cookie. `auth login-tv` uses the TV QR flow and saves a TV-specific access key for future TV/app
 flows without overwriting the generic intl/Bstar access key imported or acquired through the generic
@@ -386,6 +389,8 @@ redacted credential booleans. For current WEB and TV login flows, `qr_payload` i
 can be rendered directly as a QR code by embedding projects. Treat login URLs and QR payloads as
 temporary login secrets because they contain login handoff state. Token values are not printed by
 status or the `saved` JSON event.
+WEB and TV QR login record lifecycle source and acquisition time, but only record an expiry when the
+upstream response provides a reliable expiry field.
 
 Use `auth health` to diagnose configured credentials without exposing secret values. The command
 checks the WEB cookie against the web nav endpoint and checks both the generic `access_key` and TV

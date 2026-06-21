@@ -224,8 +224,12 @@ BiliPlus/BALH-compatible browser handoff URL whose `AccessKeyLoginTicketOutput::
 rendered directly as a QR code. The parser accepts the historical `balh-login-credentials:` message
 shape with either a JSON payload or URL/query callback, returning `AccessKeyLoginCredentials` with the
 generic `access_key` plus optional refresh/expiration metadata. Calling `credentials()` converts only
-the generic access key into the existing `Credentials` model; automatic refresh and CLI persistence
-are separate lifecycle concerns. In browser `postMessage` flows, prefer
+the generic access key into the existing `Credentials` model, so embedding applications that own
+storage should persist lifecycle metadata from `oauth_expires_at`, `expires_at`, `expires_in`, and
+`refresh_token` explicitly. The CLI login path records that metadata in the selected credential
+profile: absolute expiry fields are stored directly, relative `expires_in` values are converted from
+the acquisition time, and refresh-token presence is stored without copying the token value into
+lifecycle metadata. In browser `postMessage` flows, prefer
 `AccessKeyLoginTicketOutput::credentials_from_message(event_origin, data)` so the sender origin is
 validated against the ticket's trusted auth or callback origin before parsing. Use the raw
 `AccessKeyLoginCredentials::from_balh_*` parsers only after an embedding application has already
@@ -236,12 +240,20 @@ requests. The report includes one probe each for the WEB cookie, generic `access
 `tv_access_key`; `kind` identifies the credential slot and `scope` identifies the checked consumer.
 The generic `access_key` probe currently covers the intl/Bstar OAuth-info scope only, so downstream
 applications that need APP gRPC or proxy-specific assurance should treat that as a separate policy
-decision. Probe messages are sanitized before they are serialized.
+decision. Probe messages are sanitized before they are serialized. Use `CredentialHealthReport::summary()`
+for a compact, JSON-friendly aggregate status and `CredentialHealthReport::probe(kind, scope)` when
+UI or preflight policy needs one exact probe.
+Profile documents can also be evaluated without network I/O through
+`CredentialProfiles::profile_lifecycle_status(profile, policy)` or
+`CredentialProfiles::lifecycle_statuses(policy)`. `CredentialLifecyclePolicy` requires an explicit
+`now_unix_millis` value so embedders can make deterministic stale/expiring decisions in UI,
+background jobs, or tests.
 
 ```rust,no_run
 use bbdown_core::{
     AccessKeyLoginConfig, AccessKeyLoginCredentials, AccessKeyLoginTicketOutput, BiliClient,
-    ClientConfig, CredentialProfileSelection, CredentialStore, Credentials,
+    ClientConfig, CredentialKind, CredentialLifecyclePolicy, CredentialLifecycleStatus,
+    CredentialProfileSelection, CredentialStore, Credentials,
 };
 
 async fn check_credentials() {
@@ -251,12 +263,28 @@ async fn check_credentials() {
 
     let config = ClientConfig::default().with_credentials(credentials);
     let client = BiliClient::new(config);
-    let _health = client.check_credential_health().await;
+    let health = client.check_credential_health().await;
+    let _summary = health.summary();
 }
 
 fn load_named_profile(store: &CredentialStore, profile: &str) -> bbdown_core::Result<Credentials> {
     let selection = CredentialProfileSelection::named(profile)?;
     store.load_selected_profile(&selection)
+}
+
+fn access_key_lifecycle_status(
+    store: &CredentialStore,
+    profile: &str,
+    now_unix_millis: u64,
+) -> bbdown_core::Result<Option<CredentialLifecycleStatus>> {
+    let profiles = store.load_profiles()?;
+    let policy = CredentialLifecyclePolicy::at_unix_millis(now_unix_millis);
+    let status = profiles.profile_lifecycle_status(profile, &policy)?;
+    Ok(status
+        .credential_statuses
+        .into_iter()
+        .find(|status| status.kind == CredentialKind::AccessKey)
+        .map(|status| status.status))
 }
 
 fn access_key_login_ticket() -> bbdown_core::Result<AccessKeyLoginTicketOutput> {
