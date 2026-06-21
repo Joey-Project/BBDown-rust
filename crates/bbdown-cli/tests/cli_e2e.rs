@@ -1,5 +1,8 @@
 use assert_cmd::Command;
-use bbdown_core::{CredentialKind, CredentialLifecycleSource, CredentialStore, Credentials};
+use bbdown_core::{
+    CredentialKind, CredentialLifecycleMetadata, CredentialLifecycleSource,
+    CredentialProfileMetadata, CredentialProfiles, CredentialStore, Credentials,
+};
 use httpmock::MockServer;
 use httpmock::prelude::*;
 use prost::Message as _;
@@ -3694,6 +3697,369 @@ fn auth_health_reports_redacted_credential_probe_statuses() -> anyhow::Result<()
     access_key_mock.assert_calls(1);
     tv_access_key_mock.assert_calls(1);
     Ok(())
+}
+
+#[test]
+fn auth_status_profiles_reports_default_selected_and_lifecycle_guidance() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    save_lifecycle_cli_profiles(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_acquired_at_unix_millis(1),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_expires_at_unix_millis(1)
+            .with_refresh_token_present(true),
+    )?;
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .args([
+            "auth",
+            "status",
+            "--profiles",
+            "--all-profiles",
+            "--stale-after-seconds",
+            "1",
+            "--expiring-within-seconds",
+            "1",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let output_text = String::from_utf8(output.clone())?;
+    let report: Value = serde_json::from_slice(&output)?;
+    let profile_reports = report["profiles"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("missing profiles array"))?;
+    let default = profile_reports
+        .iter()
+        .find(|entry| entry["profile"] == "default")
+        .ok_or_else(|| anyhow::anyhow!("missing default profile"))?;
+    let intl = profile_reports
+        .iter()
+        .find(|entry| entry["profile"] == "intl")
+        .ok_or_else(|| anyhow::anyhow!("missing intl profile"))?;
+
+    assert_eq!(report["selected_profile"], "intl");
+    assert_eq!(default["is_default_profile"], true);
+    assert_eq!(default["is_selected_profile"], false);
+    assert_eq!(default["status"], "stale");
+    assert_eq!(intl["is_default_profile"], false);
+    assert_eq!(intl["is_selected_profile"], true);
+    assert_eq!(intl["status"], "expired");
+    assert!(default["guidance"].as_array().is_some_and(|items| {
+        items.iter().any(|item| {
+            item.as_str()
+                .is_some_and(|text| text.contains("cookie lifecycle metadata is stale"))
+        })
+    }));
+    assert!(intl["guidance"].as_array().is_some_and(|items| {
+        items.iter().any(|item| {
+            item.as_str().is_some_and(|text| {
+                text.contains("access_key lifecycle metadata is expired")
+                    && text.contains("auth login-access-key")
+            })
+        })
+    }));
+    for secret in ["COOKIE_SECRET", "ACCESS_SECRET"] {
+        assert!(!output_text.contains(secret));
+    }
+    Ok(())
+}
+
+#[test]
+fn auth_status_all_profiles_includes_selected_empty_profile() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .args(["auth", "status", "--profiles", "--all-profiles"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let report: Value = serde_json::from_slice(&output)?;
+    let profile_reports = report["profiles"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("missing profiles array"))?;
+    let selected = profile_reports
+        .iter()
+        .find(|entry| entry["profile"] == "intl")
+        .ok_or_else(|| anyhow::anyhow!("missing selected profile"))?;
+
+    assert_eq!(report["selected_profile"], "intl");
+    assert_eq!(selected["is_default_profile"], false);
+    assert_eq!(selected["is_selected_profile"], true);
+    assert_eq!(selected["credentials"]["has_cookie"], false);
+    assert_eq!(selected["credentials"]["has_access_key"], false);
+    assert_eq!(selected["credentials"]["has_tv_access_key"], false);
+    assert_eq!(selected["status"], "missing");
+    Ok(())
+}
+
+#[test]
+fn auth_health_all_profiles_reports_profile_summaries_and_guidance() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    save_lifecycle_cli_profiles(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+    )?;
+
+    let cookie_mock = mock_valid_cookie_health(&server);
+    let access_key_mock = mock_rejected_access_key_health(&server);
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--tv-passport-base")
+        .arg(server.base_url())
+        .arg("--tv-passport-poll-base")
+        .arg(server.base_url())
+        .args(["auth", "health", "--json", "--all-profiles"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let output_text = String::from_utf8(output.clone())?;
+    let report: Value = serde_json::from_slice(&output)?;
+    let profile_reports = report["profiles"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("missing profiles array"))?;
+    let default = profile_reports
+        .iter()
+        .find(|entry| entry["profile"] == "default")
+        .ok_or_else(|| anyhow::anyhow!("missing default profile"))?;
+    let intl = profile_reports
+        .iter()
+        .find(|entry| entry["profile"] == "intl")
+        .ok_or_else(|| anyhow::anyhow!("missing intl profile"))?;
+
+    assert_eq!(report["selected_profile"], "intl");
+    assert_eq!(default["health_summary"]["status"], "degraded");
+    assert_eq!(intl["health_summary"]["status"], "rejected");
+    assert_eq!(intl["health"]["probes"][1]["status"], "rejected");
+    assert!(intl["guidance"].as_array().is_some_and(|items| {
+        items.iter().any(|item| {
+            item.as_str().is_some_and(|text| {
+                text.contains("access_key was rejected by Bilibili for intl/bstar")
+                    && text.contains("auth login-access-key")
+            })
+        })
+    }));
+    for secret in ["COOKIE_SECRET", "ACCESS_SECRET"] {
+        assert!(!output_text.contains(secret));
+    }
+    cookie_mock.assert_calls(1);
+    access_key_mock.assert_calls(1);
+    Ok(())
+}
+
+#[test]
+fn auth_health_all_profiles_includes_selected_empty_profile() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .args(["auth", "health", "--json", "--all-profiles"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let report: Value = serde_json::from_slice(&output)?;
+    let profile_reports = report["profiles"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("missing profiles array"))?;
+    let selected = profile_reports
+        .iter()
+        .find(|entry| entry["profile"] == "intl")
+        .ok_or_else(|| anyhow::anyhow!("missing selected profile"))?;
+
+    assert_eq!(report["selected_profile"], "intl");
+    assert_eq!(selected["is_default_profile"], false);
+    assert_eq!(selected["is_selected_profile"], true);
+    assert_eq!(selected["lifecycle"]["status"], "missing");
+    assert_eq!(selected["health_summary"]["status"], "missing");
+    assert_eq!(selected["health_summary"]["missing_count"], 3);
+    assert_eq!(selected["health"]["credentials"]["has_cookie"], false);
+    assert_eq!(selected["health"]["credentials"]["has_access_key"], false);
+    assert_eq!(
+        selected["health"]["credentials"]["has_tv_access_key"],
+        false
+    );
+    Ok(())
+}
+
+#[test]
+fn auth_health_all_profiles_escapes_control_characters_in_human_profile_names() -> anyhow::Result<()>
+{
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let profile_name = "bad\n\u{1b}[31m";
+    let store = CredentialStore::new(credential_file.clone());
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_default_profile(profile_name)?;
+    profiles.set_profile(
+        profile_name,
+        Credentials::default().with_cookie("SESSDATA=COOKIE_SECRET"),
+    )?;
+    let mut profile_metadata = CredentialProfileMetadata::default();
+    profile_metadata.set_credential(
+        CredentialKind::Cookie,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+    );
+    profiles.set_profile_metadata(profile_name, profile_metadata)?;
+    store.save_profiles(&profiles)?;
+
+    let cookie_mock = mock_valid_cookie_health(&server);
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .args(["auth", "health", "--all-profiles"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let output_text = String::from_utf8(output)?;
+
+    assert!(output_text.contains(r#"profile "bad\n\u{1b}[31m" (default, selected):"#));
+    assert!(!output_text.contains(profile_name));
+    cookie_mock.assert_calls(1);
+    Ok(())
+}
+
+#[test]
+fn auth_health_escapes_control_characters_in_human_probe_messages() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    CredentialStore::new(credential_file.clone())
+        .save(&Credentials::default().with_access_key("ACCESS_SECRET"))?;
+    let message = "expired\n\u{1b}[31m";
+    let access_key_mock = mock_rejected_access_key_health_with_message(&server, message);
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .args(["auth", "health"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let output_text = String::from_utf8(output)?;
+
+    assert!(output_text.contains(r#"- "expired\n\u{1b}[31m""#));
+    assert!(!output_text.contains(message));
+    access_key_mock.assert_calls(1);
+    Ok(())
+}
+
+fn save_lifecycle_cli_profiles(
+    credential_file: &Path,
+    cookie_metadata: CredentialLifecycleMetadata,
+    access_key_metadata: CredentialLifecycleMetadata,
+) -> anyhow::Result<()> {
+    let store = CredentialStore::new(credential_file.to_path_buf());
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_profile(
+        "default",
+        Credentials::default().with_cookie("SESSDATA=COOKIE_SECRET"),
+    )?;
+    let mut default_metadata = CredentialProfileMetadata::default();
+    default_metadata.set_credential(CredentialKind::Cookie, cookie_metadata);
+    profiles.set_profile_metadata("default", default_metadata)?;
+    profiles.set_profile(
+        "intl",
+        Credentials::default().with_access_key("ACCESS_SECRET"),
+    )?;
+    let mut intl_metadata = CredentialProfileMetadata::default();
+    intl_metadata.set_credential(CredentialKind::AccessKey, access_key_metadata);
+    profiles.set_profile_metadata("intl", intl_metadata)?;
+    store.save_profiles(&profiles)?;
+    Ok(())
+}
+
+fn mock_valid_cookie_health(server: &MockServer) -> httpmock::Mock<'_> {
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/nav")
+            .header("cookie", "SESSDATA=COOKIE_SECRET");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "isLogin": true,
+                "wbi_img": {
+                    "img_url": "https://i0.hdslb.com/bfs/wbi/0123456789abcdef0123456789abcdef.png",
+                    "sub_url": "https://i0.hdslb.com/bfs/wbi/fedcba9876543210fedcba9876543210.png"
+                }
+            }
+        }));
+    })
+}
+
+fn mock_rejected_access_key_health(server: &MockServer) -> httpmock::Mock<'_> {
+    mock_rejected_access_key_health_with_message(server, "access key expired")
+}
+
+fn mock_rejected_access_key_health_with_message<'a>(
+    server: &'a MockServer,
+    message: &str,
+) -> httpmock::Mock<'a> {
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/passport-login/oauth2/info")
+            .query_param("access_key", "ACCESS_SECRET")
+            .query_param("appkey", "7d089525d3611b1c")
+            .query_param("mobi_app", "bstar_a")
+            .query_param_exists("ts")
+            .query_param_exists("sign")
+            .header_missing("cookie");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -101,
+            "message": message
+        }));
+    })
 }
 
 #[test]

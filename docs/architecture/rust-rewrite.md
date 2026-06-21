@@ -412,6 +412,10 @@ documents still load without lifecycle metadata.
 status output without network I/O. The policy requires an explicit `now_unix_millis` value and lets
 embedders choose stale and expiring windows, so UI preflight, background jobs, and tests can make the
 same lifecycle decision without reading wall-clock time inside the model.
+The CLI applies that policy in `auth status --profiles`, where the no-flag `auth status` output
+remains the legacy selected-profile redacted credential summary. Profile status output adds
+default/selected markers, per-credential lifecycle status, and non-secret guidance; `--all-profiles`
+expands it from the selected profile to every saved profile.
 Credential health diagnostics are a read-only layer over the same credential model. The crate exposes
 `CredentialHealthReport` and `BiliClient::check_credential_health()` so embedding callers can check
 the WEB cookie, generic `access_key`, and TV `tv_access_key` independently before choosing a login or
@@ -425,6 +429,11 @@ are contained per credential as `missing`, `valid`, `rejected`, or `request_fail
 failing the whole report.
 `CredentialHealthReport::summary()` gives downstream UI a compact aggregate status while preserving
 the per-kind probes for exact policy decisions.
+The CLI keeps single-profile `auth health --json` compatible with the raw report schema. Human
+`auth health` output augments the probes with lifecycle or health guidance when a credential should
+be re-checked, renewed, or re-acquired. `auth health --all-profiles --json` wraps each profile's
+redacted lifecycle status, network health report, aggregate health summary, and guidance for profile
+management UIs.
 
 Generic access-key acquisition is modeled as a BiliPlus/BALH-compatible browser handoff rather than
 an official Bilibili poller. `AccessKeyLoginConfig` builds the authorization URL with

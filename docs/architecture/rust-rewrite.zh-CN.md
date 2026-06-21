@@ -358,6 +358,10 @@ flat credential 文件和有效 profile document 仍可在没有 lifecycle metad
 expired 状态输出，且不发起网络请求。policy 要求调用方显式传入 `now_unix_millis`，并允许
 embedding app 自行选择 stale 和 expiring 窗口，因此 UI preflight、后台任务和测试可以在不从
 model 内部读取 wall-clock time 的情况下做出一致的 lifecycle 判断。
+CLI 会在 `auth status --profiles` 中应用该 policy；不带 flag 的 `auth status` 仍保留旧的
+selected-profile 脱敏凭据 summary 输出。profile status 输出会增加 default/selected 标记、
+逐 credential lifecycle status 和不含密钥的 guidance；`--all-profiles` 会把范围从当前选中
+profile 扩展到所有已保存 profile。
 credential health diagnostics 是同一 credential model 上的只读层。crate 暴露
 `CredentialHealthReport` 和 `BiliClient::check_credential_health()`，让嵌入调用方可以在选
 择登录或 fallback flow 之前，分别检查 WEB cookie、通用 `access_key` 和 TV `tv_access_key`。
@@ -370,6 +374,11 @@ cookie。通用 token probe 当前通过配置的 `passport_base` 检查 intl/Bs
 `rejected` 或 `request_failed`，不会让整份报告失败。
 `CredentialHealthReport::summary()` 会给下游 UI 一个紧凑的 aggregate status，同时保留每个
 kind 的 probe，供精确 policy decision 使用。
+CLI 会保持单 profile `auth health --json` 与原始 report schema 兼容。人类可读的
+`auth health` 输出会在 credential 需要重新检查、续期或重新获取时，把 lifecycle/health
+guidance 附加在 probe 后面。`auth health --all-profiles --json` 会把每个 profile 的脱敏
+lifecycle status、网络 health report、aggregate health summary 和 guidance 包装在一起，
+方便 profile 管理 UI 使用。
 
 通用 access-key 获取被建模为 BiliPlus/BALH-compatible browser handoff，而不是官方 Bilibili
 poller。`AccessKeyLoginConfig` 会用 `balh_auth=1` 和归一化 callback origin 构造授权 URL；

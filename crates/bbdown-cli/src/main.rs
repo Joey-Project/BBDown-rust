@@ -5,15 +5,17 @@ use anyhow::{Context, bail, ensure};
 use bbdown_core::{
     AccessKeyLoginConfig, AccessKeyLoginCredentials, AccessKeyLoginTicketOutput, BiliClient,
     ClientConfig, CredentialHealthReport, CredentialHealthScope, CredentialHealthStatus,
-    CredentialKind, CredentialLifecycleMetadata, CredentialLifecycleSource,
-    CredentialProfileSelection, CredentialStore, Credentials, DanmakuFormat, DanmakuUpdateOptions,
-    DownloadArchive, DownloadCancellationToken, DownloadMode, DownloadOptions,
-    DownloadPathTemplates, DownloadPlan, DownloadPreflight, DownloadProgressEvent,
-    DownloadProgressSink, DownloadReport, DuplicateDecision, EndpointConfig, MediaHostOptions,
-    MediaStream, MuxOptions, PlaybackPlan, PlayurlMode, QrLoginKind, QrLoginState, QrLoginTicket,
-    QrLoginTicketOutput, ResolvedContent, RestrictedArea, RestrictedAreaConfig,
-    RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection, StreamQuality,
-    StreamSelection, StreamSet, SubtitleAiPolicy, archive_entry_allows_danmaku_update,
+    CredentialHealthSummaryStatus, CredentialKind, CredentialLifecycleMetadata,
+    CredentialLifecyclePolicy, CredentialLifecycleSource, CredentialLifecycleStatus,
+    CredentialProfileLifecycleStatus, CredentialProfileSelection, CredentialProfiles,
+    CredentialStore, Credentials, DanmakuFormat, DanmakuUpdateOptions, DownloadArchive,
+    DownloadCancellationToken, DownloadMode, DownloadOptions, DownloadPathTemplates, DownloadPlan,
+    DownloadPreflight, DownloadProgressEvent, DownloadProgressSink, DownloadReport,
+    DuplicateDecision, EndpointConfig, MediaHostOptions, MediaStream, MuxOptions, PlaybackPlan,
+    PlayurlMode, QrLoginKind, QrLoginState, QrLoginTicket, QrLoginTicketOutput, ResolvedContent,
+    RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind,
+    RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet, SubtitleAiPolicy,
+    archive_entry_allows_danmaku_update,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::ffi::{OsStr, OsString};
@@ -249,7 +251,7 @@ struct DanmakuUpdateCliArgs {
 
 #[derive(Debug, Subcommand)]
 enum AuthCommand {
-    Status,
+    Status(AuthStatusArgs),
     Health(AuthHealthArgs),
     ImportCookie(SecretImportArgs),
     ImportAccessKey(SecretImportArgs),
@@ -261,9 +263,27 @@ enum AuthCommand {
 }
 
 #[derive(Debug, Args)]
+struct AuthStatusArgs {
+    #[arg(long)]
+    profiles: bool,
+    #[arg(long)]
+    all_profiles: bool,
+    #[arg(long, default_value_t = 7 * 24 * 60 * 60)]
+    stale_after_seconds: u64,
+    #[arg(long, default_value_t = 24 * 60 * 60)]
+    expiring_within_seconds: u64,
+}
+
+#[derive(Debug, Args)]
 struct AuthHealthArgs {
     #[arg(long)]
     json: bool,
+    #[arg(long)]
+    all_profiles: bool,
+    #[arg(long, default_value_t = 7 * 24 * 60 * 60)]
+    stale_after_seconds: u64,
+    #[arg(long, default_value_t = 24 * 60 * 60)]
+    expiring_within_seconds: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -982,6 +1002,12 @@ impl CredentialRuntime {
             }
         }
         Ok(())
+    }
+
+    fn selected_profile_name(&self, profiles: &CredentialProfiles) -> String {
+        self.selection
+            .profile_name()
+            .map_or_else(|| profiles.default_profile.clone(), str::to_owned)
     }
 }
 
@@ -1915,20 +1941,11 @@ async fn handle_auth(
     client_runtime: &ClientRuntimeConfig,
 ) -> anyhow::Result<()> {
     match command {
-        AuthCommand::Status => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&credential_runtime.load()?.redacted_summary())?
-            );
+        AuthCommand::Status(args) => {
+            handle_auth_status(&args, credential_runtime)?;
         }
         AuthCommand::Health(args) => {
-            let client = BiliClient::new(client_runtime.client_config(credential_runtime.load()?));
-            let report = client.check_credential_health().await;
-            if args.json {
-                println!("{}", serde_json::to_string_pretty(&report)?);
-            } else {
-                print_credential_health_report(&report)?;
-            }
+            handle_auth_health(&args, credential_runtime, client_runtime).await?;
         }
         AuthCommand::ImportCookie(args) => {
             let mut stored = credential_runtime.load()?;
@@ -1961,12 +1978,187 @@ async fn handle_auth(
     Ok(())
 }
 
+fn handle_auth_status(
+    args: &AuthStatusArgs,
+    credential_runtime: &CredentialRuntime,
+) -> anyhow::Result<()> {
+    if !args.profiles && !args.all_profiles {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&credential_runtime.load()?.redacted_summary())?
+        );
+        return Ok(());
+    }
+
+    let policy = lifecycle_policy_from_seconds(
+        args.stale_after_seconds,
+        args.expiring_within_seconds,
+        current_unix_millis(),
+    );
+    let (_profiles, selected_profile, statuses) =
+        lifecycle_statuses_for_selection(credential_runtime, args.all_profiles, &policy)?;
+    let profile_values = statuses
+        .iter()
+        .map(|status| profile_lifecycle_status_json(status, &selected_profile))
+        .collect::<Vec<_>>();
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "selected_profile": selected_profile,
+            "profiles": profile_values,
+        }))?
+    );
+    Ok(())
+}
+
+async fn handle_auth_health(
+    args: &AuthHealthArgs,
+    credential_runtime: &CredentialRuntime,
+    client_runtime: &ClientRuntimeConfig,
+) -> anyhow::Result<()> {
+    if !args.all_profiles {
+        let client = BiliClient::new(client_runtime.client_config(credential_runtime.load()?));
+        let report = client.check_credential_health().await;
+        if args.json {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        } else {
+            print_credential_health_report(&report)?;
+            let policy = lifecycle_policy_from_seconds(
+                args.stale_after_seconds,
+                args.expiring_within_seconds,
+                current_unix_millis(),
+            );
+            let (_profiles, _selected_profile, mut statuses) =
+                lifecycle_statuses_for_selection(credential_runtime, false, &policy)?;
+            if let Some(status) = statuses.pop() {
+                print_credential_guidance(&credential_profile_guidance(&status, Some(&report)))?;
+            }
+        }
+        return Ok(());
+    }
+
+    let policy = lifecycle_policy_from_seconds(
+        args.stale_after_seconds,
+        args.expiring_within_seconds,
+        current_unix_millis(),
+    );
+    let (profiles, selected_profile, statuses) =
+        lifecycle_statuses_for_selection(credential_runtime, true, &policy)?;
+    let mut profile_reports = Vec::new();
+    for status in statuses {
+        let credentials = profiles.profile(&status.profile)?;
+        let client = BiliClient::new(client_runtime.client_config(credentials));
+        let report = client.check_credential_health().await;
+        let health_summary = report.summary();
+        let guidance = credential_profile_guidance(&status, Some(&report));
+        if args.json {
+            profile_reports.push(serde_json::json!({
+                "profile": &status.profile,
+                "is_default_profile": status.is_default_profile,
+                "is_selected_profile": status.profile == selected_profile,
+                "credentials": &status.credentials,
+                "lifecycle": &status,
+                "health": &report,
+                "health_summary": health_summary,
+                "guidance": &guidance,
+            }));
+        } else {
+            print_profile_health_header(&status, &selected_profile, &report)?;
+            print_credential_health_report_with_indent(&report, "  ")?;
+            print_credential_guidance(&guidance)?;
+        }
+    }
+
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "selected_profile": selected_profile,
+                "profiles": profile_reports,
+            }))?
+        );
+    }
+    Ok(())
+}
+
+fn lifecycle_policy_from_seconds(
+    stale_after_seconds: u64,
+    expiring_within_seconds: u64,
+    now_unix_millis: u64,
+) -> CredentialLifecyclePolicy {
+    CredentialLifecyclePolicy::at_unix_millis(now_unix_millis)
+        .with_stale_after_millis(Some(stale_after_seconds.saturating_mul(1_000)))
+        .with_expiring_within_millis(Some(expiring_within_seconds.saturating_mul(1_000)))
+}
+
+fn lifecycle_statuses_for_selection(
+    credential_runtime: &CredentialRuntime,
+    all_profiles: bool,
+    policy: &CredentialLifecyclePolicy,
+) -> anyhow::Result<(
+    CredentialProfiles,
+    String,
+    Vec<CredentialProfileLifecycleStatus>,
+)> {
+    let profiles = credential_runtime
+        .store
+        .load_profiles()
+        .context("failed to load credential profiles")?;
+    let selected_profile = credential_runtime.selected_profile_name(&profiles);
+    let statuses = if all_profiles {
+        let mut statuses = profiles
+            .lifecycle_statuses(policy)
+            .context("failed to evaluate credential profile lifecycle status")?;
+        if !statuses
+            .iter()
+            .any(|status| status.profile == selected_profile)
+        {
+            statuses.push(
+                profiles
+                    .profile_lifecycle_status(&selected_profile, policy)
+                    .context("failed to evaluate credential profile lifecycle status")?,
+            );
+            statuses.sort_by(|left, right| left.profile.cmp(&right.profile));
+        }
+        statuses
+    } else {
+        vec![
+            profiles
+                .profile_lifecycle_status(&selected_profile, policy)
+                .context("failed to evaluate credential profile lifecycle status")?,
+        ]
+    };
+    Ok((profiles, selected_profile, statuses))
+}
+
+fn profile_lifecycle_status_json(
+    status: &CredentialProfileLifecycleStatus,
+    selected_profile: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "profile": &status.profile,
+        "is_default_profile": status.is_default_profile,
+        "is_selected_profile": status.profile == selected_profile,
+        "credentials": &status.credentials,
+        "status": status.status,
+        "credential_statuses": &status.credential_statuses,
+        "guidance": credential_profile_guidance(status, None),
+    })
+}
+
 fn print_credential_health_report(report: &CredentialHealthReport) -> anyhow::Result<()> {
+    print_credential_health_report_with_indent(report, "")
+}
+
+fn print_credential_health_report_with_indent(
+    report: &CredentialHealthReport,
+    indent: &str,
+) -> anyhow::Result<()> {
     use std::fmt::Write as _;
 
     for probe in &report.probes {
         let mut line = format!(
-            "{} ({}): {}",
+            "{indent}{} ({}): {}",
             credential_kind_label(probe.kind),
             credential_health_scope_label(probe.scope),
             credential_health_status_label(probe.status)
@@ -1980,11 +2172,150 @@ fn print_credential_health_report(report: &CredentialHealthReport) -> anyhow::Re
         }
         if let Some(message) = &probe.message {
             line.push_str(" - ");
-            line.push_str(message);
+            line.push_str(&display_human_text(message));
         }
         print_human_line(line)?;
     }
     Ok(())
+}
+
+fn print_profile_health_header(
+    status: &CredentialProfileLifecycleStatus,
+    selected_profile: &str,
+    report: &CredentialHealthReport,
+) -> anyhow::Result<()> {
+    let mut markers = Vec::new();
+    if status.is_default_profile {
+        markers.push("default");
+    }
+    if status.profile == selected_profile {
+        markers.push("selected");
+    }
+    let suffix = if markers.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", markers.join(", "))
+    };
+    print_human_line(format_args!(
+        "profile {}{}: lifecycle={} health={}",
+        display_profile_name(&status.profile),
+        suffix,
+        credential_lifecycle_status_label(status.status),
+        credential_health_summary_status_label(report.summary().status)
+    ))
+}
+
+fn display_profile_name(profile: &str) -> String {
+    display_human_text(profile)
+}
+
+fn display_human_text(value: &str) -> String {
+    if value.chars().any(char::is_control) {
+        format!("{value:?}")
+    } else {
+        value.to_owned()
+    }
+}
+
+fn print_credential_guidance(guidance: &[String]) -> anyhow::Result<()> {
+    for item in guidance {
+        print_human_line(format_args!("guidance: {item}"))?;
+    }
+    Ok(())
+}
+
+fn credential_profile_guidance(
+    status: &CredentialProfileLifecycleStatus,
+    report: Option<&CredentialHealthReport>,
+) -> Vec<String> {
+    let mut guidance = Vec::new();
+    if !status.credentials.has_cookie
+        && !status.credentials.has_access_key
+        && !status.credentials.has_tv_access_key
+    {
+        push_unique(
+            &mut guidance,
+            "profile has no credentials; run auth login-web, auth login-tv, auth login-access-key, or import a credential".to_owned(),
+        );
+    }
+
+    for credential in &status.credential_statuses {
+        if !credential.present {
+            continue;
+        }
+        match credential.status {
+            CredentialLifecycleStatus::Expired => push_unique(
+                &mut guidance,
+                format!(
+                    "{} lifecycle metadata is expired; {}",
+                    credential_kind_label(credential.kind),
+                    credential_relogin_hint(credential.kind)
+                ),
+            ),
+            CredentialLifecycleStatus::Expiring => push_unique(
+                &mut guidance,
+                format!(
+                    "{} lifecycle metadata expires soon; renew it before relying on restricted downloads",
+                    credential_kind_label(credential.kind)
+                ),
+            ),
+            CredentialLifecycleStatus::Stale => push_unique(
+                &mut guidance,
+                format!(
+                    "{} lifecycle metadata is stale; run auth health or re-login if requests fail",
+                    credential_kind_label(credential.kind)
+                ),
+            ),
+            CredentialLifecycleStatus::Unknown => push_unique(
+                &mut guidance,
+                format!(
+                    "{} has no lifecycle metadata; run auth health or re-login if requests fail",
+                    credential_kind_label(credential.kind)
+                ),
+            ),
+            CredentialLifecycleStatus::Missing | CredentialLifecycleStatus::Fresh => {}
+        }
+    }
+
+    if let Some(report) = report {
+        for probe in &report.probes {
+            match probe.status {
+                CredentialHealthStatus::Rejected => push_unique(
+                    &mut guidance,
+                    format!(
+                        "{} was rejected by Bilibili for {}; {}",
+                        credential_kind_label(probe.kind),
+                        credential_health_scope_label(probe.scope),
+                        credential_relogin_hint(probe.kind)
+                    ),
+                ),
+                CredentialHealthStatus::RequestFailed => push_unique(
+                    &mut guidance,
+                    format!(
+                        "{} health check for {} failed; retry after checking network, proxy, or endpoint configuration",
+                        credential_kind_label(probe.kind),
+                        credential_health_scope_label(probe.scope)
+                    ),
+                ),
+                CredentialHealthStatus::Missing | CredentialHealthStatus::Valid => {}
+            }
+        }
+    }
+    guidance
+}
+
+fn push_unique(items: &mut Vec<String>, item: String) {
+    if !items.contains(&item) {
+        items.push(item);
+    }
+}
+
+fn credential_relogin_hint(kind: CredentialKind) -> &'static str {
+    match kind {
+        CredentialKind::Cookie => "run auth login-web or auth import-cookie",
+        CredentialKind::AccessKey => "run auth login-access-key or auth import-access-key",
+        CredentialKind::TvAccessKey => "run auth login-tv",
+    }
 }
 
 fn credential_kind_label(kind: CredentialKind) -> &'static str {
@@ -1992,6 +2323,28 @@ fn credential_kind_label(kind: CredentialKind) -> &'static str {
         CredentialKind::Cookie => "cookie",
         CredentialKind::AccessKey => "access_key",
         CredentialKind::TvAccessKey => "tv_access_key",
+    }
+}
+
+fn credential_lifecycle_status_label(status: CredentialLifecycleStatus) -> &'static str {
+    match status {
+        CredentialLifecycleStatus::Missing => "missing",
+        CredentialLifecycleStatus::Unknown => "unknown",
+        CredentialLifecycleStatus::Fresh => "fresh",
+        CredentialLifecycleStatus::Stale => "stale",
+        CredentialLifecycleStatus::Expiring => "expiring",
+        CredentialLifecycleStatus::Expired => "expired",
+    }
+}
+
+fn credential_health_summary_status_label(status: CredentialHealthSummaryStatus) -> &'static str {
+    match status {
+        CredentialHealthSummaryStatus::Unknown => "unknown",
+        CredentialHealthSummaryStatus::Healthy => "healthy",
+        CredentialHealthSummaryStatus::Degraded => "degraded",
+        CredentialHealthSummaryStatus::Missing => "missing",
+        CredentialHealthSummaryStatus::Rejected => "rejected",
+        CredentialHealthSummaryStatus::RequestFailed => "request_failed",
     }
 }
 
