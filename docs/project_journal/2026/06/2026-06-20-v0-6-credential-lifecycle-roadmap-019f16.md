@@ -4,7 +4,7 @@ title: v0.6.0 Credential Lifecycle Roadmap
 status: active
 created: 2026-06-20
 updated: 2026-06-20
-branch: docs/v0.5-release-completion
+branch: feature/v0.6-credential-lifecycle-metadata
 pr:
 supersedes: []
 superseded_by:
@@ -48,6 +48,19 @@ superseded_by:
 - PR 8: release prep for `v0.6.0`, including bilingual docs, public API checks, deterministic CI,
   live-e2e notes, release notes, and protected RC readiness.
 
+## Completed Slices
+
+- PR 2 implemented the credential lifecycle metadata model:
+  - Profile documents can now carry optional per-profile, per-credential-kind lifecycle metadata.
+  - Metadata records track provenance, acquired/checked/expiry timestamps, and whether a refresh
+    token is present without duplicating raw credential values.
+  - Empty metadata is omitted, orphan metadata is normalized away on save, and legacy flat
+    credential stores continue to load without lifecycle metadata.
+  - Unknown or malformed optional metadata is ignored on load, while malformed required profile data
+    still fails fast.
+  - Replacing a credential value drops lifecycle metadata for that credential kind so old token
+    expiry/source hints are not rebound to a new token.
+
 ## Out Of Scope For This Line
 
 - Per-video related recommendations and additional Bilibili page-family parsing remain planned for
@@ -65,7 +78,11 @@ superseded_by:
 - Published crate version: `bbdown-core` `0.5.0`.
 - Current credential model: `crates/bbdown/src/credentials.rs`.
 - Current login model: `crates/bbdown/src/login.rs`.
+- PR 2 local validation:
+  - `cargo test -p bbdown-core credentials --locked`.
+  - `cargo test -p bbdown-core --test public_api --locked`.
+  - `just ci`.
 
 ## Next Steps
 
-- Cut PR 2 from updated `master` for the credential lifecycle metadata model.
+- Cut PR 3 from updated `master` for lifecycle status and health policy APIs after PR 2 lands.

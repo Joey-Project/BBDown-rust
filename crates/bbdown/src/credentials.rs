@@ -106,6 +106,45 @@ impl Credentials {
     }
 }
 
+impl CredentialKind {
+    fn from_metadata_key(key: &str) -> Option<Self> {
+        match key {
+            "cookie" => Some(Self::Cookie),
+            "access_key" => Some(Self::AccessKey),
+            "tv_access_key" => Some(Self::TvAccessKey),
+            _ => None,
+        }
+    }
+
+    fn is_present_in(self, credentials: &Credentials) -> bool {
+        self.value_in(credentials).is_some()
+    }
+
+    fn is_unchanged_between(self, old: &Credentials, new: &Credentials) -> bool {
+        match (self.value_in(old), self.value_in(new)) {
+            (Some(old), Some(new)) => old == new,
+            _ => false,
+        }
+    }
+
+    fn value_in(self, credentials: &Credentials) -> Option<&str> {
+        match self {
+            Self::Cookie => credentials
+                .cookie
+                .as_deref()
+                .filter(|value| !value.is_empty()),
+            Self::AccessKey => credentials
+                .access_key
+                .as_deref()
+                .filter(|value| !value.is_empty()),
+            Self::TvAccessKey => credentials
+                .tv_access_key
+                .as_deref()
+                .filter(|value| !value.is_empty()),
+        }
+    }
+}
+
 #[non_exhaustive]
 #[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CredentialProfiles {
@@ -115,6 +154,12 @@ pub struct CredentialProfiles {
     pub default_profile: String,
     #[serde(default)]
     pub profiles: BTreeMap<String, Credentials>,
+    #[serde(
+        default,
+        skip_serializing_if = "BTreeMap::is_empty",
+        deserialize_with = "deserialize_profile_metadata"
+    )]
+    pub profile_metadata: BTreeMap<String, CredentialProfileMetadata>,
 }
 
 impl fmt::Debug for CredentialProfiles {
@@ -124,6 +169,7 @@ impl fmt::Debug for CredentialProfiles {
             .field("version", &self.version)
             .field("default_profile", &self.default_profile)
             .field("profiles", &self.profiles)
+            .field("profile_metadata", &self.profile_metadata)
             .finish()
     }
 }
@@ -134,6 +180,7 @@ impl Default for CredentialProfiles {
             version: CREDENTIAL_PROFILES_VERSION,
             default_profile: DEFAULT_CREDENTIAL_PROFILE.to_owned(),
             profiles: BTreeMap::new(),
+            profile_metadata: BTreeMap::new(),
         }
     }
 }
@@ -165,7 +212,15 @@ impl CredentialProfiles {
         let name = normalize_profile_name(name)?;
         if credentials.is_empty() {
             self.profiles.remove(&name);
+            self.profile_metadata.remove(&name);
         } else {
+            let metadata = self.profile_metadata.remove(&name);
+            if let (Some(metadata), Some(previous)) = (metadata, self.profiles.get(&name)) {
+                let metadata = metadata.normalize_for_unchanged_credentials(previous, &credentials);
+                if !metadata.is_empty() {
+                    self.profile_metadata.insert(name.clone(), metadata);
+                }
+            }
             self.profiles.insert(name, credentials);
         }
         Ok(())
@@ -173,6 +228,7 @@ impl CredentialProfiles {
 
     pub fn remove_profile(&mut self, name: &str) -> Result<Option<Credentials>> {
         let name = normalize_profile_name(name)?;
+        self.profile_metadata.remove(&name);
         Ok(self.profiles.remove(&name))
     }
 
@@ -183,6 +239,35 @@ impl CredentialProfiles {
 
     pub fn profile_names(&self) -> impl Iterator<Item = &str> {
         self.profiles.keys().map(String::as_str)
+    }
+
+    pub fn profile_metadata(&self, name: &str) -> Result<CredentialProfileMetadata> {
+        let name = normalize_profile_name(name)?;
+        Ok(self
+            .profile_metadata
+            .get(&name)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    pub fn set_profile_metadata(
+        &mut self,
+        name: &str,
+        metadata: CredentialProfileMetadata,
+    ) -> Result<()> {
+        let name = normalize_profile_name(name)?;
+        let metadata = self
+            .profiles
+            .get(&name)
+            .map_or_else(CredentialProfileMetadata::default, |credentials| {
+                metadata.normalize_for_credentials(credentials)
+            });
+        if metadata.is_empty() {
+            self.profile_metadata.remove(&name);
+        } else {
+            self.profile_metadata.insert(name, metadata);
+        }
+        Ok(())
     }
 
     fn normalize(mut self) -> Result<Self> {
@@ -202,8 +287,176 @@ impl CredentialProfiles {
             }
         }
         self.profiles = profiles;
+        let mut profile_metadata = BTreeMap::new();
+        for (name, metadata) in self.profile_metadata {
+            if name.trim().is_empty() {
+                continue;
+            }
+            let name = normalize_profile_name(&name)?;
+            if let Some(credentials) = self.profiles.get(&name) {
+                let metadata = metadata.normalize_for_credentials(credentials);
+                if !metadata.is_empty() {
+                    profile_metadata.insert(name, metadata);
+                }
+            }
+        }
+        self.profile_metadata = profile_metadata;
         Ok(self)
     }
+}
+
+#[non_exhaustive]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CredentialProfileMetadata {
+    #[serde(
+        default,
+        skip_serializing_if = "BTreeMap::is_empty",
+        deserialize_with = "deserialize_credential_lifecycle_metadata"
+    )]
+    pub credentials: BTreeMap<CredentialKind, CredentialLifecycleMetadata>,
+}
+
+impl CredentialProfileMetadata {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.credentials
+            .values()
+            .all(CredentialLifecycleMetadata::is_empty)
+    }
+
+    #[must_use]
+    pub fn credential(&self, kind: CredentialKind) -> Option<&CredentialLifecycleMetadata> {
+        self.credentials.get(&kind)
+    }
+
+    pub fn set_credential(&mut self, kind: CredentialKind, metadata: CredentialLifecycleMetadata) {
+        if metadata.is_empty() {
+            self.credentials.remove(&kind);
+        } else {
+            self.credentials.insert(kind, metadata);
+        }
+    }
+
+    fn normalize_for_credentials(mut self, credentials: &Credentials) -> Self {
+        self.credentials
+            .retain(|kind, metadata| !metadata.is_empty() && kind.is_present_in(credentials));
+        self
+    }
+
+    fn normalize_for_unchanged_credentials(mut self, old: &Credentials, new: &Credentials) -> Self {
+        self.credentials
+            .retain(|kind, metadata| !metadata.is_empty() && kind.is_unchanged_between(old, new));
+        self
+    }
+}
+
+fn deserialize_credential_lifecycle_metadata<'de, D>(
+    deserializer: D,
+) -> std::result::Result<BTreeMap<CredentialKind, CredentialLifecycleMetadata>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    let Some(raw_metadata) = value.as_object() else {
+        return Ok(BTreeMap::new());
+    };
+
+    Ok(raw_metadata
+        .iter()
+        .filter_map(|(key, value)| {
+            let kind = CredentialKind::from_metadata_key(key)?;
+            let metadata = serde_json::from_value(value.clone()).ok()?;
+            Some((kind, metadata))
+        })
+        .collect())
+}
+
+fn deserialize_profile_metadata<'de, D>(
+    deserializer: D,
+) -> std::result::Result<BTreeMap<String, CredentialProfileMetadata>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    let Some(raw_metadata) = value.as_object() else {
+        return Ok(BTreeMap::new());
+    };
+
+    Ok(raw_metadata
+        .iter()
+        .filter_map(|(name, value)| {
+            let metadata = serde_json::from_value(value.clone()).ok()?;
+            Some((name.clone(), metadata))
+        })
+        .collect())
+}
+
+#[non_exhaustive]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CredentialLifecycleMetadata {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<CredentialLifecycleSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acquired_at_unix_millis: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked_at_unix_millis: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at_unix_millis: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh_token_present: Option<bool>,
+}
+
+impl CredentialLifecycleMetadata {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.source.is_none()
+            && self.acquired_at_unix_millis.is_none()
+            && self.checked_at_unix_millis.is_none()
+            && self.expires_at_unix_millis.is_none()
+            && self.refresh_token_present.is_none()
+    }
+
+    #[must_use]
+    pub fn with_source(mut self, source: CredentialLifecycleSource) -> Self {
+        self.source = Some(source);
+        self
+    }
+
+    #[must_use]
+    pub fn with_acquired_at_unix_millis(mut self, value: u64) -> Self {
+        self.acquired_at_unix_millis = Some(value);
+        self
+    }
+
+    #[must_use]
+    pub fn with_checked_at_unix_millis(mut self, value: u64) -> Self {
+        self.checked_at_unix_millis = Some(value);
+        self
+    }
+
+    #[must_use]
+    pub fn with_expires_at_unix_millis(mut self, value: u64) -> Self {
+        self.expires_at_unix_millis = Some(value);
+        self
+    }
+
+    #[must_use]
+    pub fn with_refresh_token_present(mut self, value: bool) -> Self {
+        self.refresh_token_present = Some(value);
+        self
+    }
+}
+
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CredentialLifecycleSource {
+    ManualImport,
+    WebQrLogin,
+    TvQrLogin,
+    AccessKeyLogin,
+    #[serde(other)]
+    Unknown,
 }
 
 fn credential_profiles_version() -> u32 {
@@ -304,7 +557,7 @@ impl CredentialHealthProbe {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CredentialKind {
     Cookie,
@@ -532,8 +785,9 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CredentialProfileSelection, CredentialProfiles, CredentialStore, Credentials,
-        DEFAULT_CREDENTIAL_PROFILE,
+        CredentialKind, CredentialLifecycleMetadata, CredentialLifecycleSource,
+        CredentialProfileMetadata, CredentialProfileSelection, CredentialProfiles, CredentialStore,
+        Credentials, DEFAULT_CREDENTIAL_PROFILE,
     };
 
     #[test]
@@ -637,6 +891,11 @@ mod tests {
         assert_eq!(
             store.load()?.tv_access_key.as_deref(),
             Some("tv-access-token")
+        );
+        assert!(
+            profiles
+                .profile_metadata(DEFAULT_CREDENTIAL_PROFILE)?
+                .is_empty()
         );
         Ok(())
     }
@@ -816,6 +1075,767 @@ mod tests {
             profiles.profile("intl")?.cookie.as_deref(),
             Some("SESSDATA=updated-intl")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn profile_metadata_round_trips_lifecycle_fields() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "intl",
+            Credentials {
+                cookie: None,
+                access_key: Some("access-token".to_owned()),
+                tv_access_key: None,
+            },
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_acquired_at_unix_millis(1_710_000_000_000)
+                .with_checked_at_unix_millis(1_710_000_010_000)
+                .with_expires_at_unix_millis(1_710_007_200_000)
+                .with_refresh_token_present(true),
+        );
+        profiles.set_profile_metadata("intl", metadata)?;
+
+        store.save_profiles(&profiles)?;
+
+        let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path)?)?;
+        assert_eq!(
+            value["profile_metadata"]["intl"]["credentials"]["access_key"]["source"].as_str(),
+            Some("access_key_login")
+        );
+        assert_eq!(
+            value["profile_metadata"]["intl"]["credentials"]["access_key"]["refresh_token_present"]
+                .as_bool(),
+            Some(true)
+        );
+        assert!(
+            !value["profile_metadata"]
+                .to_string()
+                .contains("access-token"),
+            "metadata must not duplicate raw credential values"
+        );
+        let loaded = store.load_profiles()?;
+        let metadata = loaded.profile_metadata("intl")?;
+        assert_eq!(
+            metadata
+                .credential(CredentialKind::AccessKey)
+                .map(|lifecycle| lifecycle.source),
+            Some(Some(CredentialLifecycleSource::AccessKeyLogin))
+        );
+        assert_eq!(
+            metadata
+                .credential(CredentialKind::AccessKey)
+                .and_then(|lifecycle| lifecycle.expires_at_unix_millis),
+            Some(1_710_007_200_000)
+        );
+        assert_eq!(
+            metadata
+                .credential(CredentialKind::AccessKey)
+                .and_then(|lifecycle| lifecycle.refresh_token_present),
+            Some(true)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn save_profile_preserves_profile_metadata() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path);
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "intl",
+            Credentials {
+                cookie: None,
+                access_key: Some("old-access-token".to_owned()),
+                tv_access_key: None,
+            },
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_refresh_token_present(true),
+        );
+        profiles.set_profile_metadata("intl", metadata)?;
+        store.save_profiles(&profiles)?;
+
+        store.save_profile(
+            "intl",
+            &Credentials {
+                cookie: None,
+                access_key: Some("old-access-token".to_owned()),
+                tv_access_key: None,
+            },
+        )?;
+
+        let loaded = store.load_profiles()?;
+        assert_eq!(
+            loaded.profile("intl")?.access_key.as_deref(),
+            Some("old-access-token")
+        );
+        assert_eq!(
+            loaded
+                .profile_metadata("intl")?
+                .credential(CredentialKind::AccessKey)
+                .and_then(|lifecycle| lifecycle.refresh_token_present),
+            Some(true)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn save_profile_drops_metadata_for_changed_credential_value() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "intl",
+            Credentials {
+                cookie: None,
+                access_key: Some("old-access-token".to_owned()),
+                tv_access_key: None,
+            },
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_expires_at_unix_millis(1_710_007_200_000),
+        );
+        profiles.set_profile_metadata("intl", metadata)?;
+        store.save_profiles(&profiles)?;
+
+        store.save_profile(
+            "intl",
+            &Credentials {
+                cookie: None,
+                access_key: Some("new-access-token".to_owned()),
+                tv_access_key: None,
+            },
+        )?;
+
+        let loaded = store.load_profiles()?;
+        assert_eq!(
+            loaded.profile("intl")?.access_key.as_deref(),
+            Some("new-access-token")
+        );
+        assert!(loaded.profile_metadata("intl")?.is_empty());
+        let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path)?)?;
+        assert!(value.get("profile_metadata").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn save_profile_prunes_metadata_for_removed_credential_kind() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "intl",
+            Credentials {
+                cookie: Some("SESSDATA=old".to_owned()),
+                access_key: Some("access-token".to_owned()),
+                tv_access_key: None,
+            },
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_refresh_token_present(true),
+        );
+        profiles.set_profile_metadata("intl", metadata)?;
+        store.save_profiles(&profiles)?;
+
+        store.save_profile(
+            "intl",
+            &Credentials {
+                cookie: Some("SESSDATA=new".to_owned()),
+                access_key: None,
+                tv_access_key: None,
+            },
+        )?;
+
+        let loaded = store.load_profiles()?;
+        assert_eq!(
+            loaded.profile("intl")?.cookie.as_deref(),
+            Some("SESSDATA=new")
+        );
+        assert!(loaded.profile_metadata("intl")?.is_empty());
+        let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path)?)?;
+        assert!(value.get("profile_metadata").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn set_profile_prunes_in_memory_metadata_for_removed_credential_kind() -> anyhow::Result<()> {
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "intl",
+            Credentials {
+                cookie: Some("SESSDATA=old".to_owned()),
+                access_key: Some("access-token".to_owned()),
+                tv_access_key: None,
+            },
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_refresh_token_present(true),
+        );
+        profiles.set_profile_metadata("intl", metadata)?;
+
+        profiles.set_profile(
+            "intl",
+            Credentials {
+                cookie: Some("SESSDATA=new".to_owned()),
+                access_key: None,
+                tv_access_key: None,
+            },
+        )?;
+
+        assert!(profiles.profile_metadata("intl")?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn set_profile_drops_in_memory_metadata_for_changed_credential_value() -> anyhow::Result<()> {
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "intl",
+            Credentials {
+                cookie: None,
+                access_key: Some("old-access-token".to_owned()),
+                tv_access_key: None,
+            },
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_expires_at_unix_millis(1_710_007_200_000),
+        );
+        profiles.set_profile_metadata("intl", metadata)?;
+
+        profiles.set_profile(
+            "intl",
+            Credentials {
+                cookie: None,
+                access_key: Some("new-access-token".to_owned()),
+                tv_access_key: None,
+            },
+        )?;
+
+        assert!(profiles.profile_metadata("intl")?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn set_profile_metadata_filters_missing_credential_kinds_in_memory() -> anyhow::Result<()> {
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "intl",
+            Credentials {
+                cookie: Some("SESSDATA=secret".to_owned()),
+                access_key: None,
+                tv_access_key: None,
+            },
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::Cookie,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::ManualImport),
+        );
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin),
+        );
+
+        profiles.set_profile_metadata("intl", metadata)?;
+
+        let metadata = profiles.profile_metadata("intl")?;
+        assert!(metadata.credential(CredentialKind::AccessKey).is_none());
+        assert_eq!(
+            metadata
+                .credential(CredentialKind::Cookie)
+                .and_then(|lifecycle| lifecycle.source),
+            Some(CredentialLifecycleSource::ManualImport)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn set_profile_metadata_drops_metadata_without_profile() -> anyhow::Result<()> {
+        let mut profiles = CredentialProfiles::default();
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin),
+        );
+
+        profiles.set_profile_metadata("missing", metadata)?;
+
+        assert!(profiles.profile_metadata("missing")?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_lifecycle_source_deserializes_as_unknown() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path);
+        std::fs::write(
+            store.path(),
+            r#"{
+  "version": 1,
+  "default_profile": "intl",
+  "profiles": {
+    "intl": {
+      "access_key": "access-token"
+    }
+  },
+  "profile_metadata": {
+    "intl": {
+      "credentials": {
+        "access_key": {
+          "source": "future_login"
+        }
+      }
+    }
+  }
+}"#,
+        )?;
+
+        let profiles = store.load_profiles()?;
+        assert_eq!(
+            profiles
+                .profile_metadata("intl")?
+                .credential(CredentialKind::AccessKey)
+                .and_then(|lifecycle| lifecycle.source),
+            Some(CredentialLifecycleSource::Unknown)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_metadata_credential_kind_is_ignored() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        std::fs::write(
+            &path,
+            r#"{
+  "version": 1,
+  "default_profile": "intl",
+  "profiles": {
+    "intl": {
+      "access_key": "access-token"
+    }
+  },
+  "profile_metadata": {
+    "intl": {
+      "credentials": {
+        "access_key": {
+          "source": "access_key_login"
+        },
+        "future_key": {
+          "source": "future_login"
+        }
+      }
+    }
+  }
+}"#,
+        )?;
+
+        let profiles = store.load_profiles()?;
+        assert_eq!(
+            profiles
+                .profile_metadata("intl")?
+                .credential(CredentialKind::AccessKey)
+                .and_then(|lifecycle| lifecycle.source),
+            Some(CredentialLifecycleSource::AccessKeyLogin)
+        );
+        store.save_profiles(&profiles)?;
+
+        let value = std::fs::read_to_string(path)?;
+        assert!(!value.contains("future_key"));
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_metadata_credential_kind_with_invalid_payload_is_ignored() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        std::fs::write(
+            &path,
+            r#"{
+  "version": 1,
+  "default_profile": "intl",
+  "profiles": {
+    "intl": {
+      "access_key": "access-token"
+    }
+  },
+  "profile_metadata": {
+    "intl": {
+      "credentials": {
+        "access_key": {
+          "source": "access_key_login"
+        },
+        "future_key": [
+          "future",
+          {
+            "payload": true
+          }
+        ]
+      }
+    }
+  }
+}"#,
+        )?;
+
+        let profiles = store.load_profiles()?;
+        assert_eq!(
+            profiles
+                .profile_metadata("intl")?
+                .credential(CredentialKind::AccessKey)
+                .and_then(|lifecycle| lifecycle.source),
+            Some(CredentialLifecycleSource::AccessKeyLogin)
+        );
+        store.save_profiles(&profiles)?;
+
+        let value = std::fs::read_to_string(path)?;
+        assert!(!value.contains("future_key"));
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_profile_metadata_payload_is_ignored() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        std::fs::write(
+            &path,
+            r#"{
+  "version": 1,
+  "default_profile": "default",
+  "profiles": {
+    "default": {
+      "cookie": "SESSDATA=secret"
+    }
+  },
+  "profile_metadata": {
+    "default": [
+      "future",
+      {
+        "payload": true
+      }
+    ]
+  }
+}"#,
+        )?;
+
+        let profiles = store.load_profiles()?;
+        assert!(
+            profiles
+                .profile_metadata(DEFAULT_CREDENTIAL_PROFILE)?
+                .is_empty()
+        );
+        store.save_profiles(&profiles)?;
+
+        let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path)?)?;
+        assert!(value.get("profile_metadata").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_profile_metadata_document_is_ignored() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        std::fs::write(
+            &path,
+            r#"{
+  "version": 1,
+  "default_profile": "default",
+  "profiles": {
+    "default": {
+      "cookie": "SESSDATA=secret"
+    }
+  },
+  "profile_metadata": [
+    "future",
+    {
+      "payload": true
+    }
+  ]
+}"#,
+        )?;
+
+        let profiles = store.load_profiles()?;
+        assert!(
+            profiles
+                .profile_metadata(DEFAULT_CREDENTIAL_PROFILE)?
+                .is_empty()
+        );
+        store.save_profiles(&profiles)?;
+
+        let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path)?)?;
+        assert!(value.get("profile_metadata").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_known_lifecycle_metadata_payload_is_ignored() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        std::fs::write(
+            &path,
+            r#"{
+  "version": 1,
+  "default_profile": "intl",
+  "profiles": {
+    "intl": {
+      "access_key": "access-token"
+    }
+  },
+  "profile_metadata": {
+    "intl": {
+      "credentials": {
+        "access_key": [
+          "future",
+          {
+            "payload": true
+          }
+        ]
+      }
+    }
+  }
+}"#,
+        )?;
+
+        let profiles = store.load_profiles()?;
+        assert!(profiles.profile_metadata("intl")?.is_empty());
+        store.save_profiles(&profiles)?;
+
+        let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path)?)?;
+        assert!(value.get("profile_metadata").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_lifecycle_source_is_ignored() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        std::fs::write(
+            &path,
+            r#"{
+  "version": 1,
+  "default_profile": "intl",
+  "profiles": {
+    "intl": {
+      "access_key": "access-token"
+    }
+  },
+  "profile_metadata": {
+    "intl": {
+      "credentials": {
+        "access_key": {
+          "source": {
+            "future": true
+          }
+        }
+      }
+    }
+  }
+}"#,
+        )?;
+
+        let profiles = store.load_profiles()?;
+        assert!(profiles.profile_metadata("intl")?.is_empty());
+        store.save_profiles(&profiles)?;
+
+        let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path)?)?;
+        assert!(value.get("profile_metadata").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn empty_lifecycle_entries_are_not_serialized() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        std::fs::write(
+            &path,
+            r#"{
+  "version": 1,
+  "default_profile": "intl",
+  "profiles": {
+    "intl": {
+      "access_key": "access-token"
+    }
+  },
+  "profile_metadata": {
+    "intl": {
+      "credentials": {
+        "access_key": {}
+      }
+    }
+  }
+}"#,
+        )?;
+
+        let profiles = store.load_profiles()?;
+        assert!(profiles.profile_metadata("intl")?.is_empty());
+        store.save_profiles(&profiles)?;
+
+        let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path)?)?;
+        assert!(value.get("profile_metadata").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn empty_profile_metadata_is_not_serialized() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            DEFAULT_CREDENTIAL_PROFILE,
+            Credentials {
+                cookie: Some("SESSDATA=default".to_owned()),
+                access_key: None,
+                tv_access_key: None,
+            },
+        )?;
+        profiles.set_profile_metadata(
+            DEFAULT_CREDENTIAL_PROFILE,
+            CredentialProfileMetadata::default(),
+        )?;
+
+        store.save_profiles(&profiles)?;
+
+        let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path)?)?;
+        assert!(value.get("profile_metadata").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn removing_profile_removes_profile_metadata() -> anyhow::Result<()> {
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "intl",
+            Credentials {
+                cookie: None,
+                access_key: Some("access-token".to_owned()),
+                tv_access_key: None,
+            },
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin),
+        );
+        profiles.set_profile_metadata("intl", metadata)?;
+
+        assert!(profiles.remove_profile("intl")?.is_some());
+
+        assert!(profiles.profile_metadata("intl")?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn orphan_profile_metadata_is_dropped_on_save() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        std::fs::write(
+            &path,
+            r#"{
+  "version": 1,
+  "default_profile": "default",
+  "profiles": {},
+  "profile_metadata": {
+    "orphan": {
+      "credentials": {
+        "access_key": {
+          "source": "access_key_login"
+        }
+      }
+    }
+  }
+}"#,
+        )?;
+
+        let profiles = store.load_profiles()?;
+        store.save_profiles(&profiles)?;
+
+        let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path)?)?;
+        assert!(value.get("profile_metadata").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn blank_profile_metadata_key_is_dropped_on_load() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        std::fs::write(
+            &path,
+            r#"{
+  "version": 1,
+  "default_profile": "default",
+  "profiles": {
+    "default": {
+      "cookie": "SESSDATA=secret"
+    }
+  },
+  "profile_metadata": {
+    " ": {
+      "credentials": {
+        "cookie": {
+          "source": "manual_import"
+        }
+      }
+    }
+  }
+}"#,
+        )?;
+
+        let profiles = store.load_profiles()?;
+        assert!(
+            profiles
+                .profile_metadata(DEFAULT_CREDENTIAL_PROFILE)?
+                .is_empty()
+        );
+        store.save_profiles(&profiles)?;
+
+        let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path)?)?;
+        assert!(value.get("profile_metadata").is_none());
         Ok(())
     }
 

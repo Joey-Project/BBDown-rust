@@ -402,6 +402,12 @@ selection preserves legacy `load`/`save` behavior, while named selections route 
 document APIs and preserve other profiles during writes. The CLI exposes this through the global
 `--credential-profile` flag and `BBDOWN_CREDENTIAL_PROFILE`; `auth logout` clears the whole store for
 legacy default selection and removes only the named profile when one is explicitly selected.
+Profile documents can include optional lifecycle metadata keyed by profile and credential kind. The
+metadata records provenance, acquisition/check/expiry timestamps, and a boolean
+`refresh_token_present` hint without duplicating raw token values in the metadata map. Empty metadata
+is dropped during normalization, orphan metadata is removed when its profile has no credentials, and
+unknown or malformed optional metadata is ignored so legacy flat credential files and valid profile
+documents still load without lifecycle metadata.
 Credential health diagnostics are a read-only layer over the same credential model. The crate exposes
 `CredentialHealthReport` and `BiliClient::check_credential_health()` so embedding callers can check
 the WEB cookie, generic `access_key`, and TV `tv_access_key` independently before choosing a login or
