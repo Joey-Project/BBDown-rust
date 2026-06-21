@@ -191,6 +191,8 @@ bbdown auth import-cookie --file cookie.txt
 bbdown auth import-access-key --stdin
 bbdown auth login-access-key --stdin < balh-callback.txt
 bbdown auth login-access-key --file balh-callback.txt
+bbdown auth renew-access-key --json
+bbdown auth renew-access-key --stdin < balh-callback.txt
 bbdown auth login-web
 bbdown auth login-tv
 bbdown auth status
@@ -208,7 +210,13 @@ scrollback 中；`--stdin` 必须来自 pipe 或 redirect，并会拒绝 termina
 会拒绝 terminal-backed path。命令不会隐式消费 stdin；pipe 或 redirect 必须显式传
 `--stdin`。如果输入来自浏览器 `postMessage`，请使用 `--message-origin`，这样 CLI 会把
 sender origin 与本次 login ticket 校验；兼容 mock 或部署可以使用 `--auth-base` 和
-`--callback-origin`。二维码登录命令会轮询 Bilibili 二维码状态机，并只保存最终得到的凭
+`--callback-origin`。`auth renew-access-key` 会评估当前所选 profile 的 access-key lifecycle
+metadata 并输出结构化 renewal decision。fresh credential 会返回 `no_action`；missing、
+unknown、stale、expiring、expired 或 forced credential 会返回 BiliPlus/BALH 重新授权 ticket。
+同一个命令如果传入 `--stdin` 或 `--file`，就会完成这次重新授权并保存新的通用 access key。
+命令会报告 `automatic_refresh_readiness`，方便嵌入方区分“metadata 显示曾出现 refresh
+token”和“本地已经安全保存 refresh secret”；当前版本不会静默 refresh access key，因为不会持久化
+raw refresh token。二维码登录命令会轮询 Bilibili 二维码状态机，并只保存最终得到的凭
 据。WEB 二维码登录保存 cookie；TV 二维码登录保存 TV 专用 access key，不会覆盖由通用
 access-key 命令导入或获取的 intl/Bstar access key。使用 `--json` 时，登录命令输出换行分
 隔 JSON 事件：先输出带登录 URL 和 `qr_payload` 的 `ticket` 事件，再在凭据保存后输出

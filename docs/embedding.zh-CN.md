@@ -220,6 +220,14 @@ CLI 登录路径会把这些 metadata 记录到当前选择的 credential profil
 `AccessKeyLoginTicketOutput::credentials_from_message(event_origin, data)`，让 sender origin
 先按 ticket 的可信 auth origin 或 callback origin 校验后再解析。只有当嵌入应用已经自行验证
 message provenance 时，才直接使用 raw `AccessKeyLoginCredentials::from_balh_*` parser。
+access-key lifecycle orchestration 可以在加载
+`CredentialProfiles::profile_lifecycle_status(...)` 后调用
+`AccessKeyRenewalDecision::from_profile_status(profile_status, force_reauthorization)`。`NoAction`
+decision 表示当前所选 profile 的 access-key metadata 在调用方 policy 下仍是 fresh；
+`Reauthorize` 表示 UI 应渲染新的 `AccessKeyLoginTicketOutput`，并收集下一次 BALH callback。
+decision 中的 `automatic_refresh_readiness` 是刻意显式的：`metadata_only_refresh_token`
+表示上一次 callback 报告过 refresh token，但 BBDown 当前只持久化安全 lifecycle metadata；
+在未来设计 refresh-secret storage 前，无法静默刷新 token。
 当嵌入项目需要在决定提示登录、导入 token 或继续匿名请求前做脱敏诊断时，可以调用
 `BiliClient::check_credential_health()`。报告会分别包含 WEB cookie、通用 `access_key` 和
 TV `tv_access_key` 的 probe；`kind` 表示凭据槽位，`scope` 表示实际检查的消费场景。通用

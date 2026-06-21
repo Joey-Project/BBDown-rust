@@ -42,8 +42,10 @@ pub use download::{
 pub use error::{Error, Result};
 pub use input::Input;
 pub use login::{
-    AccessKeyLoginConfig, AccessKeyLoginCredentials, AccessKeyLoginTicket,
-    AccessKeyLoginTicketOutput, QrLoginKind, QrLoginState, QrLoginTicket, QrLoginTicketOutput,
+    AccessKeyAutomaticRefreshReadiness, AccessKeyLoginConfig, AccessKeyLoginCredentials,
+    AccessKeyLoginTicket, AccessKeyLoginTicketOutput, AccessKeyRenewalAction,
+    AccessKeyRenewalDecision, AccessKeyRenewalReason, QrLoginKind, QrLoginState, QrLoginTicket,
+    QrLoginTicketOutput,
 };
 pub use models::{
     ChapterTrack, CodecFamily, DanmakuTrack, DownloadEntry, DownloadPlan, EpisodeMetadata,

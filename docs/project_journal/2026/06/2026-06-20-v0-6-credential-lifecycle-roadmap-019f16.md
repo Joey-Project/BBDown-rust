@@ -4,8 +4,8 @@ title: v0.6.0 Credential Lifecycle Roadmap
 status: active
 created: 2026-06-20
 updated: 2026-06-21
-branch:
-pr:
+branch: feature/v0.6-access-key-renewal
+pr: 65
 supersedes: []
 superseded_by:
 ---
@@ -86,6 +86,21 @@ superseded_by:
     and prompt for login.
   - Human `auth health` output now adds guidance when credentials are stale, expired, rejected, or
     failed by request, while preserving the raw `auth health --json` schema for single-profile use.
+- PR 5 implements access-key renewal orchestration without pretending silent refresh is available:
+  - `AccessKeyRenewalDecision` maps selected profile lifecycle status to `NoAction` or
+    `Reauthorize` and exposes `automatic_refresh_readiness` so embedders can distinguish missing
+    credentials, unsupported sources, missing refresh-token metadata, and metadata-only refresh
+    token evidence.
+  - `auth renew-access-key` emits newline-delimited JSON `decision`, `ticket`, and optional `saved`
+    events, or equivalent human output, while reusing the existing safe BALH parser and
+    `save_credentials_with_lifecycle` path.
+  - Fresh access-key metadata returns `no_action`; missing, unknown, stale, expiring, expired, or
+    forced credentials return a BiliPlus/BALH reauthorization ticket.
+  - Providing `--stdin` or `--file` to `auth renew-access-key` completes the reauthorization and
+    refreshes the selected profile's generic access key and lifecycle metadata without printing raw
+    access or refresh tokens.
+  - Bilingual README, user guide, embedding guide, and architecture docs now describe the difference
+    between metadata-only refresh-token evidence and a future stored refresh secret.
 
 ## Out Of Scope For This Line
 
@@ -134,8 +149,15 @@ superseded_by:
   - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/07780f1c323453fd738330fbf8fd70e2899d4409/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.
   - `git diff --check`.
   - `just ci`.
+- PR 5 local validation:
+  - `cargo test -p bbdown-core access_key_renewal --locked`.
+  - `cargo test -p bbdown-cli auth_renew_access_key --test cli_e2e --locked`.
+  - `cargo fmt --all -- --check`.
+  - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/07780f1c323453fd738330fbf8fd70e2899d4409/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.
+  - `git diff --check`.
+  - `just ci`.
 
 ## Next Steps
 
-- Cut PR 5 from updated `master` for access-key refresh or reacquisition orchestration after PR 4
-  lands.
+- Complete PR 5 review/CI/merge, then cut PR 6 from updated `master` for optional credential
+  preflight integration in planning/downloading paths.

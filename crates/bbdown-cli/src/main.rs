@@ -3,19 +3,20 @@
 
 use anyhow::{Context, bail, ensure};
 use bbdown_core::{
-    AccessKeyLoginConfig, AccessKeyLoginCredentials, AccessKeyLoginTicketOutput, BiliClient,
-    ClientConfig, CredentialHealthReport, CredentialHealthScope, CredentialHealthStatus,
-    CredentialHealthSummaryStatus, CredentialKind, CredentialLifecycleMetadata,
-    CredentialLifecyclePolicy, CredentialLifecycleSource, CredentialLifecycleStatus,
-    CredentialProfileLifecycleStatus, CredentialProfileSelection, CredentialProfiles,
-    CredentialStore, Credentials, DanmakuFormat, DanmakuUpdateOptions, DownloadArchive,
-    DownloadCancellationToken, DownloadMode, DownloadOptions, DownloadPathTemplates, DownloadPlan,
-    DownloadPreflight, DownloadProgressEvent, DownloadProgressSink, DownloadReport,
-    DuplicateDecision, EndpointConfig, MediaHostOptions, MediaStream, MuxOptions, PlaybackPlan,
-    PlayurlMode, QrLoginKind, QrLoginState, QrLoginTicket, QrLoginTicketOutput, ResolvedContent,
-    RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind,
-    RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet, SubtitleAiPolicy,
-    archive_entry_allows_danmaku_update,
+    AccessKeyAutomaticRefreshReadiness, AccessKeyLoginConfig, AccessKeyLoginCredentials,
+    AccessKeyLoginTicketOutput, AccessKeyRenewalAction, AccessKeyRenewalDecision,
+    AccessKeyRenewalReason, BiliClient, ClientConfig, CredentialHealthReport,
+    CredentialHealthScope, CredentialHealthStatus, CredentialHealthSummaryStatus, CredentialKind,
+    CredentialLifecycleMetadata, CredentialLifecyclePolicy, CredentialLifecycleSource,
+    CredentialLifecycleStatus, CredentialProfileLifecycleStatus, CredentialProfileSelection,
+    CredentialProfiles, CredentialStore, Credentials, DanmakuFormat, DanmakuUpdateOptions,
+    DownloadArchive, DownloadCancellationToken, DownloadMode, DownloadOptions,
+    DownloadPathTemplates, DownloadPlan, DownloadPreflight, DownloadProgressEvent,
+    DownloadProgressSink, DownloadReport, DuplicateDecision, EndpointConfig, MediaHostOptions,
+    MediaStream, MuxOptions, PlaybackPlan, PlayurlMode, QrLoginKind, QrLoginState, QrLoginTicket,
+    QrLoginTicketOutput, ResolvedContent, RestrictedArea, RestrictedAreaConfig,
+    RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection, StreamQuality,
+    StreamSelection, StreamSet, SubtitleAiPolicy, archive_entry_allows_danmaku_update,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::ffi::{OsStr, OsString};
@@ -259,6 +260,8 @@ enum AuthCommand {
     LoginTv(QrLoginArgs),
     #[command(about = "Acquire a generic access key through a BiliPlus/BALH browser handoff")]
     LoginAccessKey(AccessKeyLoginArgs),
+    #[command(about = "Plan or complete generic access-key reauthorization")]
+    RenewAccessKey(AccessKeyRenewalArgs),
     Logout,
 }
 
@@ -631,6 +634,56 @@ struct QrLoginArgs {
 struct AccessKeyLoginArgs {
     #[arg(long, help = "Emit newline-delimited JSON ticket and saved events")]
     json: bool,
+    #[arg(
+        long,
+        default_value = DEFAULT_ACCESS_KEY_AUTH_BASE,
+        value_name = "URL",
+        help = "BiliPlus/BALH-compatible authorization base URL"
+    )]
+    auth_base: String,
+    #[arg(
+        long,
+        default_value = DEFAULT_ACCESS_KEY_CALLBACK_ORIGIN,
+        value_name = "ORIGIN",
+        help = "Callback origin passed to the authorization page"
+    )]
+    callback_origin: String,
+    #[arg(
+        long,
+        value_name = "ORIGIN",
+        help = "Validate a browser postMessage sender origin before parsing BALH data"
+    )]
+    message_origin: Option<String>,
+    #[arg(
+        long,
+        conflicts_with = "file",
+        help = "Read pasted BALH message or callback URL/query from piped or redirected stdin"
+    )]
+    stdin: bool,
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Read pasted BALH message or callback URL/query from a file"
+    )]
+    file: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct AccessKeyRenewalArgs {
+    #[arg(
+        long,
+        help = "Emit newline-delimited JSON decision, ticket, and saved events"
+    )]
+    json: bool,
+    #[arg(
+        long,
+        help = "Force reauthorization even when lifecycle metadata is fresh"
+    )]
+    force: bool,
+    #[arg(long, default_value_t = 7 * 24 * 60 * 60)]
+    stale_after_seconds: u64,
+    #[arg(long, default_value_t = 24 * 60 * 60)]
+    expiring_within_seconds: u64,
     #[arg(
         long,
         default_value = DEFAULT_ACCESS_KEY_AUTH_BASE,
@@ -1970,6 +2023,9 @@ async fn handle_auth(
         AuthCommand::LoginAccessKey(args) => {
             handle_access_key_login(&args, credential_runtime)?;
         }
+        AuthCommand::RenewAccessKey(args) => {
+            handle_access_key_renewal(&args, credential_runtime)?;
+        }
         AuthCommand::Logout => {
             credential_runtime.logout()?;
             println!("credentials cleared");
@@ -2313,7 +2369,9 @@ fn push_unique(items: &mut Vec<String>, item: String) {
 fn credential_relogin_hint(kind: CredentialKind) -> &'static str {
     match kind {
         CredentialKind::Cookie => "run auth login-web or auth import-cookie",
-        CredentialKind::AccessKey => "run auth login-access-key or auth import-access-key",
+        CredentialKind::AccessKey => {
+            "run auth renew-access-key, auth login-access-key, or auth import-access-key"
+        }
         CredentialKind::TvAccessKey => "run auth login-tv",
     }
 }
@@ -2444,6 +2502,76 @@ fn handle_access_key_login(
     Ok(())
 }
 
+fn handle_access_key_renewal(
+    args: &AccessKeyRenewalArgs,
+    credential_runtime: &CredentialRuntime,
+) -> anyhow::Result<()> {
+    let policy = lifecycle_policy_from_seconds(
+        args.stale_after_seconds,
+        args.expiring_within_seconds,
+        current_unix_millis(),
+    );
+    let (_profiles, _selected_profile, mut statuses) =
+        lifecycle_statuses_for_selection(credential_runtime, false, &policy)?;
+    let status = statuses
+        .pop()
+        .context("failed to evaluate selected credential profile")?;
+    let has_input = args.stdin || args.file.is_some();
+    let mut decision = AccessKeyRenewalDecision::from_profile_status(&status, args.force);
+    if has_input && decision.action == AccessKeyRenewalAction::NoAction {
+        decision = AccessKeyRenewalDecision::from_profile_status(&status, true);
+    }
+
+    if args.json {
+        print_access_key_renewal_decision_json(&decision)?;
+    } else {
+        print_access_key_renewal_decision(&decision)?;
+    }
+
+    if decision.action == AccessKeyRenewalAction::NoAction {
+        return Ok(());
+    }
+
+    let ticket = AccessKeyLoginConfig::new(&args.auth_base, &args.callback_origin)?.ticket()?;
+    let output = ticket.output();
+    if args.json {
+        print_access_key_ticket_json(&output)?;
+    } else {
+        print_human_line(format_args!("authorization: {}", output.url))?;
+        print_human_line(format_args!("qr_payload: {}", output.qr_payload))?;
+    }
+
+    let Some(input) = read_access_key_renewal_input(args)? else {
+        if !args.json {
+            print_human_line(
+                "complete the browser handoff, then rerun auth renew-access-key with --stdin or --file to save the callback",
+            )?;
+        }
+        return Ok(());
+    };
+    let credentials =
+        parse_access_key_login_input(&output, args.message_origin.as_deref(), &input)?;
+    let acquired_at_unix_millis = current_unix_millis();
+    let summary = save_credentials_with_lifecycle(
+        credential_runtime,
+        credentials.credentials(),
+        [(
+            CredentialKind::AccessKey,
+            access_key_lifecycle_metadata(&credentials, acquired_at_unix_millis),
+        )],
+    )?;
+    if args.json {
+        print_json_line(&serde_json::json!({
+            "event": "saved",
+            "kind": "access_key",
+            "saved": summary,
+        }))?;
+    } else {
+        print_human_line("access key saved")?;
+    }
+    Ok(())
+}
+
 fn print_qr_ticket_json(output: &QrLoginTicketOutput) -> anyhow::Result<()> {
     print_json_line(&serde_json::json!({
         "event": "ticket",
@@ -2462,6 +2590,63 @@ fn print_access_key_ticket_json(output: &AccessKeyLoginTicketOutput) -> anyhow::
         "message_origin": output.message_origin,
         "callback_origin": output.callback_origin,
     }))
+}
+
+fn print_access_key_renewal_decision_json(
+    decision: &AccessKeyRenewalDecision,
+) -> anyhow::Result<()> {
+    print_json_line(&serde_json::json!({
+        "event": "decision",
+        "kind": "access_key",
+        "decision": decision,
+    }))
+}
+
+fn print_access_key_renewal_decision(decision: &AccessKeyRenewalDecision) -> anyhow::Result<()> {
+    print_human_line(format_args!(
+        "access_key renewal: {} ({})",
+        access_key_renewal_action_label(decision.action),
+        access_key_renewal_reason_label(decision.reason)
+    ))?;
+    print_human_line(format_args!(
+        "automatic_refresh: {}",
+        access_key_automatic_refresh_readiness_label(decision.automatic_refresh_readiness)
+    ))
+}
+
+fn access_key_renewal_action_label(action: AccessKeyRenewalAction) -> &'static str {
+    match action {
+        AccessKeyRenewalAction::NoAction => "no_action",
+        AccessKeyRenewalAction::Reauthorize => "reauthorize",
+        _ => "unknown",
+    }
+}
+
+fn access_key_renewal_reason_label(reason: AccessKeyRenewalReason) -> &'static str {
+    match reason {
+        AccessKeyRenewalReason::CredentialMissing => "credential_missing",
+        AccessKeyRenewalReason::LifecycleFresh => "lifecycle_fresh",
+        AccessKeyRenewalReason::LifecycleUnknown => "lifecycle_unknown",
+        AccessKeyRenewalReason::LifecycleStale => "lifecycle_stale",
+        AccessKeyRenewalReason::LifecycleExpiring => "lifecycle_expiring",
+        AccessKeyRenewalReason::LifecycleExpired => "lifecycle_expired",
+        AccessKeyRenewalReason::Forced => "forced",
+        _ => "unknown",
+    }
+}
+
+fn access_key_automatic_refresh_readiness_label(
+    readiness: AccessKeyAutomaticRefreshReadiness,
+) -> &'static str {
+    match readiness {
+        AccessKeyAutomaticRefreshReadiness::CredentialMissing => "credential_missing",
+        AccessKeyAutomaticRefreshReadiness::UnsupportedSource => "unsupported_source",
+        AccessKeyAutomaticRefreshReadiness::MissingRefreshToken => "missing_refresh_token",
+        AccessKeyAutomaticRefreshReadiness::MetadataOnlyRefreshToken => {
+            "metadata_only_refresh_token"
+        }
+        _ => "unknown",
+    }
 }
 
 #[cfg(test)]
@@ -2601,6 +2786,44 @@ fn read_access_key_login_input(args: &AccessKeyLoginArgs) -> anyhow::Result<Stri
     let input = raw.trim_end_matches(['\r', '\n']).to_owned();
     ensure!(!input.trim().is_empty(), "access-key login input is empty");
     Ok(input)
+}
+
+fn read_access_key_renewal_input(args: &AccessKeyRenewalArgs) -> anyhow::Result<Option<String>> {
+    let raw = if args.stdin {
+        ensure_access_key_login_stdin_is_safe(io::stdin().is_terminal())?;
+        let mut buffer = String::new();
+        io::stdin()
+            .read_to_string(&mut buffer)
+            .context("failed to read access-key renewal data from stdin")?;
+        Some(buffer)
+    } else if let Some(path) = &args.file {
+        let mut file = fs::File::open(path).with_context(|| {
+            format!(
+                "failed to open access-key renewal data from {}",
+                path.display()
+            )
+        })?;
+        ensure_access_key_login_file_is_safe(path, file.is_terminal())?;
+        let mut buffer = String::new();
+        file.read_to_string(&mut buffer).with_context(|| {
+            format!(
+                "failed to read access-key renewal data from {}",
+                path.display()
+            )
+        })?;
+        Some(buffer)
+    } else {
+        None
+    };
+    raw.map(|raw| {
+        let input = raw.trim_end_matches(['\r', '\n']).to_owned();
+        ensure!(
+            !input.trim().is_empty(),
+            "access-key renewal input is empty"
+        );
+        Ok(input)
+    })
+    .transpose()
 }
 
 fn ensure_access_key_login_stdin_is_safe(stdin_is_terminal: bool) -> anyhow::Result<()> {

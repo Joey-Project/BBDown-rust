@@ -389,8 +389,12 @@ JSON credentials，也可以是使用 `access_key` 或 `access_token` 的 URL/qu
 `expires_in` metadata，但转回 `Credentials` 时只保存通用 `access_key`。自行管理存储的嵌入
 方应显式把过期时间和 refresh-token presence 复制到 `CredentialLifecycleMetadata`。CLI 登录
 路径保存所选 profile 时会执行这一步：绝对 expiry 直接保存，相对 `expires_in` 按获取时间
-换算，并且 lifecycle metadata 只记录 refresh token 是否存在。refresh scheduling 和 token
-rotation 仍然是独立 lifecycle 工作，让嵌入方可以选择自己的策略。
+换算，并且 lifecycle metadata 只记录 refresh token 是否存在。`AccessKeyRenewalDecision`
+会把所选 profile lifecycle status 转成 `NoAction` 或 `Reauthorize`，并单独报告
+`automatic_refresh_readiness`，让嵌入方能看出为什么当前不能 silent refresh。在当前模型中，
+`metadata_only_refresh_token` 表示 BALH callback 带过 refresh token，但 BBDown 只保存了不含密钥的
+presence bit；未来需要 refresh-token store 和已验证的 refresh endpoint，才能在不重新授权的
+情况下轮换 token。
 browser `postMessage` consumer 应通过 ticket/output 的 `credentials_from_message` helper
 解析，它会先把 sender origin 与可信 auth origin 或 callback origin 校验，再使用 raw BALH
 payload parser。
@@ -399,7 +403,11 @@ CLI 用 `auth login-access-key` 包装这个 core API：它会打印同一组授
 `access_key` 和安全 lifecycle metadata merge 到当前选择的 credential profile。它会刻意避免交互式 secret paste
 prompt，因为终端 echo 可能把 callback token 泄露到 scrollback 中；`--stdin` 也要求来自
 pipe 或 redirect，`--file` 会拒绝 terminal-backed path，并且命令会拒绝隐式 stdin，调用方
-必须先显式选择才会消费 pipe 或 redirect 输入。自动化可以读取换行分隔 JSON ticket/saved
+必须先显式选择才会消费 pipe 或 redirect 输入。`auth renew-access-key` 使用同一套 parser 和
+保存路径，但会先输出 renewal decision。需要重新授权时，它会输出新的 ticket；如果同时提供
+callback input，则保存新的 access key 和更新后的 lifecycle metadata。没有 callback input 时，
+它会在 decision 和 ticket 后停止，让嵌入 shell 或 wrapper 自行渲染 QR payload 并收集 handoff。
+自动化可以读取换行分隔 JSON ticket/saved
 事件，stdout 中不会包含 token 值。
 
 二维码登录在 crate 中建模为显式状态机。WEB 二维码登录创建 `QrLoginTicket`，它可以转换为

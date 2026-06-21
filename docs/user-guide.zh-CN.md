@@ -319,6 +319,8 @@ bbdown auth import-cookie --stdin
 bbdown auth import-access-key --stdin
 bbdown auth login-access-key --stdin < balh-callback.txt
 bbdown auth login-access-key --file balh-callback.txt
+bbdown auth renew-access-key --json
+bbdown auth renew-access-key --stdin < balh-callback.txt
 bbdown auth login-web
 bbdown auth login-tv
 bbdown auth status
@@ -342,7 +344,16 @@ sender origin 与本次 login ticket 校验；可信的手工 callback URL/query
 兼容 mock 或部署可以使用 `--auth-base` 和 `--callback-origin`。当 access-key callback 带有
 `oauth_expires_at`、`expires_at` 或 `expires_in` 时，CLI 会把派生出的 lifecycle expiry
 metadata 记录到当前选择的 credential profile 中；它也会记录是否出现过 refresh token，但不
-会把 refresh token 值保存进 lifecycle metadata。`auth login-web` 打印二维码登录 URL，轮询到扫码确认，并保存得到的
+会把 refresh token 值保存进 lifecycle metadata。自动化如果需要 profile-aware access-key
+renewal decision，可以使用 `auth renew-access-key`。该命令会先按 `auth status` 相同的
+lifecycle policy 评估当前选择的 profile；fresh credential 输出 `no_action` decision，missing、
+unknown、stale、expiring、expired 或 `--force` credential 会输出 reauthorization decision 和
+新的 BiliPlus/BALH ticket。使用 `--json` 时，事件顺序是 `decision`，需要重新授权时接着
+`ticket`，如果 `--stdin` 或 `--file` 提供 callback data，则最后输出 `saved`。没有 callback
+输入时，命令会在 ticket 后停止，让调用方自行渲染 URL 或 `qr_payload` 并收集浏览器 handoff。
+decision 会包含 `automatic_refresh_readiness`；`metadata_only_refresh_token` 表示上一次
+callback 报告过 refresh token，但 BBDown 只保存了安全 metadata，没有保存静默刷新所需的
+raw refresh secret。`auth login-web` 打印二维码登录 URL，轮询到扫码确认，并保存得到的
 cookie。`auth login-tv` 使用 TV 二维码流程，保存 TV 专用 access key 供未来 TV/app 流程使
 用，不会覆盖由通用 access-key 命令导入或获取的 intl/Bstar access key。使用 `--json` 时，
 登录命令会打印换行分隔 JSON 事件：`ticket` 在轮询或 handoff 前包含登录 URL 和

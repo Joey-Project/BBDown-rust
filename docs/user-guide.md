@@ -359,6 +359,8 @@ bbdown auth import-cookie --stdin
 bbdown auth import-access-key --stdin
 bbdown auth login-access-key --stdin < balh-callback.txt
 bbdown auth login-access-key --file balh-callback.txt
+bbdown auth renew-access-key --json
+bbdown auth renew-access-key --stdin < balh-callback.txt
 bbdown auth login-web
 bbdown auth login-tv
 bbdown auth status
@@ -384,6 +386,16 @@ and `--callback-origin` for compatible mocks or deployments.
 When the access-key callback includes `oauth_expires_at`, `expires_at`, or `expires_in`, the CLI
 records the derived lifecycle expiry metadata in the selected credential profile. It also records
 whether a refresh token was present without storing that token value in lifecycle metadata.
+Use `auth renew-access-key` when automation needs a profile-aware access-key renewal decision. The
+command first evaluates the selected profile with the same lifecycle policy as `auth status`; fresh
+credentials emit a `no_action` decision, while missing, unknown, stale, expiring, expired, or
+`--force` credentials emit a reauthorization decision and a new BiliPlus/BALH ticket. With `--json`,
+the event order is `decision`, then `ticket` when reauthorization is needed, then `saved` when
+`--stdin` or `--file` supplies callback data. Without callback input the command stops after the
+ticket so callers can render the URL or `qr_payload` and collect the browser handoff separately.
+The decision includes `automatic_refresh_readiness`; `metadata_only_refresh_token` means the
+previous callback reported a refresh token, but BBDown only persisted safe metadata, not the raw
+refresh secret required for silent token refresh.
 `auth login-web` prints a QR login URL, polls until scan confirmation, and saves the resulting
 cookie. `auth login-tv` uses the TV QR flow and saves a TV-specific access key for future TV/app
 flows without overwriting the generic intl/Bstar access key imported or acquired through the generic
