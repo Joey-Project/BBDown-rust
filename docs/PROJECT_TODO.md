@@ -89,6 +89,11 @@
   policy/reporting, profile-level status, and multi-account lifecycle UX.
 - [pending] Implement the `v0.6.0` credential lifecycle sequence from
   `docs/project_journal/2026/06/2026-06-20-v0-6-credential-lifecycle-roadmap-019f16.md`.
+- [pending] Prioritize an overseas playback/CDN routing workstream after the current credential
+  lifecycle line, using CCB as a research reference for Bilibili CDN regions and overseas host
+  candidates while keeping `bbdown-core` configurable and not dependent on a third-party live data
+  service. See
+  `docs/project_journal/2026/06/2026-06-21-overseas-cdn-routing-roadmap-019f17.md`.
 - [pending] Plan `v0.7.0` or a later feed/page release for per-video related recommendations and
   any additional Bilibili page-family parsing that does not fit the downloader or credential lines.
 - [pending] Continue the remaining BBDown parity backlog after the published `0.4.0` credential and
