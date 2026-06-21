@@ -67,8 +67,11 @@ superseded_by:
     profile-level and per-credential status output for embedding UI and preflight decisions.
   - `CredentialHealthReport::summary` and `probe` add compact UI summaries while preserving exact
     per-kind probe inspection.
+  - CLI WEB/TV QR login now records lifecycle source and acquisition time, and access-key login
+    persists callback-provided absolute or relative expiry metadata plus refresh-token presence in
+    the selected credential profile.
   - Embedding and architecture docs now describe the difference between local lifecycle evaluation
-    and network-backed credential health probes.
+    metadata, saved login provenance, and network-backed credential health probes.
 
 ## Out Of Scope For This Line
 
@@ -92,10 +95,17 @@ superseded_by:
   - `cargo test -p bbdown-core --test public_api --locked`.
   - `just ci`.
 - PR 3 local validation:
+  - `cargo fmt --all -- --check`.
   - `cargo test -p bbdown-core credentials --locked`.
   - `cargo test -p bbdown-core --test public_api --locked`.
+  - `cargo test -p bbdown-cli save_credentials --locked`.
+  - `cargo test -p bbdown-cli lifecycle_metadata --locked`.
+  - `cargo test -p bbdown-cli auth_login_access_key --test cli_e2e --locked`.
+  - `cargo test -p bbdown-cli auth_qr_login_web_and_tv_use_local_store --test cli_e2e --locked`.
   - `cargo clippy -p bbdown-core --all-targets --locked -- -D warnings`.
+  - `cargo clippy -p bbdown-cli --all-targets --locked -- -D warnings`.
   - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/07780f1c323453fd738330fbf8fd70e2899d4409/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.
+  - `git diff --check`.
   - `just ci`.
 
 ## Next Steps

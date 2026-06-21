@@ -377,14 +377,17 @@ poller。`AccessKeyLoginConfig` 会用 `balh_auth=1` 和归一化 callback origi
 供嵌入 UI 使用。parser 接受历史 `balh-login-credentials:` message prefix；payload 可以是
 JSON credentials，也可以是使用 `access_key` 或 `access_token` 的 URL/query callback。
 `AccessKeyLoginCredentials` 会保留可选的 `refresh_token`、绝对 `oauth_expires_at` 和相对
-`expires_in` metadata，但转回 `Credentials` 时只保存通用 `access_key`。refresh scheduling、
-token rotation 和 CLI persistence 会作为独立 lifecycle 工作处理，让嵌入方可以选择自己的策略。
+`expires_in` metadata，但转回 `Credentials` 时只保存通用 `access_key`。自行管理存储的嵌入
+方应显式把过期时间和 refresh-token presence 复制到 `CredentialLifecycleMetadata`。CLI 登录
+路径保存所选 profile 时会执行这一步：绝对 expiry 直接保存，相对 `expires_in` 按获取时间
+换算，并且 lifecycle metadata 只记录 refresh token 是否存在。refresh scheduling 和 token
+rotation 仍然是独立 lifecycle 工作，让嵌入方可以选择自己的策略。
 browser `postMessage` consumer 应通过 ticket/output 的 `credentials_from_message` helper
 解析，它会先把 sender origin 与可信 auth origin 或 callback origin 校验，再使用 raw BALH
 payload parser。
 CLI 用 `auth login-access-key` 包装这个 core API：它会打印同一组授权 URL 和 QR payload，
-通过 `--stdin` 或 `--file` 接收粘贴的 message 或 callback data，然后只把得到的通用
-`access_key` merge 到当前选择的 credential profile。它会刻意避免交互式 secret paste
+通过 `--stdin` 或 `--file` 接收粘贴的 message 或 callback data，然后把得到的通用
+`access_key` 和安全 lifecycle metadata merge 到当前选择的 credential profile。它会刻意避免交互式 secret paste
 prompt，因为终端 echo 可能把 callback token 泄露到 scrollback 中；`--stdin` 也要求来自
 pipe 或 redirect，`--file` 会拒绝 terminal-backed path，并且命令会拒绝隐式 stdin，调用方
 必须先显式选择才会消费 pipe 或 redirect 输入。自动化可以读取换行分隔 JSON ticket/saved

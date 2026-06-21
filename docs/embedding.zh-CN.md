@@ -211,7 +211,11 @@ BiliPlus/BALH-compatible browser handoff URL；`AccessKeyLoginTicketOutput::qr_p
 直接渲染成二维码。parser 接受历史 `balh-login-credentials:` message shape，payload 可以是
 JSON，也可以是 URL/query callback；返回的 `AccessKeyLoginCredentials` 包含通用
 `access_key` 以及可选的 refresh/expiration metadata。调用 `credentials()` 只会把通用
-access key 转成现有 `Credentials` model；自动续期和 CLI 持久化属于独立 lifecycle 事项。
+access key 转成现有 `Credentials` model，因此自行管理存储的嵌入应用需要显式保存来自
+`oauth_expires_at`、`expires_at`、`expires_in` 和 `refresh_token` 的 lifecycle metadata。
+CLI 登录路径会把这些 metadata 记录到当前选择的 credential profile：绝对 expiry 字段会直接
+保存，相对 `expires_in` 会按获取时间换算，refresh token 只记录是否存在，不会把 token 值
+复制进 lifecycle metadata。
 在 browser `postMessage` flow 中，应优先使用
 `AccessKeyLoginTicketOutput::credentials_from_message(event_origin, data)`，让 sender origin
 先按 ticket 的可信 auth origin 或 callback origin 校验后再解析。只有当嵌入应用已经自行验证

@@ -433,14 +433,19 @@ payload, expected message origin, and callback origin for embedding UIs. The par
 historical `balh-login-credentials:` message prefix with either JSON credentials or a URL/query
 callback using `access_key` or `access_token`. `AccessKeyLoginCredentials` preserves optional
 `refresh_token`, absolute `oauth_expires_at`, and relative `expires_in` metadata, but conversion back
-to `Credentials` stores only the generic `access_key`. Refresh scheduling, token rotation, and CLI
-persistence are intentionally separate lifecycle work so embedders can choose their own policy.
+to `Credentials` stores only the generic `access_key`. Embedding callers that own storage should
+copy expiration and refresh-token presence into `CredentialLifecycleMetadata` explicitly. The CLI
+login path does that when it saves the selected profile: absolute expiry values are stored directly,
+relative `expires_in` values are computed from the acquisition time, and only refresh-token presence
+is recorded in lifecycle metadata. Refresh scheduling and token rotation remain separate lifecycle
+work so embedders can choose their own policy.
 Browser `postMessage` consumers should parse through the ticket/output `credentials_from_message`
 helpers, which validate the sender origin against the trusted auth or callback origin before using
 the raw BALH payload parser.
 The CLI wraps this core API in `auth login-access-key`: it prints the same authorization URL and QR
-payload, accepts pasted message or callback data through `--stdin` or `--file`, then merges only the
-resulting generic `access_key` into the currently selected credential profile. It deliberately avoids
+payload, accepts pasted message or callback data through `--stdin` or `--file`, then merges the
+resulting generic `access_key` and safe lifecycle metadata into the currently selected credential
+profile. It deliberately avoids
 interactive secret paste prompts because terminal echo can leak callback tokens into scrollback.
 `--stdin` requires piped or redirected input for the same reason, `--file` rejects terminal-backed
 paths, and the command rejects implicit stdin so callers must opt in before pipe or redirect input is

@@ -224,8 +224,12 @@ BiliPlus/BALH-compatible browser handoff URL whose `AccessKeyLoginTicketOutput::
 rendered directly as a QR code. The parser accepts the historical `balh-login-credentials:` message
 shape with either a JSON payload or URL/query callback, returning `AccessKeyLoginCredentials` with the
 generic `access_key` plus optional refresh/expiration metadata. Calling `credentials()` converts only
-the generic access key into the existing `Credentials` model; automatic refresh and CLI persistence
-are separate lifecycle concerns. In browser `postMessage` flows, prefer
+the generic access key into the existing `Credentials` model, so embedding applications that own
+storage should persist lifecycle metadata from `oauth_expires_at`, `expires_at`, `expires_in`, and
+`refresh_token` explicitly. The CLI login path records that metadata in the selected credential
+profile: absolute expiry fields are stored directly, relative `expires_in` values are converted from
+the acquisition time, and refresh-token presence is stored without copying the token value into
+lifecycle metadata. In browser `postMessage` flows, prefer
 `AccessKeyLoginTicketOutput::credentials_from_message(event_origin, data)` so the sender origin is
 validated against the ticket's trusted auth or callback origin before parsing. Use the raw
 `AccessKeyLoginCredentials::from_balh_*` parsers only after an embedding application has already

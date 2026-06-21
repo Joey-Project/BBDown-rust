@@ -5,9 +5,10 @@ use anyhow::{Context, bail, ensure};
 use bbdown_core::{
     AccessKeyLoginConfig, AccessKeyLoginCredentials, AccessKeyLoginTicketOutput, BiliClient,
     ClientConfig, CredentialHealthReport, CredentialHealthScope, CredentialHealthStatus,
-    CredentialKind, CredentialProfileSelection, CredentialStore, Credentials, DanmakuFormat,
-    DanmakuUpdateOptions, DownloadArchive, DownloadCancellationToken, DownloadMode,
-    DownloadOptions, DownloadPathTemplates, DownloadPlan, DownloadPreflight, DownloadProgressEvent,
+    CredentialKind, CredentialLifecycleMetadata, CredentialLifecycleSource,
+    CredentialProfileSelection, CredentialStore, Credentials, DanmakuFormat, DanmakuUpdateOptions,
+    DownloadArchive, DownloadCancellationToken, DownloadMode, DownloadOptions,
+    DownloadPathTemplates, DownloadPlan, DownloadPreflight, DownloadProgressEvent,
     DownloadProgressSink, DownloadReport, DuplicateDecision, EndpointConfig, MediaHostOptions,
     MediaStream, MuxOptions, PlaybackPlan, PlayurlMode, QrLoginKind, QrLoginState, QrLoginTicket,
     QrLoginTicketOutput, ResolvedContent, RestrictedArea, RestrictedAreaConfig,
@@ -23,7 +24,7 @@ use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
 };
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::task::JoinHandle;
 
 const DEFAULT_ACCESS_KEY_AUTH_BASE: &str = "https://www.biliplus.com";
@@ -2037,7 +2038,11 @@ async fn handle_qr_login(
         print_human_line(format_args!("scan: {}", output.url))?;
     }
     let credentials = wait_for_qr_login(&client, &ticket, &args).await?;
-    let summary = save_credentials(credential_runtime, credentials)?;
+    let summary = save_credentials_with_lifecycle(
+        credential_runtime,
+        credentials,
+        [qr_login_lifecycle_metadata(kind, current_unix_millis())],
+    )?;
     if args.json {
         print_json_line(&serde_json::json!({
             "event": "saved",
@@ -2065,7 +2070,15 @@ fn handle_access_key_login(
     let input = read_access_key_login_input(args)?;
     let credentials =
         parse_access_key_login_input(&output, args.message_origin.as_deref(), &input)?;
-    let summary = save_credentials(credential_runtime, credentials.credentials())?;
+    let acquired_at_unix_millis = current_unix_millis();
+    let summary = save_credentials_with_lifecycle(
+        credential_runtime,
+        credentials.credentials(),
+        [(
+            CredentialKind::AccessKey,
+            access_key_lifecycle_metadata(&credentials, acquired_at_unix_millis),
+        )],
+    )?;
     if args.json {
         print_json_line(&serde_json::json!({
             "event": "saved",
@@ -2098,6 +2111,7 @@ fn print_access_key_ticket_json(output: &AccessKeyLoginTicketOutput) -> anyhow::
     }))
 }
 
+#[cfg(test)]
 fn save_credentials(
     credential_runtime: &CredentialRuntime,
     credentials: Credentials,
@@ -2105,6 +2119,43 @@ fn save_credentials(
     let mut stored = credential_runtime.load()?;
     merge_credentials(&mut stored, credentials);
     credential_runtime.save(&stored)?;
+    Ok(stored.redacted_summary())
+}
+
+fn save_credentials_with_lifecycle(
+    credential_runtime: &CredentialRuntime,
+    credentials: Credentials,
+    lifecycle_metadata: impl IntoIterator<Item = (CredentialKind, CredentialLifecycleMetadata)>,
+) -> anyhow::Result<bbdown_core::CredentialSource> {
+    let mut profiles = credential_runtime
+        .store
+        .load_profiles()
+        .context("failed to load credential profiles")?;
+    let profile_name = credential_runtime
+        .selection
+        .profile_name()
+        .map_or_else(|| profiles.default_profile.clone(), str::to_owned);
+    let mut stored = profiles
+        .profile(&profile_name)
+        .context("failed to load credential profile")?;
+    merge_credentials(&mut stored, credentials);
+    profiles
+        .set_profile(&profile_name, stored.clone())
+        .context("failed to update credential profile")?;
+
+    let mut profile_metadata = profiles
+        .profile_metadata(&profile_name)
+        .context("failed to load credential profile metadata")?;
+    for (kind, metadata) in lifecycle_metadata {
+        profile_metadata.set_credential(kind, metadata);
+    }
+    profiles
+        .set_profile_metadata(&profile_name, profile_metadata)
+        .context("failed to update credential lifecycle metadata")?;
+    credential_runtime
+        .store
+        .save_profiles(&profiles)
+        .context("failed to save credentials")?;
     Ok(stored.redacted_summary())
 }
 
@@ -2118,6 +2169,53 @@ fn merge_credentials(stored: &mut Credentials, credentials: Credentials) {
     if credentials.tv_access_key.is_some() {
         stored.tv_access_key = credentials.tv_access_key;
     }
+}
+
+fn current_unix_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| {
+            duration.as_millis().try_into().unwrap_or(u64::MAX)
+        })
+}
+
+fn qr_login_lifecycle_metadata(
+    kind: QrLoginKind,
+    acquired_at_unix_millis: u64,
+) -> (CredentialKind, CredentialLifecycleMetadata) {
+    match kind {
+        QrLoginKind::Web => (
+            CredentialKind::Cookie,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::WebQrLogin)
+                .with_acquired_at_unix_millis(acquired_at_unix_millis),
+        ),
+        QrLoginKind::Tv => (
+            CredentialKind::TvAccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::TvQrLogin)
+                .with_acquired_at_unix_millis(acquired_at_unix_millis),
+        ),
+    }
+}
+
+fn access_key_lifecycle_metadata(
+    credentials: &AccessKeyLoginCredentials,
+    acquired_at_unix_millis: u64,
+) -> CredentialLifecycleMetadata {
+    let expires_at_unix_millis = credentials.oauth_expires_at.or_else(|| {
+        credentials.expires_in.map(|expires_in| {
+            acquired_at_unix_millis.saturating_add(expires_in.saturating_mul(1_000))
+        })
+    });
+    let mut metadata = CredentialLifecycleMetadata::default()
+        .with_source(CredentialLifecycleSource::AccessKeyLogin)
+        .with_acquired_at_unix_millis(acquired_at_unix_millis)
+        .with_refresh_token_present(credentials.refresh_token.is_some());
+    if let Some(expires_at_unix_millis) = expires_at_unix_millis {
+        metadata = metadata.with_expires_at_unix_millis(expires_at_unix_millis);
+    }
+    metadata
 }
 
 fn read_access_key_login_input(args: &AccessKeyLoginArgs) -> anyhow::Result<String> {
@@ -2694,18 +2792,21 @@ mod tests {
     use super::{
         Cli, CliProgressReporter, CredentialRuntime, DownloadCtrlCAction, DownloadOnlyArg,
         DuplicateDecisionRequest, DuplicatePromptActiveGuard, SingleDownloadValidationArgs,
-        SubtitleAiPolicyArg, archive_sidecar_path, credential_profile_selection,
-        download_ctrl_c_action, duplicate_decision_or_report, endpoints_from_cli,
-        ensure_access_key_login_file_is_safe, ensure_access_key_login_stdin_is_safe,
-        ensure_archive_file_is_not_output_root, next_poll_sleep, parse_access_key_login_input,
+        SubtitleAiPolicyArg, access_key_lifecycle_metadata, archive_sidecar_path,
+        credential_profile_selection, download_ctrl_c_action, duplicate_decision_or_report,
+        endpoints_from_cli, ensure_access_key_login_file_is_safe,
+        ensure_access_key_login_stdin_is_safe, ensure_archive_file_is_not_output_root,
+        next_poll_sleep, parse_access_key_login_input, qr_login_lifecycle_metadata,
         remaining_until, restricted_area_from_cli_with_args,
         restricted_area_from_cli_with_env_values, save_credentials,
-        should_prompt_duplicate_decision, validate_media_host_spec, validate_single_download_args,
+        save_credentials_with_lifecycle, should_prompt_duplicate_decision,
+        validate_media_host_spec, validate_single_download_args,
     };
     use bbdown_core::{
-        AccessKeyLoginConfig, CredentialProfileSelection, CredentialStore, Credentials,
-        DownloadCancellationToken, DownloadOutputConflict, DownloadPreflight, DuplicateDecision,
-        EndpointConfig,
+        AccessKeyLoginConfig, AccessKeyLoginCredentials, CredentialKind,
+        CredentialLifecycleMetadata, CredentialLifecycleSource, CredentialProfileSelection,
+        CredentialStore, Credentials, DownloadCancellationToken, DownloadOutputConflict,
+        DownloadPreflight, DuplicateDecision, EndpointConfig, QrLoginKind,
     };
     use clap::Parser as _;
     use std::fs;
@@ -3525,5 +3626,103 @@ mod tests {
         assert!(!summary.has_access_key);
         assert!(summary.has_tv_access_key);
         Ok(())
+    }
+
+    #[test]
+    fn access_key_lifecycle_metadata_records_absolute_and_relative_expiry() -> anyhow::Result<()> {
+        let now = 1_700_000_000_000;
+        let absolute_credentials = AccessKeyLoginCredentials::from_balh_payload(
+            "access_key=ACCESS&refresh_token=REFRESH&oauth_expires_at=1700000120000&expires_in=60",
+        )?;
+        let absolute = access_key_lifecycle_metadata(&absolute_credentials, now);
+        assert_eq!(
+            absolute.source,
+            Some(CredentialLifecycleSource::AccessKeyLogin)
+        );
+        assert_eq!(absolute.acquired_at_unix_millis, Some(now));
+        assert_eq!(absolute.expires_at_unix_millis, Some(now + 120_000));
+        assert_eq!(absolute.refresh_token_present, Some(true));
+
+        let relative_credentials =
+            AccessKeyLoginCredentials::from_balh_payload("access_key=ACCESS&expires_in=60")?;
+        let relative = access_key_lifecycle_metadata(&relative_credentials, now);
+        assert_eq!(relative.expires_at_unix_millis, Some(now + 60_000));
+        assert_eq!(relative.refresh_token_present, Some(false));
+        Ok(())
+    }
+
+    #[test]
+    fn save_credentials_with_lifecycle_records_default_profile_metadata() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let store = CredentialStore::new(temp.path().join("credentials.json"));
+        store.save(&Credentials {
+            cookie: Some("SESSDATA=default".to_owned()),
+            access_key: None,
+            tv_access_key: None,
+        })?;
+        let runtime =
+            CredentialRuntime::new(store.clone(), CredentialProfileSelection::default_profile());
+        let now = 1_700_000_000_000;
+
+        let summary = save_credentials_with_lifecycle(
+            &runtime,
+            Credentials {
+                cookie: None,
+                access_key: Some("ACCESS".to_owned()),
+                tv_access_key: None,
+            },
+            [(
+                CredentialKind::AccessKey,
+                CredentialLifecycleMetadata::default()
+                    .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                    .with_acquired_at_unix_millis(now)
+                    .with_expires_at_unix_millis(now + 60_000)
+                    .with_refresh_token_present(true),
+            )],
+        )?;
+
+        assert!(summary.has_cookie);
+        assert!(summary.has_access_key);
+        let saved = store.load()?;
+        assert_eq!(saved.cookie.as_deref(), Some("SESSDATA=default"));
+        assert_eq!(saved.access_key.as_deref(), Some("ACCESS"));
+        let profiles = store.load_profiles()?;
+        let metadata = profiles.profile_metadata("default")?;
+        let access_key_metadata = metadata
+            .credential(CredentialKind::AccessKey)
+            .ok_or_else(|| anyhow::anyhow!("missing access-key lifecycle metadata"))?;
+        assert_eq!(
+            access_key_metadata.source,
+            Some(CredentialLifecycleSource::AccessKeyLogin)
+        );
+        assert_eq!(access_key_metadata.acquired_at_unix_millis, Some(now));
+        assert_eq!(
+            access_key_metadata.expires_at_unix_millis,
+            Some(now + 60_000)
+        );
+        assert_eq!(access_key_metadata.refresh_token_present, Some(true));
+        Ok(())
+    }
+
+    #[test]
+    fn qr_login_lifecycle_metadata_records_source_and_acquisition_time() {
+        let now = 1_700_000_000_000;
+        let (web_kind, web_metadata) = qr_login_lifecycle_metadata(QrLoginKind::Web, now);
+        assert_eq!(web_kind, CredentialKind::Cookie);
+        assert_eq!(
+            web_metadata.source,
+            Some(CredentialLifecycleSource::WebQrLogin)
+        );
+        assert_eq!(web_metadata.acquired_at_unix_millis, Some(now));
+        assert_eq!(web_metadata.expires_at_unix_millis, None);
+
+        let (tv_kind, tv_metadata) = qr_login_lifecycle_metadata(QrLoginKind::Tv, now);
+        assert_eq!(tv_kind, CredentialKind::TvAccessKey);
+        assert_eq!(
+            tv_metadata.source,
+            Some(CredentialLifecycleSource::TvQrLogin)
+        );
+        assert_eq!(tv_metadata.acquired_at_unix_millis, Some(now));
+        assert_eq!(tv_metadata.expires_at_unix_millis, None);
     }
 }
