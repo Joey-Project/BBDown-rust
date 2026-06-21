@@ -81,6 +81,9 @@ superseded_by:
   - `auth health --all-profiles` checks every saved profile with network health probes, and
     `--json --all-profiles` returns each profile's redacted lifecycle status, raw health report,
     compact summary, and guidance for downstream UI.
+  - All-profile status and health output now also includes the explicitly selected profile when it
+    has no saved credentials, so downstream callers can still identify the selected empty profile
+    and prompt for login.
   - Human `auth health` output now adds guidance when credentials are stale, expired, rejected, or
     failed by request, while preserving the raw `auth health --json` schema for single-profile use.
 
@@ -124,6 +127,8 @@ superseded_by:
   - `cargo test -p bbdown-cli auth_health_all_profiles --test cli_e2e --locked`.
   - `cargo test -p bbdown-cli auth_health_escapes_control_characters_in_human_probe_messages --test cli_e2e --locked -- --exact`.
   - `cargo test -p bbdown-cli auth_health_all_profiles_escapes_control_characters_in_human_profile_names --test cli_e2e --locked -- --exact`.
+  - `cargo test -p bbdown-cli auth_status_all_profiles_includes_selected_empty_profile --test cli_e2e --locked -- --exact`.
+  - `cargo test -p bbdown-cli auth_health_all_profiles_includes_selected_empty_profile --test cli_e2e --locked -- --exact`.
   - `cargo test -p bbdown-cli auth_health_reports_redacted_credential_probe_statuses --test cli_e2e --locked`.
   - `cargo clippy -p bbdown-cli --all-targets --locked -- -D warnings`.
   - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/07780f1c323453fd738330fbf8fd70e2899d4409/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.

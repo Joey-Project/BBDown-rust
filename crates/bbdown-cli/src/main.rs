@@ -2106,9 +2106,21 @@ fn lifecycle_statuses_for_selection(
         .context("failed to load credential profiles")?;
     let selected_profile = credential_runtime.selected_profile_name(&profiles);
     let statuses = if all_profiles {
-        profiles
+        let mut statuses = profiles
             .lifecycle_statuses(policy)
-            .context("failed to evaluate credential profile lifecycle status")?
+            .context("failed to evaluate credential profile lifecycle status")?;
+        if !statuses
+            .iter()
+            .any(|status| status.profile == selected_profile)
+        {
+            statuses.push(
+                profiles
+                    .profile_lifecycle_status(&selected_profile, policy)
+                    .context("failed to evaluate credential profile lifecycle status")?,
+            );
+            statuses.sort_by(|left, right| left.profile.cmp(&right.profile));
+        }
+        statuses
     } else {
         vec![
             profiles

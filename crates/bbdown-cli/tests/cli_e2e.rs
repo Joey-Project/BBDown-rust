@@ -3776,6 +3776,41 @@ fn auth_status_profiles_reports_default_selected_and_lifecycle_guidance() -> any
 }
 
 #[test]
+fn auth_status_all_profiles_includes_selected_empty_profile() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .args(["auth", "status", "--profiles", "--all-profiles"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let report: Value = serde_json::from_slice(&output)?;
+    let profile_reports = report["profiles"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("missing profiles array"))?;
+    let selected = profile_reports
+        .iter()
+        .find(|entry| entry["profile"] == "intl")
+        .ok_or_else(|| anyhow::anyhow!("missing selected profile"))?;
+
+    assert_eq!(report["selected_profile"], "intl");
+    assert_eq!(selected["is_default_profile"], false);
+    assert_eq!(selected["is_selected_profile"], true);
+    assert_eq!(selected["credentials"]["has_cookie"], false);
+    assert_eq!(selected["credentials"]["has_access_key"], false);
+    assert_eq!(selected["credentials"]["has_tv_access_key"], false);
+    assert_eq!(selected["status"], "missing");
+    Ok(())
+}
+
+#[test]
 fn auth_health_all_profiles_reports_profile_summaries_and_guidance() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;
@@ -3843,6 +3878,46 @@ fn auth_health_all_profiles_reports_profile_summaries_and_guidance() -> anyhow::
     }
     cookie_mock.assert_calls(1);
     access_key_mock.assert_calls(1);
+    Ok(())
+}
+
+#[test]
+fn auth_health_all_profiles_includes_selected_empty_profile() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .args(["auth", "health", "--json", "--all-profiles"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let report: Value = serde_json::from_slice(&output)?;
+    let profile_reports = report["profiles"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("missing profiles array"))?;
+    let selected = profile_reports
+        .iter()
+        .find(|entry| entry["profile"] == "intl")
+        .ok_or_else(|| anyhow::anyhow!("missing selected profile"))?;
+
+    assert_eq!(report["selected_profile"], "intl");
+    assert_eq!(selected["is_default_profile"], false);
+    assert_eq!(selected["is_selected_profile"], true);
+    assert_eq!(selected["lifecycle"]["status"], "missing");
+    assert_eq!(selected["health_summary"]["status"], "missing");
+    assert_eq!(selected["health_summary"]["missing_count"], 3);
+    assert_eq!(selected["health"]["credentials"]["has_cookie"], false);
+    assert_eq!(selected["health"]["credentials"]["has_access_key"], false);
+    assert_eq!(
+        selected["health"]["credentials"]["has_tv_access_key"],
+        false
+    );
     Ok(())
 }
 
