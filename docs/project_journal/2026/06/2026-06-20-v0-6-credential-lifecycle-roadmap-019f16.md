@@ -3,8 +3,8 @@ id: 20260620-019f16-v0-6-credential-lifecycle-roadmap
 title: v0.6.0 Credential Lifecycle Roadmap
 status: active
 created: 2026-06-20
-updated: 2026-06-20
-branch: feature/v0.6-credential-lifecycle-metadata
+updated: 2026-06-21
+branch: feature/v0.6-credential-lifecycle-status
 pr:
 supersedes: []
 superseded_by:
@@ -60,6 +60,15 @@ superseded_by:
     still fails fast.
   - Replacing a credential value drops lifecycle metadata for that credential kind so old token
     expiry/source hints are not rebound to a new token.
+- PR 3 implemented lifecycle status and health policy APIs:
+  - `CredentialLifecyclePolicy` evaluates profile metadata with explicit `now_unix_millis`,
+    stale-after, and expiring-within windows.
+  - `CredentialProfiles::profile_lifecycle_status` and `lifecycle_statuses` expose redacted
+    profile-level and per-credential status output for embedding UI and preflight decisions.
+  - `CredentialHealthReport::summary` and `probe` add compact UI summaries while preserving exact
+    per-kind probe inspection.
+  - Embedding and architecture docs now describe the difference between local lifecycle evaluation
+    and network-backed credential health probes.
 
 ## Out Of Scope For This Line
 
@@ -82,7 +91,13 @@ superseded_by:
   - `cargo test -p bbdown-core credentials --locked`.
   - `cargo test -p bbdown-core --test public_api --locked`.
   - `just ci`.
+- PR 3 local validation:
+  - `cargo test -p bbdown-core credentials --locked`.
+  - `cargo test -p bbdown-core --test public_api --locked`.
+  - `cargo clippy -p bbdown-core --all-targets --locked -- -D warnings`.
+  - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/07780f1c323453fd738330fbf8fd70e2899d4409/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.
+  - `just ci`.
 
 ## Next Steps
 
-- Cut PR 3 from updated `master` for lifecycle status and health policy APIs after PR 2 lands.
+- Cut PR 4 from updated `master` for CLI lifecycle UX after PR 3 lands.

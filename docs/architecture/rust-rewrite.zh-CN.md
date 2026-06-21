@@ -354,6 +354,10 @@ profile document 可以包含按 profile 和 credential kind 索引的可选 lif
 map 中复制原始 token 值。normalize 时会丢弃空 metadata；当 profile 没有 credentials 时，
 orphan metadata 也会被移除；未知或 malformed 的可选 metadata 会在加载时被忽略，因此旧的
 flat credential 文件和有效 profile document 仍可在没有 lifecycle metadata 的情况下加载。
+`CredentialLifecyclePolicy` 会把这些已持久化 metadata 转换成确定的 stale / expiring /
+expired 状态输出，且不发起网络请求。policy 要求调用方显式传入 `now_unix_millis`，并允许
+embedding app 自行选择 stale 和 expiring 窗口，因此 UI preflight、后台任务和测试可以在不从
+model 内部读取 wall-clock time 的情况下做出一致的 lifecycle 判断。
 credential health diagnostics 是同一 credential model 上的只读层。crate 暴露
 `CredentialHealthReport` 和 `BiliClient::check_credential_health()`，让嵌入调用方可以在选
 择登录或 fallback flow 之前，分别检查 WEB cookie、通用 `access_key` 和 TV `tv_access_key`。
@@ -364,6 +368,8 @@ cookie。通用 token probe 当前通过配置的 `passport_base` 检查 intl/Bs
 个已存储 `access_key` 对 APP gRPC 或 restricted-area proxy 也一定有效。TV token probe 使用
 配置的 `tv_passport_poll_base`。probe failure 会按凭据独立记录为 `missing`、`valid`、
 `rejected` 或 `request_failed`，不会让整份报告失败。
+`CredentialHealthReport::summary()` 会给下游 UI 一个紧凑的 aggregate status，同时保留每个
+kind 的 probe，供精确 policy decision 使用。
 
 通用 access-key 获取被建模为 BiliPlus/BALH-compatible browser handoff，而不是官方 Bilibili
 poller。`AccessKeyLoginConfig` 会用 `balh_auth=1` 和归一化 callback origin 构造授权 URL；

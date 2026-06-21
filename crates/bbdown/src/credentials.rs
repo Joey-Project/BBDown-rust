@@ -1,6 +1,6 @@
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -107,6 +107,8 @@ impl Credentials {
 }
 
 impl CredentialKind {
+    pub const ALL: [Self; 3] = [Self::Cookie, Self::AccessKey, Self::TvAccessKey];
+
     fn from_metadata_key(key: &str) -> Option<Self> {
         match key {
             "cookie" => Some(Self::Cookie),
@@ -268,6 +270,36 @@ impl CredentialProfiles {
             self.profile_metadata.insert(name, metadata);
         }
         Ok(())
+    }
+
+    pub fn profile_lifecycle_status(
+        &self,
+        name: &str,
+        policy: &CredentialLifecyclePolicy,
+    ) -> Result<CredentialProfileLifecycleStatus> {
+        let name = normalize_profile_name(name)?;
+        let credentials = self.profile(&name)?;
+        let metadata = self.profile_metadata(&name)?;
+        Ok(CredentialProfileLifecycleStatus::from_parts(
+            name.clone(),
+            name == self.default_profile,
+            &credentials,
+            &metadata,
+            policy,
+        ))
+    }
+
+    pub fn lifecycle_statuses(
+        &self,
+        policy: &CredentialLifecyclePolicy,
+    ) -> Result<Vec<CredentialProfileLifecycleStatus>> {
+        let mut names = BTreeSet::new();
+        names.insert(self.default_profile.clone());
+        names.extend(self.profiles.keys().cloned());
+        names
+            .into_iter()
+            .map(|name| self.profile_lifecycle_status(&name, policy))
+            .collect()
     }
 
     fn normalize(mut self) -> Result<Self> {
@@ -447,6 +479,195 @@ impl CredentialLifecycleMetadata {
     }
 }
 
+const DEFAULT_LIFECYCLE_STALE_AFTER_MILLIS: u64 = 7 * 24 * 60 * 60 * 1_000;
+const DEFAULT_LIFECYCLE_EXPIRING_WITHIN_MILLIS: u64 = 24 * 60 * 60 * 1_000;
+
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CredentialLifecyclePolicy {
+    pub now_unix_millis: u64,
+    pub stale_after_millis: Option<u64>,
+    pub expiring_within_millis: Option<u64>,
+}
+
+impl CredentialLifecyclePolicy {
+    #[must_use]
+    pub fn at_unix_millis(now_unix_millis: u64) -> Self {
+        Self {
+            now_unix_millis,
+            stale_after_millis: Some(DEFAULT_LIFECYCLE_STALE_AFTER_MILLIS),
+            expiring_within_millis: Some(DEFAULT_LIFECYCLE_EXPIRING_WITHIN_MILLIS),
+        }
+    }
+
+    #[must_use]
+    pub fn with_stale_after_millis(mut self, value: Option<u64>) -> Self {
+        self.stale_after_millis = value;
+        self
+    }
+
+    #[must_use]
+    pub fn with_expiring_within_millis(mut self, value: Option<u64>) -> Self {
+        self.expiring_within_millis = value;
+        self
+    }
+}
+
+#[non_exhaustive]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CredentialProfileLifecycleStatus {
+    pub profile: String,
+    pub is_default_profile: bool,
+    pub credentials: CredentialSource,
+    pub status: CredentialLifecycleStatus,
+    pub credential_statuses: Vec<CredentialLifecycleCredentialStatus>,
+}
+
+impl CredentialProfileLifecycleStatus {
+    fn from_parts(
+        profile: String,
+        is_default_profile: bool,
+        credentials: &Credentials,
+        metadata: &CredentialProfileMetadata,
+        policy: &CredentialLifecyclePolicy,
+    ) -> Self {
+        let credential_statuses = CredentialKind::ALL
+            .iter()
+            .copied()
+            .map(|kind| {
+                CredentialLifecycleCredentialStatus::from_parts(
+                    kind,
+                    credentials,
+                    metadata.credential(kind),
+                    policy,
+                )
+            })
+            .collect::<Vec<_>>();
+        let status = CredentialLifecycleStatus::overall(
+            credential_statuses
+                .iter()
+                .filter(|status| status.present)
+                .map(|status| status.status),
+        );
+        Self {
+            profile,
+            is_default_profile,
+            credentials: credentials.redacted_summary(),
+            status,
+            credential_statuses,
+        }
+    }
+}
+
+#[non_exhaustive]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CredentialLifecycleCredentialStatus {
+    pub kind: CredentialKind,
+    pub present: bool,
+    pub status: CredentialLifecycleStatus,
+    pub source: Option<CredentialLifecycleSource>,
+    pub acquired_at_unix_millis: Option<u64>,
+    pub checked_at_unix_millis: Option<u64>,
+    pub expires_at_unix_millis: Option<u64>,
+    pub refresh_token_present: Option<bool>,
+}
+
+impl CredentialLifecycleCredentialStatus {
+    fn from_parts(
+        kind: CredentialKind,
+        credentials: &Credentials,
+        metadata: Option<&CredentialLifecycleMetadata>,
+        policy: &CredentialLifecyclePolicy,
+    ) -> Self {
+        let present = kind.is_present_in(credentials);
+        let metadata = metadata.cloned().unwrap_or_default();
+        let status = if present {
+            CredentialLifecycleStatus::from_metadata(&metadata, policy)
+        } else {
+            CredentialLifecycleStatus::Missing
+        };
+        Self {
+            kind,
+            present,
+            status,
+            source: metadata.source,
+            acquired_at_unix_millis: metadata.acquired_at_unix_millis,
+            checked_at_unix_millis: metadata.checked_at_unix_millis,
+            expires_at_unix_millis: metadata.expires_at_unix_millis,
+            refresh_token_present: metadata.refresh_token_present,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CredentialLifecycleStatus {
+    Missing,
+    Unknown,
+    Fresh,
+    Stale,
+    Expiring,
+    Expired,
+}
+
+impl CredentialLifecycleStatus {
+    fn from_metadata(
+        metadata: &CredentialLifecycleMetadata,
+        policy: &CredentialLifecyclePolicy,
+    ) -> Self {
+        if let Some(expires_at) = metadata.expires_at_unix_millis {
+            if expires_at <= policy.now_unix_millis {
+                return Self::Expired;
+            }
+            if policy
+                .expiring_within_millis
+                .is_some_and(|window| expires_at <= policy.now_unix_millis.saturating_add(window))
+            {
+                return Self::Expiring;
+            }
+            return Self::Fresh;
+        }
+
+        if let Some(last_seen) = metadata
+            .checked_at_unix_millis
+            .or(metadata.acquired_at_unix_millis)
+        {
+            if policy
+                .stale_after_millis
+                .is_some_and(|window| policy.now_unix_millis.saturating_sub(last_seen) > window)
+            {
+                return Self::Stale;
+            }
+            return Self::Fresh;
+        }
+
+        Self::Unknown
+    }
+
+    fn overall(statuses: impl IntoIterator<Item = Self>) -> Self {
+        let mut saw_any = false;
+        let mut result = Self::Fresh;
+        for status in statuses {
+            saw_any = true;
+            if status.severity() > result.severity() {
+                result = status;
+            }
+        }
+        if saw_any { result } else { Self::Missing }
+    }
+
+    fn severity(self) -> u8 {
+        match self {
+            Self::Fresh => 0,
+            Self::Unknown => 1,
+            Self::Stale => 2,
+            Self::Expiring => 3,
+            Self::Expired => 4,
+            Self::Missing => 5,
+        }
+    }
+}
+
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -479,6 +700,79 @@ pub struct CredentialSource {
 pub struct CredentialHealthReport {
     pub credentials: CredentialSource,
     pub probes: Vec<CredentialHealthProbe>,
+}
+
+impl CredentialHealthReport {
+    #[must_use]
+    pub fn summary(&self) -> CredentialHealthSummary {
+        CredentialHealthSummary::from_probes(&self.probes)
+    }
+
+    #[must_use]
+    pub fn probe(
+        &self,
+        kind: CredentialKind,
+        scope: CredentialHealthScope,
+    ) -> Option<&CredentialHealthProbe> {
+        self.probes
+            .iter()
+            .find(|probe| probe.kind == kind && probe.scope == scope)
+    }
+}
+
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CredentialHealthSummary {
+    pub status: CredentialHealthSummaryStatus,
+    pub valid_count: usize,
+    pub missing_count: usize,
+    pub rejected_count: usize,
+    pub request_failed_count: usize,
+}
+
+impl CredentialHealthSummary {
+    fn from_probes(probes: &[CredentialHealthProbe]) -> Self {
+        let mut summary = Self {
+            status: CredentialHealthSummaryStatus::Unknown,
+            valid_count: 0,
+            missing_count: 0,
+            rejected_count: 0,
+            request_failed_count: 0,
+        };
+        for probe in probes {
+            match probe.status {
+                CredentialHealthStatus::Missing => summary.missing_count += 1,
+                CredentialHealthStatus::Valid => summary.valid_count += 1,
+                CredentialHealthStatus::Rejected => summary.rejected_count += 1,
+                CredentialHealthStatus::RequestFailed => summary.request_failed_count += 1,
+            }
+        }
+        summary.status = if probes.is_empty() {
+            CredentialHealthSummaryStatus::Unknown
+        } else if summary.rejected_count > 0 {
+            CredentialHealthSummaryStatus::Rejected
+        } else if summary.request_failed_count > 0 {
+            CredentialHealthSummaryStatus::RequestFailed
+        } else if summary.valid_count == probes.len() {
+            CredentialHealthSummaryStatus::Healthy
+        } else if summary.valid_count == 0 && summary.missing_count == probes.len() {
+            CredentialHealthSummaryStatus::Missing
+        } else {
+            CredentialHealthSummaryStatus::Degraded
+        };
+        summary
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CredentialHealthSummaryStatus {
+    Unknown,
+    Healthy,
+    Degraded,
+    Missing,
+    Rejected,
+    RequestFailed,
 }
 
 #[non_exhaustive]
@@ -785,9 +1079,11 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CredentialKind, CredentialLifecycleMetadata, CredentialLifecycleSource,
-        CredentialProfileMetadata, CredentialProfileSelection, CredentialProfiles, CredentialStore,
-        Credentials, DEFAULT_CREDENTIAL_PROFILE,
+        CredentialHealthProbe, CredentialHealthReport, CredentialHealthScope,
+        CredentialHealthStatus, CredentialHealthSummaryStatus, CredentialKind,
+        CredentialLifecycleMetadata, CredentialLifecyclePolicy, CredentialLifecycleSource,
+        CredentialLifecycleStatus, CredentialProfileMetadata, CredentialProfileSelection,
+        CredentialProfiles, CredentialStore, Credentials, DEFAULT_CREDENTIAL_PROFILE,
     };
 
     #[test]
@@ -1480,6 +1776,152 @@ mod tests {
         let value = std::fs::read_to_string(path)?;
         assert!(!value.contains("future_key"));
         Ok(())
+    }
+
+    #[test]
+    fn profile_lifecycle_status_evaluates_policy_without_secrets() -> anyhow::Result<()> {
+        let now = 1_700_000_000_000;
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "intl",
+            Credentials {
+                cookie: Some("SESSDATA=COOKIE_SECRET".to_owned()),
+                access_key: Some("ACCESS_SECRET".to_owned()),
+                tv_access_key: None,
+            },
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::Cookie,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::ManualImport)
+                .with_checked_at_unix_millis(now - 2_000),
+        );
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_expires_at_unix_millis(now + 200)
+                .with_refresh_token_present(true),
+        );
+        profiles.set_profile_metadata("intl", metadata)?;
+        let policy = CredentialLifecyclePolicy::at_unix_millis(now)
+            .with_stale_after_millis(Some(1_000))
+            .with_expiring_within_millis(Some(500));
+
+        let status = profiles.profile_lifecycle_status("intl", &policy)?;
+
+        assert_eq!(status.profile, "intl");
+        assert_eq!(status.status, CredentialLifecycleStatus::Expiring);
+        assert_eq!(
+            status
+                .credential_statuses
+                .iter()
+                .map(|status| (status.kind, status.present, status.status))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    CredentialKind::Cookie,
+                    true,
+                    CredentialLifecycleStatus::Stale
+                ),
+                (
+                    CredentialKind::AccessKey,
+                    true,
+                    CredentialLifecycleStatus::Expiring,
+                ),
+                (
+                    CredentialKind::TvAccessKey,
+                    false,
+                    CredentialLifecycleStatus::Missing,
+                ),
+            ]
+        );
+        let serialized = serde_json::to_string(&status)?;
+        assert!(serialized.contains("\"status\":\"expiring\""));
+        assert!(!serialized.contains("COOKIE_SECRET"));
+        assert!(!serialized.contains("ACCESS_SECRET"));
+        Ok(())
+    }
+
+    #[test]
+    fn lifecycle_statuses_include_default_and_named_profiles() -> anyhow::Result<()> {
+        let now = 1_700_000_000_000;
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_default_profile("intl")?;
+        profiles.set_profile(
+            "web",
+            Credentials {
+                cookie: Some("SESSDATA=COOKIE_SECRET".to_owned()),
+                access_key: None,
+                tv_access_key: None,
+            },
+        )?;
+
+        let statuses =
+            profiles.lifecycle_statuses(&CredentialLifecyclePolicy::at_unix_millis(now))?;
+
+        assert_eq!(
+            statuses
+                .iter()
+                .map(|status| (
+                    status.profile.as_str(),
+                    status.is_default_profile,
+                    status.status
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                ("intl", true, CredentialLifecycleStatus::Missing),
+                ("web", false, CredentialLifecycleStatus::Unknown),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn credential_health_report_summary_counts_probe_statuses() {
+        let report = CredentialHealthReport {
+            credentials: super::CredentialSource {
+                has_cookie: true,
+                has_access_key: false,
+                has_tv_access_key: false,
+            },
+            probes: vec![
+                CredentialHealthProbe::valid(
+                    CredentialKind::Cookie,
+                    CredentialHealthScope::WebCookie,
+                    "web_nav",
+                ),
+                CredentialHealthProbe::missing(
+                    CredentialKind::AccessKey,
+                    CredentialHealthScope::IntlBstar,
+                ),
+                CredentialHealthProbe::request_failed(
+                    CredentialKind::TvAccessKey,
+                    CredentialHealthScope::Tv,
+                    "oauth2_info",
+                    "network unavailable",
+                ),
+            ],
+        };
+
+        let summary = report.summary();
+
+        assert_eq!(summary.status, CredentialHealthSummaryStatus::RequestFailed);
+        assert_eq!(summary.valid_count, 1);
+        assert_eq!(summary.missing_count, 1);
+        assert_eq!(summary.request_failed_count, 1);
+        assert_eq!(
+            report
+                .probe(CredentialKind::Cookie, CredentialHealthScope::WebCookie)
+                .map(|probe| probe.status),
+            Some(CredentialHealthStatus::Valid)
+        );
+        assert!(
+            report
+                .probe(CredentialKind::AccessKey, CredentialHealthScope::Tv)
+                .is_none()
+        );
     }
 
     #[test]

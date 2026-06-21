@@ -1,13 +1,14 @@
 use bbdown_core::{
-    BiliClient, ClientConfig, CredentialKind, CredentialLifecycleMetadata,
-    CredentialLifecycleSource, CredentialProfileMetadata, DownloadCancellationToken,
-    DownloadOptions, DownloadProgressEvent, DownloadProgressSink, DownloadReportSummary,
-    NoopDownloadProgress, StreamSelection, SubtitleAiPolicy,
+    BiliClient, ClientConfig, CredentialHealthSummaryStatus, CredentialKind,
+    CredentialLifecycleMetadata, CredentialLifecyclePolicy, CredentialLifecycleSource,
+    CredentialLifecycleStatus, CredentialProfileMetadata, CredentialProfiles,
+    DownloadCancellationToken, DownloadOptions, DownloadProgressEvent, DownloadProgressSink,
+    DownloadReportSummary, NoopDownloadProgress, StreamSelection, SubtitleAiPolicy,
 };
 use std::path::PathBuf;
 
 #[test]
-fn v0_5_embedding_surface_is_reexported() {
+fn embedding_surface_is_reexported() -> anyhow::Result<()> {
     fn accepts_progress_sink(_sink: &dyn DownloadProgressSink) {}
 
     let _client = BiliClient::new(ClientConfig::default());
@@ -43,4 +44,13 @@ fn v0_5_embedding_surface_is_reexported() {
             .credential(CredentialKind::AccessKey)
             .is_some()
     );
+
+    let lifecycle_policy = CredentialLifecyclePolicy::at_unix_millis(1_700_000_000_000);
+    let profiles = CredentialProfiles::default();
+    let lifecycle_status = profiles.profile_lifecycle_status("default", &lifecycle_policy)?;
+    assert_eq!(lifecycle_status.status, CredentialLifecycleStatus::Missing);
+
+    let health_status = CredentialHealthSummaryStatus::Unknown;
+    assert_eq!(format!("{health_status:?}"), "Unknown");
+    Ok(())
 }

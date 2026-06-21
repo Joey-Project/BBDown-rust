@@ -236,12 +236,20 @@ requests. The report includes one probe each for the WEB cookie, generic `access
 `tv_access_key`; `kind` identifies the credential slot and `scope` identifies the checked consumer.
 The generic `access_key` probe currently covers the intl/Bstar OAuth-info scope only, so downstream
 applications that need APP gRPC or proxy-specific assurance should treat that as a separate policy
-decision. Probe messages are sanitized before they are serialized.
+decision. Probe messages are sanitized before they are serialized. Use `CredentialHealthReport::summary()`
+for a compact, JSON-friendly aggregate status and `CredentialHealthReport::probe(kind, scope)` when
+UI or preflight policy needs one exact probe.
+Profile documents can also be evaluated without network I/O through
+`CredentialProfiles::profile_lifecycle_status(profile, policy)` or
+`CredentialProfiles::lifecycle_statuses(policy)`. `CredentialLifecyclePolicy` requires an explicit
+`now_unix_millis` value so embedders can make deterministic stale/expiring decisions in UI,
+background jobs, or tests.
 
 ```rust,no_run
 use bbdown_core::{
     AccessKeyLoginConfig, AccessKeyLoginCredentials, AccessKeyLoginTicketOutput, BiliClient,
-    ClientConfig, CredentialProfileSelection, CredentialStore, Credentials,
+    ClientConfig, CredentialKind, CredentialLifecyclePolicy, CredentialLifecycleStatus,
+    CredentialProfileSelection, CredentialStore, Credentials,
 };
 
 async fn check_credentials() {
@@ -251,12 +259,28 @@ async fn check_credentials() {
 
     let config = ClientConfig::default().with_credentials(credentials);
     let client = BiliClient::new(config);
-    let _health = client.check_credential_health().await;
+    let health = client.check_credential_health().await;
+    let _summary = health.summary();
 }
 
 fn load_named_profile(store: &CredentialStore, profile: &str) -> bbdown_core::Result<Credentials> {
     let selection = CredentialProfileSelection::named(profile)?;
     store.load_selected_profile(&selection)
+}
+
+fn access_key_lifecycle_status(
+    store: &CredentialStore,
+    profile: &str,
+    now_unix_millis: u64,
+) -> bbdown_core::Result<Option<CredentialLifecycleStatus>> {
+    let profiles = store.load_profiles()?;
+    let policy = CredentialLifecyclePolicy::at_unix_millis(now_unix_millis);
+    let status = profiles.profile_lifecycle_status(profile, &policy)?;
+    Ok(status
+        .credential_statuses
+        .into_iter()
+        .find(|status| status.kind == CredentialKind::AccessKey)
+        .map(|status| status.status))
 }
 
 fn access_key_login_ticket() -> bbdown_core::Result<AccessKeyLoginTicketOutput> {

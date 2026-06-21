@@ -408,6 +408,10 @@ metadata records provenance, acquisition/check/expiry timestamps, and a boolean
 is dropped during normalization, orphan metadata is removed when its profile has no credentials, and
 unknown or malformed optional metadata is ignored so legacy flat credential files and valid profile
 documents still load without lifecycle metadata.
+`CredentialLifecyclePolicy` turns that persisted metadata into deterministic stale/expiring/expired
+status output without network I/O. The policy requires an explicit `now_unix_millis` value and lets
+embedders choose stale and expiring windows, so UI preflight, background jobs, and tests can make the
+same lifecycle decision without reading wall-clock time inside the model.
 Credential health diagnostics are a read-only layer over the same credential model. The crate exposes
 `CredentialHealthReport` and `BiliClient::check_credential_health()` so embedding callers can check
 the WEB cookie, generic `access_key`, and TV `tv_access_key` independently before choosing a login or
@@ -419,6 +423,8 @@ configured `passport_base`; this does not claim APP gRPC or restricted-area prox
 same stored `access_key`. TV token probes use the configured `tv_passport_poll_base`. Probe failures
 are contained per credential as `missing`, `valid`, `rejected`, or `request_failed` rather than
 failing the whole report.
+`CredentialHealthReport::summary()` gives downstream UI a compact aggregate status while preserving
+the per-kind probes for exact policy decisions.
 
 Generic access-key acquisition is modeled as a BiliPlus/BALH-compatible browser handoff rather than
 an official Bilibili poller. `AccessKeyLoginConfig` builds the authorization URL with
