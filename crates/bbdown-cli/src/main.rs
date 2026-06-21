@@ -2160,7 +2160,7 @@ fn print_credential_health_report_with_indent(
         }
         if let Some(message) = &probe.message {
             line.push_str(" - ");
-            line.push_str(message);
+            line.push_str(&display_human_text(message));
         }
         print_human_line(line)?;
     }
@@ -2194,10 +2194,14 @@ fn print_profile_health_header(
 }
 
 fn display_profile_name(profile: &str) -> String {
-    if profile.chars().any(char::is_control) {
-        format!("{profile:?}")
+    display_human_text(profile)
+}
+
+fn display_human_text(value: &str) -> String {
+    if value.chars().any(char::is_control) {
+        format!("{value:?}")
     } else {
-        profile.to_owned()
+        value.to_owned()
     }
 }
 

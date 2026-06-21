@@ -3891,6 +3891,35 @@ fn auth_health_all_profiles_escapes_control_characters_in_human_profile_names() 
     Ok(())
 }
 
+#[test]
+fn auth_health_escapes_control_characters_in_human_probe_messages() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    CredentialStore::new(credential_file.clone())
+        .save(&Credentials::default().with_access_key("ACCESS_SECRET"))?;
+    let message = "expired\n\u{1b}[31m";
+    let access_key_mock = mock_rejected_access_key_health_with_message(&server, message);
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .args(["auth", "health"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let output_text = String::from_utf8(output)?;
+
+    assert!(output_text.contains(r#"- "expired\n\u{1b}[31m""#));
+    assert!(!output_text.contains(message));
+    access_key_mock.assert_calls(1);
+    Ok(())
+}
+
 fn save_lifecycle_cli_profiles(
     credential_file: &Path,
     cookie_metadata: CredentialLifecycleMetadata,
@@ -3935,6 +3964,13 @@ fn mock_valid_cookie_health(server: &MockServer) -> httpmock::Mock<'_> {
 }
 
 fn mock_rejected_access_key_health(server: &MockServer) -> httpmock::Mock<'_> {
+    mock_rejected_access_key_health_with_message(server, "access key expired")
+}
+
+fn mock_rejected_access_key_health_with_message<'a>(
+    server: &'a MockServer,
+    message: &str,
+) -> httpmock::Mock<'a> {
     server.mock(|when, then| {
         when.method(GET)
             .path("/x/passport-login/oauth2/info")
@@ -3946,7 +3982,7 @@ fn mock_rejected_access_key_health(server: &MockServer) -> httpmock::Mock<'_> {
             .header_missing("cookie");
         then.status(200).json_body_obj(&serde_json::json!({
             "code": -101,
-            "message": "access key expired"
+            "message": message
         }));
     })
 }

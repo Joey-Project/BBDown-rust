@@ -122,6 +122,7 @@ superseded_by:
   - `cargo fmt --all -- --check`.
   - `cargo test -p bbdown-cli auth_status_profiles --test cli_e2e --locked`.
   - `cargo test -p bbdown-cli auth_health_all_profiles --test cli_e2e --locked`.
+  - `cargo test -p bbdown-cli auth_health_escapes_control_characters_in_human_probe_messages --test cli_e2e --locked -- --exact`.
   - `cargo test -p bbdown-cli auth_health_all_profiles_escapes_control_characters_in_human_profile_names --test cli_e2e --locked -- --exact`.
   - `cargo test -p bbdown-cli auth_health_reports_redacted_credential_probe_statuses --test cli_e2e --locked`.
   - `cargo clippy -p bbdown-cli --all-targets --locked -- -D warnings`.
