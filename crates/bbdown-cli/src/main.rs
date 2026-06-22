@@ -1588,7 +1588,10 @@ async fn handle_download(
     credential_preflight: &CredentialPreflightRuntimeConfig,
     args: DownloadCommandArgs,
 ) -> anyhow::Result<()> {
-    let credentials = prepare_credentials_for_media_request(
+    let progress = CliProgressReporter {
+        json: args.progress_json,
+    };
+    let credentials = match prepare_credentials_for_media_request(
         credentials,
         client_runtime,
         credential_preflight,
@@ -1596,11 +1599,21 @@ async fn handle_download(
         args.options.mode.requires_media_streams(),
         !args.progress_json,
     )
-    .await?;
-    let client = BiliClient::new(client_runtime.client_config(credentials));
-    let progress = CliProgressReporter {
-        json: args.progress_json,
+    .await
+    {
+        Ok(credentials) => credentials,
+        Err(error) => {
+            emit_cli_plan_failed(
+                progress,
+                &args.url,
+                &args.options.output_dir,
+                0,
+                error.to_string(),
+            );
+            return Err(error);
+        }
     };
+    let client = BiliClient::new(client_runtime.client_config(credentials));
     let cancellation = DownloadCancellationToken::new();
     let duplicate_prompt_active = Arc::new(AtomicBool::new(false));
     let _cancellation_guard = install_download_cancellation_handler(

@@ -324,7 +324,8 @@ fn preflight_issue(
     {
         return None;
     }
-    let blocking = mode == CredentialPreflightMode::Fail && status.required;
+    let blocking = mode == CredentialPreflightMode::Fail
+        && (status.required || status.selected_status != CredentialLifecycleStatus::Missing);
     Some(CredentialPreflightIssue {
         request_path: status.request_path,
         credential_kinds: status.credential_kinds.clone(),
@@ -481,7 +482,7 @@ mod tests {
     }
 
     #[test]
-    fn fail_mode_reports_non_fresh_optional_web_cookie_without_blocking() -> crate::Result<()> {
+    fn fail_mode_blocks_non_fresh_optional_web_cookie() -> crate::Result<()> {
         let mut profiles = CredentialProfiles::default();
         profiles.set_profile(
             "default",
@@ -506,9 +507,38 @@ mod tests {
             [CredentialPreflightRequirement::web_playurl_cookie_optional()],
         );
 
-        assert!(!report.has_blocking_issues());
+        assert!(report.has_blocking_issues());
         assert_eq!(report.issues[0].status, CredentialLifecycleStatus::Stale);
-        assert!(!report.issues[0].blocking);
+        assert!(report.issues[0].blocking);
+        Ok(())
+    }
+
+    #[test]
+    fn fail_mode_blocks_non_fresh_optional_restricted_area_access_key() -> crate::Result<()> {
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile("default", Credentials::default().with_access_key("ACCESS"))?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_checked_at_unix_millis(1),
+        );
+        profiles.set_profile_metadata("default", metadata)?;
+        let status = profiles.profile_lifecycle_status(
+            "default",
+            &CredentialLifecyclePolicy::at_unix_millis(10_000).with_stale_after_millis(Some(1_000)),
+        )?;
+
+        let report = CredentialPreflightReport::evaluate(
+            CredentialPreflightMode::Fail,
+            &status,
+            [CredentialPreflightRequirement::restricted_area_access_key()],
+        );
+
+        assert!(report.has_blocking_issues());
+        assert_eq!(report.issues[0].status, CredentialLifecycleStatus::Stale);
+        assert!(report.issues[0].blocking);
         Ok(())
     }
 
