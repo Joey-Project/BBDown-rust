@@ -10,15 +10,15 @@ use bbdown_core::{
     ClientConfig, CredentialHealthReport, CredentialHealthScope, CredentialHealthStatus,
     CredentialHealthSummaryStatus, CredentialKind, CredentialLifecycleMetadata,
     CredentialLifecyclePolicy, CredentialLifecycleSource, CredentialLifecycleStatus,
-    CredentialProfileLifecycleStatus, CredentialProfileSelection, CredentialProfiles,
-    CredentialStore, Credentials, DanmakuFormat, DanmakuUpdateOptions, DownloadArchive,
-    DownloadCancellationToken, DownloadMode, DownloadOptions, DownloadPathTemplates, DownloadPlan,
-    DownloadPreflight, DownloadProgressEvent, DownloadProgressSink, DownloadReport,
-    DuplicateDecision, EndpointConfig, MediaHostOptions, MediaStream, MuxOptions, PlaybackPlan,
-    PlayurlMode, QrLoginKind, QrLoginState, QrLoginTicket, QrLoginTicketOutput, ResolvedContent,
-    RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind,
-    RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet, SubtitleAiPolicy,
-    archive_entry_allows_danmaku_update,
+    CredentialPreflightMode, CredentialPreflightReport, CredentialProfileLifecycleStatus,
+    CredentialProfileSelection, CredentialProfiles, CredentialStore, Credentials, DanmakuFormat,
+    DanmakuUpdateOptions, DownloadArchive, DownloadCancellationToken, DownloadMode,
+    DownloadOptions, DownloadPathTemplates, DownloadPlan, DownloadPreflight, DownloadProgressEvent,
+    DownloadProgressSink, DownloadReport, DuplicateDecision, EndpointConfig, MediaHostOptions,
+    MediaStream, MuxOptions, PlaybackPlan, PlayurlMode, QrLoginKind, QrLoginState, QrLoginTicket,
+    QrLoginTicketOutput, ResolvedContent, RestrictedArea, RestrictedAreaConfig,
+    RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection, StreamQuality,
+    StreamSelection, StreamSet, SubtitleAiPolicy, archive_entry_allows_danmaku_update,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::ffi::{OsStr, OsString};
@@ -121,6 +121,26 @@ struct Cli {
     credential_file: Option<PathBuf>,
     #[arg(long, env = "BBDOWN_CREDENTIAL_PROFILE", value_name = "NAME")]
     credential_profile: Option<String>,
+    #[arg(
+        long,
+        env = "BBDOWN_CREDENTIAL_PREFLIGHT",
+        value_enum,
+        default_value = "off",
+        value_name = "MODE"
+    )]
+    credential_preflight: CredentialPreflightModeArg,
+    #[arg(
+        long,
+        env = "BBDOWN_CREDENTIAL_STALE_AFTER_SECONDS",
+        default_value_t = 7 * 24 * 60 * 60
+    )]
+    credential_stale_after_seconds: u64,
+    #[arg(
+        long,
+        env = "BBDOWN_CREDENTIAL_EXPIRING_WITHIN_SECONDS",
+        default_value_t = 24 * 60 * 60
+    )]
+    credential_expiring_within_seconds: u64,
     #[arg(long, env = "BBDOWN_REQUEST_TIMEOUT_SECONDS", default_value_t = 30)]
     request_timeout_seconds: u64,
     #[command(subcommand)]
@@ -370,12 +390,32 @@ enum PlayurlModeArg {
     App,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+enum CredentialPreflightModeArg {
+    Off,
+    Warn,
+    Fail,
+    Renew,
+}
+
 impl From<PlayurlModeArg> for PlayurlMode {
     fn from(value: PlayurlModeArg) -> Self {
         match value {
             PlayurlModeArg::Web => Self::Web,
             PlayurlModeArg::Tv => Self::Tv,
             PlayurlModeArg::App => Self::App,
+        }
+    }
+}
+
+impl From<CredentialPreflightModeArg> for CredentialPreflightMode {
+    fn from(value: CredentialPreflightModeArg) -> Self {
+        match value {
+            CredentialPreflightModeArg::Off => Self::Off,
+            CredentialPreflightModeArg::Warn => Self::Warn,
+            CredentialPreflightModeArg::Fail => Self::Fail,
+            CredentialPreflightModeArg::Renew => Self::Renew,
         }
     }
 }
@@ -751,6 +791,11 @@ async fn run() -> anyhow::Result<()> {
     let request_timeout = Duration::from_secs(cli.request_timeout_seconds);
     let client_runtime =
         ClientRuntimeConfig::new(endpoints, restricted_area, playurl_mode, request_timeout);
+    let credential_preflight = CredentialPreflightRuntimeConfig::new(
+        cli.credential_preflight.into(),
+        cli.credential_stale_after_seconds,
+        cli.credential_expiring_within_seconds,
+    );
     let credential_runtime = CredentialRuntime::new(
         CredentialStore::new(credential_path(cli.credential_file)?),
         credential_profile_selection(cli.credential_profile)?,
@@ -760,13 +805,35 @@ async fn run() -> anyhow::Result<()> {
             handle_info(&credential_runtime, &client_runtime, url, select, json).await?;
         }
         Command::Plan { url, select, json } => {
-            handle_plan(&credential_runtime, &client_runtime, url, select, json).await?;
+            handle_plan(
+                &credential_runtime,
+                &client_runtime,
+                &credential_preflight,
+                url,
+                select,
+                json,
+            )
+            .await?;
         }
         Command::Playback { url, select, json } => {
-            handle_playback(&credential_runtime, &client_runtime, url, select, json).await?;
+            handle_playback(
+                &credential_runtime,
+                &client_runtime,
+                &credential_preflight,
+                url,
+                select,
+                json,
+            )
+            .await?;
         }
         Command::Download(args) => {
-            handle_download_cli(&credential_runtime, &client_runtime, *args).await?;
+            handle_download_cli(
+                &credential_runtime,
+                &client_runtime,
+                &credential_preflight,
+                *args,
+            )
+            .await?;
         }
         Command::Danmaku { command } => {
             handle_danmaku(command, &credential_runtime, &client_runtime).await?;
@@ -789,6 +856,7 @@ fn anyhow_error_is_cancelled(error: &anyhow::Error) -> bool {
 async fn handle_download_cli(
     credentials: &CredentialRuntime,
     client_runtime: &ClientRuntimeConfig,
+    credential_preflight: &CredentialPreflightRuntimeConfig,
     args: DownloadCliArgs,
 ) -> anyhow::Result<()> {
     ensure!(
@@ -836,7 +904,13 @@ async fn handle_download_cli(
         archive_file: args.archive_file,
         on_duplicate: args.on_duplicate.map(Into::into),
     };
-    handle_download(credentials, client_runtime, command_args).await
+    handle_download(
+        credentials,
+        client_runtime,
+        credential_preflight,
+        command_args,
+    )
+    .await
 }
 
 struct DownloadCommandArgs {
@@ -1028,6 +1102,35 @@ impl ClientRuntimeConfig {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CredentialPreflightRuntimeConfig {
+    mode: CredentialPreflightMode,
+    stale_after_seconds: u64,
+    expiring_within_seconds: u64,
+}
+
+impl CredentialPreflightRuntimeConfig {
+    fn new(
+        mode: CredentialPreflightMode,
+        stale_after_seconds: u64,
+        expiring_within_seconds: u64,
+    ) -> Self {
+        Self {
+            mode,
+            stale_after_seconds,
+            expiring_within_seconds,
+        }
+    }
+
+    fn policy(&self) -> CredentialLifecyclePolicy {
+        lifecycle_policy_from_seconds(
+            self.stale_after_seconds,
+            self.expiring_within_seconds,
+            current_unix_millis(),
+        )
+    }
+}
+
 #[derive(Clone, Debug)]
 struct CredentialRuntime {
     store: CredentialStore,
@@ -1100,14 +1203,124 @@ async fn handle_info(
     Ok(())
 }
 
+async fn prepare_credentials_for_media_request(
+    credential_runtime: &CredentialRuntime,
+    client_runtime: &ClientRuntimeConfig,
+    credential_preflight: &CredentialPreflightRuntimeConfig,
+) -> anyhow::Result<Credentials> {
+    if credential_preflight.mode == CredentialPreflightMode::Off {
+        return credential_runtime.load();
+    }
+
+    let mut report =
+        credential_preflight_report(credential_runtime, client_runtime, credential_preflight)?;
+    if report.should_attempt_access_key_renewal() {
+        let profiles = credential_runtime
+            .store
+            .load_profiles()
+            .context("failed to load credential profiles")?;
+        if try_access_key_auto_refresh_for_preflight(
+            credential_runtime,
+            client_runtime,
+            &profiles,
+            &report.access_key_renewal,
+        )
+        .await?
+        {
+            report = credential_preflight_report(
+                credential_runtime,
+                client_runtime,
+                credential_preflight,
+            )?;
+        }
+    }
+
+    emit_credential_preflight_warnings(&report);
+    if report.has_blocking_issues() {
+        let messages = report
+            .issues
+            .iter()
+            .filter(|issue| issue.blocking)
+            .map(|issue| issue.message.as_str())
+            .collect::<Vec<_>>()
+            .join("; ");
+        bail!("credential preflight failed: {messages}");
+    }
+    credential_runtime.load()
+}
+
+fn credential_preflight_report(
+    credential_runtime: &CredentialRuntime,
+    client_runtime: &ClientRuntimeConfig,
+    credential_preflight: &CredentialPreflightRuntimeConfig,
+) -> anyhow::Result<CredentialPreflightReport> {
+    let policy = credential_preflight.policy();
+    let (_profiles, _selected_profile, mut statuses) =
+        lifecycle_statuses_for_selection(credential_runtime, false, &policy)?;
+    let status = statuses
+        .pop()
+        .context("failed to evaluate selected credential profile")?;
+    Ok(CredentialPreflightReport::from_client_context(
+        credential_preflight.mode,
+        &status,
+        client_runtime.playurl_mode,
+        &client_runtime.restricted_area,
+    ))
+}
+
+async fn try_access_key_auto_refresh_for_preflight(
+    credential_runtime: &CredentialRuntime,
+    client_runtime: &ClientRuntimeConfig,
+    profiles: &CredentialProfiles,
+    decision: &AccessKeyRenewalDecision,
+) -> anyhow::Result<bool> {
+    let refresh = match access_key_refresh_request_from_profiles(profiles, &decision.profile) {
+        Ok(refresh) => refresh,
+        Err(error) => {
+            eprintln!(
+                "credential preflight warning: automatic access_key refresh setup failed: {}",
+                display_human_text(&error.to_string())
+            );
+            return Ok(false);
+        }
+    };
+    let client = BiliClient::new(client_runtime.client_config(Credentials::default()));
+    match client.refresh_access_key(&refresh.request).await {
+        Ok(refreshed) => {
+            let _summary =
+                save_refreshed_access_key_silent(credential_runtime, &refresh, &refreshed)?;
+            eprintln!("credential preflight: access_key refreshed");
+            Ok(true)
+        }
+        Err(error) => {
+            let message = redact_access_key_refresh_error(&error, &refresh.request);
+            eprintln!(
+                "credential preflight warning: automatic access_key refresh failed: {}",
+                display_human_text(&message)
+            );
+            Ok(false)
+        }
+    }
+}
+
+fn emit_credential_preflight_warnings(report: &CredentialPreflightReport) {
+    for issue in report.issues.iter().filter(|issue| !issue.blocking) {
+        eprintln!("credential preflight warning: {}", issue.message);
+    }
+}
+
 async fn handle_plan(
     credentials: &CredentialRuntime,
     client_runtime: &ClientRuntimeConfig,
+    credential_preflight: &CredentialPreflightRuntimeConfig,
     url: String,
     select: Option<Selection>,
     json: bool,
 ) -> anyhow::Result<()> {
-    let client = BiliClient::new(client_runtime.client_config(credentials.load()?));
+    let credentials =
+        prepare_credentials_for_media_request(credentials, client_runtime, credential_preflight)
+            .await?;
+    let client = BiliClient::new(client_runtime.client_config(credentials));
     let plan = client.plan_download(&url, select).await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&plan)?);
@@ -1120,11 +1333,15 @@ async fn handle_plan(
 async fn handle_playback(
     credentials: &CredentialRuntime,
     client_runtime: &ClientRuntimeConfig,
+    credential_preflight: &CredentialPreflightRuntimeConfig,
     url: String,
     select: Option<Selection>,
     json: bool,
 ) -> anyhow::Result<()> {
-    let client = BiliClient::new(client_runtime.client_config(credentials.load()?));
+    let credentials =
+        prepare_credentials_for_media_request(credentials, client_runtime, credential_preflight)
+            .await?;
+    let client = BiliClient::new(client_runtime.client_config(credentials));
     let plan = client.plan_playback(&url, select).await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&plan)?);
@@ -1277,9 +1494,13 @@ fn media_stream_summary(label: &str, stream: &MediaStream) -> String {
 async fn handle_download(
     credentials: &CredentialRuntime,
     client_runtime: &ClientRuntimeConfig,
+    credential_preflight: &CredentialPreflightRuntimeConfig,
     args: DownloadCommandArgs,
 ) -> anyhow::Result<()> {
-    let client = BiliClient::new(client_runtime.client_config(credentials.load()?));
+    let credentials =
+        prepare_credentials_for_media_request(credentials, client_runtime, credential_preflight)
+            .await?;
+    let client = BiliClient::new(client_runtime.client_config(credentials));
     let progress = CliProgressReporter {
         json: args.progress_json,
     };
@@ -2652,26 +2873,7 @@ fn save_refreshed_access_key(
     refreshed: &AccessKeyLoginCredentials,
     json: bool,
 ) -> anyhow::Result<()> {
-    let acquired_at_unix_millis = current_unix_millis();
-    let refreshed_secret = refreshed_access_key_provider_secret(
-        refresh.access_key_provider,
-        &refresh.request,
-        refreshed,
-    );
-    let summary = save_credentials_with_lifecycle_and_secrets(
-        credential_runtime,
-        refreshed.credentials(),
-        [(
-            CredentialKind::AccessKey,
-            access_key_lifecycle_metadata_with_provider(
-                refreshed,
-                acquired_at_unix_millis,
-                refresh.access_key_provider,
-                refreshed_secret.1.has_refresh_token(),
-            ),
-        )],
-        [refreshed_secret],
-    )?;
+    let summary = save_refreshed_access_key_silent(credential_runtime, refresh, refreshed)?;
     if json {
         print_json_line(&serde_json::json!({
             "event": "refreshed",
@@ -2688,6 +2890,33 @@ fn save_refreshed_access_key(
         print_human_line("access key refreshed")?;
         print_human_line("access key saved")
     }
+}
+
+fn save_refreshed_access_key_silent(
+    credential_runtime: &CredentialRuntime,
+    refresh: &StoredAccessKeyRefreshRequest,
+    refreshed: &AccessKeyLoginCredentials,
+) -> anyhow::Result<bbdown_core::CredentialSource> {
+    let acquired_at_unix_millis = current_unix_millis();
+    let refreshed_secret = refreshed_access_key_provider_secret(
+        refresh.access_key_provider,
+        &refresh.request,
+        refreshed,
+    );
+    save_credentials_with_lifecycle_and_secrets(
+        credential_runtime,
+        refreshed.credentials(),
+        [(
+            CredentialKind::AccessKey,
+            access_key_lifecycle_metadata_with_provider(
+                refreshed,
+                acquired_at_unix_millis,
+                refresh.access_key_provider,
+                refreshed_secret.1.has_refresh_token(),
+            ),
+        )],
+        [refreshed_secret],
+    )
 }
 
 fn print_access_key_auto_refresh_failure(

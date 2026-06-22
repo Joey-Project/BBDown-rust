@@ -252,12 +252,22 @@ profile document 也可以在不发网络请求的情况下通过
 `CredentialProfiles::lifecycle_statuses(policy)` 做 lifecycle 评估。`CredentialLifecyclePolicy`
 要求调用方显式传入 `now_unix_millis`，方便 embedding app 在 UI、后台任务和测试中得到确定
 的 stale/expiring 结果。
+plan/download preflight 可以用当前所选 profile 的 lifecycle status 和 media request context
+构造 `CredentialPreflightReport`。`CredentialPreflightReport::from_client_context(...)` 会对齐
+CLI 行为：WEB playurl 的 cookie 是 optional；TV playurl 要求 `tv_access_key`；APP playurl
+接受 `tv_access_key` 或通用 `access_key` 任一可用；restricted-area proxy fallback 要求通用
+`access_key`。这个 report 是纯值：它会列出 requirement status、warning/blocker，以及当前所选
+profile 的 `AccessKeyRenewalDecision`，但不会修改 credential storage。嵌入项目可以把 blocker
+作为 fail-fast UI，把 warning 作为非阻断 banner，或在
+`should_attempt_access_key_renewal()` 为 true 时调用 `BiliClient::refresh_access_key(...)`，
+并通过自己的存储层保存刷新后的 credential。
 
 ```rust,no_run
 use bbdown_core::{
     AccessKeyLoginConfig, AccessKeyLoginCredentials, AccessKeyLoginTicketOutput, BiliClient,
     ClientConfig, CredentialKind, CredentialLifecyclePolicy, CredentialLifecycleStatus,
-    CredentialProfileSelection, CredentialStore, Credentials,
+    CredentialPreflightMode, CredentialPreflightReport, CredentialProfileSelection,
+    CredentialStore, Credentials, PlayurlMode, RestrictedAreaConfig,
 };
 
 async fn check_credentials() {
@@ -289,6 +299,22 @@ fn access_key_lifecycle_status(
         .into_iter()
         .find(|status| status.kind == CredentialKind::AccessKey)
         .map(|status| status.status))
+}
+
+fn plan_preflight_report(
+    store: &CredentialStore,
+    profile: &str,
+    now_unix_millis: u64,
+) -> bbdown_core::Result<CredentialPreflightReport> {
+    let profiles = store.load_profiles()?;
+    let policy = CredentialLifecyclePolicy::at_unix_millis(now_unix_millis);
+    let status = profiles.profile_lifecycle_status(profile, &policy)?;
+    Ok(CredentialPreflightReport::from_client_context(
+        CredentialPreflightMode::Warn,
+        &status,
+        PlayurlMode::Web,
+        &RestrictedAreaConfig::default(),
+    ))
 }
 
 fn access_key_login_ticket() -> bbdown_core::Result<AccessKeyLoginTicketOutput> {

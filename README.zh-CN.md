@@ -216,9 +216,11 @@ unknown、stale、expiring、expired 或 forced credential 会返回 BiliPlus/BA
 同一个命令如果传入 `--stdin` 或 `--file`，就会完成这次重新授权并保存新的通用 access key。
 命令会报告 `automatic_refresh_readiness`，方便嵌入方区分“metadata 显示曾出现 refresh
 token”和“本地已经按 provider 保存 refresh secret”。refresh secret 会以明文 provider section
-保存在同一个私有 credential file 中，并在 status、debug 和 JSON 输出中脱敏；当前版本在所选
-provider 有已保存 secret 时会报告 `ready`，但静默 refresh 会在下一个 credential lifecycle
-切片实现。二维码登录命令会轮询 Bilibili 二维码状态机，并只保存最终得到的凭
+保存在同一个私有 credential file 中，并在 status、debug 和 JSON 输出中脱敏。所选 provider
+状态为 `ready` 时，`auth renew-access-key` 可以非交互刷新通用 access key。`plan`、
+`playback` 和 `download` 也支持 `--credential-preflight warn|fail|renew`，方便调用方在 media
+request 前检查当前 profile；preflight diagnostic 会写到 stderr，JSON stdout 仍保持为单个
+plan 或 report payload。二维码登录命令会轮询 Bilibili 二维码状态机，并只保存最终得到的凭
 据。WEB 二维码登录保存 cookie；TV 二维码登录保存 TV 专用 access key，不会覆盖由通用
 access-key 命令导入或获取的 intl/Bstar access key。使用 `--json` 时，登录命令输出换行分
 隔 JSON 事件：先输出带登录 URL 和 `qr_payload` 的 `ticket` 事件，再在凭据保存后输出

@@ -405,6 +405,18 @@ did not pass `--force`, `--stdin`, or `--file`, the CLI first tries provider-spe
 refresh. With `--json`, successful automatic refresh emits `decision`, `refreshed`, and `saved`
 events without printing raw tokens. If refresh fails, the CLI emits `refresh_failed` and falls back
 to the normal authorization ticket so callers can prompt the user without losing the old credential.
+Use the global `--credential-preflight warn|fail|renew` option with `plan`, `playback`, or
+`download` when a media request should check the selected profile before resolving streams.
+Preflight derives the expected credential requirements from the selected request path: WEB playurl
+treats cookies as optional so anonymous public videos still work, TV playurl requires
+`tv_access_key`, APP playurl accepts either `tv_access_key` or generic `access_key`, and
+restricted-area proxy fallback requires generic `access_key`. `warn` writes diagnostics to stderr and
+continues, `fail` aborts before network stream resolution when a required credential is missing or a
+relevant credential has non-fresh lifecycle metadata, and `renew` first tries provider-specific
+generic access-key refresh when the selected profile is refresh-ready. Preflight never writes to
+stdout, so `--json` output remains a single JSON plan, playback plan, or download report. Tune the
+local lifecycle policy with global `--credential-stale-after-seconds` and
+`--credential-expiring-within-seconds`.
 `auth login-web` prints a QR login URL, polls until scan confirmation, and saves the resulting
 cookie. `auth login-tv` uses the TV QR flow and saves a TV-specific access key for future TV/app
 flows without overwriting the generic intl/Bstar access key imported or acquired through the generic

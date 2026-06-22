@@ -405,6 +405,14 @@ refresh form。refresh 成功会返回 `AccessKeyLoginCredentials`，
 CLI 和嵌入方可以复用与首次 access-key 获取相同的 lifecycle metadata 和 provider-secret
 持久化路径。失败的 refresh 尝试是 non-destructive；调用方保留旧 credential，并可回退到
 reauthorization ticket。
+media credential preflight 被建模为显式 policy layer，而不是隐藏在
+`BiliClient::plan_download` 内部的行为。`CredentialPreflightReport` 会把当前所选 profile 的
+lifecycle status 与 request-path requirement 做评估，并返回可序列化的 requirement status、
+issue，以及关联的 access-key renewal decision。CLI 会在 `plan`、`playback` 和 `download`
+前应用这个 report：`warn` 把 diagnostic 写到 stderr，`fail` 在 stream resolution 前阻断，
+`renew` 只在 report 显示当前 profile 已 refresh-ready 时尝试 provider-specific generic
+access-key refresh。这样嵌入方仍能控制 storage mutation，同时和 CLI 共享同一套 requirement
+model。
 browser `postMessage` consumer 应通过 ticket/output 的 `credentials_from_message` helper
 解析，它会先把 sender origin 与可信 auth origin 或 callback origin 校验，再使用 raw BALH
 payload parser。

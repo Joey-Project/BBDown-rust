@@ -5,6 +5,7 @@ mod app_playurl;
 mod bv;
 mod cancellation;
 mod client;
+mod credential_preflight;
 mod credentials;
 mod danmaku;
 mod download;
@@ -21,6 +22,11 @@ pub use cancellation::DownloadCancellationToken;
 pub use client::{
     BiliClient, ClientConfig, EndpointConfig, PlayurlMode, RestrictedArea, RestrictedAreaConfig,
     RestrictedAreaProxy, RestrictedAreaProxyKind,
+};
+pub use credential_preflight::{
+    CredentialPreflightIssue, CredentialPreflightMode, CredentialPreflightReport,
+    CredentialPreflightRequestPath, CredentialPreflightRequirement,
+    CredentialPreflightRequirementStatus, credential_preflight_requirements,
 };
 pub use credentials::{
     AccessKeyProvider, AccessKeyProviderSecret, AccessKeyRefreshKeypair, AccessKeyRefreshProvider,

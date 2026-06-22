@@ -269,12 +269,22 @@ Profile documents can also be evaluated without network I/O through
 `CredentialProfiles::lifecycle_statuses(policy)`. `CredentialLifecyclePolicy` requires an explicit
 `now_unix_millis` value so embedders can make deterministic stale/expiring decisions in UI,
 background jobs, or tests.
+For plan/download preflight, build a `CredentialPreflightReport` from the selected profile lifecycle
+status and the media request context. `CredentialPreflightReport::from_client_context(...)` mirrors
+the CLI behavior: WEB playurl cookies are optional, TV playurl requires `tv_access_key`, APP playurl
+accepts either `tv_access_key` or generic `access_key`, and restricted-area proxy fallback requires
+generic `access_key`. The report is a pure value: it lists requirement statuses, warnings/blockers,
+and the selected profile's `AccessKeyRenewalDecision`, but it never mutates credential storage.
+Embedding projects can treat blockers as fail-fast UI, warnings as non-blocking banners, or call
+`should_attempt_access_key_renewal()` before using `BiliClient::refresh_access_key(...)` and saving
+the refreshed credentials through their own storage layer.
 
 ```rust,no_run
 use bbdown_core::{
     AccessKeyLoginConfig, AccessKeyLoginCredentials, AccessKeyLoginTicketOutput, BiliClient,
     ClientConfig, CredentialKind, CredentialLifecyclePolicy, CredentialLifecycleStatus,
-    CredentialProfileSelection, CredentialStore, Credentials,
+    CredentialPreflightMode, CredentialPreflightReport, CredentialProfileSelection,
+    CredentialStore, Credentials, PlayurlMode, RestrictedAreaConfig,
 };
 
 async fn check_credentials() {
@@ -306,6 +316,22 @@ fn access_key_lifecycle_status(
         .into_iter()
         .find(|status| status.kind == CredentialKind::AccessKey)
         .map(|status| status.status))
+}
+
+fn plan_preflight_report(
+    store: &CredentialStore,
+    profile: &str,
+    now_unix_millis: u64,
+) -> bbdown_core::Result<CredentialPreflightReport> {
+    let profiles = store.load_profiles()?;
+    let policy = CredentialLifecyclePolicy::at_unix_millis(now_unix_millis);
+    let status = profiles.profile_lifecycle_status(profile, &policy)?;
+    Ok(CredentialPreflightReport::from_client_context(
+        CredentialPreflightMode::Warn,
+        &status,
+        PlayurlMode::Web,
+        &RestrictedAreaConfig::default(),
+    ))
 }
 
 fn access_key_login_ticket() -> bbdown_core::Result<AccessKeyLoginTicketOutput> {

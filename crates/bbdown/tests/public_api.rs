@@ -1,9 +1,10 @@
 use bbdown_core::{
     BiliClient, ClientConfig, CredentialHealthSummaryStatus, CredentialKind,
     CredentialLifecycleMetadata, CredentialLifecyclePolicy, CredentialLifecycleSource,
-    CredentialLifecycleStatus, CredentialProfileMetadata, CredentialProfiles,
-    DownloadCancellationToken, DownloadOptions, DownloadProgressEvent, DownloadProgressSink,
-    DownloadReportSummary, NoopDownloadProgress, StreamSelection, SubtitleAiPolicy,
+    CredentialLifecycleStatus, CredentialPreflightMode, CredentialPreflightReport,
+    CredentialProfileMetadata, CredentialProfiles, DownloadCancellationToken, DownloadOptions,
+    DownloadProgressEvent, DownloadProgressSink, DownloadReportSummary, NoopDownloadProgress,
+    PlayurlMode, RestrictedAreaConfig, StreamSelection, SubtitleAiPolicy,
 };
 use std::path::PathBuf;
 
@@ -49,6 +50,13 @@ fn embedding_surface_is_reexported() -> anyhow::Result<()> {
     let profiles = CredentialProfiles::default();
     let lifecycle_status = profiles.profile_lifecycle_status("default", &lifecycle_policy)?;
     assert_eq!(lifecycle_status.status, CredentialLifecycleStatus::Missing);
+    let preflight = CredentialPreflightReport::from_client_context(
+        CredentialPreflightMode::Warn,
+        &lifecycle_status,
+        PlayurlMode::Web,
+        &RestrictedAreaConfig::default(),
+    );
+    assert!(!preflight.has_blocking_issues());
 
     let health_status = CredentialHealthSummaryStatus::Unknown;
     assert_eq!(format!("{health_status:?}"), "Unknown");

@@ -361,7 +361,18 @@ access key 如果已经 expired、expiring、stale 或 unknown，且状态为 `r
 `--force`、`--stdin` 或 `--file`，CLI 会先尝试 provider-specific automatic refresh。使用
 `--json` 时，自动刷新成功会输出 `decision`、`refreshed` 和 `saved` 事件，仍不会打印原始
 token。如果 refresh 失败，CLI 会输出 `refresh_failed`，然后回退到普通 authorization ticket，
-这样调用方可以提示用户重新授权而不会丢掉旧 credential。`auth login-web` 打印二维码登录 URL，轮询到扫码确认，并保存得到的
+这样调用方可以提示用户重新授权而不会丢掉旧 credential。`plan`、`playback` 或 `download`
+可以配合全局 `--credential-preflight warn|fail|renew`，在解析 media stream 前检查当前选择的
+profile。preflight 会按 request path 推导所需 credential：WEB playurl 把 cookie 视为
+optional，所以匿名公开视频仍可工作；TV playurl 要求 `tv_access_key`；APP playurl 接受
+`tv_access_key` 或通用 `access_key` 任一可用；restricted-area proxy fallback 要求通用
+`access_key`。`warn` 会把 diagnostic 写到 stderr 并继续；`fail` 会在缺少 required
+credential 或相关 credential lifecycle metadata 不是 fresh 时，在网络 stream resolution 前
+中止；`renew` 会在当前 profile refresh-ready 时先尝试 provider-specific generic access-key
+refresh。preflight 不会写 stdout，因此 `--json` 仍保持单个 JSON plan、playback plan 或
+download report。可通过全局 `--credential-stale-after-seconds` 和
+`--credential-expiring-within-seconds` 调整本地 lifecycle policy。
+`auth login-web` 打印二维码登录 URL，轮询到扫码确认，并保存得到的
 cookie。`auth login-tv` 使用 TV 二维码流程，保存 TV 专用 access key 供未来 TV/app 流程使
 用，不会覆盖由通用 access-key 命令导入或获取的 intl/Bstar access key。使用 `--json` 时，
 登录命令会打印换行分隔 JSON 事件：`ticket` 在轮询或 handoff 前包含登录 URL 和

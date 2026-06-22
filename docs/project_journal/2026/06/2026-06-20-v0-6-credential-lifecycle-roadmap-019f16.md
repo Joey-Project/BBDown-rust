@@ -4,7 +4,7 @@ title: v0.6.0 Credential Lifecycle Roadmap
 status: active
 created: 2026-06-20
 updated: 2026-06-22
-branch: feature/v0.6-access-key-refresh-clients
+branch: feature/v0.6-credential-preflight
 pr:
 supersedes: []
 superseded_by:
@@ -144,6 +144,21 @@ superseded_by:
   - GitHub Codex review follow-up routes `bili_tv` main-provider refresh requests to the TV OAuth
     refresh path under the configured passport base, while Android-family keypairs continue using the
     main passport refresh path.
+- PR 8 implements optional credential preflight for media planning/downloading:
+  - `CredentialPreflightReport` exposes a pure core evaluator for selected-profile lifecycle status,
+    media request-path requirements, warnings/blockers, and the selected access-key renewal decision.
+  - Request-path requirements distinguish WEB optional cookies, TV `tv_access_key`, APP
+    `tv_access_key` or generic `access_key`, and restricted-area proxy generic `access_key`.
+  - CLI `plan`, `playback`, and `download` support global `--credential-preflight off|warn|fail|renew`
+    plus lifecycle window overrides.
+  - `warn` writes diagnostics to stderr while keeping JSON stdout as a single payload; `fail`
+    aborts before stream resolution when required credentials are missing or relevant lifecycle
+    metadata is non-fresh.
+  - `renew` attempts provider-specific generic access-key refresh for refresh-ready selected
+    profiles, saves the refreshed credential non-interactively, reloads credentials, and then
+    continues with media resolution.
+  - Bilingual README, user guide, embedding guide, and architecture docs now describe the preflight
+    strategy and embedding surface.
 
 ## Out Of Scope For This Line
 
@@ -218,7 +233,6 @@ superseded_by:
   - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/c192ee2af594cc9cb64cf151261c58b2695513fb/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.
   - `git diff --check`.
   - `just ci`.
-  - `just ci`.
 - PR 7 review-fix validation:
   - `cargo fmt --all -- --check`.
   - `cargo test -p bbdown-core access_key_refresh --locked`.
@@ -251,8 +265,16 @@ superseded_by:
   - `cargo fmt --all -- --check`.
   - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/c192ee2af594cc9cb64cf151261c58b2695513fb/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.
   - `git diff --check`.
+- PR 8 local validation:
+  - `cargo fmt --check`.
+  - `cargo test -p bbdown-core credential_preflight --locked`.
+  - `cargo test -p bbdown-core --test public_api --locked`.
+  - `cargo test -p bbdown-cli credential_preflight --locked`.
+  - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/5f1ab3fa5d9f7d534507216a2d6f765694f9b710/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.
+  - `git diff --check`.
+  - `just ci`.
 
 ## Next Steps
 
-- Finish PR 7 provider-specific refresh client validation, review gates, CI, and merge.
-- Continue PR 8 optional credential preflight integration only after refresh outcomes are stable.
+- Finish PR 8 local full validation, review gates, CI, and merge.
+- Continue PR 9 multi-account lifecycle polish after preflight behavior is stable on `master`.

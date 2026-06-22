@@ -39,6 +39,9 @@ const CLI_OVERRIDE_ENV_VARS: &[&str] = &[
     "BBDOWN_RESTRICTED_API_PROXY",
     "BBDOWN_CREDENTIAL_FILE",
     "BBDOWN_CREDENTIAL_PROFILE",
+    "BBDOWN_CREDENTIAL_PREFLIGHT",
+    "BBDOWN_CREDENTIAL_STALE_AFTER_SECONDS",
+    "BBDOWN_CREDENTIAL_EXPIRING_WITHIN_SECONDS",
     "BBDOWN_REQUEST_TIMEOUT_SECONDS",
     "BBDOWN_COOKIE",
     "BBDOWN_ACCESS_KEY",
@@ -349,6 +352,224 @@ fn plan_json_resolves_mock_video_streams() -> anyhow::Result<()> {
     assert_plan_chapters(&json);
 
     assert_human_plan_lists_qualities(&credential_file, &server)?;
+    Ok(())
+}
+
+#[test]
+fn plan_credential_preflight_warn_keeps_json_stdout_clean() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    mock_video_stream_plan_endpoints(&server);
+    let store = CredentialStore::new(credential_file.clone());
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_profile(
+        "default",
+        Credentials::default().with_cookie("SESSDATA=COOKIE_SECRET"),
+    )?;
+    let mut metadata = CredentialProfileMetadata::default();
+    metadata.set_credential(
+        CredentialKind::Cookie,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::WebQrLogin)
+            .with_checked_at_unix_millis(1),
+    );
+    profiles.set_profile_metadata("default", metadata)?;
+    store.save_profiles(&profiles)?;
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--credential-preflight")
+        .arg("warn")
+        .arg("--credential-stale-after-seconds")
+        .arg("1")
+        .arg("plan")
+        .arg("av170001")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let stdout_json: Value = serde_json::from_slice(&output.stdout)?;
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert_eq!(stdout_json["title"], "Mock video");
+    assert!(stderr.contains("credential preflight warning"));
+    assert!(stderr.contains("cookie for WEB playurl has stale lifecycle metadata"));
+    assert!(!String::from_utf8(output.stdout)?.contains("credential preflight"));
+    Ok(())
+}
+
+#[test]
+fn plan_credential_preflight_fail_blocks_missing_restricted_access_key() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-preflight")
+        .arg("fail")
+        .arg("--restricted-area")
+        .arg("hk")
+        .arg("plan")
+        .arg("ep1000")
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8(output)?;
+
+    assert!(stderr.contains("credential preflight failed"));
+    assert!(stderr.contains("restricted-area proxy requires access_key"));
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn plan_credential_preflight_renew_refreshes_restricted_access_key() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    save_lifecycle_cli_profiles_with_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(1_000)
+            .with_expires_at_unix_millis(2_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    )?;
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET")
+            .form_urlencoded_tuple("refresh_token", "OLD_REFRESH_SECRET")
+            .form_urlencoded_tuple("appkey", "4409e2ce8ffd12b8")
+            .form_urlencoded_tuple_exists("sign");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "refresh_token": "AUTO_REFRESH_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/view/web/season")
+            .query_param("ep_id", "1000");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "result": {
+                "season_id": 123,
+                "title": "Restricted Season",
+                "episodes": [
+                    {"aid": 10, "bvid": "BV1aa", "cid": 100, "id": 1000, "ep_id": 1000, "title": "1", "long_title": "Start"}
+                ]
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/player/web/v2/playurl")
+            .query_param("ep_id", "1000");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -40301,
+            "message": "area restricted"
+        }));
+    });
+    let proxy_mock = server.mock(|when, then| {
+        when.method(GET)
+            .path("/proxy-playurl")
+            .query_param("ep_id", "1000")
+            .query_param("area", "hk")
+            .query_param("access_key", "AUTO_ACCESS_SECRET")
+            .header_missing("cookie");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "timelength": 3000,
+            "accept_quality": [80],
+            "accept_description": ["1080P"],
+            "support_formats": [{"quality": 80, "new_description": "1080P"}],
+            "dash": {
+                "duration": 3,
+                "video": [{
+                    "id": 80,
+                    "baseUrl": "https://proxy.example/video.m4s",
+                    "base_url": "https://proxy.example/video.m4s"
+                }],
+                "audio": []
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/v2")
+            .query_param("aid", "10")
+            .query_param("cid", "100");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {"subtitle": {"subtitles": []}}
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--pgc-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("--restricted-area")
+        .arg("hk")
+        .arg("--restricted-area-proxy")
+        .arg(format!("hk={}/proxy-playurl", server.base_url()))
+        .arg("plan")
+        .arg("ep1000")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let plan: Value = serde_json::from_slice(&output.stdout)?;
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert_eq!(plan["entries"][0]["source"], "pgc_proxy");
+    assert!(stderr.contains("credential preflight: access_key refreshed"));
+    for secret in ["ACCESS_SECRET", "OLD_REFRESH_SECRET", "AUTO_ACCESS_SECRET"] {
+        assert!(!stderr.contains(secret));
+    }
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load_profile("intl")?
+            .access_key
+            .as_deref(),
+        Some("AUTO_ACCESS_SECRET")
+    );
+    refresh_mock.assert_calls(1);
+    proxy_mock.assert_calls(1);
     Ok(())
 }
 

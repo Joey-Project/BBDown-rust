@@ -462,6 +462,14 @@ refresh form. Refresh returns
 `AccessKeyLoginCredentials`, letting CLI and embedders reuse the same lifecycle metadata and
 provider-secret persistence path used by initial access-key acquisition. Failed refresh attempts are
 non-destructive; callers keep the old credential and can fall back to a reauthorization ticket.
+Media credential preflight is modeled as an explicit policy layer rather than hidden behavior inside
+`BiliClient::plan_download`. `CredentialPreflightReport` evaluates the selected profile lifecycle
+status against request-path requirements and returns serializable requirement statuses, issues, and
+the associated access-key renewal decision. The CLI applies that report before `plan`, `playback`,
+and `download`: `warn` writes diagnostics to stderr, `fail` blocks before stream resolution, and
+`renew` attempts provider-specific generic access-key refresh only when the report says the selected
+profile is ready. This keeps embedders in control of storage mutation while still sharing the same
+requirement model as the CLI.
 Browser `postMessage` consumers should parse through the ticket/output `credentials_from_message`
 helpers, which validate the sender origin against the trusted auth or callback origin before using
 the raw BALH payload parser.
