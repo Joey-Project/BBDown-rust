@@ -834,8 +834,10 @@ fn main_access_key_refresh_params(
         .refresh_keypair
         .ok_or(Error::MissingField("refresh_keypair"))?;
     let spec = AccessKeyRefreshKeypairSpec::new(keypair);
-    let mut params = Vec::new();
-    params.push((spec.access_token_field, request.access_key.clone()));
+    let mut params = vec![
+        ("access_key", request.access_key.clone()),
+        ("access_token", request.access_key.clone()),
+    ];
     if spec.include_action_key {
         params.push(("actionKey", "appkey".to_owned()));
     }
@@ -861,7 +863,6 @@ fn intl_access_key_refresh_params(
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct AccessKeyRefreshKeypairSpec {
-    access_token_field: &'static str,
     appkey: &'static str,
     secret: &'static str,
     include_action_key: bool,
@@ -871,19 +872,16 @@ impl AccessKeyRefreshKeypairSpec {
     fn new(keypair: AccessKeyRefreshKeypair) -> Self {
         match keypair {
             AccessKeyRefreshKeypair::BiliTv => Self {
-                access_token_field: "access_key",
                 appkey: crate::client::TV_PLAYURL_APPKEY,
                 secret: crate::client::TV_PLAYURL_APP_SECRET,
                 include_action_key: true,
             },
             AccessKeyRefreshKeypair::Android => Self {
-                access_token_field: "access_key",
                 appkey: crate::client::BILIBILI_ANDROID_APPKEY,
                 secret: crate::client::BILIBILI_ANDROID_APP_SECRET,
                 include_action_key: true,
             },
             AccessKeyRefreshKeypair::AndroidB => Self {
-                access_token_field: "access_token",
                 appkey: crate::client::BILIBILI_ANDROID_B_APPKEY,
                 secret: crate::client::BILIBILI_ANDROID_B_APP_SECRET,
                 include_action_key: false,
@@ -971,15 +969,21 @@ fn access_key_credentials_from_refresh_data(
     } = data;
     let token_info = token_info.unwrap_or_default();
     build_access_key_login_credentials(
-        token_info
-            .access_key
-            .or(token_info.access_token)
-            .or(access_key)
-            .or(access_token),
-        token_info.refresh_token.or(refresh_token),
+        non_empty_refresh_string(token_info.access_key)
+            .or_else(|| non_empty_refresh_string(token_info.access_token))
+            .or_else(|| non_empty_refresh_string(access_key))
+            .or_else(|| non_empty_refresh_string(access_token)),
+        non_empty_refresh_string(token_info.refresh_token)
+            .or_else(|| non_empty_refresh_string(refresh_token)),
         oauth_expires_at.or(expires_at).or(token_info.expires_at),
         token_info.expires_in.or(expires_in),
     )
+}
+
+fn non_empty_refresh_string(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
 
 fn access_key_callback_query(payload: &str) -> Result<String> {
@@ -1735,6 +1739,7 @@ mod tests {
         let tv_params = main_access_key_refresh_params(&tv_request, 1_700_000_000)?;
 
         assert_eq!(param_value(&tv_params, "access_key"), Some("OLD_ACCESS"));
+        assert_eq!(param_value(&tv_params, "access_token"), Some("OLD_ACCESS"));
         assert_eq!(param_value(&tv_params, "actionKey"), Some("appkey"));
         assert_eq!(param_value(&tv_params, "appkey"), Some("4409e2ce8ffd12b8"));
         assert_eq!(
@@ -1754,6 +1759,10 @@ mod tests {
 
         assert_eq!(
             param_value(&android_b_params, "access_token"),
+            Some("OLD_ACCESS")
+        );
+        assert_eq!(
+            param_value(&android_b_params, "access_key"),
             Some("OLD_ACCESS")
         );
         assert_eq!(param_value(&android_b_params, "actionKey"), None);
@@ -1846,6 +1855,7 @@ mod tests {
                 .path("/x/passport-login/oauth2/refresh_token")
                 .header_missing("cookie")
                 .form_urlencoded_tuple("access_key", "OLD_ACCESS")
+                .form_urlencoded_tuple("access_token", "OLD_ACCESS")
                 .form_urlencoded_tuple("actionKey", "appkey")
                 .form_urlencoded_tuple("appkey", "4409e2ce8ffd12b8")
                 .form_urlencoded_tuple("refresh_token", "OLD_REFRESH")
@@ -1854,6 +1864,7 @@ mod tests {
                 "code": 0,
                 "data": {
                     "token_info": {
+                        "access_key": "",
                         "access_token": "NEW_ACCESS",
                         "refresh_token": "NEW_REFRESH",
                         "expires_in": 2_592_000

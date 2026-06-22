@@ -134,6 +134,10 @@ superseded_by:
   - PR review follow-up keeps lifecycle `refresh_token_present=true` when automatic refresh succeeds
     without returning a replacement refresh token and the saved provider secret falls back to the
     previous refresh token.
+  - GitHub Codex review follow-up sends both `access_key` and `access_token` aliases in main
+    Bilibili OAuth2 refresh forms while preserving the selected app keypair signer.
+  - GitHub Codex review follow-up filters empty refresh-response token aliases before falling back
+    to alternate fields, preventing an empty alias from overwriting a usable access key.
 
 ## Out Of Scope For This Line
 
