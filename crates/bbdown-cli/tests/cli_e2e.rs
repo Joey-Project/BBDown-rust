@@ -4486,7 +4486,7 @@ fn auth_renew_access_key_auto_refreshes_ready_provider_secret() -> anyhow::Resul
     let server = MockServer::start();
     let refresh_mock = server.mock(|when, then| {
         when.method(POST)
-            .path("/x/passport-login/oauth2/refresh_token")
+            .path("/x/passport-tv-login/oauth2/refresh_token")
             .form_urlencoded_tuple("access_key", "ACCESS_SECRET")
             .form_urlencoded_tuple("refresh_token", "OLD_REFRESH_SECRET")
             .form_urlencoded_tuple("appkey", "4409e2ce8ffd12b8")
@@ -4549,7 +4549,7 @@ fn auth_renew_access_key_auto_refresh_redacts_echoed_failure() -> anyhow::Result
     let server = MockServer::start();
     let refresh_mock = server.mock(|when, then| {
         when.method(POST)
-            .path("/x/passport-login/oauth2/refresh_token")
+            .path("/x/passport-tv-login/oauth2/refresh_token")
             .form_urlencoded_tuple("access_key", "ACCESS_SECRET")
             .form_urlencoded_tuple("refresh_token", "ACCESS_SECRET_REFRESH")
             .form_urlencoded_tuple("appkey", "4409e2ce8ffd12b8")
@@ -4694,7 +4694,7 @@ fn auth_renew_access_key_auto_refresh_keeps_old_refresh_token_when_response_omit
     let server = MockServer::start();
     let refresh_mock = server.mock(|when, then| {
         when.method(POST)
-            .path("/x/passport-login/oauth2/refresh_token")
+            .path("/x/passport-tv-login/oauth2/refresh_token")
             .form_urlencoded_tuple("access_key", "ACCESS_SECRET")
             .form_urlencoded_tuple("refresh_token", "OLD_REFRESH_SECRET")
             .form_urlencoded_tuple("appkey", "4409e2ce8ffd12b8")

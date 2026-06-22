@@ -138,6 +138,12 @@ superseded_by:
     Bilibili OAuth2 refresh forms while preserving the selected app keypair signer.
   - GitHub Codex review follow-up filters empty refresh-response token aliases before falling back
     to alternate fields, preventing an empty alias from overwriting a usable access key.
+  - GitHub Codex review follow-up preserves explicit
+    `refresh_token_secret_present=false` lifecycle status when provider metadata exists but no
+    provider secret is stored.
+  - GitHub Codex review follow-up routes `bili_tv` main-provider refresh requests to the TV OAuth
+    refresh path under the configured passport base, while Android-family keypairs continue using the
+    main passport refresh path.
 
 ## Out Of Scope For This Line
 
@@ -212,6 +218,7 @@ superseded_by:
   - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/c192ee2af594cc9cb64cf151261c58b2695513fb/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.
   - `git diff --check`.
   - `just ci`.
+  - `just ci`.
 - PR 7 review-fix validation:
   - `cargo fmt --all -- --check`.
   - `cargo test -p bbdown-core access_key_refresh --locked`.
@@ -231,6 +238,19 @@ superseded_by:
   - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/c192ee2af594cc9cb64cf151261c58b2695513fb/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.
   - `git diff --check`.
   - `just ci`.
+- PR 7 current-head GitHub Codex review-fix validation:
+  - `cargo fmt --all`.
+  - `cargo test -p bbdown-core missing_refresh_secret_reports_false_when_provider_metadata_exists --locked`.
+  - `cargo test -p bbdown-core refreshes_tv_access_key_with_tv_oauth_endpoint --locked`.
+  - `cargo test -p bbdown-core refreshes_android_access_key_with_main_oauth_endpoint --locked`.
+  - `cargo test -p bbdown-core access_key_refresh --locked`.
+  - `cargo test -p bbdown-core refreshes_ --locked`.
+  - `cargo test -p bbdown-cli auth_renew_access_key_auto_refresh --test cli_e2e --locked`.
+  - `cargo test -p bbdown-core credentials --locked`.
+  - `cargo test -p bbdown-cli auth_renew_access_key --test cli_e2e --locked`.
+  - `cargo fmt --all -- --check`.
+  - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/c192ee2af594cc9cb64cf151261c58b2695513fb/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.
+  - `git diff --check`.
 
 ## Next Steps
 

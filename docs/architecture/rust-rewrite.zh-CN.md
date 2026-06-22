@@ -399,8 +399,9 @@ secret 值。`AccessKeyRenewalDecision` 会把所选 profile lifecycle status �
 旧的 presence bit；`ready` 表示当前所选 provider 已保存 refresh secret、refresh provider，
 以及该 refresh provider 需要的 keypair。provider-specific network refresh layer 现在通过
 `AccessKeyRefreshRequest` 和 `BiliClient::refresh_access_key(...)` 暴露。Bilibili main OAuth2
-refresh 使用配置的 `passport_base` 和带签名的 app keypair；BiliIntl OAuth2 refresh 使用配置的
-`intl_passport_base` 和 intl refresh form。refresh 成功会返回 `AccessKeyLoginCredentials`，
+refresh 使用配置的 `passport_base` 和带签名的 app keypair，其中 `bili_tv` keypair 会路由到
+TV OAuth refresh path；BiliIntl OAuth2 refresh 使用配置的 `intl_passport_base` 和 intl
+refresh form。refresh 成功会返回 `AccessKeyLoginCredentials`，
 CLI 和嵌入方可以复用与首次 access-key 获取相同的 lifecycle metadata 和 provider-secret
 持久化路径。失败的 refresh 尝试是 non-destructive；调用方保留旧 credential，并可回退到
 reauthorization ticket。

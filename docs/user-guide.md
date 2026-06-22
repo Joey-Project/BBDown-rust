@@ -460,7 +460,8 @@ Current intl support uses official intl metadata/subtitle endpoints and the offi
 playurl endpoint with the configured access key when present. Danmaku XML downloads use the
 configurable comment endpoint. WEB QR login, generic token-health probes, and Bilibili main OAuth2
 access-key refresh use `--passport-base`. BiliIntl OAuth2 access-key refresh uses
-`--intl-passport-base`.
+`--intl-passport-base`. Main-provider `bili_tv` refresh secrets use the TV OAuth refresh path under
+the configured `--passport-base`.
 TV QR generation uses `--tv-passport-base`; TV QR polling and TV token-health probes use
 `--tv-passport-poll-base`. The CLI makes the TV poll base follow `--tv-passport-base` when only that
 TV override is supplied; set `--tv-passport-poll-base` explicitly for split-host mocks or proxies.

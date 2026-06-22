@@ -235,8 +235,9 @@ callback 在 provider secret 保存能力出现前报告过 refresh token；`rea
 keypair。嵌入方可以用已保存的 access key 和匹配的 `AccessKeyProviderSecret` 构造
 `AccessKeyRefreshRequest`，再调用 `BiliClient::refresh_access_key(...)`。client 支持通过
 `EndpointConfig::passport_base` 进行 Bilibili main OAuth2 refresh，也支持通过
-`EndpointConfig::intl_passport_base` 进行 BiliIntl OAuth2 refresh；成功后会返回新的
-`AccessKeyLoginCredentials`，调用方可以复用与首次 access-key login 相同的 lifecycle/secret
+`EndpointConfig::intl_passport_base` 进行 BiliIntl OAuth2 refresh；`bili_tv` main-provider
+keypair 会路由到 TV OAuth refresh path。成功后会返回新的 `AccessKeyLoginCredentials`，
+调用方可以复用与首次 access-key login 相同的 lifecycle/secret
 持久化路径。网络或 API refresh 失败应视为 non-destructive：保留旧 credential，并在策略需要
 用户介入时回退到重新授权 UI。
 当嵌入项目需要在决定提示登录、导入 token 或继续匿名请求前做脱敏诊断时，可以调用

@@ -413,7 +413,8 @@ bbdown auth login-access-key --auth-base http://127.0.0.1:8080 --callback-origin
 当前 intl 支持使用官方 intl 元数据/字幕端点，以及在配置 access key 时使用官方签名 intl
 OGV playurl 端点。弹幕 XML 下载使用可配置的 comment 端点。WEB 二维码登录和通用 token
 health probe 使用 `--passport-base`；Bilibili main OAuth2 access-key refresh 也使用
-`--passport-base`。BiliIntl OAuth2 access-key refresh 使用 `--intl-passport-base`。
+`--passport-base`。BiliIntl OAuth2 access-key refresh 使用 `--intl-passport-base`。main-provider
+`bili_tv` refresh secret 会使用配置的 `--passport-base` 下的 TV OAuth refresh path。
 TV 二维码生成使用 `--tv-passport-base`；TV 二维码轮询
 和 TV token health probe 使用 `--tv-passport-poll-base`。如果只提供 `--tv-passport-base`，
 CLI 会让 TV poll base 跟随该覆盖；对 split-host mock 或代理，请显式设置

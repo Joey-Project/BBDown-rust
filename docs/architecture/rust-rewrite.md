@@ -456,8 +456,9 @@ profile lifecycle status into either `NoAction` or `Reauthorize`, and reports
 exists, while `ready` means the selected provider has a stored refresh secret, refresh provider, and
 any keypair required by that refresh provider. The provider-specific network refresh layer is exposed
 as `AccessKeyRefreshRequest` plus `BiliClient::refresh_access_key(...)`. Bilibili main OAuth2 refresh
-uses the configured `passport_base` and signed app keypairs; BiliIntl OAuth2 refresh uses the
-configured `intl_passport_base` and its intl refresh form. Refresh returns
+uses the configured `passport_base` and signed app keypairs, with the `bili_tv` keypair routed to the
+TV OAuth refresh path; BiliIntl OAuth2 refresh uses the configured `intl_passport_base` and its intl
+refresh form. Refresh returns
 `AccessKeyLoginCredentials`, letting CLI and embedders reuse the same lifecycle metadata and
 provider-secret persistence path used by initial access-key acquisition. Failed refresh attempts are
 non-destructive; callers keep the old credential and can fall back to a reauthorization ticket.

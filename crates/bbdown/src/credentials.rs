@@ -822,7 +822,7 @@ impl CredentialLifecycleCredentialStatus {
         let metadata = metadata.cloned().unwrap_or_default();
         let refresh_secret = access_key_refresh_secret(kind, &metadata, secrets);
         let refresh_token_secret_present =
-            refresh_secret.map(AccessKeyProviderSecret::has_refresh_token);
+            access_key_refresh_secret_present(kind, &metadata, refresh_secret);
         let refresh_provider = refresh_secret.and_then(|secret| secret.refresh_provider);
         let refresh_keypair = refresh_secret.and_then(|secret| secret.refresh_keypair);
         let status = if present {
@@ -857,6 +857,17 @@ fn access_key_refresh_secret<'a>(
     }
     let provider = metadata.access_key_provider?;
     secrets.access_key_provider(provider)
+}
+
+fn access_key_refresh_secret_present(
+    kind: CredentialKind,
+    metadata: &CredentialLifecycleMetadata,
+    refresh_secret: Option<&AccessKeyProviderSecret>,
+) -> Option<bool> {
+    if kind != CredentialKind::AccessKey || metadata.access_key_provider.is_none() {
+        return None;
+    }
+    Some(refresh_secret.is_some_and(AccessKeyProviderSecret::has_refresh_token))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -1853,6 +1864,40 @@ mod tests {
                 .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
         );
         profiles.set_profile_secrets("intl", secrets)?;
+
+        let status = profiles.profile_lifecycle_status(
+            "intl",
+            &CredentialLifecyclePolicy::at_unix_millis(1_700_000_000_000),
+        )?;
+        let access_key_status = status
+            .credential_statuses
+            .iter()
+            .find(|status| status.kind == CredentialKind::AccessKey)
+            .ok_or_else(|| anyhow::anyhow!("access-key status should exist"))?;
+        assert_eq!(access_key_status.refresh_token_secret_present, Some(false));
+        Ok(())
+    }
+
+    #[test]
+    fn missing_refresh_secret_reports_false_when_provider_metadata_exists() -> anyhow::Result<()> {
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "intl",
+            Credentials {
+                cookie: None,
+                access_key: Some("ACCESS_SECRET".to_owned()),
+                tv_access_key: None,
+            },
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+                .with_refresh_token_present(true),
+        );
+        profiles.set_profile_metadata("intl", metadata)?;
 
         let status = profiles.profile_lifecycle_status(
             "intl",

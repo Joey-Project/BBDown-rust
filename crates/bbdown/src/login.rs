@@ -815,7 +815,7 @@ fn access_key_refresh_endpoint_and_params<'a>(
     match request.refresh_provider {
         AccessKeyRefreshProvider::BilibiliMainOauth2 => Ok(AccessKeyRefreshEndpoint {
             base: passport_base,
-            path: "/x/passport-login/oauth2/refresh_token",
+            path: main_access_key_refresh_path(request)?,
             params: main_access_key_refresh_params(request, timestamp)?,
         }),
         AccessKeyRefreshProvider::BiliIntlOauth2 => Ok(AccessKeyRefreshEndpoint {
@@ -824,6 +824,13 @@ fn access_key_refresh_endpoint_and_params<'a>(
             params: intl_access_key_refresh_params(request),
         }),
     }
+}
+
+fn main_access_key_refresh_path(request: &AccessKeyRefreshRequest) -> Result<&'static str> {
+    let keypair = request
+        .refresh_keypair
+        .ok_or(Error::MissingField("refresh_keypair"))?;
+    Ok(AccessKeyRefreshKeypairSpec::new(keypair).path)
 }
 
 fn main_access_key_refresh_params(
@@ -863,6 +870,7 @@ fn intl_access_key_refresh_params(
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct AccessKeyRefreshKeypairSpec {
+    path: &'static str,
     appkey: &'static str,
     secret: &'static str,
     include_action_key: bool,
@@ -872,16 +880,19 @@ impl AccessKeyRefreshKeypairSpec {
     fn new(keypair: AccessKeyRefreshKeypair) -> Self {
         match keypair {
             AccessKeyRefreshKeypair::BiliTv => Self {
+                path: "/x/passport-tv-login/oauth2/refresh_token",
                 appkey: crate::client::TV_PLAYURL_APPKEY,
                 secret: crate::client::TV_PLAYURL_APP_SECRET,
                 include_action_key: true,
             },
             AccessKeyRefreshKeypair::Android => Self {
+                path: "/x/passport-login/oauth2/refresh_token",
                 appkey: crate::client::BILIBILI_ANDROID_APPKEY,
                 secret: crate::client::BILIBILI_ANDROID_APP_SECRET,
                 include_action_key: true,
             },
             AccessKeyRefreshKeypair::AndroidB => Self {
+                path: "/x/passport-login/oauth2/refresh_token",
                 appkey: crate::client::BILIBILI_ANDROID_B_APPKEY,
                 secret: crate::client::BILIBILI_ANDROID_B_APP_SECRET,
                 include_action_key: false,
@@ -1231,7 +1242,8 @@ mod tests {
         AccessKeyRenewalAction, AccessKeyRenewalDecision, AccessKeyRenewalReason, QrLoginState,
         QrLoginTicket, TvLoginContext, access_key_credentials_from_refresh_data,
         cookie_from_set_cookie_headers, cookie_from_success_url, intl_access_key_refresh_params,
-        main_access_key_refresh_params, qrcode_key_from_url, tv_login_params,
+        main_access_key_refresh_params, main_access_key_refresh_path, qrcode_key_from_url,
+        tv_login_params,
     };
     use crate::{
         AccessKeyProvider, AccessKeyProviderSecret, AccessKeyRefreshKeypair,
@@ -1745,6 +1757,10 @@ mod tests {
         .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv);
         let tv_params = main_access_key_refresh_params(&tv_request, 1_700_000_000)?;
 
+        assert_eq!(
+            main_access_key_refresh_path(&tv_request)?,
+            "/x/passport-tv-login/oauth2/refresh_token"
+        );
         assert_eq!(param_value(&tv_params, "access_key"), Some("OLD_ACCESS"));
         assert_eq!(param_value(&tv_params, "access_token"), Some("OLD_ACCESS"));
         assert_eq!(param_value(&tv_params, "actionKey"), Some("appkey"));
@@ -1764,6 +1780,10 @@ mod tests {
         .with_refresh_keypair(AccessKeyRefreshKeypair::AndroidB);
         let android_b_params = main_access_key_refresh_params(&android_b_request, 1_700_000_000)?;
 
+        assert_eq!(
+            main_access_key_refresh_path(&android_b_request)?,
+            "/x/passport-login/oauth2/refresh_token"
+        );
         assert_eq!(
             param_value(&android_b_params, "access_token"),
             Some("OLD_ACCESS")
@@ -1880,11 +1900,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn refreshes_main_access_key_with_signed_form() -> anyhow::Result<()> {
+    async fn refreshes_tv_access_key_with_tv_oauth_endpoint() -> anyhow::Result<()> {
         let server = MockServer::start();
         let refresh_mock = server.mock(|when, then| {
             when.method(POST)
-                .path("/x/passport-login/oauth2/refresh_token")
+                .path("/x/passport-tv-login/oauth2/refresh_token")
                 .header_missing("cookie")
                 .form_urlencoded_tuple("access_key", "OLD_ACCESS")
                 .form_urlencoded_tuple("access_token", "OLD_ACCESS")
@@ -1917,6 +1937,50 @@ mod tests {
         assert_eq!(credentials.access_key, "NEW_ACCESS");
         assert_eq!(credentials.refresh_token.as_deref(), Some("NEW_REFRESH"));
         assert_eq!(credentials.expires_in, Some(2_592_000));
+        refresh_mock.assert_calls(1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn refreshes_android_access_key_with_main_oauth_endpoint() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let refresh_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/x/passport-login/oauth2/refresh_token")
+                .header_missing("cookie")
+                .form_urlencoded_tuple("access_key", "OLD_ACCESS")
+                .form_urlencoded_tuple("access_token", "OLD_ACCESS")
+                .form_urlencoded_tuple("actionKey", "appkey")
+                .form_urlencoded_tuple("appkey", crate::client::BILIBILI_ANDROID_APPKEY)
+                .form_urlencoded_tuple("refresh_token", "OLD_REFRESH")
+                .form_urlencoded_tuple_exists("sign");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "token_info": {
+                        "access_key": "NEW_ANDROID_ACCESS",
+                        "refresh_token": "NEW_ANDROID_REFRESH",
+                        "expires_in": 3600
+                    }
+                }
+            }));
+        });
+        let client = test_client(&server);
+        let request = AccessKeyRefreshRequest::new(
+            "OLD_ACCESS",
+            "OLD_REFRESH",
+            AccessKeyRefreshProvider::BilibiliMainOauth2,
+        )?
+        .with_refresh_keypair(AccessKeyRefreshKeypair::Android);
+
+        let credentials = client.refresh_access_key(&request).await?;
+
+        assert_eq!(credentials.access_key, "NEW_ANDROID_ACCESS");
+        assert_eq!(
+            credentials.refresh_token.as_deref(),
+            Some("NEW_ANDROID_REFRESH")
+        );
+        assert_eq!(credentials.expires_in, Some(3_600));
         refresh_mock.assert_calls(1);
         Ok(())
     }

@@ -250,8 +250,9 @@ refresh provider, and any provider keypair required for network refresh.
 Build an `AccessKeyRefreshRequest` from the saved access key plus the matching
 `AccessKeyProviderSecret`, then call `BiliClient::refresh_access_key(...)`. The client supports
 Bilibili main OAuth2 refresh through `EndpointConfig::passport_base` and BiliIntl OAuth2 refresh
-through `EndpointConfig::intl_passport_base`; it returns a fresh `AccessKeyLoginCredentials` value so
-callers can reuse the same lifecycle/secret persistence path as initial access-key login. Treat
+through `EndpointConfig::intl_passport_base`; `bili_tv` main-provider keypairs are routed to the TV
+OAuth refresh path. It returns a fresh `AccessKeyLoginCredentials` value so callers can reuse the same
+lifecycle/secret persistence path as initial access-key login. Treat
 network or API refresh failures as non-destructive: keep the old credential and fall back to
 reauthorization UI when policy requires user action.
 Call `BiliClient::check_credential_health()` when an embedding project needs a redacted diagnostic
