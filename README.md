@@ -202,6 +202,8 @@ bbdown auth import-cookie --file cookie.txt
 bbdown auth import-access-key --stdin
 bbdown auth login-access-key --stdin < balh-callback.txt
 bbdown auth login-access-key --file balh-callback.txt
+bbdown auth renew-access-key --json
+bbdown auth renew-access-key --stdin < balh-callback.txt
 bbdown auth login-web
 bbdown auth login-tv
 bbdown auth status
@@ -220,6 +222,13 @@ terminal echo can expose token values in scrollback; `--stdin` must be piped or 
 reject terminal stdin, and `--file` rejects terminal-backed paths. The command never consumes
 implicit stdin; pass `--stdin` for pipes or redirects. Use `--message-origin` when ingesting browser
 `postMessage` data and `--auth-base` / `--callback-origin` for compatible mocks or deployments.
+`auth renew-access-key` evaluates the selected profile's access-key lifecycle metadata and emits a
+structured renewal decision. Fresh credentials return `no_action`; missing, unknown, stale,
+expiring, expired, or forced credentials return a BiliPlus/BALH reauthorization ticket. Passing
+`--stdin` or `--file` to the same command completes that reauthorization and saves the new generic
+access key. The command reports `automatic_refresh_readiness` so embedders can distinguish metadata
+that says a refresh token was present from a stored refresh secret; this release does not silently
+refresh access keys because raw refresh tokens are not persisted.
 QR login commands poll the Bilibili QR state machine and save only the resulting credential. WEB QR
 login saves a cookie; TV QR login saves a TV-specific access
 key without overwriting the generic intl/Bstar access key. With `--json`, login commands emit

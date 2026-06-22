@@ -43,8 +43,9 @@
   callbacks, terminal progress events/report summaries, cancellation-aware download execution,
   chapter metadata muxing, audio language selection, AI subtitle filtering, and release-note
   archive packaging are now published.
-- The active `0.6.0` planning line is credential lifecycle work: automatic credential refresh,
-  health policy/reporting, profile-level lifecycle status, and multi-account lifecycle UX.
+- The active `0.6.0` planning line is credential lifecycle work: renewal/reauthorization
+  orchestration, health policy/reporting, profile-level lifecycle status, and multi-account
+  lifecycle UX.
 - The release-prep deterministic gate passed. The latest local live e2e rerun is still blocked by
   upstream restricted PGC proxy `502 Bad Gateway` responses in the ignored manifest.
 - Repo-local skill `$bbdown-live-e2e-fixtures` and `live-e2e.samples.example.json` record the current

@@ -85,8 +85,8 @@
   `just ci`, and documented live-e2e restricted-proxy caveat.
 - [completed] Publish `v0.5.0` through the protected release candidate and promotion workflow as a
   GitHub Release and crates.io `bbdown-core` package.
-- [completed] Plan `v0.6.0` as the credential lifecycle line: automatic credential refresh, health
-  policy/reporting, profile-level status, and multi-account lifecycle UX.
+- [completed] Plan `v0.6.0` as the credential lifecycle line: renewal/reauthorization
+  orchestration, health policy/reporting, profile-level status, and multi-account lifecycle UX.
 - [pending] Implement the `v0.6.0` credential lifecycle sequence from
   `docs/project_journal/2026/06/2026-06-20-v0-6-credential-lifecycle-roadmap-019f16.md`.
 - [pending] Prioritize an overseas playback/CDN routing workstream after the current credential

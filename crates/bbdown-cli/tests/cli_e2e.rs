@@ -4271,6 +4271,120 @@ fn auth_login_access_key_failures_do_not_save_credentials() -> anyhow::Result<()
 }
 
 #[test]
+fn auth_renew_access_key_reports_fresh_no_action() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    save_lifecycle_cli_profiles(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_acquired_at_unix_millis(9_000_000_000_000)
+            .with_expires_at_unix_millis(9_000_000_060_000)
+            .with_refresh_token_present(true),
+    )?;
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .args(["auth", "renew-access-key", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let events = json_lines(&output)?;
+
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["event"], "decision");
+    assert_eq!(events[0]["kind"], "access_key");
+    assert_eq!(events[0]["decision"]["profile"], "intl");
+    assert_eq!(events[0]["decision"]["present"], true);
+    assert_eq!(events[0]["decision"]["lifecycle_status"], "fresh");
+    assert_eq!(
+        events[0]["decision"]["automatic_refresh_readiness"],
+        "metadata_only_refresh_token"
+    );
+    assert_eq!(events[0]["decision"]["action"], "no_action");
+    assert_eq!(events[0]["decision"]["reason"], "lifecycle_fresh");
+    let output_text = String::from_utf8(output)?;
+    assert!(!output_text.contains("ACCESS_SECRET"));
+    Ok(())
+}
+
+#[test]
+fn auth_renew_access_key_reauthorizes_and_saves_redacted_credentials() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    save_lifecycle_cli_profiles(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_acquired_at_unix_millis(1_000)
+            .with_expires_at_unix_millis(2_000)
+            .with_refresh_token_present(true),
+    )?;
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .args([
+            "auth",
+            "renew-access-key",
+            "--json",
+            "--stdin",
+            "--message-origin",
+            "https://www.biliplus.com/login",
+        ])
+        .write_stdin(
+            r#"balh-login-credentials: {"access_key":"NEW_ACCESS_SECRET","refresh_token":"NEW_REFRESH_SECRET","expires_in":60}"#,
+        )
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let events = json_lines(&output)?;
+
+    assert_eq!(events.len(), 3);
+    assert_eq!(events[0]["event"], "decision");
+    assert_eq!(events[0]["decision"]["lifecycle_status"], "expired");
+    assert_eq!(events[0]["decision"]["action"], "reauthorize");
+    assert_eq!(events[0]["decision"]["reason"], "lifecycle_expired");
+    assert_eq!(events[1]["event"], "ticket");
+    assert_eq!(events[1]["kind"], "access_key");
+    assert_eq!(events[2]["event"], "saved");
+    assert_eq!(events[2]["saved"]["has_access_key"], true);
+    let output_text = String::from_utf8(output)?;
+    for secret in ["ACCESS_SECRET", "NEW_ACCESS_SECRET", "NEW_REFRESH_SECRET"] {
+        assert!(!output_text.contains(secret));
+    }
+    let store = CredentialStore::new(credential_file);
+    assert_eq!(
+        store.load_profile("intl")?.access_key.as_deref(),
+        Some("NEW_ACCESS_SECRET")
+    );
+    let metadata = store.load_profiles()?.profile_metadata("intl")?;
+    let access_key_metadata = metadata
+        .credential(CredentialKind::AccessKey)
+        .ok_or_else(|| anyhow::anyhow!("missing access-key lifecycle metadata"))?;
+    assert_eq!(
+        access_key_metadata.source,
+        Some(CredentialLifecycleSource::AccessKeyLogin)
+    );
+    assert_eq!(access_key_metadata.refresh_token_present, Some(true));
+    assert!(access_key_metadata.acquired_at_unix_millis.is_some());
+    Ok(())
+}
+
+#[test]
 fn auth_login_access_key_requires_explicit_input_source() -> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;
     let credential_file = temp.path().join("credentials.json");

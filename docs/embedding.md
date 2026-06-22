@@ -234,6 +234,14 @@ lifecycle metadata. In browser `postMessage` flows, prefer
 validated against the ticket's trusted auth or callback origin before parsing. Use the raw
 `AccessKeyLoginCredentials::from_balh_*` parsers only after an embedding application has already
 validated message provenance.
+For access-key lifecycle orchestration, evaluate
+`AccessKeyRenewalDecision::from_profile_status(profile_status, force_reauthorization)` after loading
+`CredentialProfiles::profile_lifecycle_status(...)`. A `NoAction` decision means the selected
+profile's access-key metadata is still fresh under the caller's policy; `Reauthorize` means the UI
+should render a new `AccessKeyLoginTicketOutput` and collect another BALH callback. The decision's
+`automatic_refresh_readiness` field is intentionally explicit: `metadata_only_refresh_token` means a
+previous callback reported a refresh token, but BBDown has only persisted safe lifecycle metadata and
+cannot silently refresh the token without a future refresh-secret storage design.
 Call `BiliClient::check_credential_health()` when an embedding project needs a redacted diagnostic
 report before deciding whether to prompt for login, import a token, or continue with anonymous
 requests. The report includes one probe each for the WEB cookie, generic `access_key`, and TV

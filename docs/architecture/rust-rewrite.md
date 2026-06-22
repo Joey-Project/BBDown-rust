@@ -446,8 +446,12 @@ to `Credentials` stores only the generic `access_key`. Embedding callers that ow
 copy expiration and refresh-token presence into `CredentialLifecycleMetadata` explicitly. The CLI
 login path does that when it saves the selected profile: absolute expiry values are stored directly,
 relative `expires_in` values are computed from the acquisition time, and only refresh-token presence
-is recorded in lifecycle metadata. Refresh scheduling and token rotation remain separate lifecycle
-work so embedders can choose their own policy.
+is recorded in lifecycle metadata. `AccessKeyRenewalDecision` turns a selected profile lifecycle
+status into either `NoAction` or `Reauthorize`, and reports `automatic_refresh_readiness` separately
+so embedders can see why silent refresh is unavailable. In the current model,
+`metadata_only_refresh_token` means the BALH callback included a refresh token, but BBDown stored only
+the non-secret presence bit; a future refresh-token store and verified refresh endpoint are required
+before token rotation can happen without user reauthorization.
 Browser `postMessage` consumers should parse through the ticket/output `credentials_from_message`
 helpers, which validate the sender origin against the trusted auth or callback origin before using
 the raw BALH payload parser.
@@ -459,6 +463,10 @@ interactive secret paste prompts because terminal echo can leak callback tokens 
 `--stdin` requires piped or redirected input for the same reason, `--file` rejects terminal-backed
 paths, and the command rejects implicit stdin so callers must opt in before pipe or redirect input is
 consumed.
+`auth renew-access-key` uses the same parser and save path, but starts with the renewal decision. If
+reauthorization is needed, it emits a fresh ticket; if callback input is supplied, it saves the new
+access key and refreshed lifecycle metadata. Without callback input it stops after the decision and
+ticket, letting an embedding shell or wrapper render the QR payload and collect the handoff.
 Automation can use newline-delimited JSON ticket/saved events without receiving token values in stdout.
 
 QR login is modeled as an explicit state machine in the crate. WEB QR login creates a

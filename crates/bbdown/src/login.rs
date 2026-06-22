@@ -1,4 +1,7 @@
-use crate::{BiliClient, Credentials, Error, Result};
+use crate::{
+    BiliClient, CredentialKind, CredentialLifecycleCredentialStatus, CredentialLifecycleSource,
+    CredentialLifecycleStatus, CredentialProfileLifecycleStatus, Credentials, Error, Result,
+};
 use md5::Digest;
 use reqwest::header::{HeaderMap, SET_COOKIE};
 use serde::{Deserialize, Serialize};
@@ -192,6 +195,150 @@ impl fmt::Debug for AccessKeyLoginCredentials {
             .field("oauth_expires_at", &self.oauth_expires_at)
             .field("expires_in", &self.expires_in)
             .finish()
+    }
+}
+
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AccessKeyRenewalAction {
+    NoAction,
+    Reauthorize,
+}
+
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AccessKeyRenewalReason {
+    CredentialMissing,
+    LifecycleFresh,
+    LifecycleUnknown,
+    LifecycleStale,
+    LifecycleExpiring,
+    LifecycleExpired,
+    Forced,
+}
+
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AccessKeyAutomaticRefreshReadiness {
+    CredentialMissing,
+    UnsupportedSource,
+    MissingRefreshToken,
+    MetadataOnlyRefreshToken,
+}
+
+#[non_exhaustive]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AccessKeyRenewalDecision {
+    pub profile: String,
+    pub present: bool,
+    pub lifecycle_status: CredentialLifecycleStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<CredentialLifecycleSource>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub acquired_at_unix_millis: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checked_at_unix_millis: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at_unix_millis: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refresh_token_present: Option<bool>,
+    pub automatic_refresh_readiness: AccessKeyAutomaticRefreshReadiness,
+    pub action: AccessKeyRenewalAction,
+    pub reason: AccessKeyRenewalReason,
+}
+
+impl AccessKeyRenewalDecision {
+    #[must_use]
+    pub fn from_profile_status(
+        status: &CredentialProfileLifecycleStatus,
+        force_reauthorization: bool,
+    ) -> Self {
+        let credential = status
+            .credential_statuses
+            .iter()
+            .find(|credential| credential.kind == CredentialKind::AccessKey);
+        let present = credential.is_some_and(|credential| credential.present);
+        let lifecycle_status = credential
+            .map_or(CredentialLifecycleStatus::Missing, |credential| {
+                credential.status
+            });
+        let reason = access_key_renewal_reason(present, lifecycle_status, force_reauthorization);
+        let action = match reason {
+            AccessKeyRenewalReason::LifecycleFresh => AccessKeyRenewalAction::NoAction,
+            AccessKeyRenewalReason::CredentialMissing
+            | AccessKeyRenewalReason::LifecycleUnknown
+            | AccessKeyRenewalReason::LifecycleStale
+            | AccessKeyRenewalReason::LifecycleExpiring
+            | AccessKeyRenewalReason::LifecycleExpired
+            | AccessKeyRenewalReason::Forced => AccessKeyRenewalAction::Reauthorize,
+        };
+        let automatic_refresh_readiness = credential.map_or(
+            AccessKeyAutomaticRefreshReadiness::CredentialMissing,
+            access_key_automatic_refresh_readiness,
+        );
+
+        Self {
+            profile: status.profile.clone(),
+            present,
+            lifecycle_status,
+            source: credential.and_then(|credential| credential.source),
+            acquired_at_unix_millis: credential
+                .and_then(|credential| credential.acquired_at_unix_millis),
+            checked_at_unix_millis: credential
+                .and_then(|credential| credential.checked_at_unix_millis),
+            expires_at_unix_millis: credential
+                .and_then(|credential| credential.expires_at_unix_millis),
+            refresh_token_present: credential
+                .and_then(|credential| credential.refresh_token_present),
+            automatic_refresh_readiness,
+            action,
+            reason,
+        }
+    }
+
+    #[must_use]
+    pub fn requires_reauthorization(&self) -> bool {
+        self.action == AccessKeyRenewalAction::Reauthorize
+    }
+}
+
+fn access_key_renewal_reason(
+    present: bool,
+    lifecycle_status: CredentialLifecycleStatus,
+    force_reauthorization: bool,
+) -> AccessKeyRenewalReason {
+    if force_reauthorization && present {
+        return AccessKeyRenewalReason::Forced;
+    }
+    if !present {
+        return AccessKeyRenewalReason::CredentialMissing;
+    }
+    match lifecycle_status {
+        CredentialLifecycleStatus::Missing => AccessKeyRenewalReason::CredentialMissing,
+        CredentialLifecycleStatus::Unknown => AccessKeyRenewalReason::LifecycleUnknown,
+        CredentialLifecycleStatus::Fresh => AccessKeyRenewalReason::LifecycleFresh,
+        CredentialLifecycleStatus::Stale => AccessKeyRenewalReason::LifecycleStale,
+        CredentialLifecycleStatus::Expiring => AccessKeyRenewalReason::LifecycleExpiring,
+        CredentialLifecycleStatus::Expired => AccessKeyRenewalReason::LifecycleExpired,
+    }
+}
+
+fn access_key_automatic_refresh_readiness(
+    credential: &CredentialLifecycleCredentialStatus,
+) -> AccessKeyAutomaticRefreshReadiness {
+    if !credential.present {
+        return AccessKeyAutomaticRefreshReadiness::CredentialMissing;
+    }
+    if credential.source != Some(CredentialLifecycleSource::AccessKeyLogin) {
+        return AccessKeyAutomaticRefreshReadiness::UnsupportedSource;
+    }
+    if credential.refresh_token_present == Some(true) {
+        AccessKeyAutomaticRefreshReadiness::MetadataOnlyRefreshToken
+    } else {
+        AccessKeyAutomaticRefreshReadiness::MissingRefreshToken
     }
 }
 
@@ -820,13 +967,16 @@ fn current_timestamp_seconds() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        AccessKeyLoginConfig, AccessKeyLoginCredentials, QrLoginState, QrLoginTicket,
-        TvLoginContext, cookie_from_set_cookie_headers, cookie_from_success_url,
+        AccessKeyAutomaticRefreshReadiness, AccessKeyLoginConfig, AccessKeyLoginCredentials,
+        AccessKeyRenewalAction, AccessKeyRenewalDecision, AccessKeyRenewalReason, QrLoginState,
+        QrLoginTicket, TvLoginContext, cookie_from_set_cookie_headers, cookie_from_success_url,
         qrcode_key_from_url, tv_login_params,
     };
     use crate::{
-        BiliClient, ClientConfig, Credentials, EndpointConfig, Error, PlayurlMode,
-        RestrictedAreaConfig,
+        BiliClient, ClientConfig, CredentialKind, CredentialLifecycleMetadata,
+        CredentialLifecyclePolicy, CredentialLifecycleSource, CredentialLifecycleStatus,
+        CredentialProfileMetadata, CredentialProfiles, Credentials, EndpointConfig, Error,
+        PlayurlMode, RestrictedAreaConfig,
     };
     use httpmock::MockServer;
     use httpmock::prelude::*;
@@ -1040,6 +1190,99 @@ mod tests {
         assert!(!debug.contains("AK"));
         assert!(!debug.contains("RT"));
         Ok(())
+    }
+
+    #[test]
+    fn access_key_renewal_decision_keeps_fresh_credentials() -> anyhow::Result<()> {
+        let status = access_key_profile_status(
+            Credentials::default().with_access_key("AK"),
+            Some(
+                CredentialLifecycleMetadata::default()
+                    .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                    .with_acquired_at_unix_millis(1_000)
+                    .with_expires_at_unix_millis(100_000_000_000)
+                    .with_refresh_token_present(true),
+            ),
+            2_000,
+        )?;
+        let decision = AccessKeyRenewalDecision::from_profile_status(&status, false);
+
+        assert!(decision.present);
+        assert_eq!(decision.lifecycle_status, CredentialLifecycleStatus::Fresh);
+        assert_eq!(
+            decision.automatic_refresh_readiness,
+            AccessKeyAutomaticRefreshReadiness::MetadataOnlyRefreshToken
+        );
+        assert_eq!(decision.action, AccessKeyRenewalAction::NoAction);
+        assert_eq!(decision.reason, AccessKeyRenewalReason::LifecycleFresh);
+        assert!(!decision.requires_reauthorization());
+        Ok(())
+    }
+
+    #[test]
+    fn access_key_renewal_decision_reauthorizes_expired_metadata_only_token() -> anyhow::Result<()>
+    {
+        let status = access_key_profile_status(
+            Credentials::default().with_access_key("AK"),
+            Some(
+                CredentialLifecycleMetadata::default()
+                    .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                    .with_acquired_at_unix_millis(1_000)
+                    .with_expires_at_unix_millis(2_000)
+                    .with_refresh_token_present(true),
+            ),
+            3_000,
+        )?;
+        let decision = AccessKeyRenewalDecision::from_profile_status(&status, false);
+
+        assert_eq!(
+            decision.lifecycle_status,
+            CredentialLifecycleStatus::Expired
+        );
+        assert_eq!(
+            decision.automatic_refresh_readiness,
+            AccessKeyAutomaticRefreshReadiness::MetadataOnlyRefreshToken
+        );
+        assert_eq!(decision.action, AccessKeyRenewalAction::Reauthorize);
+        assert_eq!(decision.reason, AccessKeyRenewalReason::LifecycleExpired);
+        assert!(decision.requires_reauthorization());
+        Ok(())
+    }
+
+    #[test]
+    fn access_key_renewal_decision_reauthorizes_missing_access_key() -> anyhow::Result<()> {
+        let status = access_key_profile_status(Credentials::default(), None, 3_000)?;
+        let decision = AccessKeyRenewalDecision::from_profile_status(&status, false);
+
+        assert!(!decision.present);
+        assert_eq!(
+            decision.lifecycle_status,
+            CredentialLifecycleStatus::Missing
+        );
+        assert_eq!(
+            decision.automatic_refresh_readiness,
+            AccessKeyAutomaticRefreshReadiness::CredentialMissing
+        );
+        assert_eq!(decision.action, AccessKeyRenewalAction::Reauthorize);
+        assert_eq!(decision.reason, AccessKeyRenewalReason::CredentialMissing);
+        Ok(())
+    }
+
+    fn access_key_profile_status(
+        credentials: Credentials,
+        access_key_metadata: Option<CredentialLifecycleMetadata>,
+        now_unix_millis: u64,
+    ) -> anyhow::Result<crate::CredentialProfileLifecycleStatus> {
+        let mut profiles = CredentialProfiles::from_credentials(credentials);
+        if let Some(access_key_metadata) = access_key_metadata {
+            let mut metadata = CredentialProfileMetadata::default();
+            metadata.set_credential(CredentialKind::AccessKey, access_key_metadata);
+            profiles.set_profile_metadata("default", metadata)?;
+        }
+        Ok(profiles.profile_lifecycle_status(
+            "default",
+            &CredentialLifecyclePolicy::at_unix_millis(now_unix_millis),
+        )?)
     }
 
     #[test]
