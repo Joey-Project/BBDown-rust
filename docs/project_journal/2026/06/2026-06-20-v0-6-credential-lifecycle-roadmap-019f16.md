@@ -158,11 +158,16 @@ superseded_by:
   - Preflight parses media input once, reuses that parsed `Input` for plan/playback/download
     planning, avoids b23 short-link double resolution, and prevents renewal before raw input
     validation succeeds.
+  - Core embedders can use `CredentialPreflightReport::from_media_paths_context(...)` to express
+    fixed-source paths such as intl/Bstar without inheriting unrelated WEB/TV/APP playurl
+    requirements.
   - Sidecar-only download modes skip TV/APP/restricted-proxy stream preflight, fixed-source
     intl/Bstar and PUGV inputs avoid unrelated global TV/APP credential requirements, intl/Bstar does
     not inherit unrelated WEB cookie lifecycle failures, and `download --progress-json` suppresses
     plaintext preflight diagnostics while wrappers still parse only JSON object lines because final
     CLI errors may also appear on stderr.
+  - Archive downloads defer `renew` automatic access-key refresh until after duplicate handling, so
+    `--on-duplicate cancel` does not call refresh endpoints or mutate stored credentials.
   - `renew` attempts provider-specific generic access-key refresh for refresh-ready selected
     profiles, saves the refreshed credential non-interactively, reloads credentials, and then
     continues with media resolution.

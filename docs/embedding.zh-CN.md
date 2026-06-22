@@ -256,7 +256,9 @@ plan/download preflight 可以用当前所选 profile 的 lifecycle status 和 m
 构造 `CredentialPreflightReport`。`CredentialPreflightReport::from_client_context(...)` 是保守
 的 client-config 形式；`CredentialPreflightReport::from_media_request_context(...)` 允许
 embedding app 对不会使用 PGC proxy fallback 的输入跳过 restricted-area proxy requirement。
-两种形式都会对齐 client 实际会发送的 credential：WEB playurl 的 cookie 是 optional；TV
+当 resolved source 没有 WEB/TV/APP playurl path 时，例如 intl/Bstar 输入只应该检查 intl 通用
+`access_key`，请使用 `CredentialPreflightReport::from_media_paths_context(...)`。这些形式都会对齐
+client 实际会发送的 credential：WEB playurl 的 cookie 是 optional；TV
 playurl 要求 `tv_access_key`；APP playurl 接受 `tv_access_key` 或通用 `access_key` 任一可用，
 并在两者都存在时先检查通用 `access_key`；restricted-area proxy fallback 会把通用
 `access_key` 视为 optional：已存在的 key 会被检查并可能由 resolver 转发，缺失 key 不会阻断

@@ -273,7 +273,9 @@ For plan/download preflight, build a `CredentialPreflightReport` from the select
 status and the media request context. `CredentialPreflightReport::from_client_context(...)` is the
 conservative client-config form, while `CredentialPreflightReport::from_media_request_context(...)`
 lets embedders skip restricted-area proxy requirements for inputs that cannot use PGC proxy fallback.
-Both forms mirror the credential the client would send: WEB playurl cookies are optional, TV playurl
+Use `CredentialPreflightReport::from_media_paths_context(...)` when the resolved source has no
+WEB/TV/APP playurl path, such as intl/Bstar inputs that should check only the intl generic
+`access_key`. These forms mirror the credential the client would send: WEB playurl cookies are optional, TV playurl
 requires `tv_access_key`, APP playurl accepts either generic `access_key` or `tv_access_key` and
 checks the generic `access_key` first when both are stored, and restricted-area proxy fallback treats the
 generic `access_key` as optional: present keys are checked and may be forwarded by the resolver, but

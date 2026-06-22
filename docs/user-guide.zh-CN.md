@@ -377,7 +377,9 @@ credential lifecycle metadata 不是 fresh 时，在网络 stream resolution 前
 当前 profile refresh-ready 时先尝试 provider-specific generic access-key refresh。preflight
 不会写 stdout，因此 `--json` 仍保持单个 JSON plan、playback plan 或 download report。
 `download --progress-json` 会抑制 preflight 纯文本 diagnostic，但失败时最终 CLI error 行仍可能
-写到 stderr；wrapper 应只解析 JSON object line。可通过全局
+写到 stderr；wrapper 应只解析 JSON object line。对 archive 下载，`renew` 会把自动 access-key
+refresh 延后到 duplicate handling 之后，因此 `--on-duplicate cancel` 会停止且不会调用 refresh
+endpoint 或重写已保存 credential。可通过全局
 `--credential-stale-after-seconds` 和
 `--credential-expiring-within-seconds` 调整本地 lifecycle policy。
 `auth login-web` 打印二维码登录 URL，轮询到扫码确认，并保存得到的

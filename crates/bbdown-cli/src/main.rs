@@ -1210,12 +1210,14 @@ async fn prepare_credentials_for_media_request(
     credential_preflight: &CredentialPreflightRuntimeConfig,
     raw_input: &str,
     requires_media_streams: bool,
+    renewal_timing: CredentialPreflightRenewalTiming,
     emit_diagnostics: bool,
 ) -> anyhow::Result<PreparedMediaRequest> {
     if credential_preflight.mode == CredentialPreflightMode::Off {
         return Ok(PreparedMediaRequest {
             credentials: credential_runtime.load()?,
             parsed_input: None,
+            deferred_preflight: None,
         });
     }
 
@@ -1231,7 +1233,9 @@ async fn prepare_credentials_for_media_request(
         credential_preflight,
         &media_preflight_context,
     )?;
-    if report.should_attempt_access_key_renewal() {
+    let defer_renewal = renewal_timing == CredentialPreflightRenewalTiming::Deferred
+        && report.should_attempt_access_key_renewal();
+    if report.should_attempt_access_key_renewal() && !defer_renewal {
         let profiles = credential_runtime
             .store
             .load_profiles()
@@ -1254,6 +1258,83 @@ async fn prepare_credentials_for_media_request(
         }
     }
 
+    if !defer_renewal && emit_diagnostics {
+        emit_credential_preflight_warnings(&report);
+    }
+    if !defer_renewal && report.has_blocking_issues() {
+        let messages = report
+            .issues
+            .iter()
+            .filter(|issue| issue.blocking)
+            .map(|issue| issue.message.as_str())
+            .collect::<Vec<_>>()
+            .join("; ");
+        bail!("credential preflight failed: {messages}");
+    }
+    let deferred_preflight = defer_renewal.then(|| DeferredMediaCredentialPreflight {
+        context: media_preflight_context.clone(),
+        report,
+    });
+    Ok(PreparedMediaRequest {
+        credentials: credential_runtime.load()?,
+        parsed_input: Some(media_preflight_context.input),
+        deferred_preflight,
+    })
+}
+
+struct PreparedMediaRequest {
+    credentials: Credentials,
+    parsed_input: Option<Input>,
+    deferred_preflight: Option<DeferredMediaCredentialPreflight>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CredentialPreflightRenewalTiming {
+    Immediate,
+    Deferred,
+}
+
+struct DeferredMediaCredentialPreflight {
+    context: MediaCredentialPreflightContext,
+    report: CredentialPreflightReport,
+}
+
+async fn complete_deferred_media_preflight_renewal(
+    credential_runtime: &CredentialRuntime,
+    client_runtime: &ClientRuntimeConfig,
+    credential_preflight: &CredentialPreflightRuntimeConfig,
+    prepared: &mut PreparedMediaRequest,
+    emit_diagnostics: bool,
+) -> anyhow::Result<bool> {
+    let Some(deferred) = prepared.deferred_preflight.take() else {
+        return Ok(false);
+    };
+    let mut refreshed = false;
+    let mut report = deferred.report;
+    if report.should_attempt_access_key_renewal() {
+        let profiles = credential_runtime
+            .store
+            .load_profiles()
+            .context("failed to load credential profiles")?;
+        refreshed = try_access_key_auto_refresh_for_preflight(
+            credential_runtime,
+            client_runtime,
+            &profiles,
+            &report.access_key_renewal,
+            emit_diagnostics,
+        )
+        .await?;
+        if refreshed {
+            report = credential_preflight_report(
+                credential_runtime,
+                client_runtime,
+                credential_preflight,
+                &deferred.context,
+            )?;
+            prepared.credentials = credential_runtime.load()?;
+        }
+    }
+
     if emit_diagnostics {
         emit_credential_preflight_warnings(&report);
     }
@@ -1267,15 +1348,7 @@ async fn prepare_credentials_for_media_request(
             .join("; ");
         bail!("credential preflight failed: {messages}");
     }
-    Ok(PreparedMediaRequest {
-        credentials: credential_runtime.load()?,
-        parsed_input: Some(media_preflight_context.input),
-    })
-}
-
-struct PreparedMediaRequest {
-    credentials: Credentials,
-    parsed_input: Option<Input>,
+    Ok(refreshed)
 }
 
 fn credential_preflight_report(
@@ -1417,6 +1490,7 @@ async fn handle_plan(
         credential_preflight,
         &url,
         true,
+        CredentialPreflightRenewalTiming::Immediate,
         true,
     )
     .await?;
@@ -1447,6 +1521,7 @@ async fn handle_playback(
         credential_preflight,
         &url,
         true,
+        CredentialPreflightRenewalTiming::Immediate,
         true,
     )
     .await?;
@@ -1612,12 +1687,18 @@ async fn handle_download(
     let progress = CliProgressReporter {
         json: args.progress_json,
     };
+    let renewal_timing = if args.archive_file.is_some() {
+        CredentialPreflightRenewalTiming::Deferred
+    } else {
+        CredentialPreflightRenewalTiming::Immediate
+    };
     let prepared = match prepare_credentials_for_media_request(
         credentials,
         client_runtime,
         credential_preflight,
         &args.url,
         args.options.mode.requires_media_streams(),
+        renewal_timing,
         !args.progress_json,
     )
     .await
@@ -1634,7 +1715,6 @@ async fn handle_download(
             return Err(error);
         }
     };
-    let client = BiliClient::new(client_runtime.client_config(prepared.credentials));
     let cancellation = DownloadCancellationToken::new();
     let duplicate_prompt_active = Arc::new(AtomicBool::new(false));
     let _cancellation_guard = install_download_cancellation_handler(
@@ -1644,13 +1724,17 @@ async fn handle_download(
     let json = args.json;
     let report = if let Some(archive_file) = args.archive_file.clone() {
         let Some(report) = handle_archive_download(
-            &client,
+            ArchiveDownloadRuntime {
+                credential_runtime: credentials,
+                client_runtime,
+                credential_preflight,
+                progress,
+                cancellation: &cancellation,
+                duplicate_prompt_active: &duplicate_prompt_active,
+            },
+            prepared,
             args,
             archive_file,
-            prepared.parsed_input,
-            progress,
-            &cancellation,
-            &duplicate_prompt_active,
         )
         .await?
         else {
@@ -1658,6 +1742,7 @@ async fn handle_download(
         };
         report
     } else {
+        let client = BiliClient::new(client_runtime.client_config(prepared.credentials));
         let input_title = args.url.clone();
         let output_dir = args.options.output_dir.clone();
         let plan = plan_download_or_report(
@@ -1691,29 +1776,39 @@ async fn handle_download(
     Ok(())
 }
 
+struct ArchiveDownloadRuntime<'a> {
+    credential_runtime: &'a CredentialRuntime,
+    client_runtime: &'a ClientRuntimeConfig,
+    credential_preflight: &'a CredentialPreflightRuntimeConfig,
+    progress: CliProgressReporter,
+    cancellation: &'a DownloadCancellationToken,
+    duplicate_prompt_active: &'a AtomicBool,
+}
+
 async fn handle_archive_download(
-    client: &BiliClient,
+    runtime: ArchiveDownloadRuntime<'_>,
+    mut prepared: PreparedMediaRequest,
     args: DownloadCommandArgs,
     archive_file: PathBuf,
-    parsed_input: Option<Input>,
-    progress: CliProgressReporter,
-    cancellation: &DownloadCancellationToken,
-    duplicate_prompt_active: &AtomicBool,
 ) -> anyhow::Result<Option<DownloadReport>> {
+    let progress = runtime.progress;
+    let cancellation = runtime.cancellation;
+    let duplicate_prompt_active = runtime.duplicate_prompt_active;
+    let mut client = BiliClient::new(
+        runtime
+            .client_runtime
+            .client_config(prepared.credentials.clone()),
+    );
     let input_title = args.url.clone();
     let output_dir = args.options.output_dir.clone();
-    let plan = plan_download_or_report(
-        client,
-        DownloadPlanningRequest {
-            raw: &args.url,
-            parsed_input,
-            selection: args.select,
-            mode: args.options.mode,
-            input_title: &input_title,
-            output_dir: &output_dir,
-            progress,
-            cancellation,
-        },
+    let mut plan = plan_archive_download_or_report(
+        &client,
+        &args,
+        prepared.parsed_input.clone(),
+        &input_title,
+        &output_dir,
+        progress,
+        cancellation,
     )
     .await?;
     let mut archive = load_archive_or_report(
@@ -1722,51 +1817,49 @@ async fn handle_archive_download(
         &plan.title,
         &args.options.output_dir,
     )?;
-    let preflight = match DownloadPreflight::inspect(&plan, &args.options, Some(&archive)) {
-        Ok(preflight) => preflight,
-        Err(error) => {
-            emit_cli_plan_failed(
-                progress,
-                &plan.title,
-                &args.options.output_dir,
-                0,
-                error.to_string(),
-            );
-            return Err(error.into());
-        }
-    };
-    let stdin_is_terminal = io::stdin().is_terminal();
-    let duplicate_prompt_printed_preflight = should_prompt_duplicate_decision(
-        args.on_duplicate,
-        args.json,
+    let mut preflight =
+        inspect_download_preflight_or_report(&plan, &args.options, &archive, progress)?;
+    let Some(decision) = archive_duplicate_decision_or_report(
+        &args,
+        &plan,
         &preflight,
-        stdin_is_terminal,
-    );
-    let decision = duplicate_decision_or_report(DuplicateDecisionRequest {
-        on_duplicate: args.on_duplicate,
-        json: args.json,
-        stdin_is_terminal,
-        preflight: &preflight,
         progress,
-        title: &plan.title,
         cancellation,
         duplicate_prompt_active,
-    })?;
+    )?
+    else {
+        return Ok(None);
+    };
+    let refreshed = complete_deferred_archive_preflight_renewal_or_report(
+        &runtime,
+        &mut prepared,
+        &args,
+        &plan,
+    )
+    .await?;
+    if refreshed {
+        client = BiliClient::new(
+            runtime
+                .client_runtime
+                .client_config(prepared.credentials.clone()),
+        );
+        plan = plan_archive_download_or_report(
+            &client,
+            &args,
+            prepared.parsed_input.clone(),
+            &input_title,
+            &output_dir,
+            progress,
+            cancellation,
+        )
+        .await?;
+        preflight = inspect_download_preflight_or_report(&plan, &args.options, &archive, progress)?;
+    }
     let execution_decision = if args.on_duplicate.is_none() && !preflight.requires_decision() {
         DuplicateDecision::Cancel
     } else {
         decision
     };
-    if preflight.requires_decision() && decision == DuplicateDecision::Cancel {
-        report_archive_duplicate_cancel(
-            args.json,
-            duplicate_prompt_printed_preflight,
-            progress,
-            &plan.title,
-            &preflight,
-        )?;
-        return Ok(None);
-    }
     let decision_output_dir =
         decision_output_dir_or_report(&preflight, decision, progress, &plan.title)?;
     if let Err(error) = ensure_archive_file_is_not_output_root(&archive_file, &decision_output_dir)
@@ -1795,6 +1888,119 @@ async fn handle_archive_download(
     save_archive_or_report(&archive, &archive_file, &report, progress, &plan.title)?;
     archive_progress.flush_plan_completed();
     Ok(Some(report))
+}
+
+async fn complete_deferred_archive_preflight_renewal_or_report(
+    runtime: &ArchiveDownloadRuntime<'_>,
+    prepared: &mut PreparedMediaRequest,
+    args: &DownloadCommandArgs,
+    plan: &DownloadPlan,
+) -> anyhow::Result<bool> {
+    match complete_deferred_media_preflight_renewal(
+        runtime.credential_runtime,
+        runtime.client_runtime,
+        runtime.credential_preflight,
+        prepared,
+        !args.progress_json,
+    )
+    .await
+    {
+        Ok(refreshed) => Ok(refreshed),
+        Err(error) => {
+            emit_cli_plan_failed(
+                runtime.progress,
+                &plan.title,
+                &args.options.output_dir,
+                0,
+                error.to_string(),
+            );
+            Err(error)
+        }
+    }
+}
+
+fn archive_duplicate_decision_or_report(
+    args: &DownloadCommandArgs,
+    plan: &DownloadPlan,
+    preflight: &DownloadPreflight,
+    progress: CliProgressReporter,
+    cancellation: &DownloadCancellationToken,
+    duplicate_prompt_active: &AtomicBool,
+) -> anyhow::Result<Option<DuplicateDecision>> {
+    let stdin_is_terminal = io::stdin().is_terminal();
+    let duplicate_prompt_printed_preflight = should_prompt_duplicate_decision(
+        args.on_duplicate,
+        args.json,
+        preflight,
+        stdin_is_terminal,
+    );
+    let decision = duplicate_decision_or_report(DuplicateDecisionRequest {
+        on_duplicate: args.on_duplicate,
+        json: args.json,
+        stdin_is_terminal,
+        preflight,
+        progress,
+        title: &plan.title,
+        cancellation,
+        duplicate_prompt_active,
+    })?;
+    if preflight.requires_decision() && decision == DuplicateDecision::Cancel {
+        report_archive_duplicate_cancel(
+            args.json,
+            duplicate_prompt_printed_preflight,
+            progress,
+            &plan.title,
+            preflight,
+        )?;
+        return Ok(None);
+    }
+    Ok(Some(decision))
+}
+
+async fn plan_archive_download_or_report(
+    client: &BiliClient,
+    args: &DownloadCommandArgs,
+    parsed_input: Option<Input>,
+    input_title: &str,
+    output_dir: &Path,
+    progress: CliProgressReporter,
+    cancellation: &DownloadCancellationToken,
+) -> anyhow::Result<DownloadPlan> {
+    plan_download_or_report(
+        client,
+        DownloadPlanningRequest {
+            raw: &args.url,
+            parsed_input,
+            selection: args.select.clone(),
+            mode: args.options.mode,
+            input_title,
+            output_dir,
+            progress,
+            cancellation,
+        },
+    )
+    .await
+}
+
+fn inspect_download_preflight_or_report(
+    plan: &DownloadPlan,
+    options: &DownloadOptions,
+    archive: &DownloadArchive,
+    progress: CliProgressReporter,
+) -> anyhow::Result<DownloadPreflight> {
+    match DownloadPreflight::inspect(plan, options, Some(archive)) {
+        Ok(preflight) => Ok(preflight),
+        Err(error) => {
+            emit_cli_plan_failed(
+                progress,
+                &plan.title,
+                &options.output_dir,
+                0,
+                error.to_string(),
+            );
+            Err(error.into())
+        }
+    }
 }
 
 struct DownloadPlanningRequest<'a> {

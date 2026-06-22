@@ -177,10 +177,29 @@ impl CredentialPreflightReport {
         restricted_area_proxy_may_run: bool,
         intl_access_key_may_run: bool,
     ) -> Self {
+        Self::from_media_paths_context(
+            mode,
+            status,
+            Some(playurl_mode),
+            restricted_area,
+            restricted_area_proxy_may_run,
+            intl_access_key_may_run,
+        )
+    }
+
+    #[must_use]
+    pub fn from_media_paths_context(
+        mode: CredentialPreflightMode,
+        status: &CredentialProfileLifecycleStatus,
+        playurl_mode: Option<PlayurlMode>,
+        restricted_area: &RestrictedAreaConfig,
+        restricted_area_proxy_may_run: bool,
+        intl_access_key_may_run: bool,
+    ) -> Self {
         Self::evaluate(
             mode,
             status,
-            credential_preflight_requirements_for_media_request(
+            credential_preflight_requirements_for_media_paths(
                 playurl_mode,
                 restricted_area,
                 restricted_area_proxy_may_run,
@@ -494,6 +513,52 @@ mod tests {
             requirements[0].credential_kinds,
             [CredentialKind::AccessKey]
         );
+    }
+
+    #[test]
+    fn media_paths_report_can_check_intl_without_web_cookie_issue() -> crate::Result<()> {
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "default",
+            Credentials::default()
+                .with_cookie("SESSDATA=COOKIE")
+                .with_access_key("ACCESS"),
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::Cookie,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::WebQrLogin)
+                .with_checked_at_unix_millis(1),
+        );
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_checked_at_unix_millis(10_000),
+        );
+        profiles.set_profile_metadata("default", metadata)?;
+        let status = profiles.profile_lifecycle_status(
+            "default",
+            &CredentialLifecyclePolicy::at_unix_millis(10_000).with_stale_after_millis(Some(1_000)),
+        )?;
+
+        let report = CredentialPreflightReport::from_media_paths_context(
+            CredentialPreflightMode::Fail,
+            &status,
+            None,
+            &RestrictedAreaConfig::default(),
+            false,
+            true,
+        );
+
+        assert!(!report.has_blocking_issues());
+        assert_eq!(report.requirements.len(), 1);
+        assert_eq!(
+            report.requirements[0].request_path,
+            CredentialPreflightRequestPath::IntlWeb
+        );
+        Ok(())
     }
 
     #[test]

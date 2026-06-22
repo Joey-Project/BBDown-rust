@@ -224,7 +224,9 @@ request 前检查当前 profile，也会覆盖使用通用 `access_key` 的 intl
 不会阻断自带认证或允许匿名 fallback 的 proxy URL。diagnostic 会写到 stderr，JSON stdout
 仍保持为单个 plan 或 report payload；`download --progress-json` 会抑制 preflight 纯文本
 diagnostic，但失败时最终 CLI error 行仍可能写到 stderr，因此 wrapper 应只解析 JSON object
-line。二维码登录命令会轮询
+line。对 archive 下载，`--credential-preflight renew` 会把自动 access-key refresh 延后到
+duplicate handling 之后，因此 `--on-duplicate cancel` 会停止且不会调用 refresh endpoint 或重写
+已保存 credential。二维码登录命令会轮询
 Bilibili 二维码状态机，并只保存最终得到的凭据。WEB 二维码登录保存 cookie；TV 二维码登录保存
 TV 专用 access key，不会覆盖由通用 access-key 命令导入或获取的 intl/Bstar access key。
 使用 `--json` 时，登录命令输出换行分隔 JSON 事件：先输出带登录 URL 和 `qr_payload` 的
