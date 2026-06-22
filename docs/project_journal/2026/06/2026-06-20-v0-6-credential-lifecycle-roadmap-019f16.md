@@ -308,6 +308,8 @@ superseded_by:
   - Archive credential retry now also message-filters API `-403`, gRPC `7`, and gRPC `16`, so
     region/permission failures such as `area restricted` do not trigger forced access-key refresh or
     rewrite local credentials.
+  - User Guide APP-mode prose now matches the implemented credential order: generic
+    `access_key` first, then `tv_access_key` fallback.
   - If deferred credential refresh changes archive preflight into a duplicate conflict, explicit
     `--on-duplicate cancel` now re-enters the CLI cancel-report path instead of letting the library
     executor convert it into an error.

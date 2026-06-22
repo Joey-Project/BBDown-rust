@@ -184,7 +184,7 @@ PGC episodes, uses the TV-specific access key saved by `auth login-tv`, and can 
 or proxy with `--tv-api-base` / `BBDOWN_TV_API_BASE`.
 Use `--playurl-mode app` or `BBDOWN_PLAYURL_MODE=app` when a downstream integration needs media
 request specs from BBDown-compatible APP gRPC playurl endpoints. APP mode applies to normal videos
-and PGC episodes, uses the saved TV access key first and then the generic imported access key, and
+and PGC episodes, uses the generic imported access key first and then the saved TV access key, and
 can be pointed at mocks or proxies with `--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` and
 `--app-pgc-grpc-base` / `BBDOWN_APP_PGC_GRPC_BASE`; the normal-video APP default uses
 `https://grpc.biliapi.net`, and the PGC APP default uses the same gRPC host. PGC APP gRPC
