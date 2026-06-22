@@ -147,18 +147,22 @@ superseded_by:
 - PR 8 implements optional credential preflight for media planning/downloading:
   - `CredentialPreflightReport` exposes a pure core evaluator for selected-profile lifecycle status,
     media request-path requirements, warnings/blockers, and the selected access-key renewal decision.
-  - Request-path requirements distinguish WEB optional cookies, TV `tv_access_key`, APP
-    `tv_access_key` or generic `access_key`, intl/Bstar generic `access_key`, and optional
+  - Request-path requirements distinguish WEB optional cookies, TV `tv_access_key`, APP generic
+    `access_key` with `tv_access_key` fallback, intl/Bstar generic `access_key`, and optional
     restricted-area proxy generic `access_key` when that proxy fallback may run.
   - CLI `plan`, `playback`, and `download` support global `--credential-preflight off|warn|fail|renew`
     plus lifecycle window overrides.
   - `warn` writes diagnostics to stderr while keeping JSON stdout as a single payload; `fail`
     aborts before stream resolution when required credentials are missing or relevant lifecycle
     metadata is non-fresh.
+  - Preflight parses media input once, reuses that parsed `Input` for plan/playback/download
+    planning, avoids b23 short-link double resolution, and prevents renewal before raw input
+    validation succeeds.
   - Sidecar-only download modes skip TV/APP/restricted-proxy stream preflight, fixed-source
-    intl/Bstar and PUGV inputs avoid unrelated global TV/APP credential requirements, and
-    `download --progress-json` keeps stderr as JSON Lines by suppressing plaintext preflight
-    diagnostics.
+    intl/Bstar and PUGV inputs avoid unrelated global TV/APP credential requirements, intl/Bstar does
+    not inherit unrelated WEB cookie lifecycle failures, and `download --progress-json` suppresses
+    plaintext preflight diagnostics while wrappers still parse only JSON object lines because final
+    CLI errors may also appear on stderr.
   - `renew` attempts provider-specific generic access-key refresh for refresh-ready selected
     profiles, saves the refreshed credential non-interactively, reloads credentials, and then
     continues with media resolution.

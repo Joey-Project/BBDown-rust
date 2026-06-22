@@ -409,8 +409,8 @@ Use the global `--credential-preflight warn|fail|renew` option with `plan`, `pla
 `download` when a media request should check the selected profile before resolving streams.
 Preflight derives the expected credential requirements from the selected request path: WEB playurl
 treats cookies as optional so anonymous public videos still work, TV playurl requires
-`tv_access_key`, APP playurl accepts either `tv_access_key` or generic `access_key` and checks
-`tv_access_key` first when both are stored, and restricted-area proxy fallback checks generic
+`tv_access_key`, APP playurl accepts either generic `access_key` or `tv_access_key` and checks
+the generic `access_key` first when both are stored, and restricted-area proxy fallback checks generic
 `access_key` only when that key is configured for an input where proxy fallback may run. Missing
 generic keys do not block restricted-area proxy URLs that authenticate themselves or allow anonymous
 fallback. Intl/Bstar episode inputs require the generic `access_key` used by the official intl

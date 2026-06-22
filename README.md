@@ -92,8 +92,8 @@ Set `--playurl-mode tv` or `BBDOWN_PLAYURL_MODE=tv` to resolve normal videos and
 through BBDown-compatible TV HTTP playurl endpoints. TV mode uses the TV-specific access key saved
 by `auth login-tv` and `--tv-api-base` / `BBDOWN_TV_API_BASE` for endpoint overrides.
 Set `--playurl-mode app` or `BBDOWN_PLAYURL_MODE=app` to use BBDown-compatible APP gRPC playurl
-endpoints for normal videos and PGC episodes. APP mode uses `Credentials::tv_access_key` first and
-falls back to the generic `Credentials::access_key`; use `--app-grpc-base` /
+endpoints for normal videos and PGC episodes. APP mode uses the generic
+`Credentials::access_key` first and falls back to `Credentials::tv_access_key`; use `--app-grpc-base` /
 `BBDOWN_APP_GRPC_BASE` and `--app-pgc-grpc-base` / `BBDOWN_APP_PGC_GRPC_BASE` for mock or proxy
 endpoint overrides; the normal-video APP default uses `https://grpc.biliapi.net` and the PGC APP
 default follows the BBDown reference host `https://app.bilibili.com`. PGC APP gRPC restricted or

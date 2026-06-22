@@ -3059,13 +3059,13 @@ impl BiliClient {
     fn app_playurl_access_key(&self) -> Option<&str> {
         self.config
             .credentials
-            .tv_access_key
+            .access_key
             .as_deref()
             .filter(|value| !value.is_empty())
             .or_else(|| {
                 self.config
                     .credentials
-                    .access_key
+                    .tv_access_key
                     .as_deref()
                     .filter(|value| !value.is_empty())
             })
@@ -10025,7 +10025,7 @@ mod tests {
             when.method(POST)
                 .path(app_playurl::PGC_PLAYURL_PATH)
                 .header("content-type", "application/grpc")
-                .header("authorization", "identify_v1 TV_ACCESS")
+                .header("authorization", "identify_v1 ACCESS_SECRET")
                 .header_missing("cookie");
             then.status(200)
                 .header("grpc-status", "7")
@@ -10113,7 +10113,7 @@ mod tests {
             when.method(POST)
                 .path(app_playurl::PGC_PLAYURL_PATH)
                 .header("content-type", "application/grpc")
-                .header("authorization", "identify_v1 TV_ACCESS")
+                .header("authorization", "identify_v1 ACCESS_SECRET")
                 .header_missing("cookie");
             then.status(200).header("grpc-status", "7");
         });
@@ -10150,7 +10150,7 @@ mod tests {
             when.method(POST)
                 .path(app_playurl::PGC_PLAYURL_PATH)
                 .header("content-type", "application/grpc")
-                .header("authorization", "identify_v1 TV_ACCESS")
+                .header("authorization", "identify_v1 ACCESS_SECRET")
                 .header_missing("cookie");
             then.status(200).body(app_response.clone());
         });
@@ -10237,7 +10237,7 @@ mod tests {
             when.method(POST)
                 .path(app_playurl::PGC_PLAYURL_PATH)
                 .header("content-type", "application/grpc")
-                .header("authorization", "identify_v1 TV_ACCESS")
+                .header("authorization", "identify_v1 ACCESS_SECRET")
                 .header_missing("cookie");
             then.status(200).body(app_response.clone());
         });

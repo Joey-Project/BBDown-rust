@@ -19,7 +19,7 @@ use bbdown_core::{
     QrLoginState, QrLoginTicket, QrLoginTicketOutput, ResolvedContent, RestrictedArea,
     RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection,
     StreamQuality, StreamSelection, StreamSet, SubtitleAiPolicy,
-    archive_entry_allows_danmaku_update, credential_preflight_requirements_for_media_request,
+    archive_entry_allows_danmaku_update, credential_preflight_requirements_for_media_paths,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::ffi::{OsStr, OsString};
@@ -1211,9 +1211,12 @@ async fn prepare_credentials_for_media_request(
     raw_input: &str,
     requires_media_streams: bool,
     emit_diagnostics: bool,
-) -> anyhow::Result<Credentials> {
+) -> anyhow::Result<PreparedMediaRequest> {
     if credential_preflight.mode == CredentialPreflightMode::Off {
-        return credential_runtime.load();
+        return Ok(PreparedMediaRequest {
+            credentials: credential_runtime.load()?,
+            parsed_input: None,
+        });
     }
 
     let media_preflight_context = media_credential_preflight_context_for_input(
@@ -1226,7 +1229,7 @@ async fn prepare_credentials_for_media_request(
         credential_runtime,
         client_runtime,
         credential_preflight,
-        media_preflight_context,
+        &media_preflight_context,
     )?;
     if report.should_attempt_access_key_renewal() {
         let profiles = credential_runtime
@@ -1246,7 +1249,7 @@ async fn prepare_credentials_for_media_request(
                 credential_runtime,
                 client_runtime,
                 credential_preflight,
-                media_preflight_context,
+                &media_preflight_context,
             )?;
         }
     }
@@ -1264,14 +1267,22 @@ async fn prepare_credentials_for_media_request(
             .join("; ");
         bail!("credential preflight failed: {messages}");
     }
-    credential_runtime.load()
+    Ok(PreparedMediaRequest {
+        credentials: credential_runtime.load()?,
+        parsed_input: Some(media_preflight_context.input),
+    })
+}
+
+struct PreparedMediaRequest {
+    credentials: Credentials,
+    parsed_input: Option<Input>,
 }
 
 fn credential_preflight_report(
     credential_runtime: &CredentialRuntime,
     client_runtime: &ClientRuntimeConfig,
     credential_preflight: &CredentialPreflightRuntimeConfig,
-    media_preflight_context: MediaCredentialPreflightContext,
+    media_preflight_context: &MediaCredentialPreflightContext,
 ) -> anyhow::Result<CredentialPreflightReport> {
     let policy = credential_preflight.policy();
     let (_profiles, _selected_profile, mut statuses) =
@@ -1279,7 +1290,7 @@ fn credential_preflight_report(
     let status = statuses
         .pop()
         .context("failed to evaluate selected credential profile")?;
-    let requirements = credential_preflight_requirements_for_media_request(
+    let requirements = credential_preflight_requirements_for_media_paths(
         media_preflight_context.playurl_mode,
         &client_runtime.restricted_area,
         media_preflight_context.restricted_area_proxy_may_run,
@@ -1292,9 +1303,10 @@ fn credential_preflight_report(
     ))
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug)]
 struct MediaCredentialPreflightContext {
-    playurl_mode: PlayurlMode,
+    input: Input,
+    playurl_mode: Option<PlayurlMode>,
     restricted_area_proxy_may_run: bool,
     intl_access_key_may_run: bool,
 }
@@ -1309,9 +1321,10 @@ async fn media_credential_preflight_context_for_input(
     let playurl_mode = if requires_media_streams {
         input_media_preflight_playurl_mode(&input, client_runtime.playurl_mode)
     } else {
-        PlayurlMode::Web
+        Some(PlayurlMode::Web)
     };
     Ok(MediaCredentialPreflightContext {
+        input: input.clone(),
         playurl_mode,
         restricted_area_proxy_may_run: requires_media_streams
             && !client_runtime.restricted_area.proxies.is_empty()
@@ -1320,12 +1333,14 @@ async fn media_credential_preflight_context_for_input(
     })
 }
 
-fn input_media_preflight_playurl_mode(input: &Input, configured: PlayurlMode) -> PlayurlMode {
+fn input_media_preflight_playurl_mode(
+    input: &Input,
+    configured: PlayurlMode,
+) -> Option<PlayurlMode> {
     match input {
-        Input::CheeseEpisode(_) | Input::CheeseSeason(_) | Input::IntlEpisode(_) => {
-            PlayurlMode::Web
-        }
-        _ => configured,
+        Input::IntlEpisode(_) => None,
+        Input::CheeseEpisode(_) | Input::CheeseSeason(_) => Some(PlayurlMode::Web),
+        _ => Some(configured),
     }
 }
 
@@ -1396,7 +1411,7 @@ async fn handle_plan(
     select: Option<Selection>,
     json: bool,
 ) -> anyhow::Result<()> {
-    let credentials = prepare_credentials_for_media_request(
+    let prepared = prepare_credentials_for_media_request(
         credentials,
         client_runtime,
         credential_preflight,
@@ -1405,8 +1420,11 @@ async fn handle_plan(
         true,
     )
     .await?;
-    let client = BiliClient::new(client_runtime.client_config(credentials));
-    let plan = client.plan_download(&url, select).await?;
+    let client = BiliClient::new(client_runtime.client_config(prepared.credentials));
+    let plan = match prepared.parsed_input {
+        Some(input) => client.plan(input, select).await?,
+        None => client.plan_download(&url, select).await?,
+    };
     if json {
         println!("{}", serde_json::to_string_pretty(&plan)?);
     } else {
@@ -1423,7 +1441,7 @@ async fn handle_playback(
     select: Option<Selection>,
     json: bool,
 ) -> anyhow::Result<()> {
-    let credentials = prepare_credentials_for_media_request(
+    let prepared = prepare_credentials_for_media_request(
         credentials,
         client_runtime,
         credential_preflight,
@@ -1432,8 +1450,11 @@ async fn handle_playback(
         true,
     )
     .await?;
-    let client = BiliClient::new(client_runtime.client_config(credentials));
-    let plan = client.plan_playback(&url, select).await?;
+    let client = BiliClient::new(client_runtime.client_config(prepared.credentials));
+    let plan = match prepared.parsed_input {
+        Some(input) => client.plan_playback_input(input, select).await?,
+        None => client.plan_playback(&url, select).await?,
+    };
     if json {
         println!("{}", serde_json::to_string_pretty(&plan)?);
     } else {
@@ -1591,7 +1612,7 @@ async fn handle_download(
     let progress = CliProgressReporter {
         json: args.progress_json,
     };
-    let credentials = match prepare_credentials_for_media_request(
+    let prepared = match prepare_credentials_for_media_request(
         credentials,
         client_runtime,
         credential_preflight,
@@ -1601,7 +1622,7 @@ async fn handle_download(
     )
     .await
     {
-        Ok(credentials) => credentials,
+        Ok(prepared) => prepared,
         Err(error) => {
             emit_cli_plan_failed(
                 progress,
@@ -1613,7 +1634,7 @@ async fn handle_download(
             return Err(error);
         }
     };
-    let client = BiliClient::new(client_runtime.client_config(credentials));
+    let client = BiliClient::new(client_runtime.client_config(prepared.credentials));
     let cancellation = DownloadCancellationToken::new();
     let duplicate_prompt_active = Arc::new(AtomicBool::new(false));
     let _cancellation_guard = install_download_cancellation_handler(
@@ -1621,33 +1642,46 @@ async fn handle_download(
         Arc::clone(&duplicate_prompt_active),
     );
     let json = args.json;
-    let report = match args.archive_file.clone() {
-        Some(archive_file) => {
-            let Some(report) = handle_archive_download(
-                &client,
-                args,
-                archive_file,
+    let report = if let Some(archive_file) = args.archive_file.clone() {
+        let Some(report) = handle_archive_download(
+            &client,
+            args,
+            archive_file,
+            prepared.parsed_input,
+            progress,
+            &cancellation,
+            &duplicate_prompt_active,
+        )
+        .await?
+        else {
+            return Ok(());
+        };
+        report
+    } else {
+        let input_title = args.url.clone();
+        let output_dir = args.options.output_dir.clone();
+        let plan = plan_download_or_report(
+            &client,
+            DownloadPlanningRequest {
+                raw: &args.url,
+                parsed_input: prepared.parsed_input,
+                selection: args.select,
+                mode: args.options.mode,
+                input_title: &input_title,
+                output_dir: &output_dir,
                 progress,
+                cancellation: &cancellation,
+            },
+        )
+        .await?;
+        client
+            .download_plan_with_progress_and_cancellation(
+                &plan,
+                args.options,
+                &progress,
                 &cancellation,
-                &duplicate_prompt_active,
             )
             .await?
-            else {
-                return Ok(());
-            };
-            report
-        }
-        None => {
-            client
-                .download_input_with_progress_and_cancellation(
-                    &args.url,
-                    args.select,
-                    args.options,
-                    &progress,
-                    &cancellation,
-                )
-                .await?
-        }
     };
     if json {
         println!("{}", serde_json::to_string_pretty(&report)?);
@@ -1661,16 +1695,18 @@ async fn handle_archive_download(
     client: &BiliClient,
     args: DownloadCommandArgs,
     archive_file: PathBuf,
+    parsed_input: Option<Input>,
     progress: CliProgressReporter,
     cancellation: &DownloadCancellationToken,
     duplicate_prompt_active: &AtomicBool,
 ) -> anyhow::Result<Option<DownloadReport>> {
     let input_title = args.url.clone();
     let output_dir = args.options.output_dir.clone();
-    let plan = plan_archive_download_or_report(
+    let plan = plan_download_or_report(
         client,
-        ArchivePlanningRequest {
+        DownloadPlanningRequest {
             raw: &args.url,
+            parsed_input,
             selection: args.select,
             mode: args.options.mode,
             input_title: &input_title,
@@ -1761,8 +1797,9 @@ async fn handle_archive_download(
     Ok(Some(report))
 }
 
-struct ArchivePlanningRequest<'a> {
+struct DownloadPlanningRequest<'a> {
     raw: &'a str,
+    parsed_input: Option<Input>,
     selection: Option<Selection>,
     mode: DownloadMode,
     input_title: &'a str,
@@ -1771,12 +1808,21 @@ struct ArchivePlanningRequest<'a> {
     cancellation: &'a DownloadCancellationToken,
 }
 
-async fn plan_archive_download_or_report(
+async fn plan_download_or_report(
     client: &BiliClient,
-    request: ArchivePlanningRequest<'_>,
+    request: DownloadPlanningRequest<'_>,
 ) -> anyhow::Result<DownloadPlan> {
     let plan_result = tokio::select! {
-        result = client.plan_download_with_mode(request.raw, request.selection, request.mode) => result,
+        result = async {
+            match request.parsed_input {
+                Some(input) => client
+                    .plan_with_download_mode(input, request.selection, request.mode)
+                    .await,
+                None => client
+                    .plan_download_with_mode(request.raw, request.selection, request.mode)
+                    .await,
+            }
+        } => result,
         () = request.cancellation.cancelled() => Err(request.cancellation.cancelled_error()),
     };
     match plan_result {
@@ -4097,15 +4143,15 @@ mod tests {
     fn media_preflight_playurl_mode_uses_fixed_source_for_intl_and_cheese_inputs() {
         assert_eq!(
             input_media_preflight_playurl_mode(&Input::IntlEpisode(341_736), PlayurlMode::App),
-            PlayurlMode::Web
+            None
         );
         assert_eq!(
             input_media_preflight_playurl_mode(&Input::CheeseEpisode(101), PlayurlMode::Tv),
-            PlayurlMode::Web
+            Some(PlayurlMode::Web)
         );
         assert_eq!(
             input_media_preflight_playurl_mode(&Input::Aid(170_001), PlayurlMode::App),
-            PlayurlMode::App
+            Some(PlayurlMode::App)
         );
     }
 

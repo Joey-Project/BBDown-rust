@@ -71,7 +71,7 @@ impl CredentialPreflightRequirement {
     pub fn app_playurl_access_key() -> Self {
         Self::new(
             CredentialPreflightRequestPath::AppPlayurl,
-            [CredentialKind::TvAccessKey, CredentialKind::AccessKey],
+            [CredentialKind::AccessKey, CredentialKind::TvAccessKey],
             true,
         )
     }
@@ -222,15 +222,33 @@ pub fn credential_preflight_requirements_for_media_request(
     restricted_area_proxy_may_run: bool,
     intl_access_key_may_run: bool,
 ) -> Vec<CredentialPreflightRequirement> {
+    credential_preflight_requirements_for_media_paths(
+        Some(playurl_mode),
+        restricted_area,
+        restricted_area_proxy_may_run,
+        intl_access_key_may_run,
+    )
+}
+
+#[must_use]
+pub fn credential_preflight_requirements_for_media_paths(
+    playurl_mode: Option<PlayurlMode>,
+    restricted_area: &RestrictedAreaConfig,
+    restricted_area_proxy_may_run: bool,
+    intl_access_key_may_run: bool,
+) -> Vec<CredentialPreflightRequirement> {
     let mut requirements = match playurl_mode {
-        PlayurlMode::Web => vec![CredentialPreflightRequirement::web_playurl_cookie_optional()],
-        PlayurlMode::Tv => vec![CredentialPreflightRequirement::tv_playurl_access_key()],
-        PlayurlMode::App => vec![CredentialPreflightRequirement::app_playurl_access_key()],
+        Some(PlayurlMode::Web) => {
+            vec![CredentialPreflightRequirement::web_playurl_cookie_optional()]
+        }
+        Some(PlayurlMode::Tv) => vec![CredentialPreflightRequirement::tv_playurl_access_key()],
+        Some(PlayurlMode::App) => vec![CredentialPreflightRequirement::app_playurl_access_key()],
+        None => Vec::new(),
     };
     if intl_access_key_may_run {
         requirements.push(CredentialPreflightRequirement::intl_access_key());
     }
-    if playurl_mode != PlayurlMode::Tv
+    if playurl_mode != Some(PlayurlMode::Tv)
         && restricted_area_proxy_may_run
         && !restricted_area.proxies.is_empty()
     {
@@ -459,6 +477,26 @@ mod tests {
     }
 
     #[test]
+    fn media_paths_context_can_check_intl_without_web_cookie() {
+        let requirements = credential_preflight_requirements_for_media_paths(
+            None,
+            &RestrictedAreaConfig::default(),
+            false,
+            true,
+        );
+
+        assert_eq!(requirements.len(), 1);
+        assert_eq!(
+            requirements[0].request_path,
+            CredentialPreflightRequestPath::IntlWeb
+        );
+        assert_eq!(
+            requirements[0].credential_kinds,
+            [CredentialKind::AccessKey]
+        );
+    }
+
+    #[test]
     fn fail_mode_treats_missing_optional_web_cookie_as_satisfied() -> crate::Result<()> {
         let status = CredentialProfiles::default().profile_lifecycle_status(
             "default",
@@ -564,19 +602,18 @@ mod tests {
         assert!(
             report.issues[0]
                 .message
-                .contains("tv_access_key or access_key")
+                .contains("access_key or tv_access_key")
         );
         Ok(())
     }
 
     #[test]
-    fn app_requirement_accepts_fresh_tv_access_key_alternative() -> crate::Result<()> {
+    fn app_requirement_accepts_fresh_tv_access_key_when_generic_key_is_absent() -> crate::Result<()>
+    {
         let mut profiles = CredentialProfiles::default();
         profiles.set_profile(
             "default",
-            Credentials::default()
-                .with_tv_access_key("TV_ACCESS")
-                .with_access_key("ACCESS"),
+            Credentials::default().with_tv_access_key("TV_ACCESS"),
         )?;
         let mut metadata = CredentialProfileMetadata::default();
         metadata.set_credential(
@@ -584,12 +621,6 @@ mod tests {
             CredentialLifecycleMetadata::default()
                 .with_source(CredentialLifecycleSource::TvQrLogin)
                 .with_acquired_at_unix_millis(1_000),
-        );
-        metadata.set_credential(
-            CredentialKind::AccessKey,
-            CredentialLifecycleMetadata::default()
-                .with_source(CredentialLifecycleSource::AccessKeyLogin)
-                .with_expires_at_unix_millis(500),
         );
         profiles.set_profile_metadata("default", metadata)?;
         let status = profiles.profile_lifecycle_status(
@@ -612,7 +643,54 @@ mod tests {
     }
 
     #[test]
-    fn app_requirement_checks_present_tv_access_key_before_fresh_generic_access_key()
+    fn app_requirement_checks_present_generic_access_key_before_fresh_tv_access_key()
+    -> crate::Result<()> {
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "default",
+            Credentials::default()
+                .with_tv_access_key("TV_ACCESS")
+                .with_access_key("ACCESS"),
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::TvAccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::TvQrLogin)
+                .with_acquired_at_unix_millis(10_000),
+        );
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_checked_at_unix_millis(1),
+        );
+        profiles.set_profile_metadata("default", metadata)?;
+        let status = profiles.profile_lifecycle_status(
+            "default",
+            &CredentialLifecyclePolicy::at_unix_millis(10_000).with_stale_after_millis(Some(1_000)),
+        )?;
+
+        let report = CredentialPreflightReport::evaluate(
+            CredentialPreflightMode::Fail,
+            &status,
+            [CredentialPreflightRequirement::app_playurl_access_key()],
+        );
+
+        assert!(report.has_blocking_issues());
+        assert_eq!(
+            report.requirements[0].selected_kind,
+            Some(CredentialKind::AccessKey)
+        );
+        assert_eq!(
+            report.requirements[0].selected_status,
+            CredentialLifecycleStatus::Stale
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn renew_mode_refreshes_stale_generic_app_access_key_when_tv_key_is_also_stale()
     -> crate::Result<()> {
         let mut profiles = CredentialProfiles::default();
         profiles.set_profile(
@@ -632,28 +710,35 @@ mod tests {
             CredentialKind::AccessKey,
             CredentialLifecycleMetadata::default()
                 .with_source(CredentialLifecycleSource::AccessKeyLogin)
-                .with_checked_at_unix_millis(10_000),
+                .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+                .with_checked_at_unix_millis(1)
+                .with_refresh_token_present(true),
         );
         profiles.set_profile_metadata("default", metadata)?;
+        let mut secrets = CredentialProfileSecrets::default();
+        secrets.set_access_key_provider(
+            AccessKeyProvider::BalhBiliplus,
+            AccessKeyProviderSecret::default()
+                .with_refresh_token("REFRESH")
+                .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+                .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+        );
+        profiles.set_profile_secrets("default", secrets)?;
         let status = profiles.profile_lifecycle_status(
             "default",
             &CredentialLifecyclePolicy::at_unix_millis(10_000).with_stale_after_millis(Some(1_000)),
         )?;
 
         let report = CredentialPreflightReport::evaluate(
-            CredentialPreflightMode::Fail,
+            CredentialPreflightMode::Renew,
             &status,
             [CredentialPreflightRequirement::app_playurl_access_key()],
         );
 
-        assert!(report.has_blocking_issues());
+        assert!(report.should_attempt_access_key_renewal());
         assert_eq!(
             report.requirements[0].selected_kind,
-            Some(CredentialKind::TvAccessKey)
-        );
-        assert_eq!(
-            report.requirements[0].selected_status,
-            CredentialLifecycleStatus::Stale
+            Some(CredentialKind::AccessKey)
         );
         Ok(())
     }

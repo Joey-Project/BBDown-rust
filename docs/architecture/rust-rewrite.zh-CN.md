@@ -152,7 +152,7 @@ exact codec 字符串、codec family、`format_key`、score/preferred 信号和�
 同一 planning 路径会遵守 `PlayurlMode::Tv` 和 `PlayurlMode::App`，因此 `DownloadPlan` 和
 `PlaybackPlan` 可以暴露 `NormalTv`、`PgcTv`、`NormalApp` 或 `PgcApp` source，同时不改变下
 游 request-spec shape。TV mode 使用 `Credentials::tv_access_key`。APP/gRPC mode 优先使用
-`Credentials::tv_access_key`，再回退到 `Credentials::access_key`，发送 BBDown-compatible
+`Credentials::access_key`，再回退到 `Credentials::tv_access_key`，发送 BBDown-compatible
 protobuf gRPC frame，会从 initial headers 和 trailing metadata 读取 gRPC status，并把 APP
 DASH/FLV 响应规范化为 `StreamSet`。APP DASH 的 width、height 和 frame-rate metadata 会
 保留在 HTTP playurl mode 共用的 `MediaStream` 字段上。APP legacy FLV 响应可能包含多个清
@@ -409,7 +409,7 @@ media credential preflight 被建模为显式 policy layer，而不是隐藏在
 `BiliClient::plan_download` 内部的行为。`CredentialPreflightReport` 会把当前所选 profile 的
 lifecycle status 与 request-path requirement 做评估，并返回可序列化的 requirement status、
 issue，以及关联的 access-key renewal decision。request-path 评估会对齐 client 实际使用的
-credential，包括 APP playurl 的 `tv_access_key` 优先于通用 `access_key`，以及只有配置了
+credential，包括 APP playurl 的通用 `access_key` 优先于 `tv_access_key`，以及只有配置了
 proxy 候选且当前 media input 可能使用 PGC proxy fallback 时才检查 optional restricted-area
 proxy access-key credential。intl/Bstar media input 会额外加入通用 `access_key` requirement，
 因为官方 intl metadata、playurl 和 subtitle request path 在配置该 token 时会实际发送它。CLI

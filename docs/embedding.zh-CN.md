@@ -99,7 +99,7 @@ TV mode 当前适用于普通视频和 PGC 分集。
 `EndpointConfig::with_app_grpc_base`，PGC mock 或代理使用
 `EndpointConfig::with_app_pgc_grpc_base`；普通视频和 PGC 默认都使用
 `https://grpc.biliapi.net`。APP mode 优先使用
-`Credentials::tv_access_key`，再回退到 `Credentials::access_key`；输出
+`Credentials::access_key`，再回退到 `Credentials::tv_access_key`；输出
 `StreamSource::NormalApp` 或 `StreamSource::PgcApp`，并把 protobuf DASH/FLV 媒体规范化到与
 HTTP modes 相同的 `StreamSet` 和 `PlaybackPlan` 表面。PGC APP gRPC 失败如果带有可识别的
 restricted 或 preview-only 信号，仍会进入已配置的 restricted-area HTTP playurl proxy
@@ -258,7 +258,7 @@ plan/download preflight 可以用当前所选 profile 的 lifecycle status 和 m
 embedding app 对不会使用 PGC proxy fallback 的输入跳过 restricted-area proxy requirement。
 两种形式都会对齐 client 实际会发送的 credential：WEB playurl 的 cookie 是 optional；TV
 playurl 要求 `tv_access_key`；APP playurl 接受 `tv_access_key` 或通用 `access_key` 任一可用，
-并在两者都存在时先检查 `tv_access_key`；restricted-area proxy fallback 会把通用
+并在两者都存在时先检查通用 `access_key`；restricted-area proxy fallback 会把通用
 `access_key` 视为 optional：已存在的 key 会被检查并可能由 resolver 转发，缺失 key 不会阻断
 自带认证或允许匿名 fallback 的 proxy URL。intl/Bstar episode 输入会要求官方 intl request path
 实际使用的通用 `access_key`。intl/Bstar 和 PUGV/cheese 这类固定来源输入不应继承调用方的全局

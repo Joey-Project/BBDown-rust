@@ -173,7 +173,7 @@ codec strings.
 The same planning path honors `PlayurlMode::Tv` and `PlayurlMode::App`, so `DownloadPlan` and
 `PlaybackPlan` can expose `NormalTv`, `PgcTv`, `NormalApp`, or `PgcApp` sources without changing the
 downstream request-spec shape. TV mode uses `Credentials::tv_access_key`. APP/gRPC mode uses
-`Credentials::tv_access_key` first, falls back to `Credentials::access_key`, sends BBDown-compatible
+`Credentials::access_key` first, falls back to `Credentials::tv_access_key`, sends BBDown-compatible
 protobuf gRPC frames, reads gRPC status from both initial headers and trailing metadata, and
 normalizes APP DASH/FLV replies into `StreamSet`. APP DASH width, height, and frame-rate metadata
 is preserved on the same `MediaStream` fields used by HTTP playurl modes. APP legacy FLV replies
@@ -466,7 +466,7 @@ Media credential preflight is modeled as an explicit policy layer rather than hi
 `BiliClient::plan_download`. `CredentialPreflightReport` evaluates the selected profile lifecycle
 status against request-path requirements and returns serializable requirement statuses, issues, and
 the associated access-key renewal decision. Request-path evaluation mirrors the credential actually
-used by the client, including APP playurl's `tv_access_key`-before-generic-`access_key` preference
+used by the client, including APP playurl's generic-`access_key`-before-`tv_access_key` preference
 and optional restricted-area proxy access-key checks only when proxy candidates are configured and
 the current media input may use PGC proxy fallback. Intl/Bstar media inputs add the generic
 `access_key` requirement because the official intl metadata, playurl, and subtitle request path

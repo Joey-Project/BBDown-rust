@@ -27,6 +27,7 @@ pub use credential_preflight::{
     CredentialPreflightIssue, CredentialPreflightMode, CredentialPreflightReport,
     CredentialPreflightRequestPath, CredentialPreflightRequirement,
     CredentialPreflightRequirementStatus, credential_preflight_requirements,
+    credential_preflight_requirements_for_media_paths,
     credential_preflight_requirements_for_media_request,
 };
 pub use credentials::{
