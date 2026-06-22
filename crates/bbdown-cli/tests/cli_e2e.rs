@@ -414,6 +414,8 @@ fn plan_credential_preflight_fail_blocks_missing_restricted_access_key() -> anyh
         .arg("fail")
         .arg("--restricted-area")
         .arg("hk")
+        .arg("--restricted-area-proxy")
+        .arg("hk=https://proxy.example/playurl")
         .arg("plan")
         .arg("ep1000")
         .arg("--json")
@@ -426,6 +428,38 @@ fn plan_credential_preflight_fail_blocks_missing_restricted_access_key() -> anyh
 
     assert!(stderr.contains("credential preflight failed"));
     assert!(stderr.contains("restricted-area proxy requires access_key"));
+    Ok(())
+}
+
+#[test]
+fn plan_credential_preflight_fail_allows_public_video_with_restricted_proxy_configured()
+-> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    mock_video_stream_plan_endpoints(&server);
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--credential-preflight")
+        .arg("fail")
+        .arg("--restricted-area-proxy")
+        .arg("hk=https://proxy.example/playurl")
+        .arg("plan")
+        .arg("av170001")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let stdout_json: Value = serde_json::from_slice(&output.stdout)?;
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert_eq!(stdout_json["title"], "Mock video");
+    assert!(!stderr.contains("restricted-area proxy requires access_key"));
     Ok(())
 }
 

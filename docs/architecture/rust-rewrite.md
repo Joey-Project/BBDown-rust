@@ -465,10 +465,13 @@ non-destructive; callers keep the old credential and can fall back to a reauthor
 Media credential preflight is modeled as an explicit policy layer rather than hidden behavior inside
 `BiliClient::plan_download`. `CredentialPreflightReport` evaluates the selected profile lifecycle
 status against request-path requirements and returns serializable requirement statuses, issues, and
-the associated access-key renewal decision. The CLI applies that report before `plan`, `playback`,
-and `download`: `warn` writes diagnostics to stderr, `fail` blocks before stream resolution, and
-`renew` attempts provider-specific generic access-key refresh only when the report says the selected
-profile is ready. This keeps embedders in control of storage mutation while still sharing the same
+the associated access-key renewal decision. Request-path evaluation mirrors the credential actually
+used by the client, including APP playurl's `tv_access_key`-before-generic-`access_key` preference
+and restricted-area proxy requirements only when proxy candidates are configured and the current
+media input may use PGC proxy fallback. The CLI applies that report before `plan`, `playback`, and
+`download`: `warn` writes diagnostics to stderr, `fail` blocks before stream resolution, and `renew`
+attempts provider-specific generic access-key refresh only when the report says the selected profile
+is ready. This keeps embedders in control of storage mutation while still sharing the same
 requirement model as the CLI.
 Browser `postMessage` consumers should parse through the ticket/output `credentials_from_message`
 helpers, which validate the sender origin against the trusted auth or callback origin before using

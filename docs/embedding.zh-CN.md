@@ -253,12 +253,15 @@ profile document 也可以在不发网络请求的情况下通过
 要求调用方显式传入 `now_unix_millis`，方便 embedding app 在 UI、后台任务和测试中得到确定
 的 stale/expiring 结果。
 plan/download preflight 可以用当前所选 profile 的 lifecycle status 和 media request context
-构造 `CredentialPreflightReport`。`CredentialPreflightReport::from_client_context(...)` 会对齐
-CLI 行为：WEB playurl 的 cookie 是 optional；TV playurl 要求 `tv_access_key`；APP playurl
-接受 `tv_access_key` 或通用 `access_key` 任一可用；restricted-area proxy fallback 要求通用
-`access_key`。这个 report 是纯值：它会列出 requirement status、warning/blocker，以及当前所选
-profile 的 `AccessKeyRenewalDecision`，但不会修改 credential storage。嵌入项目可以把 blocker
-作为 fail-fast UI，把 warning 作为非阻断 banner，或在
+构造 `CredentialPreflightReport`。`CredentialPreflightReport::from_client_context(...)` 是保守
+的 client-config 形式；`CredentialPreflightReport::from_media_request_context(...)` 允许
+embedding app 对不会使用 PGC proxy fallback 的输入跳过 restricted-area proxy requirement。
+两种形式都会对齐 client 实际会发送的 credential：WEB playurl 的 cookie 是 optional；TV
+playurl 要求 `tv_access_key`；APP playurl 接受 `tv_access_key` 或通用 `access_key` 任一可用，
+并在两者都存在时先检查 `tv_access_key`；restricted-area proxy fallback 只有在 proxy fallback
+可能运行时才要求通用 `access_key`。这个 report 是纯值：它会列出 requirement status、
+warning/blocker，以及当前所选 profile 的 `AccessKeyRenewalDecision`，但不会修改 credential
+storage。嵌入项目可以把 blocker 作为 fail-fast UI，把 warning 作为非阻断 banner，或在
 `should_attempt_access_key_renewal()` 为 true 时调用 `BiliClient::refresh_access_key(...)`，
 并通过自己的存储层保存刷新后的 credential。
 

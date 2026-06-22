@@ -270,11 +270,15 @@ Profile documents can also be evaluated without network I/O through
 `now_unix_millis` value so embedders can make deterministic stale/expiring decisions in UI,
 background jobs, or tests.
 For plan/download preflight, build a `CredentialPreflightReport` from the selected profile lifecycle
-status and the media request context. `CredentialPreflightReport::from_client_context(...)` mirrors
-the CLI behavior: WEB playurl cookies are optional, TV playurl requires `tv_access_key`, APP playurl
-accepts either `tv_access_key` or generic `access_key`, and restricted-area proxy fallback requires
-generic `access_key`. The report is a pure value: it lists requirement statuses, warnings/blockers,
-and the selected profile's `AccessKeyRenewalDecision`, but it never mutates credential storage.
+status and the media request context. `CredentialPreflightReport::from_client_context(...)` is the
+conservative client-config form, while `CredentialPreflightReport::from_media_request_context(...)`
+lets embedders skip restricted-area proxy requirements for inputs that cannot use PGC proxy fallback.
+Both forms mirror the credential the client would send: WEB playurl cookies are optional, TV playurl
+requires `tv_access_key`, APP playurl accepts either `tv_access_key` or generic `access_key` and
+checks `tv_access_key` first when both are stored, and restricted-area proxy fallback requires
+generic `access_key` only when proxy fallback may run. The report is a pure value: it lists
+requirement statuses, warnings/blockers, and the selected profile's `AccessKeyRenewalDecision`, but
+it never mutates credential storage.
 Embedding projects can treat blockers as fail-fast UI, warnings as non-blocking banners, or call
 `should_attempt_access_key_renewal()` before using `BiliClient::refresh_access_key(...)` and saving
 the refreshed credentials through their own storage layer.

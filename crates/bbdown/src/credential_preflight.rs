@@ -159,6 +159,25 @@ impl CredentialPreflightReport {
     }
 
     #[must_use]
+    pub fn from_media_request_context(
+        mode: CredentialPreflightMode,
+        status: &CredentialProfileLifecycleStatus,
+        playurl_mode: PlayurlMode,
+        restricted_area: &RestrictedAreaConfig,
+        restricted_area_proxy_may_run: bool,
+    ) -> Self {
+        Self::evaluate(
+            mode,
+            status,
+            credential_preflight_requirements_for_media_request(
+                playurl_mode,
+                restricted_area,
+                restricted_area_proxy_may_run,
+            ),
+        )
+    }
+
+    #[must_use]
     pub fn has_blocking_issues(&self) -> bool {
         self.issues.iter().any(|issue| issue.blocking)
     }
@@ -181,12 +200,21 @@ pub fn credential_preflight_requirements(
     playurl_mode: PlayurlMode,
     restricted_area: &RestrictedAreaConfig,
 ) -> Vec<CredentialPreflightRequirement> {
+    credential_preflight_requirements_for_media_request(playurl_mode, restricted_area, true)
+}
+
+#[must_use]
+pub fn credential_preflight_requirements_for_media_request(
+    playurl_mode: PlayurlMode,
+    restricted_area: &RestrictedAreaConfig,
+    restricted_area_proxy_may_run: bool,
+) -> Vec<CredentialPreflightRequirement> {
     let mut requirements = match playurl_mode {
         PlayurlMode::Web => vec![CredentialPreflightRequirement::web_playurl_cookie_optional()],
         PlayurlMode::Tv => vec![CredentialPreflightRequirement::tv_playurl_access_key()],
         PlayurlMode::App => vec![CredentialPreflightRequirement::app_playurl_access_key()],
     };
-    if restricted_area.area_hint.is_some() || !restricted_area.proxies.is_empty() {
+    if restricted_area_proxy_may_run && !restricted_area.proxies.is_empty() {
         requirements.push(CredentialPreflightRequirement::restricted_area_access_key());
     }
     requirements
@@ -196,12 +224,7 @@ fn evaluate_requirement(
     status: &CredentialProfileLifecycleStatus,
     requirement: &CredentialPreflightRequirement,
 ) -> CredentialPreflightRequirementStatus {
-    let selected = requirement
-        .credential_kinds
-        .iter()
-        .copied()
-        .map(|kind| (kind, credential_status(status, kind)))
-        .min_by_key(|(_, status)| credential_status_rank(*status));
+    let selected = selected_credential(status, requirement);
     let (selected_kind, selected_status) = selected.map_or(
         (None, CredentialLifecycleStatus::Missing),
         |(kind, status)| (Some(kind), status),
@@ -215,6 +238,42 @@ fn evaluate_requirement(
         selected_status,
         satisfied,
     }
+}
+
+fn selected_credential(
+    status: &CredentialProfileLifecycleStatus,
+    requirement: &CredentialPreflightRequirement,
+) -> Option<(CredentialKind, CredentialLifecycleStatus)> {
+    if requirement.request_path == CredentialPreflightRequestPath::AppPlayurl {
+        return requirement
+            .credential_kinds
+            .iter()
+            .copied()
+            .find(|kind| credential_present(status, *kind))
+            .map(|kind| (kind, credential_status(status, kind)))
+            .or_else(|| fallback_credential(status, requirement));
+    }
+    fallback_credential(status, requirement)
+}
+
+fn fallback_credential(
+    status: &CredentialProfileLifecycleStatus,
+    requirement: &CredentialPreflightRequirement,
+) -> Option<(CredentialKind, CredentialLifecycleStatus)> {
+    requirement
+        .credential_kinds
+        .iter()
+        .copied()
+        .map(|kind| (kind, credential_status(status, kind)))
+        .min_by_key(|(_, status)| credential_status_rank(*status))
+}
+
+fn credential_present(status: &CredentialProfileLifecycleStatus, kind: CredentialKind) -> bool {
+    status
+        .credential_statuses
+        .iter()
+        .find(|credential| credential.kind == kind)
+        .is_some_and(|credential| credential.present)
 }
 
 fn credential_status(
@@ -327,7 +386,7 @@ mod tests {
         AccessKeyProvider, AccessKeyProviderSecret, AccessKeyRefreshKeypair,
         AccessKeyRefreshProvider, CredentialLifecycleMetadata, CredentialLifecyclePolicy,
         CredentialLifecycleSource, CredentialProfileMetadata, CredentialProfileSecrets,
-        CredentialProfiles, Credentials, RestrictedArea,
+        CredentialProfiles, Credentials, RestrictedArea, RestrictedAreaProxy,
     };
 
     #[test]
@@ -395,6 +454,53 @@ mod tests {
     }
 
     #[test]
+    fn app_requirement_checks_present_tv_access_key_before_fresh_generic_access_key()
+    -> crate::Result<()> {
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "default",
+            Credentials::default()
+                .with_tv_access_key("TV_ACCESS")
+                .with_access_key("ACCESS"),
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::TvAccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::TvQrLogin)
+                .with_checked_at_unix_millis(1),
+        );
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_checked_at_unix_millis(10_000),
+        );
+        profiles.set_profile_metadata("default", metadata)?;
+        let status = profiles.profile_lifecycle_status(
+            "default",
+            &CredentialLifecyclePolicy::at_unix_millis(10_000).with_stale_after_millis(Some(1_000)),
+        )?;
+
+        let report = CredentialPreflightReport::evaluate(
+            CredentialPreflightMode::Fail,
+            &status,
+            [CredentialPreflightRequirement::app_playurl_access_key()],
+        );
+
+        assert!(report.has_blocking_issues());
+        assert_eq!(
+            report.requirements[0].selected_kind,
+            Some(CredentialKind::TvAccessKey)
+        );
+        assert_eq!(
+            report.requirements[0].selected_status,
+            CredentialLifecycleStatus::Stale
+        );
+        Ok(())
+    }
+
+    #[test]
     fn renew_mode_requests_ready_stale_access_key_refresh() -> crate::Result<()> {
         let mut profiles = CredentialProfiles::default();
         profiles.set_profile("default", Credentials::default().with_access_key("ACCESS"))?;
@@ -437,13 +543,18 @@ mod tests {
     }
 
     #[test]
-    fn client_context_marks_web_cookie_optional_and_restricted_area_access_key_required()
+    fn client_context_marks_web_cookie_optional_and_restricted_area_proxy_access_key_required()
     -> crate::Result<()> {
         let status = CredentialProfiles::default().profile_lifecycle_status(
             "default",
             &CredentialLifecyclePolicy::at_unix_millis(1_000),
         )?;
-        let restricted_area = RestrictedAreaConfig::default().with_area_hint(RestrictedArea::Hk);
+        let restricted_area = RestrictedAreaConfig::default()
+            .with_area_hint(RestrictedArea::Hk)
+            .with_proxy(RestrictedAreaProxy::playurl(
+                "https://proxy.example/playurl",
+                Some(RestrictedArea::Hk),
+            ));
 
         let report = CredentialPreflightReport::from_client_context(
             CredentialPreflightMode::Warn,
@@ -461,6 +572,53 @@ mod tests {
             issue.request_path == CredentialPreflightRequestPath::WebPlayurl
                 && issue.status == CredentialLifecycleStatus::Missing
         }));
+        Ok(())
+    }
+
+    #[test]
+    fn client_context_does_not_require_access_key_for_restricted_area_hint_without_proxy()
+    -> crate::Result<()> {
+        let status = CredentialProfiles::default().profile_lifecycle_status(
+            "default",
+            &CredentialLifecyclePolicy::at_unix_millis(1_000),
+        )?;
+        let restricted_area = RestrictedAreaConfig::default().with_area_hint(RestrictedArea::Hk);
+
+        let report = CredentialPreflightReport::from_client_context(
+            CredentialPreflightMode::Fail,
+            &status,
+            PlayurlMode::Web,
+            &restricted_area,
+        );
+
+        assert_eq!(report.requirements.len(), 1);
+        assert!(!report.issues.iter().any(|issue| {
+            issue.request_path == CredentialPreflightRequestPath::RestrictedAreaProxy
+        }));
+        Ok(())
+    }
+
+    #[test]
+    fn media_request_context_can_skip_restricted_area_proxy_requirement_for_non_pgc_input()
+    -> crate::Result<()> {
+        let status = CredentialProfiles::default().profile_lifecycle_status(
+            "default",
+            &CredentialLifecyclePolicy::at_unix_millis(1_000),
+        )?;
+        let restricted_area = RestrictedAreaConfig::default().with_proxy(
+            RestrictedAreaProxy::playurl("https://proxy.example/playurl", Some(RestrictedArea::Hk)),
+        );
+
+        let report = CredentialPreflightReport::from_media_request_context(
+            CredentialPreflightMode::Fail,
+            &status,
+            PlayurlMode::Web,
+            &restricted_area,
+            false,
+        );
+
+        assert_eq!(report.requirements.len(), 1);
+        assert!(!report.has_blocking_issues());
         Ok(())
     }
 }

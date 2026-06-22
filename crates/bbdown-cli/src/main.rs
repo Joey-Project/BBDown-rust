@@ -14,11 +14,12 @@ use bbdown_core::{
     CredentialProfileSelection, CredentialProfiles, CredentialStore, Credentials, DanmakuFormat,
     DanmakuUpdateOptions, DownloadArchive, DownloadCancellationToken, DownloadMode,
     DownloadOptions, DownloadPathTemplates, DownloadPlan, DownloadPreflight, DownloadProgressEvent,
-    DownloadProgressSink, DownloadReport, DuplicateDecision, EndpointConfig, MediaHostOptions,
-    MediaStream, MuxOptions, PlaybackPlan, PlayurlMode, QrLoginKind, QrLoginState, QrLoginTicket,
-    QrLoginTicketOutput, ResolvedContent, RestrictedArea, RestrictedAreaConfig,
-    RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection, StreamQuality,
-    StreamSelection, StreamSet, SubtitleAiPolicy, archive_entry_allows_danmaku_update,
+    DownloadProgressSink, DownloadReport, DuplicateDecision, EndpointConfig, Input,
+    MediaHostOptions, MediaStream, MuxOptions, PlaybackPlan, PlayurlMode, QrLoginKind,
+    QrLoginState, QrLoginTicket, QrLoginTicketOutput, ResolvedContent, RestrictedArea,
+    RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection,
+    StreamQuality, StreamSelection, StreamSet, SubtitleAiPolicy,
+    archive_entry_allows_danmaku_update, credential_preflight_requirements_for_media_request,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::ffi::{OsStr, OsString};
@@ -1207,13 +1208,18 @@ async fn prepare_credentials_for_media_request(
     credential_runtime: &CredentialRuntime,
     client_runtime: &ClientRuntimeConfig,
     credential_preflight: &CredentialPreflightRuntimeConfig,
+    raw_input: &str,
 ) -> anyhow::Result<Credentials> {
     if credential_preflight.mode == CredentialPreflightMode::Off {
         return credential_runtime.load();
     }
 
-    let mut report =
-        credential_preflight_report(credential_runtime, client_runtime, credential_preflight)?;
+    let mut report = credential_preflight_report(
+        credential_runtime,
+        client_runtime,
+        credential_preflight,
+        raw_input,
+    )?;
     if report.should_attempt_access_key_renewal() {
         let profiles = credential_runtime
             .store
@@ -1231,6 +1237,7 @@ async fn prepare_credentials_for_media_request(
                 credential_runtime,
                 client_runtime,
                 credential_preflight,
+                raw_input,
             )?;
         }
     }
@@ -1253,6 +1260,7 @@ fn credential_preflight_report(
     credential_runtime: &CredentialRuntime,
     client_runtime: &ClientRuntimeConfig,
     credential_preflight: &CredentialPreflightRuntimeConfig,
+    raw_input: &str,
 ) -> anyhow::Result<CredentialPreflightReport> {
     let policy = credential_preflight.policy();
     let (_profiles, _selected_profile, mut statuses) =
@@ -1260,12 +1268,41 @@ fn credential_preflight_report(
     let status = statuses
         .pop()
         .context("failed to evaluate selected credential profile")?;
-    Ok(CredentialPreflightReport::from_client_context(
-        credential_preflight.mode,
-        &status,
+    let requirements = credential_preflight_requirements_for_media_request(
         client_runtime.playurl_mode,
         &client_runtime.restricted_area,
+        restricted_area_proxy_may_run_for_input(raw_input),
+    );
+    Ok(CredentialPreflightReport::evaluate(
+        credential_preflight.mode,
+        &status,
+        requirements,
     ))
+}
+
+fn restricted_area_proxy_may_run_for_input(raw_input: &str) -> bool {
+    Input::parse(raw_input).is_ok_and(|input| match input {
+        Input::Episode(_)
+        | Input::Season(_)
+        | Input::Media(_)
+        | Input::ShortLink(_)
+        | Input::SpaceVideos(_)
+        | Input::FavoriteList { .. }
+        | Input::CollectionList(_)
+        | Input::SeriesList(_)
+        | Input::SpaceCollectionList { .. }
+        | Input::SpaceSeriesList { .. }
+        | Input::RecommendationFeed
+        | Input::FollowingFeed
+        | Input::SpaceDynamic(_)
+        | Input::History
+        | Input::WatchLater => true,
+        Input::Aid(_)
+        | Input::Bvid(_)
+        | Input::CheeseEpisode(_)
+        | Input::CheeseSeason(_)
+        | Input::IntlEpisode(_) => false,
+    })
 }
 
 async fn try_access_key_auto_refresh_for_preflight(
@@ -1317,9 +1354,13 @@ async fn handle_plan(
     select: Option<Selection>,
     json: bool,
 ) -> anyhow::Result<()> {
-    let credentials =
-        prepare_credentials_for_media_request(credentials, client_runtime, credential_preflight)
-            .await?;
+    let credentials = prepare_credentials_for_media_request(
+        credentials,
+        client_runtime,
+        credential_preflight,
+        &url,
+    )
+    .await?;
     let client = BiliClient::new(client_runtime.client_config(credentials));
     let plan = client.plan_download(&url, select).await?;
     if json {
@@ -1338,9 +1379,13 @@ async fn handle_playback(
     select: Option<Selection>,
     json: bool,
 ) -> anyhow::Result<()> {
-    let credentials =
-        prepare_credentials_for_media_request(credentials, client_runtime, credential_preflight)
-            .await?;
+    let credentials = prepare_credentials_for_media_request(
+        credentials,
+        client_runtime,
+        credential_preflight,
+        &url,
+    )
+    .await?;
     let client = BiliClient::new(client_runtime.client_config(credentials));
     let plan = client.plan_playback(&url, select).await?;
     if json {
@@ -1497,9 +1542,13 @@ async fn handle_download(
     credential_preflight: &CredentialPreflightRuntimeConfig,
     args: DownloadCommandArgs,
 ) -> anyhow::Result<()> {
-    let credentials =
-        prepare_credentials_for_media_request(credentials, client_runtime, credential_preflight)
-            .await?;
+    let credentials = prepare_credentials_for_media_request(
+        credentials,
+        client_runtime,
+        credential_preflight,
+        &args.url,
+    )
+    .await?;
     let client = BiliClient::new(client_runtime.client_config(credentials));
     let progress = CliProgressReporter {
         json: args.progress_json,
