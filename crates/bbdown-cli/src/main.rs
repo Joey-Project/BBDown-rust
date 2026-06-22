@@ -2157,7 +2157,7 @@ fn plan_failure_may_be_credential_related(error: &bbdown_core::Error) -> bool {
 }
 
 fn api_failure_may_be_credential_related(code: i64, message: &str) -> bool {
-    matches!(code, -101 | -403 | 7 | 16) || (code == -400 && auth_like_failure_message(message))
+    code == -101 || (matches!(code, -400 | -403 | 7 | 16) && auth_like_failure_message(message))
 }
 
 fn auth_like_failure_message(message: &str) -> bool {
@@ -2176,10 +2176,10 @@ fn restricted_area_resolver_failure_may_be_credential_related(message: &str) -> 
     let lower = message.to_ascii_lowercase();
     lower.contains("restricted-area resolver failed")
         && (lower.contains("api code -101")
-            || lower.contains("api code -403")
+            || (lower.contains("api code -403") && auth_like_failure_message(&lower))
             || (lower.contains("api code -400") && auth_like_failure_message(&lower))
-            || lower.contains("api code 7")
-            || lower.contains("api code 16")
+            || (lower.contains("api code 7") && auth_like_failure_message(&lower))
+            || (lower.contains("api code 16") && auth_like_failure_message(&lower))
             || lower.contains("401")
             || lower.contains("403 forbidden")
             || lower.contains("unauthorized"))
@@ -4680,11 +4680,46 @@ mod tests {
                 message: "expired access_key".to_owned(),
             }
         ));
+        assert!(plan_failure_may_be_credential_related(
+            &bbdown_core::Error::Api {
+                code: 16,
+                message: "access key expired".to_owned(),
+            }
+        ));
+        assert!(plan_failure_may_be_credential_related(
+            &bbdown_core::Error::Api {
+                code: -403,
+                message: "unauthorized access token".to_owned(),
+            }
+        ));
         assert!(!plan_failure_may_be_credential_related(
             &bbdown_core::Error::Api {
                 code: -400,
                 message: "invalid parameter: qn".to_owned(),
             }
+        ));
+        assert!(!plan_failure_may_be_credential_related(
+            &bbdown_core::Error::Api {
+                code: 7,
+                message: "area restricted".to_owned(),
+            }
+        ));
+        assert!(!plan_failure_may_be_credential_related(
+            &bbdown_core::Error::Api {
+                code: -403,
+                message: "area restricted".to_owned(),
+            }
+        ));
+        assert!(!plan_failure_may_be_credential_related(
+            &bbdown_core::Error::AccessRestricted(
+                "restricted-area resolver failed for hk: API code 7: area restricted".to_owned(),
+            )
+        ));
+        assert!(plan_failure_may_be_credential_related(
+            &bbdown_core::Error::AccessRestricted(
+                "restricted-area resolver failed for hk: API code 16: access key expired"
+                    .to_owned(),
+            )
         ));
     }
 
