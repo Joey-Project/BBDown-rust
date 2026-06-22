@@ -319,8 +319,8 @@ business state 等 PGC response-body metadata。非区域类官方失败会保�
 使用较老 helper 形态，把 `dash` / `durl`、`timelength` 和质量元数据返回在顶层。对这些顶
 层 helper payload，legacy 字符串状态字段（例如 `result: "suee"`）会被容忍。
 当 `Credentials::access_key` 中存在通用 access key 时，代理请求会把它作为 `access_key`
-包含；TV 专用 access key 不会复用到这个流程。Bilibili cookie 会有意从受限区域代理请求
-中省略。
+包含；缺失通用 key 也允许继续，以支持自带认证或匿名 fallback 的 proxy URL。TV 专用 access
+key 不会复用到这个流程。Bilibili cookie 会有意从受限区域代理请求中省略。
 
 代理回退成功时，`DownloadEntry.source` 为 `PgcProxy`，`DownloadEntry.diagnostics` 包含
 官方失败尝试和成功代理尝试。当所有候选失败时，返回的 access-restricted error 会摘要有序
@@ -410,14 +410,17 @@ media credential preflight 被建模为显式 policy layer，而不是隐藏在
 lifecycle status 与 request-path requirement 做评估，并返回可序列化的 requirement status、
 issue，以及关联的 access-key renewal decision。request-path 评估会对齐 client 实际使用的
 credential，包括 APP playurl 的 `tv_access_key` 优先于通用 `access_key`，以及只有配置了
-proxy 候选且当前 media input 可能使用 PGC proxy fallback 时才要求 restricted-area proxy
-credential。intl/Bstar media input 会额外加入通用 `access_key` requirement，因为官方 intl
-metadata、playurl 和 subtitle request path 在配置该 token 时会实际发送它。CLI 会先通过
-`BiliClient::parse_input(...)` 规范化 raw input，因此短链会按 redirect target 分类。CLI 会在
-`plan`、`playback` 和 `download` 前应用这个 report：`warn` 把 diagnostic 写到 stderr，
+proxy 候选且当前 media input 可能使用 PGC proxy fallback 时才检查 optional restricted-area
+proxy access-key credential。intl/Bstar media input 会额外加入通用 `access_key` requirement，
+因为官方 intl metadata、playurl 和 subtitle request path 在配置该 token 时会实际发送它。CLI
+会先通过 `BiliClient::parse_input(...)` 规范化 raw input，因此短链会按 redirect target 分类，
+而 intl/Bstar 和 PUGV/cheese 这类固定来源输入会避开无关的全局 TV/APP credential requirement。
+CLI 会在 `plan`、`playback` 和 `download` 前应用这个 report：`warn` 把 diagnostic 写到 stderr，
 `fail` 在 stream resolution 前阻断，`renew` 只在 report 显示当前 profile 已 refresh-ready
-时尝试 provider-specific generic access-key refresh。这样嵌入方仍能控制 storage mutation，同时和
-CLI 共享同一套 requirement model。
+时尝试 provider-specific generic access-key refresh。不解析 media stream 的下载模式会跳过
+TV/APP/restricted-proxy stream preflight；`download --progress-json` 会抑制 preflight 纯文本
+diagnostic，让 stderr 保持 progress JSON Lines stream。这样嵌入方仍能控制 storage mutation，
+同时和 CLI 共享同一套 requirement model。
 browser `postMessage` consumer 应通过 ticket/output 的 `credentials_from_message` helper
 解析，它会先把 sender origin 与可信 auth origin 或 callback origin 校验，再使用 raw BALH
 payload parser。

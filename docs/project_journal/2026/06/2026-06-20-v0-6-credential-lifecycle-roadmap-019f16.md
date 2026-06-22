@@ -148,12 +148,17 @@ superseded_by:
   - `CredentialPreflightReport` exposes a pure core evaluator for selected-profile lifecycle status,
     media request-path requirements, warnings/blockers, and the selected access-key renewal decision.
   - Request-path requirements distinguish WEB optional cookies, TV `tv_access_key`, APP
-    `tv_access_key` or generic `access_key`, and restricted-area proxy generic `access_key`.
+    `tv_access_key` or generic `access_key`, intl/Bstar generic `access_key`, and optional
+    restricted-area proxy generic `access_key` when that proxy fallback may run.
   - CLI `plan`, `playback`, and `download` support global `--credential-preflight off|warn|fail|renew`
     plus lifecycle window overrides.
   - `warn` writes diagnostics to stderr while keeping JSON stdout as a single payload; `fail`
     aborts before stream resolution when required credentials are missing or relevant lifecycle
     metadata is non-fresh.
+  - Sidecar-only download modes skip TV/APP/restricted-proxy stream preflight, fixed-source
+    intl/Bstar and PUGV inputs avoid unrelated global TV/APP credential requirements, and
+    `download --progress-json` keeps stderr as JSON Lines by suppressing plaintext preflight
+    diagnostics.
   - `renew` attempts provider-specific generic access-key refresh for refresh-ready selected
     profiles, saves the refreshed credential non-interactively, reloads credentials, and then
     continues with media resolution.

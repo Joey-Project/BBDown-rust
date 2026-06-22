@@ -275,11 +275,15 @@ conservative client-config form, while `CredentialPreflightReport::from_media_re
 lets embedders skip restricted-area proxy requirements for inputs that cannot use PGC proxy fallback.
 Both forms mirror the credential the client would send: WEB playurl cookies are optional, TV playurl
 requires `tv_access_key`, APP playurl accepts either `tv_access_key` or generic `access_key` and
-checks `tv_access_key` first when both are stored, and restricted-area proxy fallback requires
-generic `access_key` only when proxy fallback may run. Intl/Bstar episode inputs require the generic
-`access_key` used by the official intl request path. The report is a pure value: it lists requirement
-statuses, warnings/blockers, and the selected profile's `AccessKeyRenewalDecision`, but it never
-mutates credential storage. When embedders accept short links, normalize them with
+checks `tv_access_key` first when both are stored, and restricted-area proxy fallback treats the
+generic `access_key` as optional: present keys are checked and may be forwarded by the resolver, but
+missing keys do not block proxy URLs that authenticate themselves or allow anonymous fallback.
+Intl/Bstar episode inputs require the generic `access_key` used by the official intl request path.
+Fixed-source inputs such as intl/Bstar and PUGV/cheese should not inherit a caller's global TV/APP
+playurl credential requirements, and sidecar-only modes should skip media-stream preflight.
+The report is a pure value: it lists requirement statuses, warnings/blockers, and the selected
+profile's `AccessKeyRenewalDecision`, but it never mutates credential storage. When embedders accept
+short links, normalize them with
 `BiliClient::parse_input(...)` before deciding whether PGC proxy fallback or intl access-key
 preflight may run.
 Embedding projects can treat blockers as fail-fast UI, warnings as non-blocking banners, or call

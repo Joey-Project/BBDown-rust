@@ -81,7 +81,7 @@ impl CredentialPreflightRequirement {
         Self::new(
             CredentialPreflightRequestPath::RestrictedAreaProxy,
             [CredentialKind::AccessKey],
-            true,
+            false,
         )
     }
 
@@ -248,7 +248,8 @@ fn evaluate_requirement(
         (None, CredentialLifecycleStatus::Missing),
         |(kind, status)| (Some(kind), status),
     );
-    let satisfied = selected_status == CredentialLifecycleStatus::Fresh;
+    let satisfied = selected_status == CredentialLifecycleStatus::Fresh
+        || (!requirement.required && selected_status == CredentialLifecycleStatus::Missing);
     CredentialPreflightRequirementStatus {
         request_path: requirement.request_path,
         credential_kinds: requirement.credential_kinds.clone(),
@@ -284,6 +285,7 @@ fn fallback_credential(
         .iter()
         .copied()
         .map(|kind| (kind, credential_status(status, kind)))
+        .filter(|(_, status)| *status != CredentialLifecycleStatus::Missing)
         .min_by_key(|(_, status)| credential_status_rank(*status))
 }
 
@@ -410,7 +412,7 @@ mod tests {
     };
 
     #[test]
-    fn fail_mode_blocks_required_restricted_area_access_key() -> crate::Result<()> {
+    fn fail_mode_treats_missing_restricted_area_access_key_as_optional() -> crate::Result<()> {
         let status = CredentialProfiles::default().profile_lifecycle_status(
             "default",
             &CredentialLifecyclePolicy::at_unix_millis(1_000),
@@ -422,12 +424,59 @@ mod tests {
             [CredentialPreflightRequirement::restricted_area_access_key()],
         );
 
+        assert!(!report.has_blocking_issues());
+        assert!(report.issues.is_empty());
+        assert!(report.requirements[0].satisfied);
+        assert!(!report.requirements[0].required);
+        assert_eq!(
+            report.requirements[0].credential_kinds,
+            [CredentialKind::AccessKey]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn fail_mode_blocks_required_intl_access_key() -> crate::Result<()> {
+        let status = CredentialProfiles::default().profile_lifecycle_status(
+            "default",
+            &CredentialLifecyclePolicy::at_unix_millis(1_000),
+        )?;
+
+        let report = CredentialPreflightReport::evaluate(
+            CredentialPreflightMode::Fail,
+            &status,
+            [CredentialPreflightRequirement::intl_access_key()],
+        );
+
         assert!(report.has_blocking_issues());
         assert_eq!(report.issues[0].status, CredentialLifecycleStatus::Missing);
         assert_eq!(
             report.issues[0].credential_kinds,
             [CredentialKind::AccessKey]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn fail_mode_treats_missing_optional_web_cookie_as_satisfied() -> crate::Result<()> {
+        let status = CredentialProfiles::default().profile_lifecycle_status(
+            "default",
+            &CredentialLifecyclePolicy::at_unix_millis(1_000),
+        )?;
+
+        let report = CredentialPreflightReport::evaluate(
+            CredentialPreflightMode::Fail,
+            &status,
+            [CredentialPreflightRequirement::web_playurl_cookie_optional()],
+        );
+
+        assert!(!report.has_blocking_issues());
+        assert!(report.issues.is_empty());
+        assert_eq!(
+            report.requirements[0].selected_status,
+            CredentialLifecycleStatus::Missing
+        );
+        assert!(report.requirements[0].satisfied);
         Ok(())
     }
 
@@ -460,6 +509,33 @@ mod tests {
         assert!(!report.has_blocking_issues());
         assert_eq!(report.issues[0].status, CredentialLifecycleStatus::Stale);
         assert!(!report.issues[0].blocking);
+        Ok(())
+    }
+
+    #[test]
+    fn app_requirement_reports_all_alternatives_when_missing() -> crate::Result<()> {
+        let status = CredentialProfiles::default().profile_lifecycle_status(
+            "default",
+            &CredentialLifecyclePolicy::at_unix_millis(1_000),
+        )?;
+
+        let report = CredentialPreflightReport::evaluate(
+            CredentialPreflightMode::Fail,
+            &status,
+            [CredentialPreflightRequirement::app_playurl_access_key()],
+        );
+
+        assert!(report.has_blocking_issues());
+        assert_eq!(report.requirements[0].selected_kind, None);
+        assert_eq!(
+            report.requirements[0].selected_status,
+            CredentialLifecycleStatus::Missing
+        );
+        assert!(
+            report.issues[0]
+                .message
+                .contains("tv_access_key or access_key")
+        );
         Ok(())
     }
 
@@ -595,7 +671,7 @@ mod tests {
     }
 
     #[test]
-    fn client_context_marks_web_cookie_optional_and_restricted_area_proxy_access_key_required()
+    fn client_context_marks_web_cookie_and_restricted_area_proxy_access_key_optional()
     -> crate::Result<()> {
         let status = CredentialProfiles::default().profile_lifecycle_status(
             "default",
@@ -616,9 +692,10 @@ mod tests {
         );
 
         assert_eq!(report.requirements.len(), 2);
-        assert!(report.issues.iter().any(|issue| {
-            issue.request_path == CredentialPreflightRequestPath::RestrictedAreaProxy
-                && issue.required
+        assert!(report.requirements.iter().any(|requirement| {
+            requirement.request_path == CredentialPreflightRequestPath::RestrictedAreaProxy
+                && !requirement.required
+                && requirement.satisfied
         }));
         assert!(!report.issues.iter().any(|issue| {
             issue.request_path == CredentialPreflightRequestPath::WebPlayurl

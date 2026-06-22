@@ -366,13 +366,18 @@ token。如果 refresh 失败，CLI 会输出 `refresh_failed`，然后回退到
 profile。preflight 会按 request path 推导所需 credential：WEB playurl 把 cookie 视为
 optional，所以匿名公开视频仍可工作；TV playurl 要求 `tv_access_key`；APP playurl 接受
 `tv_access_key` 或通用 `access_key` 任一可用，并在两者都存在时先检查 `tv_access_key`；
-restricted-area proxy fallback 只会在当前输入可能触发 fallback 时要求通用 `access_key`。
+restricted-area proxy fallback 只会在当前输入可能触发 fallback 且已配置通用 `access_key` 时检查
+该 token；缺失通用 key 不会阻断自带认证或允许匿名 fallback 的 restricted-area proxy URL。
 intl/Bstar episode 输入会要求官方 intl metadata、playurl 和 subtitle 请求实际使用的通用
-`access_key`。短链会先解析为最终支持的 input kind，再做这个判断。`warn` 会把 diagnostic 写到
-stderr 并继续；`fail` 会在缺少 required credential 或相关
+`access_key`。短链会先解析为最终支持的 input kind，再做这个判断。intl/Bstar 和 PUGV/cheese
+这类固定来源输入不会继承全局 TV/APP playurl credential requirement。
+`download --only subtitle|danmaku|cover` 会跳过 TV/APP/restricted-proxy stream preflight，因为这些模式
+不会解析 media stream。`warn` 会把 diagnostic 写到 stderr 并继续；`fail` 会在缺少 required credential 或相关
 credential lifecycle metadata 不是 fresh 时，在网络 stream resolution 前中止；`renew` 会在
 当前 profile refresh-ready 时先尝试 provider-specific generic access-key refresh。preflight
-不会写 stdout，因此 `--json` 仍保持单个 JSON plan、playback plan 或 download report。可通过全局
+不会写 stdout，因此 `--json` 仍保持单个 JSON plan、playback plan 或 download report。
+`download --progress-json` 会抑制 preflight 纯文本 diagnostic，让 stderr 保持
+`DownloadProgressEvent` JSON Lines stream。可通过全局
 `--credential-stale-after-seconds` 和
 `--credential-expiring-within-seconds` 调整本地 lifecycle policy。
 `auth login-web` 打印二维码登录 URL，轮询到扫码确认，并保存得到的

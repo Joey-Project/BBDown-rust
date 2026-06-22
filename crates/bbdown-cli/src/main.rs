@@ -1209,13 +1209,19 @@ async fn prepare_credentials_for_media_request(
     client_runtime: &ClientRuntimeConfig,
     credential_preflight: &CredentialPreflightRuntimeConfig,
     raw_input: &str,
+    requires_media_streams: bool,
+    emit_diagnostics: bool,
 ) -> anyhow::Result<Credentials> {
     if credential_preflight.mode == CredentialPreflightMode::Off {
         return credential_runtime.load();
     }
 
-    let media_preflight_context =
-        media_credential_preflight_context_for_input(client_runtime, raw_input).await?;
+    let media_preflight_context = media_credential_preflight_context_for_input(
+        client_runtime,
+        raw_input,
+        requires_media_streams,
+    )
+    .await?;
     let mut report = credential_preflight_report(
         credential_runtime,
         client_runtime,
@@ -1232,6 +1238,7 @@ async fn prepare_credentials_for_media_request(
             client_runtime,
             &profiles,
             &report.access_key_renewal,
+            emit_diagnostics,
         )
         .await?
         {
@@ -1244,7 +1251,9 @@ async fn prepare_credentials_for_media_request(
         }
     }
 
-    emit_credential_preflight_warnings(&report);
+    if emit_diagnostics {
+        emit_credential_preflight_warnings(&report);
+    }
     if report.has_blocking_issues() {
         let messages = report
             .issues
@@ -1271,7 +1280,7 @@ fn credential_preflight_report(
         .pop()
         .context("failed to evaluate selected credential profile")?;
     let requirements = credential_preflight_requirements_for_media_request(
-        client_runtime.playurl_mode,
+        media_preflight_context.playurl_mode,
         &client_runtime.restricted_area,
         media_preflight_context.restricted_area_proxy_may_run,
         media_preflight_context.intl_access_key_may_run,
@@ -1285,6 +1294,7 @@ fn credential_preflight_report(
 
 #[derive(Clone, Copy, Debug, Default)]
 struct MediaCredentialPreflightContext {
+    playurl_mode: PlayurlMode,
     restricted_area_proxy_may_run: bool,
     intl_access_key_may_run: bool,
 }
@@ -1292,14 +1302,31 @@ struct MediaCredentialPreflightContext {
 async fn media_credential_preflight_context_for_input(
     client_runtime: &ClientRuntimeConfig,
     raw_input: &str,
+    requires_media_streams: bool,
 ) -> anyhow::Result<MediaCredentialPreflightContext> {
     let client = BiliClient::new(client_runtime.client_config(Credentials::default()));
     let input = client.parse_input(raw_input).await?;
+    let playurl_mode = if requires_media_streams {
+        input_media_preflight_playurl_mode(&input, client_runtime.playurl_mode)
+    } else {
+        PlayurlMode::Web
+    };
     Ok(MediaCredentialPreflightContext {
-        restricted_area_proxy_may_run: !client_runtime.restricted_area.proxies.is_empty()
+        playurl_mode,
+        restricted_area_proxy_may_run: requires_media_streams
+            && !client_runtime.restricted_area.proxies.is_empty()
             && input_may_use_restricted_area_proxy(&input),
         intl_access_key_may_run: input_may_use_intl_access_key(&input),
     })
+}
+
+fn input_media_preflight_playurl_mode(input: &Input, configured: PlayurlMode) -> PlayurlMode {
+    match input {
+        Input::CheeseEpisode(_) | Input::CheeseSeason(_) | Input::IntlEpisode(_) => {
+            PlayurlMode::Web
+        }
+        _ => configured,
+    }
 }
 
 fn input_may_use_restricted_area_proxy(input: &Input) -> bool {
@@ -1318,14 +1345,17 @@ async fn try_access_key_auto_refresh_for_preflight(
     client_runtime: &ClientRuntimeConfig,
     profiles: &CredentialProfiles,
     decision: &AccessKeyRenewalDecision,
+    emit_diagnostics: bool,
 ) -> anyhow::Result<bool> {
     let refresh = match access_key_refresh_request_from_profiles(profiles, &decision.profile) {
         Ok(refresh) => refresh,
         Err(error) => {
-            eprintln!(
-                "credential preflight warning: automatic access_key refresh setup failed: {}",
-                display_human_text(&error.to_string())
-            );
+            if emit_diagnostics {
+                eprintln!(
+                    "credential preflight warning: automatic access_key refresh setup failed: {}",
+                    display_human_text(&error.to_string())
+                );
+            }
             return Ok(false);
         }
     };
@@ -1334,15 +1364,19 @@ async fn try_access_key_auto_refresh_for_preflight(
         Ok(refreshed) => {
             let _summary =
                 save_refreshed_access_key_silent(credential_runtime, &refresh, &refreshed)?;
-            eprintln!("credential preflight: access_key refreshed");
+            if emit_diagnostics {
+                eprintln!("credential preflight: access_key refreshed");
+            }
             Ok(true)
         }
         Err(error) => {
             let message = redact_access_key_refresh_error(&error, &refresh.request);
-            eprintln!(
-                "credential preflight warning: automatic access_key refresh failed: {}",
-                display_human_text(&message)
-            );
+            if emit_diagnostics {
+                eprintln!(
+                    "credential preflight warning: automatic access_key refresh failed: {}",
+                    display_human_text(&message)
+                );
+            }
             Ok(false)
         }
     }
@@ -1367,6 +1401,8 @@ async fn handle_plan(
         client_runtime,
         credential_preflight,
         &url,
+        true,
+        true,
     )
     .await?;
     let client = BiliClient::new(client_runtime.client_config(credentials));
@@ -1392,6 +1428,8 @@ async fn handle_playback(
         client_runtime,
         credential_preflight,
         &url,
+        true,
+        true,
     )
     .await?;
     let client = BiliClient::new(client_runtime.client_config(credentials));
@@ -1555,6 +1593,8 @@ async fn handle_download(
         client_runtime,
         credential_preflight,
         &args.url,
+        args.options.mode.requires_media_streams(),
+        !args.progress_json,
     )
     .await?;
     let client = BiliClient::new(client_runtime.client_config(credentials));
@@ -3966,19 +4006,19 @@ mod tests {
         archive_sidecar_path, credential_profile_selection, download_ctrl_c_action,
         duplicate_decision_or_report, endpoints_from_cli, ensure_access_key_login_file_is_safe,
         ensure_access_key_login_stdin_is_safe, ensure_archive_file_is_not_output_root,
-        input_may_use_intl_access_key, input_may_use_restricted_area_proxy, next_poll_sleep,
-        parse_access_key_login_input, qr_login_lifecycle_metadata, remaining_until,
-        restricted_area_from_cli_with_args, restricted_area_from_cli_with_env_values,
-        save_credentials, save_credentials_with_lifecycle,
-        save_credentials_with_lifecycle_and_secrets, should_prompt_duplicate_decision,
-        validate_media_host_spec, validate_single_download_args,
+        input_may_use_intl_access_key, input_may_use_restricted_area_proxy,
+        input_media_preflight_playurl_mode, next_poll_sleep, parse_access_key_login_input,
+        qr_login_lifecycle_metadata, remaining_until, restricted_area_from_cli_with_args,
+        restricted_area_from_cli_with_env_values, save_credentials,
+        save_credentials_with_lifecycle, save_credentials_with_lifecycle_and_secrets,
+        should_prompt_duplicate_decision, validate_media_host_spec, validate_single_download_args,
     };
     use bbdown_core::{
         AccessKeyLoginConfig, AccessKeyLoginCredentials, AccessKeyProvider,
         AccessKeyRefreshKeypair, AccessKeyRefreshProvider, CredentialKind,
         CredentialLifecycleMetadata, CredentialLifecycleSource, CredentialProfileSelection,
         CredentialStore, Credentials, DownloadCancellationToken, DownloadOutputConflict,
-        DownloadPreflight, DuplicateDecision, EndpointConfig, Input, QrLoginKind,
+        DownloadPreflight, DuplicateDecision, EndpointConfig, Input, PlayurlMode, QrLoginKind,
     };
     use clap::Parser as _;
     use std::fs;
@@ -4038,6 +4078,22 @@ mod tests {
         assert!(!input_may_use_restricted_area_proxy(&Input::CheeseEpisode(
             101
         )));
+    }
+
+    #[test]
+    fn media_preflight_playurl_mode_uses_fixed_source_for_intl_and_cheese_inputs() {
+        assert_eq!(
+            input_media_preflight_playurl_mode(&Input::IntlEpisode(341_736), PlayurlMode::App),
+            PlayurlMode::Web
+        );
+        assert_eq!(
+            input_media_preflight_playurl_mode(&Input::CheeseEpisode(101), PlayurlMode::Tv),
+            PlayurlMode::Web
+        );
+        assert_eq!(
+            input_media_preflight_playurl_mode(&Input::Aid(170_001), PlayurlMode::App),
+            PlayurlMode::App
+        );
     }
 
     #[test]

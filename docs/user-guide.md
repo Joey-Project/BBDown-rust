@@ -410,16 +410,20 @@ Use the global `--credential-preflight warn|fail|renew` option with `plan`, `pla
 Preflight derives the expected credential requirements from the selected request path: WEB playurl
 treats cookies as optional so anonymous public videos still work, TV playurl requires
 `tv_access_key`, APP playurl accepts either `tv_access_key` or generic `access_key` and checks
-`tv_access_key` first when both are stored, and
-restricted-area proxy fallback requires generic `access_key` only for inputs where that fallback may
-run. Intl/Bstar episode inputs require the generic `access_key` used by the official intl metadata,
-playurl, and subtitle requests. Short links are resolved to their final supported input kind before
-this decision. `warn`
+`tv_access_key` first when both are stored, and restricted-area proxy fallback checks generic
+`access_key` only when that key is configured for an input where proxy fallback may run. Missing
+generic keys do not block restricted-area proxy URLs that authenticate themselves or allow anonymous
+fallback. Intl/Bstar episode inputs require the generic `access_key` used by the official intl
+metadata, playurl, and subtitle requests. Short links are resolved to their final supported input
+kind before this decision. Fixed-source inputs such as intl/Bstar and PUGV/cheese do not inherit the
+global TV/APP playurl credential requirements. `download --only subtitle|danmaku|cover` skips
+TV/APP/restricted-proxy stream preflight because those modes do not resolve media streams. `warn`
 writes diagnostics to stderr and continues, `fail` aborts before network stream
 resolution when a required credential is missing or a relevant credential has non-fresh lifecycle
 metadata, and `renew` first tries provider-specific generic access-key refresh when the selected
 profile is refresh-ready. Preflight never writes to stdout, so `--json` output remains a single JSON
-plan, playback plan, or download report. Tune the
+plan, playback plan, or download report. `download --progress-json` suppresses plaintext preflight
+diagnostics so stderr remains a `DownloadProgressEvent` JSON Lines stream. Tune the
 local lifecycle policy with global `--credential-stale-after-seconds` and
 `--credential-expiring-within-seconds`.
 `auth login-web` prints a QR login URL, polls until scan confirmation, and saves the resulting

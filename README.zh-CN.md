@@ -220,7 +220,10 @@ token”和“本地已经按 provider 保存 refresh secret”。refresh secret
 状态为 `ready` 时，`auth renew-access-key` 可以非交互刷新通用 access key。`plan`、
 `playback` 和 `download` 也支持 `--credential-preflight warn|fail|renew`，方便调用方在 media
 request 前检查当前 profile，也会覆盖使用通用 `access_key` 的 intl/Bstar 输入；preflight
-diagnostic 会写到 stderr，JSON stdout 仍保持为单个 plan 或 report payload。二维码登录命令会轮询
+对 restricted-area proxy 只有在已配置通用 `access_key` 时才检查该 token；缺失 proxy access key
+不会阻断自带认证或允许匿名 fallback 的 proxy URL。diagnostic 会写到 stderr，JSON stdout
+仍保持为单个 plan 或 report payload；`download --progress-json` 会抑制 preflight 纯文本
+diagnostic，让 stderr 继续保持 JSON Lines。二维码登录命令会轮询
 Bilibili 二维码状态机，并只保存最终得到的凭据。WEB 二维码登录保存 cookie；TV 二维码登录保存
 TV 专用 access key，不会覆盖由通用 access-key 命令导入或获取的 intl/Bstar access key。
 使用 `--json` 时，登录命令输出换行分隔 JSON 事件：先输出带登录 URL 和 `qr_payload` 的
