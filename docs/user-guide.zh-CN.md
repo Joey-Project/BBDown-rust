@@ -376,8 +376,8 @@ intl/Bstar episode 输入会要求官方 intl metadata、playurl 和 subtitle �
 credential lifecycle metadata 不是 fresh 时，在网络 stream resolution 前中止；`renew` 会在
 当前 profile refresh-ready 时先尝试 provider-specific generic access-key refresh。preflight
 不会写 stdout，因此 `--json` 仍保持单个 JSON plan、playback plan 或 download report。
-`download --progress-json` 会抑制 preflight 纯文本 diagnostic，让 stderr 保持
-`DownloadProgressEvent` JSON Lines stream。可通过全局
+`download --progress-json` 会抑制 preflight 纯文本 diagnostic，但失败时最终 CLI error 行仍可能
+写到 stderr；wrapper 应只解析 JSON object line。可通过全局
 `--credential-stale-after-seconds` 和
 `--credential-expiring-within-seconds` 调整本地 lifecycle policy。
 `auth login-web` 打印二维码登录 URL，轮询到扫码确认，并保存得到的

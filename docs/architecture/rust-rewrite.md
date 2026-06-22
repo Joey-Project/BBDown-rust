@@ -477,10 +477,9 @@ requirements. The CLI applies that report before `plan`, `playback`, and `downlo
 diagnostics to stderr, `fail` blocks before stream resolution, and `renew` attempts
 provider-specific generic access-key refresh only when the report says the selected profile is
 ready. Download modes that do not resolve media streams skip TV/APP/restricted-proxy stream
-preflight, and `download --progress-json` suppresses plaintext preflight diagnostics so stderr
-remains the progress JSON Lines stream. This keeps embedders in control of storage mutation while
-still sharing the same
-requirement model as the CLI.
+preflight, and `download --progress-json` suppresses plaintext preflight diagnostics while still
+allowing the final CLI error line on stderr after a failure. This keeps embedders in control of
+storage mutation while still sharing the same requirement model as the CLI.
 Browser `postMessage` consumers should parse through the ticket/output `credentials_from_message`
 helpers, which validate the sender origin against the trusted auth or callback origin before using
 the raw BALH payload parser.

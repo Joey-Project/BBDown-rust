@@ -419,7 +419,7 @@ CLI 会在 `plan`、`playback` 和 `download` 前应用这个 report：`warn` �
 `fail` 在 stream resolution 前阻断，`renew` 只在 report 显示当前 profile 已 refresh-ready
 时尝试 provider-specific generic access-key refresh。不解析 media stream 的下载模式会跳过
 TV/APP/restricted-proxy stream preflight；`download --progress-json` 会抑制 preflight 纯文本
-diagnostic，让 stderr 保持 progress JSON Lines stream。这样嵌入方仍能控制 storage mutation，
+diagnostic，但失败后的最终 CLI error 行仍可能写到 stderr。这样嵌入方仍能控制 storage mutation，
 同时和 CLI 共享同一套 requirement model。
 browser `postMessage` consumer 应通过 ticket/output 的 `credentials_from_message` helper
 解析，它会先把 sender origin 与可信 auth origin 或 callback origin 校验，再使用 raw BALH

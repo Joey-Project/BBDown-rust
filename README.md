@@ -236,7 +236,8 @@ requests, including intl/Bstar inputs that use the generic `access_key`. Restric
 preflight checks the generic `access_key` only when one is configured; missing proxy access keys do
 not block proxy URLs that authenticate themselves or allow anonymous fallback. Preflight diagnostics
 are written to stderr so JSON stdout remains a single plan or report, and `download --progress-json`
-suppresses plaintext preflight diagnostics so stderr stays JSON Lines.
+suppresses plaintext preflight diagnostics; wrappers should still parse only JSON object lines
+because the final CLI error line may also be written to stderr on failure.
 QR login commands poll the Bilibili QR state machine and save only the resulting credential. WEB QR
 login saves a cookie; TV QR login saves a TV-specific access
 key without overwriting the generic intl/Bstar access key. With `--json`, login commands emit

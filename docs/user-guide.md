@@ -423,7 +423,8 @@ resolution when a required credential is missing or a relevant credential has no
 metadata, and `renew` first tries provider-specific generic access-key refresh when the selected
 profile is refresh-ready. Preflight never writes to stdout, so `--json` output remains a single JSON
 plan, playback plan, or download report. `download --progress-json` suppresses plaintext preflight
-diagnostics so stderr remains a `DownloadProgressEvent` JSON Lines stream. Tune the
+diagnostics, but the final CLI error line may still be written to stderr on failure; wrappers should
+parse only JSON object lines. Tune the
 local lifecycle policy with global `--credential-stale-after-seconds` and
 `--credential-expiring-within-seconds`.
 `auth login-web` prints a QR login URL, polls until scan confirmation, and saves the resulting
