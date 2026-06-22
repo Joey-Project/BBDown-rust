@@ -4542,7 +4542,7 @@ fn auth_renew_access_key_auto_refresh_redacts_echoed_failure() -> anyhow::Result
             .with_refresh_token_present(true),
         AccessKeyProvider::BalhBiliplus,
         AccessKeyProviderSecret::default()
-            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_token("ACCESS_SECRET_REFRESH")
             .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
             .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
     )?;
@@ -4551,12 +4551,12 @@ fn auth_renew_access_key_auto_refresh_redacts_echoed_failure() -> anyhow::Result
         when.method(POST)
             .path("/x/passport-login/oauth2/refresh_token")
             .form_urlencoded_tuple("access_key", "ACCESS_SECRET")
-            .form_urlencoded_tuple("refresh_token", "OLD_REFRESH_SECRET")
+            .form_urlencoded_tuple("refresh_token", "ACCESS_SECRET_REFRESH")
             .form_urlencoded_tuple("appkey", "4409e2ce8ffd12b8")
             .form_urlencoded_tuple_exists("sign");
         then.status(200).json_body_obj(&serde_json::json!({
             "code": -400,
-            "message": "bad ACCESS_SECRET OLD_REFRESH_SECRET",
+            "message": "bad ACCESS_SECRET_REFRESH ACCESS_SECRET",
             "data": null
         }));
     });
@@ -4584,10 +4584,88 @@ fn auth_renew_access_key_auto_refresh_redacts_echoed_failure() -> anyhow::Result
     );
     assert_eq!(events[2]["event"], "ticket");
     let output_text = String::from_utf8(output)?;
-    for secret in ["ACCESS_SECRET", "OLD_REFRESH_SECRET"] {
+    for secret in ["ACCESS_SECRET", "ACCESS_SECRET_REFRESH", "_REFRESH"] {
         assert!(!output_text.contains(secret));
     }
     refresh_mock.assert_calls(1);
+    Ok(())
+}
+
+#[test]
+fn auth_renew_access_key_auto_refresh_falls_back_when_stored_material_is_malformed()
+-> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    save_lifecycle_cli_profiles_with_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(1_000)
+            .with_expires_at_unix_millis(2_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    )?;
+    let store = CredentialStore::new(credential_file.clone());
+    let mut profiles = store.load_profiles()?;
+    profiles.set_profile("intl", Credentials::default().with_access_key("   "))?;
+    let mut metadata = CredentialProfileMetadata::default();
+    metadata.set_credential(
+        CredentialKind::AccessKey,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(1_000)
+            .with_expires_at_unix_millis(2_000)
+            .with_refresh_token_present(true),
+    );
+    profiles.set_profile_metadata("intl", metadata)?;
+    let mut secrets = CredentialProfileSecrets::default();
+    secrets.set_access_key_provider(
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    );
+    profiles.set_profile_secrets("intl", secrets)?;
+    store.save_profiles(&profiles)?;
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .args([
+            "auth",
+            "renew-access-key",
+            "--auth-base",
+            "http://127.0.0.1:8080",
+            "--json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let events = json_lines(&output)?;
+
+    assert_eq!(events.len(), 3);
+    assert_eq!(events[0]["event"], "decision");
+    assert_eq!(
+        events[0]["decision"]["automatic_refresh_readiness"],
+        "ready"
+    );
+    assert_eq!(events[1]["event"], "refresh_failed");
+    assert_eq!(events[1]["message"], "selected profile has no access_key");
+    assert_eq!(events[2]["event"], "ticket");
     Ok(())
 }
 

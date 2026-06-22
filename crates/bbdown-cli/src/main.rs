@@ -2607,7 +2607,13 @@ async fn try_access_key_auto_refresh(
     if !should_attempt_access_key_auto_refresh(decision, args, has_input) {
         return Ok(false);
     }
-    let refresh = access_key_refresh_request_from_profiles(profiles, &decision.profile)?;
+    let refresh = match access_key_refresh_request_from_profiles(profiles, &decision.profile) {
+        Ok(refresh) => refresh,
+        Err(error) => {
+            print_access_key_auto_refresh_setup_failure(args.json, &error)?;
+            return Ok(false);
+        }
+    };
     let client = BiliClient::new(client_runtime.client_config(Credentials::default()));
     match client.refresh_access_key(&refresh.request).await {
         Ok(refreshed) => {
@@ -2618,6 +2624,25 @@ async fn try_access_key_auto_refresh(
             print_access_key_auto_refresh_failure(args.json, &refresh.request, &error)?;
             Ok(false)
         }
+    }
+}
+
+fn print_access_key_auto_refresh_setup_failure(
+    json: bool,
+    error: &anyhow::Error,
+) -> anyhow::Result<()> {
+    let message = error.to_string();
+    if json {
+        print_json_line(&serde_json::json!({
+            "event": "refresh_failed",
+            "kind": "access_key",
+            "message": message,
+        }))
+    } else {
+        print_human_line(format_args!(
+            "automatic refresh failed: {}",
+            display_human_text(&message)
+        ))
     }
 }
 
@@ -2689,11 +2714,13 @@ fn redact_access_key_refresh_error(
     error: &bbdown_core::Error,
     request: &AccessKeyRefreshRequest,
 ) -> String {
-    let message = error.to_string();
-    redact_exact_secret(
-        &redact_exact_secret(&message, &request.access_key),
-        &request.refresh_token,
-    )
+    let mut message = error.to_string();
+    let mut secrets = [request.access_key.as_str(), request.refresh_token.as_str()];
+    secrets.sort_by_key(|secret| std::cmp::Reverse(secret.trim().len()));
+    for secret in secrets {
+        message = redact_exact_secret(&message, secret);
+    }
+    message
 }
 
 fn redact_exact_secret(message: &str, secret: &str) -> String {

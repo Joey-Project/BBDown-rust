@@ -975,8 +975,10 @@ fn access_key_credentials_from_refresh_data(
             .or_else(|| non_empty_refresh_string(access_token)),
         non_empty_refresh_string(token_info.refresh_token)
             .or_else(|| non_empty_refresh_string(refresh_token)),
-        oauth_expires_at.or(expires_at).or(token_info.expires_at),
-        token_info.expires_in.or(expires_in),
+        non_zero_refresh_u64(oauth_expires_at)
+            .or_else(|| non_zero_refresh_u64(expires_at))
+            .or_else(|| non_zero_refresh_u64(token_info.expires_at)),
+        non_zero_refresh_u64(token_info.expires_in).or_else(|| non_zero_refresh_u64(expires_in)),
     )
 }
 
@@ -984,6 +986,10 @@ fn non_empty_refresh_string(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
+}
+
+fn non_zero_refresh_u64(value: Option<u64>) -> Option<u64> {
+    value.filter(|value| *value > 0)
 }
 
 fn access_key_callback_query(payload: &str) -> Result<String> {
@@ -1221,8 +1227,9 @@ fn current_timestamp_seconds() -> u64 {
 mod tests {
     use super::{
         AccessKeyAutomaticRefreshReadiness, AccessKeyLoginConfig, AccessKeyLoginCredentials,
-        AccessKeyRefreshRequest, AccessKeyRenewalAction, AccessKeyRenewalDecision,
-        AccessKeyRenewalReason, QrLoginState, QrLoginTicket, TvLoginContext,
+        AccessKeyRefreshData, AccessKeyRefreshRequest, AccessKeyRefreshTokenInfo,
+        AccessKeyRenewalAction, AccessKeyRenewalDecision, AccessKeyRenewalReason, QrLoginState,
+        QrLoginTicket, TvLoginContext, access_key_credentials_from_refresh_data,
         cookie_from_set_cookie_headers, cookie_from_success_url, intl_access_key_refresh_params,
         main_access_key_refresh_params, qrcode_key_from_url, tv_login_params,
     };
@@ -1815,6 +1822,31 @@ mod tests {
         assert!(debug.contains("BiliTv"));
         assert!(!debug.contains("OLD_ACCESS_SECRET"));
         assert!(!debug.contains("OLD_REFRESH_SECRET"));
+        Ok(())
+    }
+
+    #[test]
+    fn refresh_credentials_ignore_zero_expiry_aliases_when_falling_back() -> anyhow::Result<()> {
+        let credentials = access_key_credentials_from_refresh_data(AccessKeyRefreshData {
+            token_info: Some(AccessKeyRefreshTokenInfo {
+                access_key: Some("NEW_ACCESS".to_owned()),
+                access_token: None,
+                refresh_token: Some("NEW_REFRESH".to_owned()),
+                expires_at: Some(1_710_000_000),
+                expires_in: Some(0),
+            }),
+            access_key: None,
+            access_token: None,
+            refresh_token: None,
+            oauth_expires_at: Some(0),
+            expires_at: None,
+            expires_in: Some(3_600),
+        })?;
+
+        assert_eq!(credentials.access_key, "NEW_ACCESS");
+        assert_eq!(credentials.refresh_token.as_deref(), Some("NEW_REFRESH"));
+        assert_eq!(credentials.oauth_expires_at, Some(1_710_000_000_000));
+        assert_eq!(credentials.expires_in, Some(3_600));
         Ok(())
     }
 
