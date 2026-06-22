@@ -521,16 +521,10 @@ impl fmt::Debug for AccessKeyProviderSecret {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("AccessKeyProviderSecret")
-            .field(
-                "has_refresh_token",
-                &self
-                    .refresh_token
-                    .as_deref()
-                    .is_some_and(|value| !value.is_empty()),
-            )
+            .field("has_refresh_token", &self.has_refresh_token())
             .field("refresh_provider", &self.refresh_provider)
             .field("refresh_keypair", &self.refresh_keypair)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -555,7 +549,9 @@ impl AccessKeyProviderSecret {
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.refresh_token.as_deref().is_none_or(str::is_empty)
+        self.refresh_token
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
             && self.refresh_provider.is_none()
             && self.refresh_keypair.is_none()
     }
@@ -564,7 +560,7 @@ impl AccessKeyProviderSecret {
     pub fn has_refresh_token(&self) -> bool {
         self.refresh_token
             .as_deref()
-            .is_some_and(|value| !value.is_empty())
+            .is_some_and(|value| !value.trim().is_empty())
     }
 }
 
@@ -1813,6 +1809,61 @@ mod tests {
             Some(AccessKeyProvider::BalhBiliplus)
         );
         assert_eq!(access_key_status.refresh_token_secret_present, Some(true));
+        Ok(())
+    }
+
+    #[test]
+    fn whitespace_refresh_token_secret_is_not_lifecycle_ready() -> anyhow::Result<()> {
+        assert!(AccessKeyProviderSecret::default().is_empty());
+        assert!(
+            AccessKeyProviderSecret::default()
+                .with_refresh_token("   ")
+                .is_empty()
+        );
+        assert!(
+            !AccessKeyProviderSecret::default()
+                .with_refresh_token("   ")
+                .has_refresh_token()
+        );
+
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "intl",
+            Credentials {
+                cookie: None,
+                access_key: Some("ACCESS_SECRET".to_owned()),
+                tv_access_key: None,
+            },
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+                .with_refresh_token_present(true),
+        );
+        profiles.set_profile_metadata("intl", metadata)?;
+        let mut secrets = CredentialProfileSecrets::default();
+        secrets.set_access_key_provider(
+            AccessKeyProvider::BalhBiliplus,
+            AccessKeyProviderSecret::default()
+                .with_refresh_token("   ")
+                .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+                .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+        );
+        profiles.set_profile_secrets("intl", secrets)?;
+
+        let status = profiles.profile_lifecycle_status(
+            "intl",
+            &CredentialLifecyclePolicy::at_unix_millis(1_700_000_000_000),
+        )?;
+        let access_key_status = status
+            .credential_statuses
+            .iter()
+            .find(|status| status.kind == CredentialKind::AccessKey)
+            .ok_or_else(|| anyhow::anyhow!("access-key status should exist"))?;
+        assert_eq!(access_key_status.refresh_token_secret_present, Some(false));
         Ok(())
     }
 

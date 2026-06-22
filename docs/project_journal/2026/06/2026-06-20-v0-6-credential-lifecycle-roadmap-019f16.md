@@ -222,6 +222,15 @@ superseded_by:
   - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/c192ee2af594cc9cb64cf151261c58b2695513fb/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.
   - `git diff --check`.
   - `just ci`.
+- PR 7 whitespace-secret review-fix validation:
+  - `cargo fmt --all`.
+  - `cargo fmt --all -- --check`.
+  - `cargo test -p bbdown-core whitespace_refresh_token_secret_is_not_lifecycle_ready --locked`.
+  - `cargo test -p bbdown-core credentials --locked`.
+  - `cargo test -p bbdown-cli auth_renew_access_key --test cli_e2e --locked`.
+  - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/c192ee2af594cc9cb64cf151261c58b2695513fb/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.
+  - `git diff --check`.
+  - `just ci`.
 
 ## Next Steps
 
