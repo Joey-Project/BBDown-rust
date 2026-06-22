@@ -261,7 +261,8 @@ playurl 要求 `tv_access_key`；APP playurl 接受 `tv_access_key` 或通用 `a
 并在两者都存在时先检查 `tv_access_key`；restricted-area proxy fallback 只有在 proxy fallback
 可能运行时才要求通用 `access_key`。这个 report 是纯值：它会列出 requirement status、
 warning/blocker，以及当前所选 profile 的 `AccessKeyRenewalDecision`，但不会修改 credential
-storage。嵌入项目可以把 blocker 作为 fail-fast UI，把 warning 作为非阻断 banner，或在
+storage。embedding app 如果接受短链，应该先用 `BiliClient::parse_input(...)` 规范化输入，再判断
+PGC proxy fallback 是否可能运行。嵌入项目可以把 blocker 作为 fail-fast UI，把 warning 作为非阻断 banner，或在
 `should_attempt_access_key_renewal()` 为 true 时调用 `BiliClient::refresh_access_key(...)`，
 并通过自己的存储层保存刷新后的 credential。
 

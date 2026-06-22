@@ -278,7 +278,8 @@ requires `tv_access_key`, APP playurl accepts either `tv_access_key` or generic 
 checks `tv_access_key` first when both are stored, and restricted-area proxy fallback requires
 generic `access_key` only when proxy fallback may run. The report is a pure value: it lists
 requirement statuses, warnings/blockers, and the selected profile's `AccessKeyRenewalDecision`, but
-it never mutates credential storage.
+it never mutates credential storage. When embedders accept short links, normalize them with
+`BiliClient::parse_input(...)` before deciding whether PGC proxy fallback may run.
 Embedding projects can treat blockers as fail-fast UI, warnings as non-blocking banners, or call
 `should_attempt_access_key_renewal()` before using `BiliClient::refresh_access_key(...)` and saving
 the refreshed credentials through their own storage layer.

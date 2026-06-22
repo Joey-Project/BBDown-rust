@@ -404,6 +404,53 @@ fn plan_credential_preflight_warn_keeps_json_stdout_clean() -> anyhow::Result<()
 }
 
 #[test]
+fn plan_credential_preflight_fail_keeps_optional_web_cookie_nonblocking() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    mock_video_stream_plan_endpoints(&server);
+    let store = CredentialStore::new(credential_file.clone());
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_profile(
+        "default",
+        Credentials::default().with_cookie("SESSDATA=COOKIE_SECRET"),
+    )?;
+    let mut metadata = CredentialProfileMetadata::default();
+    metadata.set_credential(
+        CredentialKind::Cookie,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::WebQrLogin)
+            .with_checked_at_unix_millis(1),
+    );
+    profiles.set_profile_metadata("default", metadata)?;
+    store.save_profiles(&profiles)?;
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--credential-preflight")
+        .arg("fail")
+        .arg("--credential-stale-after-seconds")
+        .arg("1")
+        .arg("plan")
+        .arg("av170001")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let stdout_json: Value = serde_json::from_slice(&output.stdout)?;
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert_eq!(stdout_json["title"], "Mock video");
+    assert!(stderr.contains("credential preflight warning"));
+    assert!(stderr.contains("cookie for WEB playurl has stale lifecycle metadata"));
+    Ok(())
+}
+
+#[test]
 fn plan_credential_preflight_fail_blocks_missing_restricted_access_key() -> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;
     let credential_file = temp.path().join("credentials.json");
@@ -428,6 +475,95 @@ fn plan_credential_preflight_fail_blocks_missing_restricted_access_key() -> anyh
 
     assert!(stderr.contains("credential preflight failed"));
     assert!(stderr.contains("restricted-area proxy requires access_key"));
+    Ok(())
+}
+
+#[test]
+fn plan_credential_preflight_fail_allows_pgc_tv_with_restricted_proxy_configured()
+-> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_profile(
+        "default",
+        Credentials::default().with_tv_access_key("TV_ACCESS"),
+    )?;
+    let mut metadata = CredentialProfileMetadata::default();
+    metadata.set_credential(
+        CredentialKind::TvAccessKey,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::TvQrLogin)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+    );
+    profiles.set_profile_metadata("default", metadata)?;
+    CredentialStore::new(credential_file.clone()).save_profiles(&profiles)?;
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/view/web/season")
+            .query_param("ep_id", "1000");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "result": {
+                "season_id": 123,
+                "title": "TV Season",
+                "episodes": [
+                    {"aid": 10, "bvid": "BV1aa", "cid": 100, "id": 1000, "ep_id": 1000, "title": "1", "long_title": "Start"}
+                ]
+            }
+        }));
+    });
+    let tv_playurl = server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/player/api/playurltv")
+            .query_param("ep_id", "1000")
+            .query_param("access_key", "TV_ACCESS")
+            .query_param("appkey", "4409e2ce8ffd12b8")
+            .query_param("cid", "100")
+            .query_param("object_id", "10")
+            .query_param_exists("sign");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "dash": {
+                    "duration": 3,
+                    "video": [{
+                        "id": 80,
+                        "baseUrl": "https://tv.example/video.m4s",
+                        "base_url": "https://tv.example/video.m4s"
+                    }],
+                    "audio": []
+                }
+            }
+        }));
+    });
+    mock_empty_player_v2(&server, "10", "100");
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--pgc-base")
+        .arg(server.base_url())
+        .arg("--tv-api-base")
+        .arg(server.base_url())
+        .arg("--credential-preflight")
+        .arg("fail")
+        .arg("--playurl-mode")
+        .arg("tv")
+        .arg("--restricted-area-proxy")
+        .arg("hk=https://proxy.example/playurl")
+        .arg("plan")
+        .arg("ep1000")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output)?;
+
+    tv_playurl.assert();
+    assert_eq!(json["entries"][0]["source"], "pgc_tv");
     Ok(())
 }
 
@@ -1333,6 +1469,10 @@ fn plan_json_resolves_mock_favorite_collection_streams() -> anyhow::Result<()> {
         .arg(&credential_file)
         .arg("--api-base")
         .arg(server.base_url())
+        .arg("--credential-preflight")
+        .arg("fail")
+        .arg("--restricted-area-proxy")
+        .arg("hk=https://proxy.example/playurl")
         .arg("plan")
         .arg("fav456")
         .arg("--select")

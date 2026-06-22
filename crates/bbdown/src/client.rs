@@ -991,7 +991,7 @@ impl BiliClient {
         self.plan_collection(collection, planning_mode).await
     }
 
-    async fn parse_input(&self, raw: &str) -> Result<Input> {
+    pub async fn parse_input(&self, raw: &str) -> Result<Input> {
         match Input::parse(raw)? {
             Input::ShortLink(short_link) => self.resolve_short_link_input(&short_link).await,
             input => Ok(input),

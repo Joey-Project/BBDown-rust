@@ -214,7 +214,10 @@ pub fn credential_preflight_requirements_for_media_request(
         PlayurlMode::Tv => vec![CredentialPreflightRequirement::tv_playurl_access_key()],
         PlayurlMode::App => vec![CredentialPreflightRequirement::app_playurl_access_key()],
     };
-    if restricted_area_proxy_may_run && !restricted_area.proxies.is_empty() {
+    if playurl_mode != PlayurlMode::Tv
+        && restricted_area_proxy_may_run
+        && !restricted_area.proxies.is_empty()
+    {
         requirements.push(CredentialPreflightRequirement::restricted_area_access_key());
     }
     requirements
@@ -303,7 +306,7 @@ fn preflight_issue(
     {
         return None;
     }
-    let blocking = mode == CredentialPreflightMode::Fail;
+    let blocking = mode == CredentialPreflightMode::Fail && status.required;
     Some(CredentialPreflightIssue {
         request_path: status.request_path,
         credential_kinds: status.credential_kinds.clone(),
@@ -408,6 +411,38 @@ mod tests {
             report.issues[0].credential_kinds,
             [CredentialKind::AccessKey]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn fail_mode_reports_non_fresh_optional_web_cookie_without_blocking() -> crate::Result<()> {
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "default",
+            Credentials::default().with_cookie("SESSDATA=COOKIE"),
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::Cookie,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::WebQrLogin)
+                .with_checked_at_unix_millis(1),
+        );
+        profiles.set_profile_metadata("default", metadata)?;
+        let status = profiles.profile_lifecycle_status(
+            "default",
+            &CredentialLifecyclePolicy::at_unix_millis(10_000).with_stale_after_millis(Some(1_000)),
+        )?;
+
+        let report = CredentialPreflightReport::evaluate(
+            CredentialPreflightMode::Fail,
+            &status,
+            [CredentialPreflightRequirement::web_playurl_cookie_optional()],
+        );
+
+        assert!(!report.has_blocking_issues());
+        assert_eq!(report.issues[0].status, CredentialLifecycleStatus::Stale);
+        assert!(!report.issues[0].blocking);
         Ok(())
     }
 
@@ -619,6 +654,32 @@ mod tests {
 
         assert_eq!(report.requirements.len(), 1);
         assert!(!report.has_blocking_issues());
+        Ok(())
+    }
+
+    #[test]
+    fn media_request_context_skips_restricted_area_proxy_requirement_for_tv_playurl()
+    -> crate::Result<()> {
+        let status = CredentialProfiles::default().profile_lifecycle_status(
+            "default",
+            &CredentialLifecyclePolicy::at_unix_millis(1_000),
+        )?;
+        let restricted_area = RestrictedAreaConfig::default().with_proxy(
+            RestrictedAreaProxy::playurl("https://proxy.example/playurl", Some(RestrictedArea::Hk)),
+        );
+
+        let report = CredentialPreflightReport::from_media_request_context(
+            CredentialPreflightMode::Fail,
+            &status,
+            PlayurlMode::Tv,
+            &restricted_area,
+            true,
+        );
+
+        assert_eq!(report.requirements.len(), 1);
+        assert!(report.issues.iter().all(|issue| {
+            issue.request_path != CredentialPreflightRequestPath::RestrictedAreaProxy
+        }));
         Ok(())
     }
 }
