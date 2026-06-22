@@ -4525,6 +4525,155 @@ fn auth_renew_access_key_auto_refreshes_ready_provider_secret() -> anyhow::Resul
     Ok(())
 }
 
+#[test]
+fn auth_renew_access_key_auto_refresh_redacts_echoed_failure() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    save_lifecycle_cli_profiles_with_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(1_000)
+            .with_expires_at_unix_millis(2_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    )?;
+    let server = MockServer::start();
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET")
+            .form_urlencoded_tuple("refresh_token", "OLD_REFRESH_SECRET")
+            .form_urlencoded_tuple("appkey", "4409e2ce8ffd12b8")
+            .form_urlencoded_tuple_exists("sign");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -400,
+            "message": "bad ACCESS_SECRET OLD_REFRESH_SECRET",
+            "data": null
+        }));
+    });
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .args(["auth", "renew-access-key", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let events = json_lines(&output)?;
+
+    assert_eq!(events.len(), 3);
+    assert_eq!(events[0]["event"], "decision");
+    assert_eq!(events[1]["event"], "refresh_failed");
+    assert_eq!(
+        events[1]["message"],
+        "API returned code -400: bad <redacted> <redacted>"
+    );
+    assert_eq!(events[2]["event"], "ticket");
+    let output_text = String::from_utf8(output)?;
+    for secret in ["ACCESS_SECRET", "OLD_REFRESH_SECRET"] {
+        assert!(!output_text.contains(secret));
+    }
+    refresh_mock.assert_calls(1);
+    Ok(())
+}
+
+#[test]
+fn auth_renew_access_key_auto_refresh_keeps_old_refresh_token_when_response_omits_one()
+-> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    save_lifecycle_cli_profiles_with_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(1_000)
+            .with_expires_at_unix_millis(2_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    )?;
+    let server = MockServer::start();
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET")
+            .form_urlencoded_tuple("refresh_token", "OLD_REFRESH_SECRET")
+            .form_urlencoded_tuple("appkey", "4409e2ce8ffd12b8")
+            .form_urlencoded_tuple_exists("sign");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .args(["auth", "renew-access-key", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let events = json_lines(&output)?;
+
+    assert_auto_refresh_events(&events);
+    let profiles = CredentialStore::new(credential_file).load_profiles()?;
+    let metadata = profiles.profile_metadata("intl")?;
+    let access_key_metadata = metadata
+        .credential(CredentialKind::AccessKey)
+        .ok_or_else(|| anyhow::anyhow!("missing auto-refreshed access-key metadata"))?;
+    assert_eq!(access_key_metadata.refresh_token_present, Some(true));
+    let secrets = profiles.profile_secrets("intl")?;
+    let secret = secrets
+        .access_key_provider(AccessKeyProvider::BalhBiliplus)
+        .ok_or_else(|| anyhow::anyhow!("missing auto-refreshed access-key provider secret"))?;
+    assert_eq!(secret.refresh_token.as_deref(), Some("OLD_REFRESH_SECRET"));
+    assert_eq!(
+        secret.refresh_provider,
+        Some(AccessKeyRefreshProvider::BilibiliMainOauth2)
+    );
+    assert_eq!(
+        secret.refresh_keypair,
+        Some(AccessKeyRefreshKeypair::BiliTv)
+    );
+    let output_text = String::from_utf8(output)?;
+    for secret in ["ACCESS_SECRET", "OLD_REFRESH_SECRET", "AUTO_ACCESS_SECRET"] {
+        assert!(!output_text.contains(secret));
+    }
+    refresh_mock.assert_calls(1);
+    Ok(())
+}
+
 fn assert_auto_refresh_events(events: &[Value]) {
     assert_eq!(events.len(), 3);
     assert_eq!(events[0]["event"], "decision");

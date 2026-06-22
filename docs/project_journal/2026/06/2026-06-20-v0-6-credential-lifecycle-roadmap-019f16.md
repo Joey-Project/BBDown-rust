@@ -129,6 +129,11 @@ superseded_by:
     `refresh_failed` and fall back to the existing reauthorization ticket path.
   - `automatic_refresh_readiness=ready` now requires not only a raw refresh secret but also a refresh
     provider and, for Bilibili main OAuth2, a refresh keypair.
+  - PR review follow-up redacts exact access-key and refresh-token values from automatic refresh
+    failure output, including server error messages that echo request form values.
+  - PR review follow-up keeps lifecycle `refresh_token_present=true` when automatic refresh succeeds
+    without returning a replacement refresh token and the saved provider secret falls back to the
+    previous refresh token.
 
 ## Out Of Scope For This Line
 
@@ -195,6 +200,7 @@ superseded_by:
   - `cargo test -p bbdown-core access_key_refresh --locked`.
   - `cargo test -p bbdown-core refreshes_ --locked`.
   - `cargo test -p bbdown-cli auth_renew_access_key_auto_refreshes_ready_provider_secret --locked`.
+  - `cargo test -p bbdown-cli auth_renew_access_key_auto_refresh --test cli_e2e --locked`.
   - `cargo test -p bbdown-cli intl_passport_base --locked`.
   - `cargo test -p bbdown-cli auth_renew_access_key --test cli_e2e --locked`.
   - `cargo test -p bbdown-core login::tests --locked`.

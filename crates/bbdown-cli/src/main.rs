@@ -2615,7 +2615,7 @@ async fn try_access_key_auto_refresh(
             Ok(true)
         }
         Err(error) => {
-            print_access_key_auto_refresh_failure(args.json, &error)?;
+            print_access_key_auto_refresh_failure(args.json, &refresh.request, &error)?;
             Ok(false)
         }
     }
@@ -2628,6 +2628,11 @@ fn save_refreshed_access_key(
     json: bool,
 ) -> anyhow::Result<()> {
     let acquired_at_unix_millis = current_unix_millis();
+    let refreshed_secret = refreshed_access_key_provider_secret(
+        refresh.access_key_provider,
+        &refresh.request,
+        refreshed,
+    );
     let summary = save_credentials_with_lifecycle_and_secrets(
         credential_runtime,
         refreshed.credentials(),
@@ -2637,13 +2642,10 @@ fn save_refreshed_access_key(
                 refreshed,
                 acquired_at_unix_millis,
                 refresh.access_key_provider,
+                refreshed_secret.1.has_refresh_token(),
             ),
         )],
-        [refreshed_access_key_provider_secret(
-            refresh.access_key_provider,
-            &refresh.request,
-            refreshed,
-        )],
+        [refreshed_secret],
     )?;
     if json {
         print_json_line(&serde_json::json!({
@@ -2665,19 +2667,41 @@ fn save_refreshed_access_key(
 
 fn print_access_key_auto_refresh_failure(
     json: bool,
+    request: &AccessKeyRefreshRequest,
     error: &bbdown_core::Error,
 ) -> anyhow::Result<()> {
+    let message = redact_access_key_refresh_error(error, request);
     if json {
         print_json_line(&serde_json::json!({
             "event": "refresh_failed",
             "kind": "access_key",
-            "message": error.to_string(),
+            "message": message,
         }))
     } else {
         print_human_line(format_args!(
             "automatic refresh failed: {}",
-            display_human_text(&error.to_string())
+            display_human_text(&message)
         ))
+    }
+}
+
+fn redact_access_key_refresh_error(
+    error: &bbdown_core::Error,
+    request: &AccessKeyRefreshRequest,
+) -> String {
+    let message = error.to_string();
+    redact_exact_secret(
+        &redact_exact_secret(&message, &request.access_key),
+        &request.refresh_token,
+    )
+}
+
+fn redact_exact_secret(message: &str, secret: &str) -> String {
+    let secret = secret.trim();
+    if secret.is_empty() {
+        message.to_owned()
+    } else {
+        message.replace(secret, "<redacted>")
     }
 }
 
@@ -2884,6 +2908,7 @@ fn access_key_lifecycle_metadata(
         credentials,
         acquired_at_unix_millis,
         AccessKeyProvider::BalhBiliplus,
+        credentials.refresh_token.is_some(),
     )
 }
 
@@ -2891,6 +2916,7 @@ fn access_key_lifecycle_metadata_with_provider(
     credentials: &AccessKeyLoginCredentials,
     acquired_at_unix_millis: u64,
     access_key_provider: AccessKeyProvider,
+    refresh_token_present: bool,
 ) -> CredentialLifecycleMetadata {
     let expires_at_unix_millis = credentials.oauth_expires_at.or_else(|| {
         credentials.expires_in.map(|expires_in| {
@@ -2901,7 +2927,7 @@ fn access_key_lifecycle_metadata_with_provider(
         .with_source(CredentialLifecycleSource::AccessKeyLogin)
         .with_access_key_provider(access_key_provider)
         .with_acquired_at_unix_millis(acquired_at_unix_millis)
-        .with_refresh_token_present(credentials.refresh_token.is_some());
+        .with_refresh_token_present(refresh_token_present);
     if let Some(expires_at_unix_millis) = expires_at_unix_millis {
         metadata = metadata.with_expires_at_unix_millis(expires_at_unix_millis);
     }
