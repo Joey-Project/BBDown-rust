@@ -411,11 +411,13 @@ lifecycle status 与 request-path requirement 做评估，并返回可序列化�
 issue，以及关联的 access-key renewal decision。request-path 评估会对齐 client 实际使用的
 credential，包括 APP playurl 的 `tv_access_key` 优先于通用 `access_key`，以及只有配置了
 proxy 候选且当前 media input 可能使用 PGC proxy fallback 时才要求 restricted-area proxy
-credential。CLI 会先通过 `BiliClient::parse_input(...)` 规范化 raw input，因此短链会按 redirect
-target 分类。CLI 会在 `plan`、`playback` 和 `download` 前应用这个 report：`warn` 把 diagnostic
-写到 stderr，`fail` 在 stream resolution 前阻断，`renew` 只在 report 显示当前 profile 已
-refresh-ready 时尝试 provider-specific generic access-key refresh。这样嵌入方仍能控制 storage
-mutation，同时和 CLI 共享同一套 requirement model。
+credential。intl/Bstar media input 会额外加入通用 `access_key` requirement，因为官方 intl
+metadata、playurl 和 subtitle request path 在配置该 token 时会实际发送它。CLI 会先通过
+`BiliClient::parse_input(...)` 规范化 raw input，因此短链会按 redirect target 分类。CLI 会在
+`plan`、`playback` 和 `download` 前应用这个 report：`warn` 把 diagnostic 写到 stderr，
+`fail` 在 stream resolution 前阻断，`renew` 只在 report 显示当前 profile 已 refresh-ready
+时尝试 provider-specific generic access-key refresh。这样嵌入方仍能控制 storage mutation，同时和
+CLI 共享同一套 requirement model。
 browser `postMessage` consumer 应通过 ticket/output 的 `credentials_from_message` helper
 解析，它会先把 sender origin 与可信 auth origin 或 callback origin 校验，再使用 raw BALH
 payload parser。

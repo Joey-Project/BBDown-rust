@@ -259,10 +259,11 @@ embedding app 对不会使用 PGC proxy fallback 的输入跳过 restricted-area
 两种形式都会对齐 client 实际会发送的 credential：WEB playurl 的 cookie 是 optional；TV
 playurl 要求 `tv_access_key`；APP playurl 接受 `tv_access_key` 或通用 `access_key` 任一可用，
 并在两者都存在时先检查 `tv_access_key`；restricted-area proxy fallback 只有在 proxy fallback
-可能运行时才要求通用 `access_key`。这个 report 是纯值：它会列出 requirement status、
-warning/blocker，以及当前所选 profile 的 `AccessKeyRenewalDecision`，但不会修改 credential
-storage。embedding app 如果接受短链，应该先用 `BiliClient::parse_input(...)` 规范化输入，再判断
-PGC proxy fallback 是否可能运行。嵌入项目可以把 blocker 作为 fail-fast UI，把 warning 作为非阻断 banner，或在
+可能运行时才要求通用 `access_key`。intl/Bstar episode 输入会要求官方 intl request path 实际使用的
+通用 `access_key`。这个 report 是纯值：它会列出 requirement status、warning/blocker，以及当前所选
+profile 的 `AccessKeyRenewalDecision`，但不会修改 credential storage。embedding app 如果接受短链，
+应该先用 `BiliClient::parse_input(...)` 规范化输入，再判断 PGC proxy fallback 或 intl access-key
+preflight 是否可能运行。嵌入项目可以把 blocker 作为 fail-fast UI，把 warning 作为非阻断 banner，或在
 `should_attempt_access_key_renewal()` 为 true 时调用 `BiliClient::refresh_access_key(...)`，
 并通过自己的存储层保存刷新后的 credential。
 

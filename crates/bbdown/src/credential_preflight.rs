@@ -23,6 +23,7 @@ pub enum CredentialPreflightRequestPath {
     WebPlayurl,
     TvPlayurl,
     AppPlayurl,
+    IntlWeb,
     RestrictedAreaProxy,
 }
 
@@ -79,6 +80,15 @@ impl CredentialPreflightRequirement {
     pub fn restricted_area_access_key() -> Self {
         Self::new(
             CredentialPreflightRequestPath::RestrictedAreaProxy,
+            [CredentialKind::AccessKey],
+            true,
+        )
+    }
+
+    #[must_use]
+    pub fn intl_access_key() -> Self {
+        Self::new(
+            CredentialPreflightRequestPath::IntlWeb,
             [CredentialKind::AccessKey],
             true,
         )
@@ -165,6 +175,7 @@ impl CredentialPreflightReport {
         playurl_mode: PlayurlMode,
         restricted_area: &RestrictedAreaConfig,
         restricted_area_proxy_may_run: bool,
+        intl_access_key_may_run: bool,
     ) -> Self {
         Self::evaluate(
             mode,
@@ -173,6 +184,7 @@ impl CredentialPreflightReport {
                 playurl_mode,
                 restricted_area,
                 restricted_area_proxy_may_run,
+                intl_access_key_may_run,
             ),
         )
     }
@@ -200,7 +212,7 @@ pub fn credential_preflight_requirements(
     playurl_mode: PlayurlMode,
     restricted_area: &RestrictedAreaConfig,
 ) -> Vec<CredentialPreflightRequirement> {
-    credential_preflight_requirements_for_media_request(playurl_mode, restricted_area, true)
+    credential_preflight_requirements_for_media_request(playurl_mode, restricted_area, true, false)
 }
 
 #[must_use]
@@ -208,12 +220,16 @@ pub fn credential_preflight_requirements_for_media_request(
     playurl_mode: PlayurlMode,
     restricted_area: &RestrictedAreaConfig,
     restricted_area_proxy_may_run: bool,
+    intl_access_key_may_run: bool,
 ) -> Vec<CredentialPreflightRequirement> {
     let mut requirements = match playurl_mode {
         PlayurlMode::Web => vec![CredentialPreflightRequirement::web_playurl_cookie_optional()],
         PlayurlMode::Tv => vec![CredentialPreflightRequirement::tv_playurl_access_key()],
         PlayurlMode::App => vec![CredentialPreflightRequirement::app_playurl_access_key()],
     };
+    if intl_access_key_may_run {
+        requirements.push(CredentialPreflightRequirement::intl_access_key());
+    }
     if playurl_mode != PlayurlMode::Tv
         && restricted_area_proxy_may_run
         && !restricted_area.proxies.is_empty()
@@ -359,6 +375,7 @@ fn credential_request_path_label(path: CredentialPreflightRequestPath) -> &'stat
         CredentialPreflightRequestPath::WebPlayurl => "WEB playurl",
         CredentialPreflightRequestPath::TvPlayurl => "TV playurl",
         CredentialPreflightRequestPath::AppPlayurl => "APP playurl",
+        CredentialPreflightRequestPath::IntlWeb => "intl playurl",
         CredentialPreflightRequestPath::RestrictedAreaProxy => "restricted-area proxy",
     }
 }
@@ -650,6 +667,7 @@ mod tests {
             PlayurlMode::Web,
             &restricted_area,
             false,
+            false,
         );
 
         assert_eq!(report.requirements.len(), 1);
@@ -674,11 +692,36 @@ mod tests {
             PlayurlMode::Tv,
             &restricted_area,
             true,
+            false,
         );
 
         assert_eq!(report.requirements.len(), 1);
         assert!(report.issues.iter().all(|issue| {
             issue.request_path != CredentialPreflightRequestPath::RestrictedAreaProxy
+        }));
+        Ok(())
+    }
+
+    #[test]
+    fn media_request_context_requires_access_key_for_intl_input() -> crate::Result<()> {
+        let status = CredentialProfiles::default().profile_lifecycle_status(
+            "default",
+            &CredentialLifecyclePolicy::at_unix_millis(1_000),
+        )?;
+
+        let report = CredentialPreflightReport::from_media_request_context(
+            CredentialPreflightMode::Fail,
+            &status,
+            PlayurlMode::Web,
+            &RestrictedAreaConfig::default(),
+            false,
+            true,
+        );
+
+        assert!(report.has_blocking_issues());
+        assert!(report.issues.iter().any(|issue| {
+            issue.request_path == CredentialPreflightRequestPath::IntlWeb
+                && issue.credential_kinds == [CredentialKind::AccessKey]
         }));
         Ok(())
     }

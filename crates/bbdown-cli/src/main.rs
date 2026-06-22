@@ -1214,13 +1214,13 @@ async fn prepare_credentials_for_media_request(
         return credential_runtime.load();
     }
 
-    let restricted_area_proxy_may_run =
-        restricted_area_proxy_may_run_for_input(client_runtime, raw_input).await?;
+    let media_preflight_context =
+        media_credential_preflight_context_for_input(client_runtime, raw_input).await?;
     let mut report = credential_preflight_report(
         credential_runtime,
         client_runtime,
         credential_preflight,
-        restricted_area_proxy_may_run,
+        media_preflight_context,
     )?;
     if report.should_attempt_access_key_renewal() {
         let profiles = credential_runtime
@@ -1239,7 +1239,7 @@ async fn prepare_credentials_for_media_request(
                 credential_runtime,
                 client_runtime,
                 credential_preflight,
-                restricted_area_proxy_may_run,
+                media_preflight_context,
             )?;
         }
     }
@@ -1262,7 +1262,7 @@ fn credential_preflight_report(
     credential_runtime: &CredentialRuntime,
     client_runtime: &ClientRuntimeConfig,
     credential_preflight: &CredentialPreflightRuntimeConfig,
-    restricted_area_proxy_may_run: bool,
+    media_preflight_context: MediaCredentialPreflightContext,
 ) -> anyhow::Result<CredentialPreflightReport> {
     let policy = credential_preflight.policy();
     let (_profiles, _selected_profile, mut statuses) =
@@ -1273,7 +1273,8 @@ fn credential_preflight_report(
     let requirements = credential_preflight_requirements_for_media_request(
         client_runtime.playurl_mode,
         &client_runtime.restricted_area,
-        restricted_area_proxy_may_run,
+        media_preflight_context.restricted_area_proxy_may_run,
+        media_preflight_context.intl_access_key_may_run,
     );
     Ok(CredentialPreflightReport::evaluate(
         credential_preflight.mode,
@@ -1282,16 +1283,23 @@ fn credential_preflight_report(
     ))
 }
 
-async fn restricted_area_proxy_may_run_for_input(
+#[derive(Clone, Copy, Debug, Default)]
+struct MediaCredentialPreflightContext {
+    restricted_area_proxy_may_run: bool,
+    intl_access_key_may_run: bool,
+}
+
+async fn media_credential_preflight_context_for_input(
     client_runtime: &ClientRuntimeConfig,
     raw_input: &str,
-) -> anyhow::Result<bool> {
-    if client_runtime.restricted_area.proxies.is_empty() {
-        return Ok(false);
-    }
+) -> anyhow::Result<MediaCredentialPreflightContext> {
     let client = BiliClient::new(client_runtime.client_config(Credentials::default()));
     let input = client.parse_input(raw_input).await?;
-    Ok(input_may_use_restricted_area_proxy(&input))
+    Ok(MediaCredentialPreflightContext {
+        restricted_area_proxy_may_run: !client_runtime.restricted_area.proxies.is_empty()
+            && input_may_use_restricted_area_proxy(&input),
+        intl_access_key_may_run: input_may_use_intl_access_key(&input),
+    })
 }
 
 fn input_may_use_restricted_area_proxy(input: &Input) -> bool {
@@ -1299,6 +1307,10 @@ fn input_may_use_restricted_area_proxy(input: &Input) -> bool {
         input,
         Input::Episode(_) | Input::Season(_) | Input::Media(_) | Input::ShortLink(_)
     )
+}
+
+fn input_may_use_intl_access_key(input: &Input) -> bool {
+    matches!(input, Input::IntlEpisode(_))
 }
 
 async fn try_access_key_auto_refresh_for_preflight(
@@ -3954,11 +3966,12 @@ mod tests {
         archive_sidecar_path, credential_profile_selection, download_ctrl_c_action,
         duplicate_decision_or_report, endpoints_from_cli, ensure_access_key_login_file_is_safe,
         ensure_access_key_login_stdin_is_safe, ensure_archive_file_is_not_output_root,
-        input_may_use_restricted_area_proxy, next_poll_sleep, parse_access_key_login_input,
-        qr_login_lifecycle_metadata, remaining_until, restricted_area_from_cli_with_args,
-        restricted_area_from_cli_with_env_values, save_credentials,
-        save_credentials_with_lifecycle, save_credentials_with_lifecycle_and_secrets,
-        should_prompt_duplicate_decision, validate_media_host_spec, validate_single_download_args,
+        input_may_use_intl_access_key, input_may_use_restricted_area_proxy, next_poll_sleep,
+        parse_access_key_login_input, qr_login_lifecycle_metadata, remaining_until,
+        restricted_area_from_cli_with_args, restricted_area_from_cli_with_env_values,
+        save_credentials, save_credentials_with_lifecycle,
+        save_credentials_with_lifecycle_and_secrets, should_prompt_duplicate_decision,
+        validate_media_host_spec, validate_single_download_args,
     };
     use bbdown_core::{
         AccessKeyLoginConfig, AccessKeyLoginCredentials, AccessKeyProvider,
@@ -4020,6 +4033,8 @@ mod tests {
         assert!(!input_may_use_restricted_area_proxy(&Input::IntlEpisode(
             341_736
         )));
+        assert!(input_may_use_intl_access_key(&Input::IntlEpisode(341_736)));
+        assert!(!input_may_use_intl_access_key(&Input::Episode(1000)));
         assert!(!input_may_use_restricted_area_proxy(&Input::CheeseEpisode(
             101
         )));

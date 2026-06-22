@@ -219,11 +219,12 @@ token”和“本地已经按 provider 保存 refresh secret”。refresh secret
 保存在同一个私有 credential file 中，并在 status、debug 和 JSON 输出中脱敏。所选 provider
 状态为 `ready` 时，`auth renew-access-key` 可以非交互刷新通用 access key。`plan`、
 `playback` 和 `download` 也支持 `--credential-preflight warn|fail|renew`，方便调用方在 media
-request 前检查当前 profile；preflight diagnostic 会写到 stderr，JSON stdout 仍保持为单个
-plan 或 report payload。二维码登录命令会轮询 Bilibili 二维码状态机，并只保存最终得到的凭
-据。WEB 二维码登录保存 cookie；TV 二维码登录保存 TV 专用 access key，不会覆盖由通用
-access-key 命令导入或获取的 intl/Bstar access key。使用 `--json` 时，登录命令输出换行分
-隔 JSON 事件：先输出带登录 URL 和 `qr_payload` 的 `ticket` 事件，再在凭据保存后输出
+request 前检查当前 profile，也会覆盖使用通用 `access_key` 的 intl/Bstar 输入；preflight
+diagnostic 会写到 stderr，JSON stdout 仍保持为单个 plan 或 report payload。二维码登录命令会轮询
+Bilibili 二维码状态机，并只保存最终得到的凭据。WEB 二维码登录保存 cookie；TV 二维码登录保存
+TV 专用 access key，不会覆盖由通用 access-key 命令导入或获取的 intl/Bstar access key。
+使用 `--json` 时，登录命令输出换行分隔 JSON 事件：先输出带登录 URL 和 `qr_payload` 的
+`ticket` 事件，再在凭据保存后输出
 `saved` 事件。当前 WEB 和 TV 登录流程会直接使用扫码 URL 作为 QR payload。请把登录 URL
 和 QR payload 当成临时登录密钥；状态输出和 `saved` 事件只暴露脱敏布尔值。
 `auth health` 会在不打印密钥值的情况下检查已配置凭据：WEB cookie 通过 web nav 端点检查；

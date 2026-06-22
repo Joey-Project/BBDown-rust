@@ -451,6 +451,48 @@ fn plan_credential_preflight_fail_keeps_optional_web_cookie_nonblocking() -> any
 }
 
 #[test]
+fn plan_credential_preflight_fail_blocks_stale_intl_access_key() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let store = CredentialStore::new(credential_file.clone());
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_profile(
+        "default",
+        Credentials::default().with_access_key("INTL_ACCESS_SECRET"),
+    )?;
+    let mut metadata = CredentialProfileMetadata::default();
+    metadata.set_credential(
+        CredentialKind::AccessKey,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_checked_at_unix_millis(1),
+    );
+    profiles.set_profile_metadata("default", metadata)?;
+    store.save_profiles(&profiles)?;
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-preflight")
+        .arg("fail")
+        .arg("--credential-stale-after-seconds")
+        .arg("1")
+        .arg("plan")
+        .arg("https://www.bilibili.tv/en/play/34613/341736")
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(output.stdout.is_empty());
+    assert!(stderr.contains("credential preflight failed"));
+    assert!(stderr.contains("access_key for intl playurl has stale lifecycle metadata"));
+    Ok(())
+}
+
+#[test]
 fn plan_credential_preflight_fail_blocks_missing_restricted_access_key() -> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;
     let credential_file = temp.path().join("credentials.json");

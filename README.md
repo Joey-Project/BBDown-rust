@@ -232,7 +232,8 @@ are stored in the same private credential file as plaintext provider sections an
 status, debug, and JSON output. When the selected provider is `ready`, `auth renew-access-key`
 can refresh the generic access key non-interactively. `plan`, `playback`, and `download` also accept
 `--credential-preflight warn|fail|renew` so callers can check the selected profile before media
-requests; preflight diagnostics are written to stderr so JSON stdout remains a single plan or report.
+requests, including intl/Bstar inputs that use the generic `access_key`; preflight diagnostics are
+written to stderr so JSON stdout remains a single plan or report.
 QR login commands poll the Bilibili QR state machine and save only the resulting credential. WEB QR
 login saves a cookie; TV QR login saves a TV-specific access
 key without overwriting the generic intl/Bstar access key. With `--json`, login commands emit

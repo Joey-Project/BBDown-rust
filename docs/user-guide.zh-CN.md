@@ -367,7 +367,9 @@ profile。preflight 会按 request path 推导所需 credential：WEB playurl �
 optional，所以匿名公开视频仍可工作；TV playurl 要求 `tv_access_key`；APP playurl 接受
 `tv_access_key` 或通用 `access_key` 任一可用，并在两者都存在时先检查 `tv_access_key`；
 restricted-area proxy fallback 只会在当前输入可能触发 fallback 时要求通用 `access_key`。
-短链会先解析为最终支持的 input kind，再做这个判断。`warn` 会把 diagnostic 写到 stderr 并继续；`fail` 会在缺少 required credential 或相关
+intl/Bstar episode 输入会要求官方 intl metadata、playurl 和 subtitle 请求实际使用的通用
+`access_key`。短链会先解析为最终支持的 input kind，再做这个判断。`warn` 会把 diagnostic 写到
+stderr 并继续；`fail` 会在缺少 required credential 或相关
 credential lifecycle metadata 不是 fresh 时，在网络 stream resolution 前中止；`renew` 会在
 当前 profile refresh-ready 时先尝试 provider-specific generic access-key refresh。preflight
 不会写 stdout，因此 `--json` 仍保持单个 JSON plan、playback plan 或 download report。可通过全局

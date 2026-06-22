@@ -276,10 +276,12 @@ lets embedders skip restricted-area proxy requirements for inputs that cannot us
 Both forms mirror the credential the client would send: WEB playurl cookies are optional, TV playurl
 requires `tv_access_key`, APP playurl accepts either `tv_access_key` or generic `access_key` and
 checks `tv_access_key` first when both are stored, and restricted-area proxy fallback requires
-generic `access_key` only when proxy fallback may run. The report is a pure value: it lists
-requirement statuses, warnings/blockers, and the selected profile's `AccessKeyRenewalDecision`, but
-it never mutates credential storage. When embedders accept short links, normalize them with
-`BiliClient::parse_input(...)` before deciding whether PGC proxy fallback may run.
+generic `access_key` only when proxy fallback may run. Intl/Bstar episode inputs require the generic
+`access_key` used by the official intl request path. The report is a pure value: it lists requirement
+statuses, warnings/blockers, and the selected profile's `AccessKeyRenewalDecision`, but it never
+mutates credential storage. When embedders accept short links, normalize them with
+`BiliClient::parse_input(...)` before deciding whether PGC proxy fallback or intl access-key
+preflight may run.
 Embedding projects can treat blockers as fail-fast UI, warnings as non-blocking banners, or call
 `should_attempt_access_key_renewal()` before using `BiliClient::refresh_access_key(...)` and saving
 the refreshed credentials through their own storage layer.

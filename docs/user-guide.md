@@ -412,7 +412,9 @@ treats cookies as optional so anonymous public videos still work, TV playurl req
 `tv_access_key`, APP playurl accepts either `tv_access_key` or generic `access_key` and checks
 `tv_access_key` first when both are stored, and
 restricted-area proxy fallback requires generic `access_key` only for inputs where that fallback may
-run; short links are resolved to their final supported input kind before this decision. `warn`
+run. Intl/Bstar episode inputs require the generic `access_key` used by the official intl metadata,
+playurl, and subtitle requests. Short links are resolved to their final supported input kind before
+this decision. `warn`
 writes diagnostics to stderr and continues, `fail` aborts before network stream
 resolution when a required credential is missing or a relevant credential has non-fresh lifecycle
 metadata, and `renew` first tries provider-specific generic access-key refresh when the selected
