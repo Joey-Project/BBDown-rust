@@ -3448,6 +3448,233 @@ fn download_archive_reruns_duplicate_preflight_after_deferred_refresh() -> anyho
 
 #[test]
 #[allow(clippy::too_many_lines)]
+fn download_archive_cancel_reports_duplicate_after_deferred_refresh() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    save_intl_access_key_profile(&credential_file, "AUTO_ACCESS_SECRET")?;
+    let fresh_season =
+        mock_intl_episode_metadata(&server, "AUTO_ACCESS_SECRET", "Fresh Intl Season", 7, 70);
+    let fresh_playurl = mock_intl_episode_playurl(
+        &server,
+        "AUTO_ACCESS_SECRET",
+        70,
+        &format!("{}/fresh-video.m4s", server.base_url()),
+    );
+    let fresh_video = server.mock(|when, then| {
+        when.method(GET).path("/fresh-video.m4s");
+        then.status(200).body("fresh video");
+    });
+
+    bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--intl-base")
+        .arg(server.base_url())
+        .arg("download")
+        .arg("https://www.bilibili.tv/en/play/34613/341736")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--no-mux")
+        .arg("--no-subtitles")
+        .arg("--no-danmaku")
+        .arg("--no-cover")
+        .arg("--json")
+        .assert()
+        .success();
+
+    save_lifecycle_cli_profiles_with_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(1_000)
+            .with_expires_at_unix_millis(2_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    )?;
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET")
+            .form_urlencoded_tuple("refresh_token", "OLD_REFRESH_SECRET")
+            .form_urlencoded_tuple("appkey", "4409e2ce8ffd12b8")
+            .form_urlencoded_tuple_exists("sign");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "refresh_token": "AUTO_REFRESH_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+    let stale_season =
+        mock_intl_episode_metadata(&server, "ACCESS_SECRET", "Stale Intl Season", 8, 80);
+    let stale_playurl = mock_intl_episode_playurl(
+        &server,
+        "ACCESS_SECRET",
+        80,
+        &format!("{}/stale-video.m4s", server.base_url()),
+    );
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--intl-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("download")
+        .arg("https://www.bilibili.tv/en/play/34613/341736")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--no-mux")
+        .arg("--no-subtitles")
+        .arg("--no-danmaku")
+        .arg("--no-cover")
+        .arg("--on-duplicate")
+        .arg("cancel")
+        .arg("--json")
+        .arg("--progress-json")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let report: Value = serde_json::from_slice(&output.stdout)?;
+    let events = json_object_lines(&output.stderr)?;
+
+    assert_eq!(report["status"], "canceled");
+    assert!(
+        report["preflight"]["output_conflict"]["path"]
+            .as_str()
+            .is_some_and(|path| path.ends_with("Fresh Intl Season"))
+    );
+    assert!(events.iter().any(|event| {
+        event["type"] == "plan_cancelled"
+            && event["completed_entries"] == 0
+            && event["error"] == "archive or output conflict requires a decision"
+    }));
+    assert!(output_dir.join("Fresh Intl Season").exists());
+    assert!(!output_dir.join("Stale Intl Season").exists());
+    fresh_video.assert_calls(1);
+    stale_season.assert_calls(1);
+    stale_playurl.assert_calls(1);
+    fresh_season.assert_calls(2);
+    fresh_playurl.assert_calls(2);
+    refresh_mock.assert_calls(1);
+    Ok(())
+}
+
+#[test]
+fn download_archive_does_not_refresh_for_generic_api_bad_request() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    save_lifecycle_cli_profiles_with_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(1_000)
+            .with_expires_at_unix_millis(2_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    )?;
+    let season_mock = server.mock(|when, then| {
+        when.method(GET)
+            .path("/intl/gateway/v2/ogv/view/app/season")
+            .query_param("ep_id", "341736")
+            .query_param("access_key", "ACCESS_SECRET");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -400,
+            "message": "invalid parameter: ep_id"
+        }));
+    });
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "refresh_token": "AUTO_REFRESH_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--intl-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("download")
+        .arg("https://www.bilibili.tv/en/play/34613/341736")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(stderr.contains("invalid parameter: ep_id"));
+    season_mock.assert_calls(1);
+    refresh_mock.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
 fn download_archive_retries_restricted_proxy_after_deferred_credential_refresh()
 -> anyhow::Result<()> {
     let server = MockServer::start();

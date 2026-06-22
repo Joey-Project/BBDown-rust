@@ -1999,10 +1999,7 @@ fn archive_duplicate_decision_after_refresh_or_report(
     preflight: &DownloadPreflight,
     current_decision: ArchiveDuplicateDecision,
 ) -> anyhow::Result<ArchiveDuplicateDecision> {
-    if args.on_duplicate.is_none()
-        && preflight.requires_decision()
-        && preflight != previous_preflight
-    {
+    if preflight.requires_decision() && preflight != previous_preflight {
         archive_duplicate_decision_or_report(
             args,
             plan,
@@ -2138,7 +2135,9 @@ async fn plan_archive_download_with_deferred_retry_or_report(
 
 fn plan_failure_may_be_credential_related(error: &bbdown_core::Error) -> bool {
     match error {
-        bbdown_core::Error::Api { code, .. } => matches!(*code, -101 | -400 | -403 | 7 | 16),
+        bbdown_core::Error::Api { code, message } => {
+            api_failure_may_be_credential_related(*code, message)
+        }
         bbdown_core::Error::Http(error) => error
             .status()
             .is_some_and(|status| status == 401 || status == 403),
@@ -2157,12 +2156,28 @@ fn plan_failure_may_be_credential_related(error: &bbdown_core::Error) -> bool {
     }
 }
 
+fn api_failure_may_be_credential_related(code: i64, message: &str) -> bool {
+    matches!(code, -101 | -403 | 7 | 16) || (code == -400 && auth_like_failure_message(message))
+}
+
+fn auth_like_failure_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("access_key")
+        || lower.contains("access key")
+        || lower.contains("credential")
+        || lower.contains("token")
+        || lower.contains("unauthorized")
+        || lower.contains("not login")
+        || lower.contains("no login")
+        || lower.contains("auth")
+}
+
 fn restricted_area_resolver_failure_may_be_credential_related(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
     lower.contains("restricted-area resolver failed")
         && (lower.contains("api code -101")
-            || lower.contains("api code -400")
             || lower.contains("api code -403")
+            || (lower.contains("api code -400") && auth_like_failure_message(&lower))
             || lower.contains("api code 7")
             || lower.contains("api code 16")
             || lower.contains("401")
@@ -4562,10 +4577,11 @@ mod tests {
         ensure_access_key_login_stdin_is_safe, ensure_archive_file_is_not_output_root,
         input_may_use_intl_access_key, input_may_use_restricted_area_proxy,
         input_media_preflight_playurl_mode, next_poll_sleep, parse_access_key_login_input,
-        qr_login_lifecycle_metadata, remaining_until, restricted_area_from_cli_with_args,
-        restricted_area_from_cli_with_env_values, save_credentials,
-        save_credentials_with_lifecycle, save_credentials_with_lifecycle_and_secrets,
-        should_prompt_duplicate_decision, validate_media_host_spec, validate_single_download_args,
+        plan_failure_may_be_credential_related, qr_login_lifecycle_metadata, remaining_until,
+        restricted_area_from_cli_with_args, restricted_area_from_cli_with_env_values,
+        save_credentials, save_credentials_with_lifecycle,
+        save_credentials_with_lifecycle_and_secrets, should_prompt_duplicate_decision,
+        validate_media_host_spec, validate_single_download_args,
     };
     use bbdown_core::{
         AccessKeyLoginConfig, AccessKeyLoginCredentials, AccessKeyProvider,
@@ -4648,6 +4664,28 @@ mod tests {
             input_media_preflight_playurl_mode(&Input::Aid(170_001), PlayurlMode::App),
             Some(PlayurlMode::App)
         );
+    }
+
+    #[test]
+    fn plan_failure_classifier_only_treats_auth_like_bad_request_as_credentials() {
+        assert!(plan_failure_may_be_credential_related(
+            &bbdown_core::Error::Api {
+                code: -101,
+                message: "not logged in".to_owned(),
+            }
+        ));
+        assert!(plan_failure_may_be_credential_related(
+            &bbdown_core::Error::Api {
+                code: -400,
+                message: "expired access_key".to_owned(),
+            }
+        ));
+        assert!(!plan_failure_may_be_credential_related(
+            &bbdown_core::Error::Api {
+                code: -400,
+                message: "invalid parameter: qn".to_owned(),
+            }
+        ));
     }
 
     #[test]

@@ -304,9 +304,15 @@ superseded_by:
 - PR 8 second review-fix checkpoint:
   - `--progress-json --on-duplicate cancel` now suppresses duplicate preflight plaintext on stderr while still emitting the `plan_cancelled` event.
   - Archive downloads now distinguish "no duplicate decision was required" from a real `replace` decision, then rerun duplicate preflight decision handling when deferred credential refresh changes the plan/preflight into a conflict.
-  - Added mock e2e coverage for both cases:
+  - Archive credential retry now treats generic API `-400` as refresh-worthy only when the message looks auth/access-key related, avoiding credential mutation for ordinary invalid-parameter failures.
+  - If deferred credential refresh changes archive preflight into a duplicate conflict, explicit
+    `--on-duplicate cancel` now re-enters the CLI cancel-report path instead of letting the library
+    executor convert it into an error.
+  - Added mock e2e coverage for these review follow-ups:
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_progress_json_cancel_suppresses_plaintext_preflight --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_reruns_duplicate_preflight_after_deferred_refresh --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_cancel_reports_duplicate_after_deferred_refresh --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_for_generic_api_bad_request --locked`.
 
 ## Next Steps
 
