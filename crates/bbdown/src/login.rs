@@ -1,6 +1,7 @@
 use crate::{
-    BiliClient, CredentialKind, CredentialLifecycleCredentialStatus, CredentialLifecycleSource,
-    CredentialLifecycleStatus, CredentialProfileLifecycleStatus, Credentials, Error, Result,
+    AccessKeyProvider, BiliClient, CredentialKind, CredentialLifecycleCredentialStatus,
+    CredentialLifecycleSource, CredentialLifecycleStatus, CredentialProfileLifecycleStatus,
+    Credentials, Error, Result,
 };
 use md5::Digest;
 use reqwest::header::{HeaderMap, SET_COOKIE};
@@ -223,6 +224,7 @@ pub enum AccessKeyRenewalReason {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AccessKeyAutomaticRefreshReadiness {
+    Ready,
     CredentialMissing,
     UnsupportedSource,
     MissingRefreshToken,
@@ -238,6 +240,8 @@ pub struct AccessKeyRenewalDecision {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<CredentialLifecycleSource>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub access_key_provider: Option<AccessKeyProvider>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub acquired_at_unix_millis: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checked_at_unix_millis: Option<u64>,
@@ -245,6 +249,8 @@ pub struct AccessKeyRenewalDecision {
     pub expires_at_unix_millis: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refresh_token_present: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refresh_token_secret_present: Option<bool>,
     pub automatic_refresh_readiness: AccessKeyAutomaticRefreshReadiness,
     pub action: AccessKeyRenewalAction,
     pub reason: AccessKeyRenewalReason,
@@ -285,6 +291,7 @@ impl AccessKeyRenewalDecision {
             present,
             lifecycle_status,
             source: credential.and_then(|credential| credential.source),
+            access_key_provider: credential.and_then(|credential| credential.access_key_provider),
             acquired_at_unix_millis: credential
                 .and_then(|credential| credential.acquired_at_unix_millis),
             checked_at_unix_millis: credential
@@ -293,6 +300,8 @@ impl AccessKeyRenewalDecision {
                 .and_then(|credential| credential.expires_at_unix_millis),
             refresh_token_present: credential
                 .and_then(|credential| credential.refresh_token_present),
+            refresh_token_secret_present: credential
+                .and_then(|credential| credential.refresh_token_secret_present),
             automatic_refresh_readiness,
             action,
             reason,
@@ -334,6 +343,9 @@ fn access_key_automatic_refresh_readiness(
     }
     if credential.source != Some(CredentialLifecycleSource::AccessKeyLogin) {
         return AccessKeyAutomaticRefreshReadiness::UnsupportedSource;
+    }
+    if credential.refresh_token_secret_present == Some(true) {
+        return AccessKeyAutomaticRefreshReadiness::Ready;
     }
     if credential.refresh_token_present == Some(true) {
         AccessKeyAutomaticRefreshReadiness::MetadataOnlyRefreshToken
@@ -973,9 +985,10 @@ mod tests {
         qrcode_key_from_url, tv_login_params,
     };
     use crate::{
-        BiliClient, ClientConfig, CredentialKind, CredentialLifecycleMetadata,
-        CredentialLifecyclePolicy, CredentialLifecycleSource, CredentialLifecycleStatus,
-        CredentialProfileMetadata, CredentialProfiles, Credentials, EndpointConfig, Error,
+        AccessKeyProvider, AccessKeyProviderSecret, AccessKeyRefreshProvider, BiliClient,
+        ClientConfig, CredentialKind, CredentialLifecycleMetadata, CredentialLifecyclePolicy,
+        CredentialLifecycleSource, CredentialLifecycleStatus, CredentialProfileMetadata,
+        CredentialProfileSecrets, CredentialProfiles, Credentials, EndpointConfig, Error,
         PlayurlMode, RestrictedAreaConfig,
     };
     use httpmock::MockServer;
@@ -1220,6 +1233,41 @@ mod tests {
     }
 
     #[test]
+    fn access_key_renewal_decision_reports_ready_refresh_secret() -> anyhow::Result<()> {
+        let status = access_key_profile_status_with_secrets(
+            Credentials::default().with_access_key("AK"),
+            Some(
+                CredentialLifecycleMetadata::default()
+                    .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                    .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+                    .with_acquired_at_unix_millis(1_000)
+                    .with_expires_at_unix_millis(100_000_000_000)
+                    .with_refresh_token_present(true),
+            ),
+            Some((
+                AccessKeyProvider::BalhBiliplus,
+                AccessKeyProviderSecret::default()
+                    .with_refresh_token("RT")
+                    .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2),
+            )),
+            1_500,
+        )?;
+        let decision = AccessKeyRenewalDecision::from_profile_status(&status, false);
+
+        assert_eq!(
+            decision.access_key_provider,
+            Some(AccessKeyProvider::BalhBiliplus)
+        );
+        assert_eq!(decision.refresh_token_secret_present, Some(true));
+        assert_eq!(
+            decision.automatic_refresh_readiness,
+            AccessKeyAutomaticRefreshReadiness::Ready
+        );
+        assert_eq!(decision.action, AccessKeyRenewalAction::NoAction);
+        Ok(())
+    }
+
+    #[test]
     fn access_key_renewal_decision_reauthorizes_expired_metadata_only_token() -> anyhow::Result<()>
     {
         let status = access_key_profile_status(
@@ -1273,11 +1321,30 @@ mod tests {
         access_key_metadata: Option<CredentialLifecycleMetadata>,
         now_unix_millis: u64,
     ) -> anyhow::Result<crate::CredentialProfileLifecycleStatus> {
+        access_key_profile_status_with_secrets(
+            credentials,
+            access_key_metadata,
+            None,
+            now_unix_millis,
+        )
+    }
+
+    fn access_key_profile_status_with_secrets(
+        credentials: Credentials,
+        access_key_metadata: Option<CredentialLifecycleMetadata>,
+        access_key_secret: Option<(AccessKeyProvider, AccessKeyProviderSecret)>,
+        now_unix_millis: u64,
+    ) -> anyhow::Result<crate::CredentialProfileLifecycleStatus> {
         let mut profiles = CredentialProfiles::from_credentials(credentials);
         if let Some(access_key_metadata) = access_key_metadata {
             let mut metadata = CredentialProfileMetadata::default();
             metadata.set_credential(CredentialKind::AccessKey, access_key_metadata);
             profiles.set_profile_metadata("default", metadata)?;
+        }
+        if let Some((provider, secret)) = access_key_secret {
+            let mut secrets = CredentialProfileSecrets::default();
+            secrets.set_access_key_provider(provider, secret);
+            profiles.set_profile_secrets("default", secrets)?;
         }
         Ok(profiles.profile_lifecycle_status(
             "default",

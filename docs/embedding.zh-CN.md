@@ -213,9 +213,12 @@ JSON，也可以是 URL/query callback；返回的 `AccessKeyLoginCredentials` �
 `access_key` 以及可选的 refresh/expiration metadata。调用 `credentials()` 只会把通用
 access key 转成现有 `Credentials` model，因此自行管理存储的嵌入应用需要显式保存来自
 `oauth_expires_at`、`expires_at`、`expires_in` 和 `refresh_token` 的 lifecycle metadata。
-CLI 登录路径会把这些 metadata 记录到当前选择的 credential profile：绝对 expiry 字段会直接
-保存，相对 `expires_in` 会按获取时间换算，refresh token 只记录是否存在，不会把 token 值
-复制进 lifecycle metadata。
+refresh secret 应与运行时 `Credentials` 分开保存：使用 `CredentialProfileSecrets`，在产出当前
+access key 的 provider 下保存 `AccessKeyProviderSecret`。CLI 会把 BiliPlus/BALH callback
+写入 `balh_biliplus` provider，并把 refresh provider 标记为 `bilibili_main_oauth2`、keypair
+family 标记为 `bili_tv`。CLI 登录路径会把 lifecycle metadata 记录到当前选择的 credential
+profile：绝对 expiry 字段会直接保存，相对 `expires_in` 会按获取时间换算，refresh token 只记录
+是否存在，不会把 token 值复制进 lifecycle metadata。
 在 browser `postMessage` flow 中，应优先使用
 `AccessKeyLoginTicketOutput::credentials_from_message(event_origin, data)`，让 sender origin
 先按 ticket 的可信 auth origin 或 callback origin 校验后再解析。只有当嵌入应用已经自行验证
@@ -226,8 +229,10 @@ access-key lifecycle orchestration 可以在加载
 decision 表示当前所选 profile 的 access-key metadata 在调用方 policy 下仍是 fresh；
 `Reauthorize` 表示 UI 应渲染新的 `AccessKeyLoginTicketOutput`，并收集下一次 BALH callback。
 decision 中的 `automatic_refresh_readiness` 是刻意显式的：`metadata_only_refresh_token`
-表示上一次 callback 报告过 refresh token，但 BBDown 当前只持久化安全 lifecycle metadata；
-在未来设计 refresh-secret storage 前，无法静默刷新 token。
+表示上一次 callback 在 provider secret 保存能力出现前报告过 refresh token；`ready` 表示当前
+所选 profile 有 provider-scoped refresh secret，可供 refresh client 使用。当前 core
+orchestration 仍不会自行发起网络 refresh；嵌入方应把 `ready` 视为下一切片 provider-specific
+refresh API 的前置条件。
 当嵌入项目需要在决定提示登录、导入 token 或继续匿名请求前做脱敏诊断时，可以调用
 `BiliClient::check_credential_health()`。报告会分别包含 WEB cookie、通用 `access_key` 和
 TV `tv_access_key` 的 probe；`kind` 表示凭据槽位，`scope` 表示实际检查的消费场景。通用

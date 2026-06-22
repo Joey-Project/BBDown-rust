@@ -226,10 +226,14 @@ shape with either a JSON payload or URL/query callback, returning `AccessKeyLogi
 generic `access_key` plus optional refresh/expiration metadata. Calling `credentials()` converts only
 the generic access key into the existing `Credentials` model, so embedding applications that own
 storage should persist lifecycle metadata from `oauth_expires_at`, `expires_at`, `expires_in`, and
-`refresh_token` explicitly. The CLI login path records that metadata in the selected credential
-profile: absolute expiry fields are stored directly, relative `expires_in` values are converted from
-the acquisition time, and refresh-token presence is stored without copying the token value into
-lifecycle metadata. In browser `postMessage` flows, prefer
+`refresh_token` explicitly. Refresh secrets should be kept separate from runtime `Credentials`:
+use `CredentialProfileSecrets` with an `AccessKeyProviderSecret` under the provider that produced the
+current access key. The CLI writes BiliPlus/BALH callbacks under the `balh_biliplus` provider and
+marks their refresh provider as `bilibili_main_oauth2` with the `bili_tv` keypair family. The CLI
+login path records lifecycle metadata in the selected credential profile: absolute expiry fields are
+stored directly, relative `expires_in` values are converted from the acquisition time, and
+refresh-token presence is stored without copying the token value into lifecycle metadata. In browser
+`postMessage` flows, prefer
 `AccessKeyLoginTicketOutput::credentials_from_message(event_origin, data)` so the sender origin is
 validated against the ticket's trusted auth or callback origin before parsing. Use the raw
 `AccessKeyLoginCredentials::from_balh_*` parsers only after an embedding application has already
@@ -240,8 +244,10 @@ For access-key lifecycle orchestration, evaluate
 profile's access-key metadata is still fresh under the caller's policy; `Reauthorize` means the UI
 should render a new `AccessKeyLoginTicketOutput` and collect another BALH callback. The decision's
 `automatic_refresh_readiness` field is intentionally explicit: `metadata_only_refresh_token` means a
-previous callback reported a refresh token, but BBDown has only persisted safe lifecycle metadata and
-cannot silently refresh the token without a future refresh-secret storage design.
+previous callback reported a refresh token before provider secrets were stored; `ready` means the
+selected profile has a provider-scoped refresh secret that a refresh client can use. Current core
+orchestration still does not perform network refresh by itself; embedders should treat `ready` as a
+precondition for the provider-specific refresh API added in the next slice.
 Call `BiliClient::check_credential_health()` when an embedding project needs a redacted diagnostic
 report before deciding whether to prompt for login, import a token, or continue with anonymous
 requests. The report includes one probe each for the WEB cookie, generic `access_key`, and TV

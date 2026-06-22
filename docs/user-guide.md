@@ -385,7 +385,11 @@ the login ticket; trusted manual callback URL/query input does not need that fla
 and `--callback-origin` for compatible mocks or deployments.
 When the access-key callback includes `oauth_expires_at`, `expires_at`, or `expires_in`, the CLI
 records the derived lifecycle expiry metadata in the selected credential profile. It also records
-whether a refresh token was present without storing that token value in lifecycle metadata.
+whether a refresh token was present without storing that token value in lifecycle metadata. When the
+callback includes a refresh token, the CLI stores the raw refresh secret separately in
+`profile_secrets.<profile>.access_key.<provider>` inside the same private credential file; this
+plaintext provider section is used only for future token refresh and is redacted from status, health,
+debug, and JSON command output.
 Use `auth renew-access-key` when automation needs a profile-aware access-key renewal decision. The
 command first evaluates the selected profile with the same lifecycle policy as `auth status`; fresh
 credentials emit a `no_action` decision, while missing, unknown, stale, expiring, expired, or
@@ -394,8 +398,9 @@ the event order is `decision`, then `ticket` when reauthorization is needed, the
 `--stdin` or `--file` supplies callback data. Without callback input the command stops after the
 ticket so callers can render the URL or `qr_payload` and collect the browser handoff separately.
 The decision includes `automatic_refresh_readiness`; `metadata_only_refresh_token` means the
-previous callback reported a refresh token, but BBDown only persisted safe metadata, not the raw
-refresh secret required for silent token refresh.
+previous callback reported a refresh token before provider secrets were stored, while `ready` means
+the selected provider has a saved refresh secret. Current commands still stop at decision or
+reauthorization; automatic silent refresh is added in the next credential lifecycle slice.
 `auth login-web` prints a QR login URL, polls until scan confirmation, and saves the resulting
 cookie. `auth login-tv` uses the TV QR flow and saves a TV-specific access key for future TV/app
 flows without overwriting the generic intl/Bstar access key imported or acquired through the generic

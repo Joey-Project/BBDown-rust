@@ -3,9 +3,9 @@ id: 20260620-019f16-v0-6-credential-lifecycle-roadmap
 title: v0.6.0 Credential Lifecycle Roadmap
 status: active
 created: 2026-06-20
-updated: 2026-06-21
-branch: feature/v0.6-access-key-renewal
-pr: 65
+updated: 2026-06-22
+branch: feature/v0.6-provider-secret-storage
+pr:
 supersedes: []
 superseded_by:
 ---
@@ -21,7 +21,8 @@ superseded_by:
 - Existing credential storage supports WEB cookies, generic `access_key`, TV `tv_access_key`, named
   profiles, QR login ticket output, and read-only health diagnostics. Access-key login parsing can
   already capture `refresh_token`, `oauth_expires_at`, and `expires_in`, but the persisted
-  `Credentials` model does not yet carry lifecycle metadata.
+  `Credentials` model deliberately remains runtime-only while lifecycle metadata and provider-scoped
+  refresh secrets live beside profiles.
 
 ## Planned Slices
 
@@ -36,16 +37,22 @@ superseded_by:
 - PR 4: CLI lifecycle UX. Add commands for profile status, default-profile visibility, selected/all
   profile health checks, and clear guidance when credentials require re-login rather than silent
   refresh.
-- PR 5: access-key refresh or reacquisition orchestration. Persist safe refresh metadata where
-  available, attempt refresh only when the source and stored metadata support it, and otherwise fall
-  back to explicit QR/login renewal.
-- PR 6: optional credential preflight integration for planning/downloading. Let CLI and embedding
+- PR 5: access-key renewal/reacquisition orchestration. Persist safe refresh metadata where
+  available, report why silent refresh is unavailable, and otherwise fall back to explicit QR/login
+  renewal.
+- PR 6: provider-aware plaintext refresh-secret storage. Store access-key refresh secrets in
+  `profile_secrets.<profile>.access_key.<provider>` without moving raw secrets into runtime
+  `Credentials`; record provider/keypair metadata for BALH/BiliPlus handoff tokens.
+- PR 7: provider-specific access-key refresh clients. Implement mocked and documented refresh
+  clients for Bilibili main OAuth2 and BiliIntl OAuth2, preserving old tokens on transient failures
+  and returning reauthorization-required outcomes for invalid refresh tokens.
+- PR 8: optional credential preflight integration for planning/downloading. Let CLI and embedding
   callers choose whether to fail fast, warn, or try renewal before restricted-area, TV, APP, or WEB
   request paths.
-- PR 7: multi-account lifecycle polish. Support lifecycle reporting across profiles, selected-profile
+- PR 9: multi-account lifecycle polish. Support lifecycle reporting across profiles, selected-profile
   renewal, and non-destructive profile updates that avoid overwriting concurrently refreshed
   credentials.
-- PR 8: release prep for `v0.6.0`, including bilingual docs, public API checks, deterministic CI,
+- PR 10: release prep for `v0.6.0`, including bilingual docs, public API checks, deterministic CI,
   live-e2e notes, release notes, and protected RC readiness.
 
 ## Completed Slices
@@ -101,6 +108,15 @@ superseded_by:
     access or refresh tokens.
   - Bilingual README, user guide, embedding guide, and architecture docs now describe the difference
     between metadata-only refresh-token evidence and a future stored refresh secret.
+- PR 6 is in progress as provider-aware plaintext refresh-secret storage:
+  - The implementation keeps runtime `Credentials` limited to cookie/access-key values and stores raw
+    refresh tokens under `CredentialProfileSecrets`.
+  - Access-key lifecycle metadata records the active provider and whether a refresh token was seen,
+    while `AccessKeyRenewalDecision` reports `ready` only when a provider-scoped refresh secret is
+    actually present.
+  - BALH/BiliPlus callbacks are stored under the `balh_biliplus` provider with refresh provider
+    `bilibili_main_oauth2` and keypair family `bili_tv`; BiliPlus itself remains treated as an
+    acquisition provider rather than a proven refresh endpoint.
 
 ## Out Of Scope For This Line
 
@@ -159,5 +175,7 @@ superseded_by:
 
 ## Next Steps
 
-- Complete PR 5 review/CI/merge, then cut PR 6 from updated `master` for optional credential
-  preflight integration in planning/downloading paths.
+- Finish PR 6 provider-aware secret storage with deterministic tests, review gates, CI, and merge.
+- Cut PR 7 from updated `master` for provider-specific access-key refresh clients and mocked endpoint
+  coverage.
+- Continue PR 8 optional credential preflight integration only after refresh outcomes are stable.

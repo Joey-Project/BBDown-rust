@@ -387,14 +387,17 @@ poller。`AccessKeyLoginConfig` 会用 `balh_auth=1` 和归一化 callback origi
 JSON credentials，也可以是使用 `access_key` 或 `access_token` 的 URL/query callback。
 `AccessKeyLoginCredentials` 会保留可选的 `refresh_token`、绝对 `oauth_expires_at` 和相对
 `expires_in` metadata，但转回 `Credentials` 时只保存通用 `access_key`。自行管理存储的嵌入
-方应显式把过期时间和 refresh-token presence 复制到 `CredentialLifecycleMetadata`。CLI 登录
-路径保存所选 profile 时会执行这一步：绝对 expiry 直接保存，相对 `expires_in` 按获取时间
-换算，并且 lifecycle metadata 只记录 refresh token 是否存在。`AccessKeyRenewalDecision`
-会把所选 profile lifecycle status 转成 `NoAction` 或 `Reauthorize`，并单独报告
-`automatic_refresh_readiness`，让嵌入方能看出为什么当前不能 silent refresh。在当前模型中，
-`metadata_only_refresh_token` 表示 BALH callback 带过 refresh token，但 BBDown 只保存了不含密钥的
-presence bit；未来需要 refresh-token store 和已验证的 refresh endpoint，才能在不重新授权的
-情况下轮换 token。
+方应显式把过期时间和 refresh-token presence 复制到 `CredentialLifecycleMetadata`，并把原始
+refresh secret 保存在 `CredentialProfileSecrets`，不要放进运行时 `Credentials`。profile secret
+按 `profile_secrets.<profile>.access_key.<provider>` 分组，这样 BALH/BiliPlus、Bilibili main
+OAuth2 和 BiliIntl OAuth2 的刷新行为可以独立演进。CLI 登录路径会把 BALH/BiliPlus refresh
+secret 以明文保存在同一个私有 credential file 中，把 refresh provider 标为
+`bilibili_main_oauth2`，并记录当前 BiliPlus handoff 观察到的 `bili_tv` keypair family。
+lifecycle metadata 仍然只记录 source、provider、时间戳和 refresh-token presence，不保存原始
+secret 值。`AccessKeyRenewalDecision` 会把所选 profile lifecycle status 转成 `NoAction` 或
+`Reauthorize`，并单独报告 `automatic_refresh_readiness`：`metadata_only_refresh_token` 表示只有
+旧的 presence bit；`ready` 表示当前所选 provider 已保存 refresh secret。网络 refresh client
+仍是独立的 provider-specific layer。
 browser `postMessage` consumer 应通过 ticket/output 的 `credentials_from_message` helper
 解析，它会先把 sender origin 与可信 auth origin 或 callback origin 校验，再使用 raw BALH
 payload parser。

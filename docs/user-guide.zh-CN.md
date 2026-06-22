@@ -344,7 +344,10 @@ sender origin 与本次 login ticket 校验；可信的手工 callback URL/query
 兼容 mock 或部署可以使用 `--auth-base` 和 `--callback-origin`。当 access-key callback 带有
 `oauth_expires_at`、`expires_at` 或 `expires_in` 时，CLI 会把派生出的 lifecycle expiry
 metadata 记录到当前选择的 credential profile 中；它也会记录是否出现过 refresh token，但不
-会把 refresh token 值保存进 lifecycle metadata。自动化如果需要 profile-aware access-key
+会把 refresh token 值保存进 lifecycle metadata。当 callback 带有 refresh token 时，CLI 会在
+同一个私有 credential file 的 `profile_secrets.<profile>.access_key.<provider>` 中单独保存
+原始 refresh secret；这个明文 provider section 只供后续 token refresh 使用，并会在 status、
+health、debug 和 JSON 命令输出中脱敏。自动化如果需要 profile-aware access-key
 renewal decision，可以使用 `auth renew-access-key`。该命令会先按 `auth status` 相同的
 lifecycle policy 评估当前选择的 profile；fresh credential 输出 `no_action` decision，missing、
 unknown、stale、expiring、expired 或 `--force` credential 会输出 reauthorization decision 和
@@ -352,8 +355,9 @@ unknown、stale、expiring、expired 或 `--force` credential 会输出 reauthor
 `ticket`，如果 `--stdin` 或 `--file` 提供 callback data，则最后输出 `saved`。没有 callback
 输入时，命令会在 ticket 后停止，让调用方自行渲染 URL 或 `qr_payload` 并收集浏览器 handoff。
 decision 会包含 `automatic_refresh_readiness`；`metadata_only_refresh_token` 表示上一次
-callback 报告过 refresh token，但 BBDown 只保存了安全 metadata，没有保存静默刷新所需的
-raw refresh secret。`auth login-web` 打印二维码登录 URL，轮询到扫码确认，并保存得到的
+callback 在 provider secret 保存能力出现前报告过 refresh token；`ready` 表示当前所选 provider
+已经保存 refresh secret。当前命令仍然只输出 decision 或走重新授权；自动静默 refresh 会在下一
+个 credential lifecycle 切片实现。`auth login-web` 打印二维码登录 URL，轮询到扫码确认，并保存得到的
 cookie。`auth login-tv` 使用 TV 二维码流程，保存 TV 专用 access key 供未来 TV/app 流程使
 用，不会覆盖由通用 access-key 命令导入或获取的 intl/Bstar access key。使用 `--json` 时，
 登录命令会打印换行分隔 JSON 事件：`ticket` 在轮询或 handoff 前包含登录 URL 和

@@ -23,12 +23,13 @@ pub use client::{
     RestrictedAreaProxy, RestrictedAreaProxyKind,
 };
 pub use credentials::{
+    AccessKeyProvider, AccessKeyProviderSecret, AccessKeyRefreshKeypair, AccessKeyRefreshProvider,
     CredentialHealthProbe, CredentialHealthReport, CredentialHealthScope, CredentialHealthStatus,
     CredentialHealthSummary, CredentialHealthSummaryStatus, CredentialKind,
     CredentialLifecycleCredentialStatus, CredentialLifecycleMetadata, CredentialLifecyclePolicy,
     CredentialLifecycleSource, CredentialLifecycleStatus, CredentialProfileLifecycleStatus,
-    CredentialProfileMetadata, CredentialProfileSelection, CredentialProfiles, CredentialSource,
-    CredentialStore, Credentials, DEFAULT_CREDENTIAL_PROFILE,
+    CredentialProfileMetadata, CredentialProfileSecrets, CredentialProfileSelection,
+    CredentialProfiles, CredentialSource, CredentialStore, Credentials, DEFAULT_CREDENTIAL_PROFILE,
 };
 pub use danmaku::{DanmakuFormat, DanmakuFormats, DanmakuXmlMerge, merge_xml_append_only};
 pub use download::{
