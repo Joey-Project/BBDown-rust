@@ -1801,14 +1801,13 @@ async fn handle_archive_download(
     );
     let input_title = args.url.clone();
     let output_dir = args.options.output_dir.clone();
-    let mut plan = plan_archive_download_or_report(
-        &client,
+    let mut plan = plan_archive_download_with_deferred_retry_or_report(
+        &runtime,
+        &mut client,
+        &mut prepared,
         &args,
-        prepared.parsed_input.clone(),
         &input_title,
         &output_dir,
-        progress,
-        cancellation,
     )
     .await?;
     let mut archive = load_archive_or_report(
@@ -1896,6 +1895,23 @@ async fn complete_deferred_archive_preflight_renewal_or_report(
     args: &DownloadCommandArgs,
     plan: &DownloadPlan,
 ) -> anyhow::Result<bool> {
+    complete_deferred_archive_preflight_renewal_for_target(
+        runtime,
+        prepared,
+        args,
+        &plan.title,
+        &args.options.output_dir,
+    )
+    .await
+}
+
+async fn complete_deferred_archive_preflight_renewal_for_target(
+    runtime: &ArchiveDownloadRuntime<'_>,
+    prepared: &mut PreparedMediaRequest,
+    args: &DownloadCommandArgs,
+    title: &str,
+    output_dir: &Path,
+) -> anyhow::Result<bool> {
     match complete_deferred_media_preflight_renewal(
         runtime.credential_runtime,
         runtime.client_runtime,
@@ -1907,15 +1923,85 @@ async fn complete_deferred_archive_preflight_renewal_or_report(
     {
         Ok(refreshed) => Ok(refreshed),
         Err(error) => {
-            emit_cli_plan_failed(
-                runtime.progress,
-                &plan.title,
-                &args.options.output_dir,
-                0,
-                error.to_string(),
-            );
+            emit_cli_plan_failed(runtime.progress, title, output_dir, 0, error.to_string());
             Err(error)
         }
+    }
+}
+
+async fn plan_archive_download_with_deferred_retry_or_report(
+    runtime: &ArchiveDownloadRuntime<'_>,
+    client: &mut BiliClient,
+    prepared: &mut PreparedMediaRequest,
+    args: &DownloadCommandArgs,
+    input_title: &str,
+    output_dir: &Path,
+) -> anyhow::Result<DownloadPlan> {
+    let request = DownloadPlanningRequest {
+        raw: &args.url,
+        parsed_input: prepared.parsed_input.clone(),
+        selection: args.select.clone(),
+        mode: args.options.mode,
+        input_title,
+        output_dir,
+        progress: runtime.progress,
+        cancellation: runtime.cancellation,
+    };
+    match plan_download(client, &request).await {
+        Ok(plan) => Ok(plan),
+        Err(error)
+            if prepared.deferred_preflight.is_some()
+                && plan_failure_may_be_credential_related(&error) =>
+        {
+            let refreshed = complete_deferred_archive_preflight_renewal_for_target(
+                runtime,
+                prepared,
+                args,
+                input_title,
+                output_dir,
+            )
+            .await?;
+            if refreshed {
+                *client = BiliClient::new(
+                    runtime
+                        .client_runtime
+                        .client_config(prepared.credentials.clone()),
+                );
+                match plan_download(client, &request).await {
+                    Ok(plan) => Ok(plan),
+                    Err(error) => {
+                        emit_plan_error_for_request(&request, &error);
+                        Err(error.into())
+                    }
+                }
+            } else {
+                emit_plan_error_for_request(&request, &error);
+                Err(error.into())
+            }
+        }
+        Err(error) => {
+            emit_plan_error_for_request(&request, &error);
+            Err(error.into())
+        }
+    }
+}
+
+fn plan_failure_may_be_credential_related(error: &bbdown_core::Error) -> bool {
+    match error {
+        bbdown_core::Error::Api { code, .. } => matches!(*code, -101 | -400 | -403 | 7 | 16),
+        bbdown_core::Error::Http(error) => error
+            .status()
+            .is_some_and(|status| status == 401 || status == 403),
+        bbdown_core::Error::Cancelled { .. }
+        | bbdown_core::Error::InvalidInput(_)
+        | bbdown_core::Error::SelectionRequired { .. }
+        | bbdown_core::Error::Unsupported(_)
+        | bbdown_core::Error::AccessRestricted(_)
+        | bbdown_core::Error::MissingField(_)
+        | bbdown_core::Error::Url(_)
+        | bbdown_core::Error::Json(_)
+        | bbdown_core::Error::Io(_)
+        | bbdown_core::Error::MuxFailed { .. } => false,
     }
 }
 
@@ -2003,6 +2089,7 @@ fn inspect_download_preflight_or_report(
     }
 }
 
+#[derive(Clone)]
 struct DownloadPlanningRequest<'a> {
     raw: &'a str,
     parsed_input: Option<Input>,
@@ -2018,41 +2105,52 @@ async fn plan_download_or_report(
     client: &BiliClient,
     request: DownloadPlanningRequest<'_>,
 ) -> anyhow::Result<DownloadPlan> {
+    match plan_download(client, &request).await {
+        Ok(plan) => Ok(plan),
+        Err(error) => {
+            emit_plan_error_for_request(&request, &error);
+            Err(error.into())
+        }
+    }
+}
+
+async fn plan_download(
+    client: &BiliClient,
+    request: &DownloadPlanningRequest<'_>,
+) -> bbdown_core::Result<DownloadPlan> {
     let plan_result = tokio::select! {
         result = async {
-            match request.parsed_input {
+            match request.parsed_input.clone() {
                 Some(input) => client
-                    .plan_with_download_mode(input, request.selection, request.mode)
+                    .plan_with_download_mode(input, request.selection.clone(), request.mode)
                     .await,
                 None => client
-                    .plan_download_with_mode(request.raw, request.selection, request.mode)
+                    .plan_download_with_mode(request.raw, request.selection.clone(), request.mode)
                     .await,
             }
         } => result,
         () = request.cancellation.cancelled() => Err(request.cancellation.cancelled_error()),
     };
-    match plan_result {
-        Ok(plan) => Ok(plan),
-        Err(error) => {
-            if error.is_cancelled() {
-                emit_cli_plan_cancelled(
-                    request.progress,
-                    request.input_title,
-                    request.output_dir,
-                    0,
-                    error.to_string(),
-                );
-            } else {
-                emit_cli_plan_failed(
-                    request.progress,
-                    request.input_title,
-                    request.output_dir,
-                    0,
-                    error.to_string(),
-                );
-            }
-            Err(error.into())
-        }
+    plan_result
+}
+
+fn emit_plan_error_for_request(request: &DownloadPlanningRequest<'_>, error: &bbdown_core::Error) {
+    if error.is_cancelled() {
+        emit_cli_plan_cancelled(
+            request.progress,
+            request.input_title,
+            request.output_dir,
+            0,
+            error.to_string(),
+        );
+    } else {
+        emit_cli_plan_failed(
+            request.progress,
+            request.input_title,
+            request.output_dir,
+            0,
+            error.to_string(),
+        );
     }
 }
 

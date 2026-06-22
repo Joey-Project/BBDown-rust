@@ -92,8 +92,8 @@ access key，并可用 `--tv-api-base` / `BBDOWN_TV_API_BASE` 覆盖端点。
 BBDown-compatible APP gRPC playurl 端点解析。APP mode 优先使用
 通用 `Credentials::access_key`，没有 generic token 时回退到 `Credentials::tv_access_key`；mock
 或代理端点可用 `--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` 和 `--app-pgc-grpc-base` /
-`BBDOWN_APP_PGC_GRPC_BASE` 覆盖；普通视频 APP 默认使用 `https://grpc.biliapi.net`，PGC
-APP 默认跟随 BBDown reference host `https://app.bilibili.com`。PGC APP gRPC
+`BBDOWN_APP_PGC_GRPC_BASE` 覆盖；普通视频和 PGC APP 默认都使用
+`https://grpc.biliapi.net`。PGC APP gRPC
 响应如果带有区域限制或 preview-only 信号，仍会回退到已配置的 restricted-area HTTP playurl
 proxy；信号可以来自区域限制消息、APP permission-denied gRPC status 或 PGC response-body
 metadata。proxy fallback URL 只会使用通用导入
@@ -224,9 +224,11 @@ request 前检查当前 profile，也会覆盖使用通用 `access_key` 的 intl
 不会阻断自带认证或允许匿名 fallback 的 proxy URL。diagnostic 会写到 stderr，JSON stdout
 仍保持为单个 plan 或 report payload；`download --progress-json` 会抑制 preflight 纯文本
 diagnostic，但失败时最终 CLI error 行仍可能写到 stderr，因此 wrapper 应只解析 JSON object
-line。对 archive 下载，`--credential-preflight renew` 会把自动 access-key refresh 延后到
-duplicate handling 之后，因此 `--on-duplicate cancel` 会停止且不会调用 refresh endpoint 或重写
-已保存 credential。二维码登录命令会轮询
+line。对 archive 下载，如果初次 plan 成功，`--credential-preflight renew` 会把自动
+access-key refresh 延后到 duplicate handling 之后，因此 `--on-duplicate cancel` 会停止且不会
+调用 refresh endpoint 或重写已保存 credential。如果初次 archive planning 因类似 auth 的
+credential 错误失败，CLI 会刷新 ready 的通用 access key 并重试一次 planning，然后才报告失败。
+二维码登录命令会轮询
 Bilibili 二维码状态机，并只保存最终得到的凭据。WEB 二维码登录保存 cookie；TV 二维码登录保存
 TV 专用 access key，不会覆盖由通用 access-key 命令导入或获取的 intl/Bstar access key。
 使用 `--json` 时，登录命令输出换行分隔 JSON 事件：先输出带登录 URL 和 `qr_payload` 的

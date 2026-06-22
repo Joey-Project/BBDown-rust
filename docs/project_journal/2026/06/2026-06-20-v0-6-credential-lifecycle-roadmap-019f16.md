@@ -166,8 +166,11 @@ superseded_by:
     not inherit unrelated WEB cookie lifecycle failures, and `download --progress-json` suppresses
     plaintext preflight diagnostics while wrappers still parse only JSON object lines because final
     CLI errors may also appear on stderr.
-  - Archive downloads defer `renew` automatic access-key refresh until after duplicate handling, so
-    `--on-duplicate cancel` does not call refresh endpoints or mutate stored credentials.
+  - Archive downloads defer `renew` automatic access-key refresh until after duplicate handling when
+    initial planning succeeds, so `--on-duplicate cancel` does not call refresh endpoints or mutate
+    stored credentials.
+  - If initial archive planning fails with an auth-like credential error before duplicate preflight
+    can be inspected, the CLI refreshes a ready generic access key and retries planning once.
   - `renew` attempts provider-specific generic access-key refresh for refresh-ready selected
     profiles, saves the refreshed credential non-interactively, reloads credentials, and then
     continues with media resolution.
@@ -287,6 +290,14 @@ superseded_by:
   - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/5f1ab3fa5d9f7d534507216a2d6f765694f9b710/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.
   - `git diff --check`.
   - `just ci`.
+- PR 8 review-fix validation:
+  - `cargo fmt --all -- --check`.
+  - `git diff --check`.
+  - `cargo test -p bbdown-cli --test cli_e2e download_archive_retries_plan_after_deferred_credential_refresh --locked`.
+  - `cargo test -p bbdown-cli --test cli_e2e download_archive_cancel_defers_credential_preflight_renewal --locked`.
+  - `cargo test -p bbdown-cli --test cli_e2e download_progress_json_reports_credential_preflight_failure --locked`.
+  - `cargo test -p bbdown-core --lib credential_preflight --locked`.
+  - `cargo clippy --workspace --all-targets --locked -- -D warnings`.
 
 ## Next Steps
 

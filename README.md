@@ -95,8 +95,8 @@ Set `--playurl-mode app` or `BBDOWN_PLAYURL_MODE=app` to use BBDown-compatible A
 endpoints for normal videos and PGC episodes. APP mode uses the generic
 `Credentials::access_key` first and falls back to `Credentials::tv_access_key`; use `--app-grpc-base` /
 `BBDOWN_APP_GRPC_BASE` and `--app-pgc-grpc-base` / `BBDOWN_APP_PGC_GRPC_BASE` for mock or proxy
-endpoint overrides; the normal-video APP default uses `https://grpc.biliapi.net` and the PGC APP
-default follows the BBDown reference host `https://app.bilibili.com`. PGC APP gRPC restricted or
+endpoint overrides; normal-video and PGC APP defaults both use `https://grpc.biliapi.net`. PGC APP
+gRPC restricted or
 preview-only signals still fall back to configured restricted-area HTTP playurl proxies when reported
 by region-limit messages, APP permission-denied gRPC status, or PGC response-body metadata. Proxy fallback
 URLs use only the generic imported `Credentials::access_key`, never the TV-specific token. Non-zero
@@ -238,8 +238,10 @@ not block proxy URLs that authenticate themselves or allow anonymous fallback. P
 are written to stderr so JSON stdout remains a single plan or report, and `download --progress-json`
 suppresses plaintext preflight diagnostics; wrappers should still parse only JSON object lines
 because the final CLI error line may also be written to stderr on failure. For archive downloads,
-`--credential-preflight renew` defers automatic access-key refresh until after duplicate handling, so
-`--on-duplicate cancel` stops without calling refresh endpoints or rewriting stored credentials.
+`--credential-preflight renew` defers automatic access-key refresh until after duplicate handling when
+the initial plan succeeds, so `--on-duplicate cancel` stops without calling refresh endpoints or
+rewriting stored credentials. If initial archive planning fails with an auth-like credential error,
+the CLI refreshes a ready generic access key and retries planning once before reporting the failure.
 QR login commands poll the Bilibili QR state machine and save only the resulting credential. WEB QR
 login saves a cookie; TV QR login saves a TV-specific access
 key without overwriting the generic intl/Bstar access key. With `--json`, login commands emit
