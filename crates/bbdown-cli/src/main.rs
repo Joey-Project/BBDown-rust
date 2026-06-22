@@ -1217,6 +1217,7 @@ async fn prepare_credentials_for_media_request(
         return Ok(PreparedMediaRequest {
             credentials: credential_runtime.load()?,
             parsed_input: None,
+            media_preflight_context: None,
             deferred_preflight: None,
         });
     }
@@ -1277,7 +1278,8 @@ async fn prepare_credentials_for_media_request(
     });
     Ok(PreparedMediaRequest {
         credentials: credential_runtime.load()?,
-        parsed_input: Some(media_preflight_context.input),
+        parsed_input: Some(media_preflight_context.input.clone()),
+        media_preflight_context: Some(media_preflight_context),
         deferred_preflight,
     })
 }
@@ -1285,6 +1287,7 @@ async fn prepare_credentials_for_media_request(
 struct PreparedMediaRequest {
     credentials: Credentials,
     parsed_input: Option<Input>,
+    media_preflight_context: Option<MediaCredentialPreflightContext>,
     deferred_preflight: Option<DeferredMediaCredentialPreflight>,
 }
 
@@ -1351,6 +1354,64 @@ async fn complete_deferred_media_preflight_renewal(
     Ok(refreshed)
 }
 
+async fn try_forced_access_key_refresh_for_archive_retry(
+    credential_runtime: &CredentialRuntime,
+    client_runtime: &ClientRuntimeConfig,
+    credential_preflight: &CredentialPreflightRuntimeConfig,
+    prepared: &mut PreparedMediaRequest,
+    emit_diagnostics: bool,
+) -> anyhow::Result<bool> {
+    if credential_preflight.mode != CredentialPreflightMode::Renew {
+        return Ok(false);
+    }
+    let Some(context) = prepared.media_preflight_context.as_ref() else {
+        return Ok(false);
+    };
+    if !media_preflight_context_may_use_generic_access_key(context, client_runtime) {
+        return Ok(false);
+    }
+    let policy = credential_preflight.policy();
+    let (profiles, _selected_profile, mut statuses) =
+        lifecycle_statuses_for_selection(credential_runtime, false, &policy)?;
+    let status = statuses
+        .pop()
+        .context("failed to evaluate selected credential profile")?;
+    let decision = AccessKeyRenewalDecision::from_profile_status(&status, true);
+    if decision.automatic_refresh_readiness != AccessKeyAutomaticRefreshReadiness::Ready {
+        return Ok(false);
+    }
+    let refreshed = try_access_key_auto_refresh_for_preflight(
+        credential_runtime,
+        client_runtime,
+        &profiles,
+        &decision,
+        emit_diagnostics,
+    )
+    .await?;
+    if refreshed {
+        prepared.credentials = credential_runtime.load()?;
+    }
+    Ok(refreshed)
+}
+
+fn media_preflight_context_may_use_generic_access_key(
+    context: &MediaCredentialPreflightContext,
+    client_runtime: &ClientRuntimeConfig,
+) -> bool {
+    credential_preflight_requirements_for_media_paths(
+        context.playurl_mode,
+        &client_runtime.restricted_area,
+        context.restricted_area_proxy_may_run,
+        context.intl_access_key_may_run,
+    )
+    .iter()
+    .any(|requirement| {
+        requirement
+            .credential_kinds
+            .contains(&CredentialKind::AccessKey)
+    })
+}
+
 fn credential_preflight_report(
     credential_runtime: &CredentialRuntime,
     client_runtime: &ClientRuntimeConfig,
@@ -1394,7 +1455,7 @@ async fn media_credential_preflight_context_for_input(
     let playurl_mode = if requires_media_streams {
         input_media_preflight_playurl_mode(&input, client_runtime.playurl_mode)
     } else {
-        Some(PlayurlMode::Web)
+        None
     };
     Ok(MediaCredentialPreflightContext {
         input: input.clone(),
@@ -1949,18 +2010,39 @@ async fn plan_archive_download_with_deferred_retry_or_report(
     };
     match plan_download(client, &request).await {
         Ok(plan) => Ok(plan),
-        Err(error)
-            if prepared.deferred_preflight.is_some()
-                && plan_failure_may_be_credential_related(&error) =>
-        {
-            let refreshed = complete_deferred_archive_preflight_renewal_for_target(
-                runtime,
-                prepared,
-                args,
-                input_title,
-                output_dir,
-            )
-            .await?;
+        Err(error) if plan_failure_may_be_credential_related(&error) => {
+            let refreshed = if prepared.deferred_preflight.is_some() {
+                complete_deferred_archive_preflight_renewal_for_target(
+                    runtime,
+                    prepared,
+                    args,
+                    input_title,
+                    output_dir,
+                )
+                .await?
+            } else {
+                match try_forced_access_key_refresh_for_archive_retry(
+                    runtime.credential_runtime,
+                    runtime.client_runtime,
+                    runtime.credential_preflight,
+                    prepared,
+                    !args.progress_json,
+                )
+                .await
+                {
+                    Ok(refreshed) => refreshed,
+                    Err(refresh_error) => {
+                        emit_cli_plan_failed(
+                            runtime.progress,
+                            input_title,
+                            output_dir,
+                            0,
+                            refresh_error.to_string(),
+                        );
+                        return Err(refresh_error);
+                    }
+                }
+            };
             if refreshed {
                 *client = BiliClient::new(
                     runtime
@@ -1992,17 +2074,32 @@ fn plan_failure_may_be_credential_related(error: &bbdown_core::Error) -> bool {
         bbdown_core::Error::Http(error) => error
             .status()
             .is_some_and(|status| status == 401 || status == 403),
+        bbdown_core::Error::AccessRestricted(message) => {
+            restricted_area_resolver_failure_may_be_credential_related(message)
+        }
         bbdown_core::Error::Cancelled { .. }
         | bbdown_core::Error::InvalidInput(_)
         | bbdown_core::Error::SelectionRequired { .. }
         | bbdown_core::Error::Unsupported(_)
-        | bbdown_core::Error::AccessRestricted(_)
         | bbdown_core::Error::MissingField(_)
         | bbdown_core::Error::Url(_)
         | bbdown_core::Error::Json(_)
         | bbdown_core::Error::Io(_)
         | bbdown_core::Error::MuxFailed { .. } => false,
     }
+}
+
+fn restricted_area_resolver_failure_may_be_credential_related(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("restricted-area resolver failed")
+        && (lower.contains("api code -101")
+            || lower.contains("api code -400")
+            || lower.contains("api code -403")
+            || lower.contains("api code 7")
+            || lower.contains("api code 16")
+            || lower.contains("401")
+            || lower.contains("403 forbidden")
+            || lower.contains("unauthorized"))
 }
 
 fn archive_duplicate_decision_or_report(

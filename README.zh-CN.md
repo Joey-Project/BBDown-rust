@@ -227,7 +227,8 @@ diagnostic，但失败时最终 CLI error 行仍可能写到 stderr，因此 wra
 line。对 archive 下载，如果初次 plan 成功，`--credential-preflight renew` 会把自动
 access-key refresh 延后到 duplicate handling 之后，因此 `--on-duplicate cancel` 会停止且不会
 调用 refresh endpoint 或重写已保存 credential。如果初次 archive planning 因类似 auth 的
-credential 错误失败，CLI 会刷新 ready 的通用 access key 并重试一次 planning，然后才报告失败。
+credential 错误失败，即使本地 lifecycle metadata 仍认为该 key fresh，CLI 也会刷新 ready
+的通用 access key 并重试一次 planning，然后才报告失败。
 二维码登录命令会轮询
 Bilibili 二维码状态机，并只保存最终得到的凭据。WEB 二维码登录保存 cookie；TV 二维码登录保存
 TV 专用 access key，不会覆盖由通用 access-key 命令导入或获取的 intl/Bstar access key。

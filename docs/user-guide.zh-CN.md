@@ -380,8 +380,8 @@ credential lifecycle metadata 不是 fresh 时，在网络 stream resolution 前
 写到 stderr；wrapper 应只解析 JSON object line。对 archive 下载，如果初次 plan 成功，
 `renew` 会把自动 access-key refresh 延后到 duplicate handling 之后，因此 `--on-duplicate cancel`
 会停止且不会调用 refresh endpoint 或重写已保存 credential。如果初次 archive planning 因类似
-auth 的 credential 错误失败，CLI 会刷新 ready 的通用 access key 并重试一次 planning，然后才
-报告失败。可通过全局
+auth 的 credential 错误失败，即使本地 lifecycle metadata 仍认为该 key fresh，CLI 也会刷新
+ready 的通用 access key 并重试一次 planning，然后才报告失败。可通过全局
 `--credential-stale-after-seconds` 和
 `--credential-expiring-within-seconds` 调整本地 lifecycle policy。
 `auth login-web` 打印二维码登录 URL，轮询到扫码确认，并保存得到的

@@ -170,7 +170,10 @@ superseded_by:
     initial planning succeeds, so `--on-duplicate cancel` does not call refresh endpoints or mutate
     stored credentials.
   - If initial archive planning fails with an auth-like credential error before duplicate preflight
-    can be inspected, the CLI refreshes a ready generic access key and retries planning once.
+    can be inspected, the CLI refreshes a ready generic access key and retries planning once,
+    including when local lifecycle metadata had still considered the key fresh.
+  - Sidecar-only cover/danmaku downloads skip playurl credential preflight so stale WEB cookie
+    metadata does not block operations that do not fetch playurl streams.
   - `renew` attempts provider-specific generic access-key refresh for refresh-ready selected
     profiles, saves the refreshed credential non-interactively, reloads credentials, and then
     continues with media resolution.

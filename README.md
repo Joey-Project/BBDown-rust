@@ -241,7 +241,8 @@ because the final CLI error line may also be written to stderr on failure. For a
 `--credential-preflight renew` defers automatic access-key refresh until after duplicate handling when
 the initial plan succeeds, so `--on-duplicate cancel` stops without calling refresh endpoints or
 rewriting stored credentials. If initial archive planning fails with an auth-like credential error,
-the CLI refreshes a ready generic access key and retries planning once before reporting the failure.
+the CLI refreshes a ready generic access key and retries planning once before reporting the failure,
+including cases where local lifecycle metadata had still considered the key fresh.
 QR login commands poll the Bilibili QR state machine and save only the resulting credential. WEB QR
 login saves a cookie; TV QR login saves a TV-specific access
 key without overwriting the generic intl/Bstar access key. With `--json`, login commands emit
