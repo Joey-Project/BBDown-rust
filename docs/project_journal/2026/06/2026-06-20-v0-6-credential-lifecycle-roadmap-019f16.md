@@ -301,6 +301,12 @@ superseded_by:
   - `cargo test -p bbdown-cli --test cli_e2e download_progress_json_reports_credential_preflight_failure --locked`.
   - `cargo test -p bbdown-core --lib credential_preflight --locked`.
   - `cargo clippy --workspace --all-targets --locked -- -D warnings`.
+- PR 8 second review-fix checkpoint:
+  - `--progress-json --on-duplicate cancel` now suppresses duplicate preflight plaintext on stderr while still emitting the `plan_cancelled` event.
+  - Archive downloads now distinguish "no duplicate decision was required" from a real `replace` decision, then rerun duplicate preflight decision handling when deferred credential refresh changes the plan/preflight into a conflict.
+  - Added mock e2e coverage for both cases:
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_progress_json_cancel_suppresses_plaintext_preflight --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_reruns_duplicate_preflight_after_deferred_refresh --locked`.
 
 ## Next Steps
 

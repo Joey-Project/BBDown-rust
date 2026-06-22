@@ -1879,17 +1879,17 @@ async fn handle_archive_download(
     )?;
     let mut preflight =
         inspect_download_preflight_or_report(&plan, &args.options, &archive, progress)?;
-    let Some(decision) = archive_duplicate_decision_or_report(
+    let mut duplicate_decision = archive_duplicate_decision_or_report(
         &args,
         &plan,
         &preflight,
         progress,
         cancellation,
         duplicate_prompt_active,
-    )?
-    else {
+    )?;
+    if duplicate_decision == ArchiveDuplicateDecision::Cancelled {
         return Ok(None);
-    };
+    }
     let refreshed = complete_deferred_archive_preflight_renewal_or_report(
         &runtime,
         &mut prepared,
@@ -1898,41 +1898,41 @@ async fn handle_archive_download(
     )
     .await?;
     if refreshed {
-        client = BiliClient::new(
-            runtime
-                .client_runtime
-                .client_config(prepared.credentials.clone()),
-        );
-        plan = plan_archive_download_or_report(
-            &client,
+        (client, plan) = replan_archive_download_after_refresh_or_report(
+            &runtime,
+            &prepared,
             &args,
-            prepared.parsed_input.clone(),
             &input_title,
             &output_dir,
-            progress,
-            cancellation,
         )
         .await?;
+        let previous_preflight = preflight;
         preflight = inspect_download_preflight_or_report(&plan, &args.options, &archive, progress)?;
+        duplicate_decision = archive_duplicate_decision_after_refresh_or_report(
+            &runtime,
+            &args,
+            &plan,
+            &previous_preflight,
+            &preflight,
+            duplicate_decision,
+        )?;
+        if duplicate_decision == ArchiveDuplicateDecision::Cancelled {
+            return Ok(None);
+        }
     }
-    let execution_decision = if args.on_duplicate.is_none() && !preflight.requires_decision() {
-        DuplicateDecision::Cancel
-    } else {
-        decision
+    let Some(execution_decision) =
+        archive_execution_duplicate_decision(&args, &preflight, duplicate_decision)
+    else {
+        return Ok(None);
     };
     let decision_output_dir =
-        decision_output_dir_or_report(&preflight, decision, progress, &plan.title)?;
-    if let Err(error) = ensure_archive_file_is_not_output_root(&archive_file, &decision_output_dir)
-    {
-        emit_cli_plan_failed(
-            progress,
-            &plan.title,
-            &decision_output_dir,
-            0,
-            error.to_string(),
-        );
-        return Err(error);
-    }
+        decision_output_dir_or_report(&preflight, execution_decision, progress, &plan.title)?;
+    ensure_archive_file_is_not_decision_output_root_or_report(
+        &archive_file,
+        &decision_output_dir,
+        progress,
+        &plan.title,
+    )?;
     let archive_progress = DeferredPlanCompletedProgress::new(progress);
     let report = client
         .download_plan_with_archive_preflight_decision_with_progress_and_cancellation(
@@ -1950,6 +1950,31 @@ async fn handle_archive_download(
     Ok(Some(report))
 }
 
+async fn replan_archive_download_after_refresh_or_report(
+    runtime: &ArchiveDownloadRuntime<'_>,
+    prepared: &PreparedMediaRequest,
+    args: &DownloadCommandArgs,
+    input_title: &str,
+    output_dir: &Path,
+) -> anyhow::Result<(BiliClient, DownloadPlan)> {
+    let client = BiliClient::new(
+        runtime
+            .client_runtime
+            .client_config(prepared.credentials.clone()),
+    );
+    let plan = plan_archive_download_or_report(
+        &client,
+        args,
+        prepared.parsed_input.clone(),
+        input_title,
+        output_dir,
+        runtime.progress,
+        runtime.cancellation,
+    )
+    .await?;
+    Ok((client, plan))
+}
+
 async fn complete_deferred_archive_preflight_renewal_or_report(
     runtime: &ArchiveDownloadRuntime<'_>,
     prepared: &mut PreparedMediaRequest,
@@ -1964,6 +1989,49 @@ async fn complete_deferred_archive_preflight_renewal_or_report(
         &args.options.output_dir,
     )
     .await
+}
+
+fn archive_duplicate_decision_after_refresh_or_report(
+    runtime: &ArchiveDownloadRuntime<'_>,
+    args: &DownloadCommandArgs,
+    plan: &DownloadPlan,
+    previous_preflight: &DownloadPreflight,
+    preflight: &DownloadPreflight,
+    current_decision: ArchiveDuplicateDecision,
+) -> anyhow::Result<ArchiveDuplicateDecision> {
+    if args.on_duplicate.is_none()
+        && preflight.requires_decision()
+        && preflight != previous_preflight
+    {
+        archive_duplicate_decision_or_report(
+            args,
+            plan,
+            preflight,
+            runtime.progress,
+            runtime.cancellation,
+            runtime.duplicate_prompt_active,
+        )
+    } else {
+        Ok(current_decision)
+    }
+}
+
+fn archive_execution_duplicate_decision(
+    args: &DownloadCommandArgs,
+    preflight: &DownloadPreflight,
+    duplicate_decision: ArchiveDuplicateDecision,
+) -> Option<DuplicateDecision> {
+    match duplicate_decision {
+        ArchiveDuplicateDecision::Decision(decision)
+            if args.on_duplicate.is_some() || preflight.requires_decision() =>
+        {
+            Some(decision)
+        }
+        ArchiveDuplicateDecision::Decision(_) | ArchiveDuplicateDecision::NoDecisionRequired => {
+            Some(DuplicateDecision::Cancel)
+        }
+        ArchiveDuplicateDecision::Cancelled => None,
+    }
 }
 
 async fn complete_deferred_archive_preflight_renewal_for_target(
@@ -2102,6 +2170,13 @@ fn restricted_area_resolver_failure_may_be_credential_related(message: &str) -> 
             || lower.contains("unauthorized"))
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ArchiveDuplicateDecision {
+    Decision(DuplicateDecision),
+    NoDecisionRequired,
+    Cancelled,
+}
+
 fn archive_duplicate_decision_or_report(
     args: &DownloadCommandArgs,
     plan: &DownloadPlan,
@@ -2109,17 +2184,18 @@ fn archive_duplicate_decision_or_report(
     progress: CliProgressReporter,
     cancellation: &DownloadCancellationToken,
     duplicate_prompt_active: &AtomicBool,
-) -> anyhow::Result<Option<DuplicateDecision>> {
+) -> anyhow::Result<ArchiveDuplicateDecision> {
     let stdin_is_terminal = io::stdin().is_terminal();
+    let suppress_human_preflight = args.json || args.progress_json;
     let duplicate_prompt_printed_preflight = should_prompt_duplicate_decision(
         args.on_duplicate,
-        args.json,
+        suppress_human_preflight,
         preflight,
         stdin_is_terminal,
     );
     let decision = duplicate_decision_or_report(DuplicateDecisionRequest {
         on_duplicate: args.on_duplicate,
-        json: args.json,
+        suppress_human_preflight,
         stdin_is_terminal,
         preflight,
         progress,
@@ -2127,17 +2203,21 @@ fn archive_duplicate_decision_or_report(
         cancellation,
         duplicate_prompt_active,
     })?;
+    let Some(decision) = decision else {
+        return Ok(ArchiveDuplicateDecision::NoDecisionRequired);
+    };
     if preflight.requires_decision() && decision == DuplicateDecision::Cancel {
         report_archive_duplicate_cancel(
             args.json,
+            suppress_human_preflight,
             duplicate_prompt_printed_preflight,
             progress,
             &plan.title,
             preflight,
         )?;
-        return Ok(None);
+        return Ok(ArchiveDuplicateDecision::Cancelled);
     }
-    Ok(Some(decision))
+    Ok(ArchiveDuplicateDecision::Decision(decision))
 }
 
 async fn plan_archive_download_or_report(
@@ -2271,7 +2351,7 @@ fn load_archive_or_report(
 #[derive(Clone, Copy)]
 struct DuplicateDecisionRequest<'a> {
     on_duplicate: Option<DuplicateDecision>,
-    json: bool,
+    suppress_human_preflight: bool,
     stdin_is_terminal: bool,
     preflight: &'a DownloadPreflight,
     progress: CliProgressReporter,
@@ -2282,10 +2362,10 @@ struct DuplicateDecisionRequest<'a> {
 
 fn duplicate_decision_or_report(
     request: DuplicateDecisionRequest<'_>,
-) -> anyhow::Result<DuplicateDecision> {
+) -> anyhow::Result<Option<DuplicateDecision>> {
     match duplicate_decision(
         request.on_duplicate,
-        request.json,
+        request.suppress_human_preflight,
         request.stdin_is_terminal,
         request.preflight,
         request.cancellation,
@@ -2337,6 +2417,19 @@ fn decision_output_dir_or_report(
     }
 }
 
+fn ensure_archive_file_is_not_decision_output_root_or_report(
+    archive_file: &Path,
+    decision_output_dir: &Path,
+    progress: CliProgressReporter,
+    title: &str,
+) -> anyhow::Result<()> {
+    if let Err(error) = ensure_archive_file_is_not_output_root(archive_file, decision_output_dir) {
+        emit_cli_plan_failed(progress, title, decision_output_dir, 0, error.to_string());
+        return Err(error);
+    }
+    Ok(())
+}
+
 fn save_archive_or_report(
     archive: &DownloadArchive,
     archive_file: &Path,
@@ -2372,6 +2465,7 @@ fn save_archive_or_report(
 
 fn report_archive_duplicate_cancel(
     json: bool,
+    suppress_human_preflight: bool,
     duplicate_prompt_printed_preflight: bool,
     progress: CliProgressReporter,
     title: &str,
@@ -2392,7 +2486,7 @@ fn report_archive_duplicate_cancel(
             }))?
         );
     } else {
-        if !duplicate_prompt_printed_preflight {
+        if !duplicate_prompt_printed_preflight && !suppress_human_preflight {
             print_duplicate_preflight(preflight);
         }
         println!("download canceled");
@@ -2703,27 +2797,27 @@ fn path_component_key(component: Component<'_>) -> String {
 
 fn duplicate_decision(
     explicit: Option<DuplicateDecision>,
-    json: bool,
+    suppress_human_preflight: bool,
     stdin_is_terminal: bool,
     preflight: &DownloadPreflight,
     cancellation: &DownloadCancellationToken,
     duplicate_prompt_active: &AtomicBool,
-) -> anyhow::Result<DuplicateDecision> {
+) -> anyhow::Result<Option<DuplicateDecision>> {
     if cancellation.is_cancelled() {
         return Err(cancellation.cancelled_error().into());
     }
     if let Some(decision) = explicit {
-        return Ok(decision);
+        return Ok(Some(decision));
     }
     if !preflight.requires_decision() {
-        return Ok(DuplicateDecision::Replace);
+        return Ok(None);
     }
-    if json || !stdin_is_terminal {
+    if suppress_human_preflight || !stdin_is_terminal {
         bail!(
             "download archive found an existing record or output conflict; pass --on-duplicate replace, keep-both, or cancel"
         );
     }
-    prompt_duplicate_decision(preflight, cancellation, duplicate_prompt_active)
+    prompt_duplicate_decision(preflight, cancellation, duplicate_prompt_active).map(Some)
 }
 
 fn should_prompt_duplicate_decision(
@@ -4807,7 +4901,7 @@ mod tests {
 
         let result = duplicate_decision_or_report(DuplicateDecisionRequest {
             on_duplicate: None,
-            json: false,
+            suppress_human_preflight: false,
             stdin_is_terminal: true,
             preflight: &preflight,
             progress: CliProgressReporter { json: false },

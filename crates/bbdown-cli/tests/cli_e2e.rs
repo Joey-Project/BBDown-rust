@@ -3053,6 +3053,46 @@ fn download_archive_cancel_reports_preflight_json() -> anyhow::Result<()> {
 }
 
 #[test]
+fn download_archive_progress_json_cancel_suppresses_plaintext_preflight() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    mock_minimal_download(&server);
+
+    archive_download_command(&credential_file, &server, &output_dir, &archive_file, None)?
+        .assert()
+        .success();
+
+    let output = archive_download_command_without_json(
+        &credential_file,
+        &server,
+        &output_dir,
+        &archive_file,
+        Some("cancel"),
+    )?
+    .arg("--progress-json")
+    .assert()
+    .success()
+    .get_output()
+    .clone();
+    let stderr_text = String::from_utf8_lossy(&output.stderr);
+    let stdout_text = String::from_utf8(output.stdout)?;
+    let events = json_lines(&output.stderr)?;
+
+    assert_eq!(stdout_text.trim(), "download canceled");
+    assert!(!stderr_text.contains("possible duplicate download"));
+    assert!(!stderr_text.contains("archive record:"));
+    assert!(events.iter().any(|event| {
+        event["type"] == "plan_cancelled"
+            && event["completed_entries"] == 0
+            && event["error"] == "archive or output conflict requires a decision"
+    }));
+    Ok(())
+}
+
+#[test]
 fn download_archive_cancel_defers_credential_preflight_renewal() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;
@@ -3272,6 +3312,137 @@ fn download_archive_retries_plan_after_auth_failure_with_fresh_refreshable_acces
     stale_app_playurl.assert_calls(1);
     refresh_mock.assert_calls(1);
     refreshed_app_playurl.assert_calls(1);
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn download_archive_reruns_duplicate_preflight_after_deferred_refresh() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    save_intl_access_key_profile(&credential_file, "AUTO_ACCESS_SECRET")?;
+    let fresh_season =
+        mock_intl_episode_metadata(&server, "AUTO_ACCESS_SECRET", "Fresh Intl Season", 7, 70);
+    let fresh_playurl = mock_intl_episode_playurl(
+        &server,
+        "AUTO_ACCESS_SECRET",
+        70,
+        &format!("{}/fresh-video.m4s", server.base_url()),
+    );
+    let fresh_video = server.mock(|when, then| {
+        when.method(GET).path("/fresh-video.m4s");
+        then.status(200).body("fresh video");
+    });
+
+    bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--intl-base")
+        .arg(server.base_url())
+        .arg("download")
+        .arg("https://www.bilibili.tv/en/play/34613/341736")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--no-mux")
+        .arg("--no-subtitles")
+        .arg("--no-danmaku")
+        .arg("--no-cover")
+        .arg("--json")
+        .assert()
+        .success();
+
+    save_lifecycle_cli_profiles_with_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(1_000)
+            .with_expires_at_unix_millis(2_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    )?;
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET")
+            .form_urlencoded_tuple("refresh_token", "OLD_REFRESH_SECRET")
+            .form_urlencoded_tuple("appkey", "4409e2ce8ffd12b8")
+            .form_urlencoded_tuple_exists("sign");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "refresh_token": "AUTO_REFRESH_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+    let stale_season =
+        mock_intl_episode_metadata(&server, "ACCESS_SECRET", "Stale Intl Season", 8, 80);
+    let stale_playurl = mock_intl_episode_playurl(
+        &server,
+        "ACCESS_SECRET",
+        80,
+        &format!("{}/stale-video.m4s", server.base_url()),
+    );
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--intl-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("download")
+        .arg("https://www.bilibili.tv/en/play/34613/341736")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--no-mux")
+        .arg("--no-subtitles")
+        .arg("--no-danmaku")
+        .arg("--no-cover")
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(stderr.contains("--on-duplicate replace, keep-both, or cancel"));
+    assert!(output_dir.join("Fresh Intl Season").exists());
+    assert!(!output_dir.join("Stale Intl Season").exists());
+    fresh_video.assert_calls(1);
+    stale_season.assert_calls(1);
+    stale_playurl.assert_calls(1);
+    fresh_season.assert_calls(2);
+    fresh_playurl.assert_calls(2);
+    refresh_mock.assert_calls(1);
     Ok(())
 }
 
@@ -5774,6 +5945,17 @@ fn assert_auto_refresh_events(events: &[Value]) {
     assert_eq!(events[2]["saved"]["has_access_key"], true);
 }
 
+fn save_intl_access_key_profile(credential_file: &Path, access_key: &str) -> anyhow::Result<()> {
+    let store = CredentialStore::new(credential_file.to_path_buf());
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_profile(
+        "intl",
+        Credentials::default().with_access_key(access_key.to_owned()),
+    )?;
+    store.save_profiles(&profiles)?;
+    Ok(())
+}
+
 fn assert_auto_refresh_output_is_redacted(output_text: &str) {
     for secret in [
         "ACCESS_SECRET",
@@ -6405,6 +6587,34 @@ fn archive_download_command(
     Ok(command)
 }
 
+fn archive_download_command_without_json(
+    credential_file: &Path,
+    server: &MockServer,
+    output_dir: &Path,
+    archive_file: &Path,
+    decision: Option<&str>,
+) -> anyhow::Result<Command> {
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("download")
+        .arg("av170001")
+        .arg("--output-dir")
+        .arg(output_dir)
+        .arg("--archive-file")
+        .arg(archive_file)
+        .arg("--no-mux")
+        .arg("--no-subtitles")
+        .arg("--no-danmaku");
+    if let Some(decision) = decision {
+        command.arg("--on-duplicate").arg(decision);
+    }
+    Ok(command)
+}
+
 fn downloaded_file_path<'a>(json: &'a Value, kind: &str) -> anyhow::Result<&'a str> {
     json["entries"][0]["files"]
         .as_array()
@@ -6416,6 +6626,74 @@ fn downloaded_file_path<'a>(json: &'a Value, kind: &str) -> anyhow::Result<&'a s
             })
         })
         .ok_or_else(|| anyhow::anyhow!("missing downloaded {kind} path"))
+}
+
+fn mock_intl_episode_metadata<'a>(
+    server: &'a MockServer,
+    access_key: &str,
+    title: &str,
+    aid: u64,
+    cid: u64,
+) -> httpmock::Mock<'a> {
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/intl/gateway/v2/ogv/view/app/season")
+            .query_param("ep_id", "341736")
+            .query_param("access_key", access_key);
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "result": {
+                "season_id": 34613,
+                "title": title,
+                "modules": [{
+                    "data": {
+                        "episodes": [
+                            {"aid": aid, "cid": cid, "id": 341_736, "title": "1", "long_title": "Start"}
+                        ]
+                    }
+                }]
+            }
+        }));
+    })
+}
+
+fn mock_intl_episode_playurl<'a>(
+    server: &'a MockServer,
+    access_key: &str,
+    cid: u64,
+    video_url: &str,
+) -> httpmock::Mock<'a> {
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/intl/gateway/v2/ogv/playurl")
+            .query_param("ep_id", "341736")
+            .query_param("cid", cid.to_string())
+            .query_param("platform", "android")
+            .query_param("mobi_app", "bstar_a")
+            .query_param("area", "th")
+            .query_param("s_locale", "zh_SG")
+            .query_param("access_key", access_key)
+            .query_param_exists("sign");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "video_info": {
+                    "timelength": 42_000,
+                    "stream_list": [{
+                        "stream_info": {"quality": 80},
+                        "dash_video": {
+                            "base_url": video_url,
+                            "width": 1280,
+                            "height": 720,
+                            "bandwidth": 900,
+                            "codecs": "avc1"
+                        }
+                    }],
+                    "dash_audio": []
+                }
+            }
+        }));
+    })
 }
 
 fn server_authority(server: &MockServer) -> anyhow::Result<String> {
