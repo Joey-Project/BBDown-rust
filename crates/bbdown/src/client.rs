@@ -24,10 +24,14 @@ use std::fmt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use url::Url;
 
-const TV_PLAYURL_APPKEY: &str = "4409e2ce8ffd12b8";
-const TV_PLAYURL_APP_SECRET: &str = "59b43e04ad6965f34319062b478f83dd";
-const INTL_OGV_APPKEY: &str = "7d089525d3611b1c";
-const INTL_OGV_APP_SECRET: &str = "acd495b248ec528c2eed1e862d393126";
+pub(crate) const TV_PLAYURL_APPKEY: &str = "4409e2ce8ffd12b8";
+pub(crate) const TV_PLAYURL_APP_SECRET: &str = "59b43e04ad6965f34319062b478f83dd";
+pub(crate) const INTL_OGV_APPKEY: &str = "7d089525d3611b1c";
+pub(crate) const INTL_OGV_APP_SECRET: &str = "acd495b248ec528c2eed1e862d393126";
+pub(crate) const BILIBILI_ANDROID_APPKEY: &str = "783bbb7264451d82";
+pub(crate) const BILIBILI_ANDROID_APP_SECRET: &str = "2653583c8873dea268ab9386918b1d65";
+pub(crate) const BILIBILI_ANDROID_B_APPKEY: &str = "1d8b6e7d45233436";
+pub(crate) const BILIBILI_ANDROID_B_APP_SECRET: &str = "560c52ccd288fed045859ed18bffd973";
 const DYNAMIC_FEED_FEATURES: &str = "itemOpusStyle,listOnlyfans,opusBigCover,onlyfansVote,forwardListHidden,decorationCard,commentsNewVersion,onlyfansAssetsV2,ugcDelete,onlyfansQaCard";
 const RECOMMENDATION_MIN_PAGE_SIZE: u32 = 20;
 const RECOMMENDATION_MAX_PAGE_SIZE: u32 = 30;
@@ -39,6 +43,7 @@ pub struct EndpointConfig {
     pub api_base: String,
     pub pgc_base: String,
     pub intl_base: String,
+    pub intl_passport_base: String,
     pub comment_base: String,
     pub passport_base: String,
     pub tv_api_base: String,
@@ -54,6 +59,7 @@ impl Default for EndpointConfig {
             api_base: "https://api.bilibili.com".to_owned(),
             pgc_base: "https://api.bilibili.com".to_owned(),
             intl_base: "https://api.bilibili.tv".to_owned(),
+            intl_passport_base: "https://passport.biliintl.com".to_owned(),
             comment_base: "https://comment.bilibili.com".to_owned(),
             passport_base: "https://passport.bilibili.com".to_owned(),
             tv_api_base: "https://api.snm0516.aisee.tv".to_owned(),
@@ -81,6 +87,12 @@ impl EndpointConfig {
     #[must_use]
     pub fn with_intl_base(mut self, intl_base: impl Into<String>) -> Self {
         self.intl_base = intl_base.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_intl_passport_base(mut self, intl_passport_base: impl Into<String>) -> Self {
+        self.intl_passport_base = intl_passport_base.into();
         self
     }
 
@@ -9479,6 +9491,7 @@ mod tests {
                 api_base: server.base_url(),
                 pgc_base: server.base_url(),
                 intl_base: server.base_url(),
+                intl_passport_base: server.base_url(),
                 comment_base: server.base_url(),
                 passport_base: server.base_url(),
                 tv_api_base: server.base_url(),
@@ -9687,6 +9700,7 @@ mod tests {
                 api_base: server.base_url(),
                 pgc_base: server.base_url(),
                 intl_base: server.base_url(),
+                intl_passport_base: server.base_url(),
                 comment_base: server.base_url(),
                 passport_base: server.base_url(),
                 tv_api_base: server.base_url(),
@@ -10407,6 +10421,7 @@ mod tests {
                 api_base: server.base_url(),
                 pgc_base: server.base_url(),
                 intl_base: server.base_url(),
+                intl_passport_base: server.base_url(),
                 comment_base: server.base_url(),
                 passport_base: server.base_url(),
                 tv_api_base: server.base_url(),
@@ -10508,6 +10523,7 @@ mod tests {
                 api_base: server.base_url(),
                 pgc_base: server.base_url(),
                 intl_base: server.base_url(),
+                intl_passport_base: server.base_url(),
                 comment_base: server.base_url(),
                 passport_base: server.base_url(),
                 tv_api_base: server.base_url(),
@@ -10600,6 +10616,7 @@ mod tests {
                     api_base: server.base_url(),
                     pgc_base: server.base_url(),
                     intl_base: server.base_url(),
+                    intl_passport_base: server.base_url(),
                     comment_base: server.base_url(),
                     passport_base: server.base_url(),
                     tv_api_base: server.base_url(),
@@ -10677,6 +10694,7 @@ mod tests {
                 api_base: server.base_url(),
                 pgc_base: server.base_url(),
                 intl_base: server.base_url(),
+                intl_passport_base: server.base_url(),
                 comment_base: server.base_url(),
                 passport_base: server.base_url(),
                 tv_api_base: server.base_url(),
@@ -10831,6 +10849,7 @@ mod tests {
                 api_base: server.base_url(),
                 pgc_base: server.base_url(),
                 intl_base: server.base_url(),
+                intl_passport_base: server.base_url(),
                 comment_base: server.base_url(),
                 passport_base: server.base_url(),
                 tv_api_base: server.base_url(),
@@ -10924,6 +10943,7 @@ mod tests {
                 api_base: format!("http://{address}"),
                 pgc_base: "http://127.0.0.1:1".to_owned(),
                 intl_base: "http://127.0.0.1:1".to_owned(),
+                intl_passport_base: "http://127.0.0.1:1".to_owned(),
                 comment_base: "http://127.0.0.1:1".to_owned(),
                 passport_base: "http://127.0.0.1:1".to_owned(),
                 tv_api_base: "http://127.0.0.1:1".to_owned(),
@@ -11151,6 +11171,7 @@ mod tests {
                 api_base: server.base_url(),
                 pgc_base: server.base_url(),
                 intl_base: server.base_url(),
+                intl_passport_base: server.base_url(),
                 comment_base: server.base_url(),
                 passport_base: server.base_url(),
                 tv_api_base: server.base_url(),

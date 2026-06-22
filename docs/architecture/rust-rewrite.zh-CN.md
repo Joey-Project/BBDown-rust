@@ -396,8 +396,14 @@ secret 以明文保存在同一个私有 credential file 中，把 refresh provi
 lifecycle metadata 仍然只记录 source、provider、时间戳和 refresh-token presence，不保存原始
 secret 值。`AccessKeyRenewalDecision` 会把所选 profile lifecycle status 转成 `NoAction` 或
 `Reauthorize`，并单独报告 `automatic_refresh_readiness`：`metadata_only_refresh_token` 表示只有
-旧的 presence bit；`ready` 表示当前所选 provider 已保存 refresh secret。网络 refresh client
-仍是独立的 provider-specific layer。
+旧的 presence bit；`ready` 表示当前所选 provider 已保存 refresh secret、refresh provider，
+以及该 refresh provider 需要的 keypair。provider-specific network refresh layer 现在通过
+`AccessKeyRefreshRequest` 和 `BiliClient::refresh_access_key(...)` 暴露。Bilibili main OAuth2
+refresh 使用配置的 `passport_base` 和带签名的 app keypair；BiliIntl OAuth2 refresh 使用配置的
+`intl_passport_base` 和 intl refresh form。refresh 成功会返回 `AccessKeyLoginCredentials`，
+CLI 和嵌入方可以复用与首次 access-key 获取相同的 lifecycle metadata 和 provider-secret
+持久化路径。失败的 refresh 尝试是 non-destructive；调用方保留旧 credential，并可回退到
+reauthorization ticket。
 browser `postMessage` consumer 应通过 ticket/output 的 `credentials_from_message` helper
 解析，它会先把 sender origin 与可信 auth origin 或 callback origin 校验，再使用 raw BALH
 payload parser。

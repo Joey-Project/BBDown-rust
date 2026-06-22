@@ -1,7 +1,7 @@
 use crate::{
-    AccessKeyProvider, BiliClient, CredentialKind, CredentialLifecycleCredentialStatus,
-    CredentialLifecycleSource, CredentialLifecycleStatus, CredentialProfileLifecycleStatus,
-    Credentials, Error, Result,
+    AccessKeyProvider, AccessKeyRefreshKeypair, AccessKeyRefreshProvider, BiliClient,
+    CredentialKind, CredentialLifecycleCredentialStatus, CredentialLifecycleSource,
+    CredentialLifecycleStatus, CredentialProfileLifecycleStatus, Credentials, Error, Result,
 };
 use md5::Digest;
 use reqwest::header::{HeaderMap, SET_COOKIE};
@@ -200,6 +200,56 @@ impl fmt::Debug for AccessKeyLoginCredentials {
 }
 
 #[non_exhaustive]
+#[derive(Clone, Eq, PartialEq)]
+pub struct AccessKeyRefreshRequest {
+    pub access_key: String,
+    pub refresh_token: String,
+    pub refresh_provider: AccessKeyRefreshProvider,
+    pub refresh_keypair: Option<AccessKeyRefreshKeypair>,
+}
+
+impl AccessKeyRefreshRequest {
+    pub fn new(
+        access_key: impl Into<String>,
+        refresh_token: impl Into<String>,
+        refresh_provider: AccessKeyRefreshProvider,
+    ) -> Result<Self> {
+        let access_key = access_key.into();
+        let refresh_token = refresh_token.into();
+        if access_key.trim().is_empty() {
+            return Err(Error::MissingField("access_key"));
+        }
+        if refresh_token.trim().is_empty() {
+            return Err(Error::MissingField("refresh_token"));
+        }
+        Ok(Self {
+            access_key,
+            refresh_token,
+            refresh_provider,
+            refresh_keypair: None,
+        })
+    }
+
+    #[must_use]
+    pub fn with_refresh_keypair(mut self, refresh_keypair: AccessKeyRefreshKeypair) -> Self {
+        self.refresh_keypair = Some(refresh_keypair);
+        self
+    }
+}
+
+impl fmt::Debug for AccessKeyRefreshRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AccessKeyRefreshRequest")
+            .field("has_access_key", &!self.access_key.is_empty())
+            .field("has_refresh_token", &!self.refresh_token.is_empty())
+            .field("refresh_provider", &self.refresh_provider)
+            .field("refresh_keypair", &self.refresh_keypair)
+            .finish()
+    }
+}
+
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AccessKeyRenewalAction {
@@ -229,6 +279,9 @@ pub enum AccessKeyAutomaticRefreshReadiness {
     UnsupportedSource,
     MissingRefreshToken,
     MetadataOnlyRefreshToken,
+    MissingRefreshProvider,
+    MissingRefreshKeypair,
+    UnsupportedRefreshProvider,
 }
 
 #[non_exhaustive]
@@ -241,6 +294,10 @@ pub struct AccessKeyRenewalDecision {
     pub source: Option<CredentialLifecycleSource>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub access_key_provider: Option<AccessKeyProvider>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refresh_provider: Option<AccessKeyRefreshProvider>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refresh_keypair: Option<AccessKeyRefreshKeypair>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub acquired_at_unix_millis: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -292,6 +349,8 @@ impl AccessKeyRenewalDecision {
             lifecycle_status,
             source: credential.and_then(|credential| credential.source),
             access_key_provider: credential.and_then(|credential| credential.access_key_provider),
+            refresh_provider: credential.and_then(|credential| credential.refresh_provider),
+            refresh_keypair: credential.and_then(|credential| credential.refresh_keypair),
             acquired_at_unix_millis: credential
                 .and_then(|credential| credential.acquired_at_unix_millis),
             checked_at_unix_millis: credential
@@ -345,7 +404,19 @@ fn access_key_automatic_refresh_readiness(
         return AccessKeyAutomaticRefreshReadiness::UnsupportedSource;
     }
     if credential.refresh_token_secret_present == Some(true) {
-        return AccessKeyAutomaticRefreshReadiness::Ready;
+        return match credential.refresh_provider {
+            Some(AccessKeyRefreshProvider::BilibiliMainOauth2) => {
+                if credential.refresh_keypair.is_some() {
+                    AccessKeyAutomaticRefreshReadiness::Ready
+                } else {
+                    AccessKeyAutomaticRefreshReadiness::MissingRefreshKeypair
+                }
+            }
+            Some(AccessKeyRefreshProvider::BiliIntlOauth2) => {
+                AccessKeyAutomaticRefreshReadiness::Ready
+            }
+            None => AccessKeyAutomaticRefreshReadiness::MissingRefreshProvider,
+        };
     }
     if credential.refresh_token_present == Some(true) {
         AccessKeyAutomaticRefreshReadiness::MetadataOnlyRefreshToken
@@ -420,6 +491,34 @@ pub enum QrLoginState {
 }
 
 impl BiliClient {
+    pub async fn refresh_access_key(
+        &self,
+        request: &AccessKeyRefreshRequest,
+    ) -> Result<AccessKeyLoginCredentials> {
+        let endpoint = access_key_refresh_endpoint_and_params(
+            request,
+            current_timestamp_seconds(),
+            &self.config.endpoints.passport_base,
+            &self.config.endpoints.intl_passport_base,
+        )?;
+        let url = Self::endpoint_url(endpoint.base, endpoint.path)?;
+        let response = self
+            .http
+            .post(url)
+            .headers(self.anonymous_headers()?)
+            .timeout(self.config.request_timeout)
+            .form(&endpoint.params)
+            .send()
+            .await
+            .map_err(BiliClient::http_error_without_url)?
+            .error_for_status()
+            .map_err(BiliClient::http_error_without_url)?
+            .json::<ApiData<AccessKeyRefreshData>>()
+            .await
+            .map_err(BiliClient::http_error_without_url)?;
+        access_key_credentials_from_refresh_data(response.into_data()?)
+    }
+
     pub async fn create_web_qr_login(&self) -> Result<QrLoginTicket> {
         let mut url = Self::endpoint_url(
             &self.config.endpoints.passport_base,
@@ -629,6 +728,26 @@ struct TvQrPollData {
     access_token: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct AccessKeyRefreshData {
+    token_info: Option<AccessKeyRefreshTokenInfo>,
+    access_key: Option<String>,
+    access_token: Option<String>,
+    refresh_token: Option<String>,
+    oauth_expires_at: Option<u64>,
+    expires_at: Option<u64>,
+    expires_in: Option<u64>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct AccessKeyRefreshTokenInfo {
+    access_key: Option<String>,
+    access_token: Option<String>,
+    refresh_token: Option<String>,
+    expires_at: Option<u64>,
+    expires_in: Option<u64>,
+}
+
 #[derive(Clone, Eq, PartialEq)]
 struct TvLoginContext {
     device_id: String,
@@ -677,6 +796,99 @@ impl TvLoginContext {
         let sign = crate::client::sign_ordered_params(&params, "59b43e04ad6965f34319062b478f83dd");
         params.push(("sign", sign));
         params
+    }
+}
+
+#[derive(Debug)]
+struct AccessKeyRefreshEndpoint<'a> {
+    base: &'a str,
+    path: &'static str,
+    params: Vec<(&'static str, String)>,
+}
+
+fn access_key_refresh_endpoint_and_params<'a>(
+    request: &AccessKeyRefreshRequest,
+    timestamp: u64,
+    passport_base: &'a str,
+    intl_passport_base: &'a str,
+) -> Result<AccessKeyRefreshEndpoint<'a>> {
+    match request.refresh_provider {
+        AccessKeyRefreshProvider::BilibiliMainOauth2 => Ok(AccessKeyRefreshEndpoint {
+            base: passport_base,
+            path: "/x/passport-login/oauth2/refresh_token",
+            params: main_access_key_refresh_params(request, timestamp)?,
+        }),
+        AccessKeyRefreshProvider::BiliIntlOauth2 => Ok(AccessKeyRefreshEndpoint {
+            base: intl_passport_base,
+            path: "/x/intl/passport-login/oauth2/refresh_token",
+            params: intl_access_key_refresh_params(request),
+        }),
+    }
+}
+
+fn main_access_key_refresh_params(
+    request: &AccessKeyRefreshRequest,
+    timestamp: u64,
+) -> Result<Vec<(&'static str, String)>> {
+    let keypair = request
+        .refresh_keypair
+        .ok_or(Error::MissingField("refresh_keypair"))?;
+    let spec = AccessKeyRefreshKeypairSpec::new(keypair);
+    let mut params = Vec::new();
+    params.push((spec.access_token_field, request.access_key.clone()));
+    if spec.include_action_key {
+        params.push(("actionKey", "appkey".to_owned()));
+    }
+    params.extend([
+        ("appkey", spec.appkey.to_owned()),
+        ("refresh_token", request.refresh_token.clone()),
+        ("ts", timestamp.to_string()),
+    ]);
+    params.sort_by(|left, right| left.0.cmp(right.0));
+    let sign = crate::client::sign_ordered_params(&params, spec.secret);
+    params.push(("sign", sign));
+    Ok(params)
+}
+
+fn intl_access_key_refresh_params(
+    request: &AccessKeyRefreshRequest,
+) -> Vec<(&'static str, String)> {
+    vec![
+        ("access_token", request.access_key.clone()),
+        ("refresh_token", request.refresh_token.clone()),
+    ]
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct AccessKeyRefreshKeypairSpec {
+    access_token_field: &'static str,
+    appkey: &'static str,
+    secret: &'static str,
+    include_action_key: bool,
+}
+
+impl AccessKeyRefreshKeypairSpec {
+    fn new(keypair: AccessKeyRefreshKeypair) -> Self {
+        match keypair {
+            AccessKeyRefreshKeypair::BiliTv => Self {
+                access_token_field: "access_key",
+                appkey: crate::client::TV_PLAYURL_APPKEY,
+                secret: crate::client::TV_PLAYURL_APP_SECRET,
+                include_action_key: true,
+            },
+            AccessKeyRefreshKeypair::Android => Self {
+                access_token_field: "access_key",
+                appkey: crate::client::BILIBILI_ANDROID_APPKEY,
+                secret: crate::client::BILIBILI_ANDROID_APP_SECRET,
+                include_action_key: true,
+            },
+            AccessKeyRefreshKeypair::AndroidB => Self {
+                access_token_field: "access_token",
+                appkey: crate::client::BILIBILI_ANDROID_B_APPKEY,
+                secret: crate::client::BILIBILI_ANDROID_B_APP_SECRET,
+                include_action_key: false,
+            },
+        }
     }
 }
 
@@ -742,6 +954,31 @@ fn credentials_from_query_payload(payload: &str) -> Result<AccessKeyLoginCredent
         query_string_field(&params, "refresh_token"),
         query_u64_field_or(&params, "oauth_expires_at", "expires_at")?,
         query_u64_field(&params, "expires_in")?,
+    )
+}
+
+fn access_key_credentials_from_refresh_data(
+    data: AccessKeyRefreshData,
+) -> Result<AccessKeyLoginCredentials> {
+    let AccessKeyRefreshData {
+        token_info,
+        access_key,
+        access_token,
+        refresh_token,
+        oauth_expires_at,
+        expires_at,
+        expires_in,
+    } = data;
+    let token_info = token_info.unwrap_or_default();
+    build_access_key_login_credentials(
+        token_info
+            .access_key
+            .or(token_info.access_token)
+            .or(access_key)
+            .or(access_token),
+        token_info.refresh_token.or(refresh_token),
+        oauth_expires_at.or(expires_at).or(token_info.expires_at),
+        token_info.expires_in.or(expires_in),
     )
 }
 
@@ -980,16 +1217,17 @@ fn current_timestamp_seconds() -> u64 {
 mod tests {
     use super::{
         AccessKeyAutomaticRefreshReadiness, AccessKeyLoginConfig, AccessKeyLoginCredentials,
-        AccessKeyRenewalAction, AccessKeyRenewalDecision, AccessKeyRenewalReason, QrLoginState,
-        QrLoginTicket, TvLoginContext, cookie_from_set_cookie_headers, cookie_from_success_url,
-        qrcode_key_from_url, tv_login_params,
+        AccessKeyRefreshRequest, AccessKeyRenewalAction, AccessKeyRenewalDecision,
+        AccessKeyRenewalReason, QrLoginState, QrLoginTicket, TvLoginContext,
+        cookie_from_set_cookie_headers, cookie_from_success_url, intl_access_key_refresh_params,
+        main_access_key_refresh_params, qrcode_key_from_url, tv_login_params,
     };
     use crate::{
-        AccessKeyProvider, AccessKeyProviderSecret, AccessKeyRefreshProvider, BiliClient,
-        ClientConfig, CredentialKind, CredentialLifecycleMetadata, CredentialLifecyclePolicy,
-        CredentialLifecycleSource, CredentialLifecycleStatus, CredentialProfileMetadata,
-        CredentialProfileSecrets, CredentialProfiles, Credentials, EndpointConfig, Error,
-        PlayurlMode, RestrictedAreaConfig,
+        AccessKeyProvider, AccessKeyProviderSecret, AccessKeyRefreshKeypair,
+        AccessKeyRefreshProvider, BiliClient, ClientConfig, CredentialKind,
+        CredentialLifecycleMetadata, CredentialLifecyclePolicy, CredentialLifecycleSource,
+        CredentialLifecycleStatus, CredentialProfileMetadata, CredentialProfileSecrets,
+        CredentialProfiles, Credentials, EndpointConfig, Error, PlayurlMode, RestrictedAreaConfig,
     };
     use httpmock::MockServer;
     use httpmock::prelude::*;
@@ -1248,7 +1486,8 @@ mod tests {
                 AccessKeyProvider::BalhBiliplus,
                 AccessKeyProviderSecret::default()
                     .with_refresh_token("RT")
-                    .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2),
+                    .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+                    .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
             )),
             1_500,
         )?;
@@ -1486,6 +1725,91 @@ mod tests {
     }
 
     #[test]
+    fn builds_main_access_key_refresh_params_for_keypairs() -> anyhow::Result<()> {
+        let tv_request = AccessKeyRefreshRequest::new(
+            "OLD_ACCESS",
+            "OLD_REFRESH",
+            AccessKeyRefreshProvider::BilibiliMainOauth2,
+        )?
+        .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv);
+        let tv_params = main_access_key_refresh_params(&tv_request, 1_700_000_000)?;
+
+        assert_eq!(param_value(&tv_params, "access_key"), Some("OLD_ACCESS"));
+        assert_eq!(param_value(&tv_params, "actionKey"), Some("appkey"));
+        assert_eq!(param_value(&tv_params, "appkey"), Some("4409e2ce8ffd12b8"));
+        assert_eq!(
+            param_value(&tv_params, "refresh_token"),
+            Some("OLD_REFRESH")
+        );
+        assert_eq!(param_value(&tv_params, "ts"), Some("1700000000"));
+        assert_eq!(param_value(&tv_params, "sign").map(str::len), Some(32));
+
+        let android_b_request = AccessKeyRefreshRequest::new(
+            "OLD_ACCESS",
+            "OLD_REFRESH",
+            AccessKeyRefreshProvider::BilibiliMainOauth2,
+        )?
+        .with_refresh_keypair(AccessKeyRefreshKeypair::AndroidB);
+        let android_b_params = main_access_key_refresh_params(&android_b_request, 1_700_000_000)?;
+
+        assert_eq!(
+            param_value(&android_b_params, "access_token"),
+            Some("OLD_ACCESS")
+        );
+        assert_eq!(param_value(&android_b_params, "actionKey"), None);
+        assert_eq!(
+            param_value(&android_b_params, "appkey"),
+            Some("1d8b6e7d45233436")
+        );
+        assert_eq!(
+            param_value(&android_b_params, "sign").map(str::len),
+            Some(32)
+        );
+        assert_ne!(
+            param_value(&tv_params, "sign"),
+            param_value(&android_b_params, "sign")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn builds_intl_access_key_refresh_params_without_app_signature() -> anyhow::Result<()> {
+        let request = AccessKeyRefreshRequest::new(
+            "OLD_ACCESS",
+            "OLD_REFRESH",
+            AccessKeyRefreshProvider::BiliIntlOauth2,
+        )?;
+        let params = intl_access_key_refresh_params(&request);
+
+        assert_eq!(
+            params,
+            vec![
+                ("access_token", "OLD_ACCESS".to_owned()),
+                ("refresh_token", "OLD_REFRESH".to_owned()),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn access_key_refresh_request_debug_redacts_tokens() -> anyhow::Result<()> {
+        let request = AccessKeyRefreshRequest::new(
+            "OLD_ACCESS_SECRET",
+            "OLD_REFRESH_SECRET",
+            AccessKeyRefreshProvider::BilibiliMainOauth2,
+        )?
+        .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv);
+        let debug = format!("{request:?}");
+
+        assert!(debug.contains("has_access_key: true"));
+        assert!(debug.contains("has_refresh_token: true"));
+        assert!(debug.contains("BiliTv"));
+        assert!(!debug.contains("OLD_ACCESS_SECRET"));
+        assert!(!debug.contains("OLD_REFRESH_SECRET"));
+        Ok(())
+    }
+
+    #[test]
     fn tv_login_context_reuses_device_identity_for_poll() {
         let context = TvLoginContext::new(1_700_000_000);
         let create_params = context.params("", 1_700_000_000);
@@ -1512,6 +1836,85 @@ mod tests {
             param_value(&create_params, "sign"),
             param_value(&poll_params, "sign")
         );
+    }
+
+    #[tokio::test]
+    async fn refreshes_main_access_key_with_signed_form() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let refresh_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/x/passport-login/oauth2/refresh_token")
+                .header_missing("cookie")
+                .form_urlencoded_tuple("access_key", "OLD_ACCESS")
+                .form_urlencoded_tuple("actionKey", "appkey")
+                .form_urlencoded_tuple("appkey", "4409e2ce8ffd12b8")
+                .form_urlencoded_tuple("refresh_token", "OLD_REFRESH")
+                .form_urlencoded_tuple_exists("sign");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "token_info": {
+                        "access_token": "NEW_ACCESS",
+                        "refresh_token": "NEW_REFRESH",
+                        "expires_in": 2_592_000
+                    }
+                }
+            }));
+        });
+        let client = test_client(&server);
+        let request = AccessKeyRefreshRequest::new(
+            "OLD_ACCESS",
+            "OLD_REFRESH",
+            AccessKeyRefreshProvider::BilibiliMainOauth2,
+        )?
+        .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv);
+
+        let credentials = client.refresh_access_key(&request).await?;
+
+        assert_eq!(credentials.access_key, "NEW_ACCESS");
+        assert_eq!(credentials.refresh_token.as_deref(), Some("NEW_REFRESH"));
+        assert_eq!(credentials.expires_in, Some(2_592_000));
+        refresh_mock.assert_calls(1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn refreshes_intl_access_key_with_intl_passport_endpoint() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let refresh_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/x/intl/passport-login/oauth2/refresh_token")
+                .header_missing("cookie")
+                .form_urlencoded_tuple("access_token", "OLD_INTL_ACCESS")
+                .form_urlencoded_tuple("refresh_token", "OLD_INTL_REFRESH");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "token_info": {
+                        "access_token": "NEW_INTL_ACCESS",
+                        "refresh_token": "NEW_INTL_REFRESH",
+                        "expires_in": 3600
+                    }
+                }
+            }));
+        });
+        let client = test_client(&server);
+        let request = AccessKeyRefreshRequest::new(
+            "OLD_INTL_ACCESS",
+            "OLD_INTL_REFRESH",
+            AccessKeyRefreshProvider::BiliIntlOauth2,
+        )?;
+
+        let credentials = client.refresh_access_key(&request).await?;
+
+        assert_eq!(credentials.access_key, "NEW_INTL_ACCESS");
+        assert_eq!(
+            credentials.refresh_token.as_deref(),
+            Some("NEW_INTL_REFRESH")
+        );
+        assert_eq!(credentials.expires_in, Some(3_600));
+        refresh_mock.assert_calls(1);
+        Ok(())
     }
 
     #[tokio::test]
@@ -1693,6 +2096,7 @@ mod tests {
                 api_base: server.base_url(),
                 pgc_base: server.base_url(),
                 intl_base: server.base_url(),
+                intl_passport_base: server.base_url(),
                 comment_base: server.base_url(),
                 passport_base: server.base_url(),
                 tv_api_base: server.base_url(),

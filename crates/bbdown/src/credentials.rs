@@ -805,6 +805,8 @@ pub struct CredentialLifecycleCredentialStatus {
     pub status: CredentialLifecycleStatus,
     pub source: Option<CredentialLifecycleSource>,
     pub access_key_provider: Option<AccessKeyProvider>,
+    pub refresh_provider: Option<AccessKeyRefreshProvider>,
+    pub refresh_keypair: Option<AccessKeyRefreshKeypair>,
     pub acquired_at_unix_millis: Option<u64>,
     pub checked_at_unix_millis: Option<u64>,
     pub expires_at_unix_millis: Option<u64>,
@@ -822,8 +824,11 @@ impl CredentialLifecycleCredentialStatus {
     ) -> Self {
         let present = kind.is_present_in(credentials);
         let metadata = metadata.cloned().unwrap_or_default();
+        let refresh_secret = access_key_refresh_secret(kind, &metadata, secrets);
         let refresh_token_secret_present =
-            access_key_refresh_secret_present(kind, &metadata, secrets);
+            refresh_secret.map(AccessKeyProviderSecret::has_refresh_token);
+        let refresh_provider = refresh_secret.and_then(|secret| secret.refresh_provider);
+        let refresh_keypair = refresh_secret.and_then(|secret| secret.refresh_keypair);
         let status = if present {
             CredentialLifecycleStatus::from_metadata(&metadata, policy)
         } else {
@@ -835,6 +840,8 @@ impl CredentialLifecycleCredentialStatus {
             status,
             source: metadata.source,
             access_key_provider: metadata.access_key_provider,
+            refresh_provider,
+            refresh_keypair,
             acquired_at_unix_millis: metadata.acquired_at_unix_millis,
             checked_at_unix_millis: metadata.checked_at_unix_millis,
             expires_at_unix_millis: metadata.expires_at_unix_millis,
@@ -844,20 +851,16 @@ impl CredentialLifecycleCredentialStatus {
     }
 }
 
-fn access_key_refresh_secret_present(
+fn access_key_refresh_secret<'a>(
     kind: CredentialKind,
     metadata: &CredentialLifecycleMetadata,
-    secrets: &CredentialProfileSecrets,
-) -> Option<bool> {
+    secrets: &'a CredentialProfileSecrets,
+) -> Option<&'a AccessKeyProviderSecret> {
     if kind != CredentialKind::AccessKey {
         return None;
     }
     let provider = metadata.access_key_provider?;
-    Some(
-        secrets
-            .access_key_provider(provider)
-            .is_some_and(AccessKeyProviderSecret::has_refresh_token),
-    )
+    secrets.access_key_provider(provider)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]

@@ -5,9 +5,9 @@ use anyhow::{Context, bail, ensure};
 use bbdown_core::{
     AccessKeyAutomaticRefreshReadiness, AccessKeyLoginConfig, AccessKeyLoginCredentials,
     AccessKeyLoginTicketOutput, AccessKeyProvider, AccessKeyProviderSecret,
-    AccessKeyRefreshKeypair, AccessKeyRefreshProvider, AccessKeyRenewalAction,
-    AccessKeyRenewalDecision, AccessKeyRenewalReason, BiliClient, ClientConfig,
-    CredentialHealthReport, CredentialHealthScope, CredentialHealthStatus,
+    AccessKeyRefreshKeypair, AccessKeyRefreshProvider, AccessKeyRefreshRequest,
+    AccessKeyRenewalAction, AccessKeyRenewalDecision, AccessKeyRenewalReason, BiliClient,
+    ClientConfig, CredentialHealthReport, CredentialHealthScope, CredentialHealthStatus,
     CredentialHealthSummaryStatus, CredentialKind, CredentialLifecycleMetadata,
     CredentialLifecyclePolicy, CredentialLifecycleSource, CredentialLifecycleStatus,
     CredentialProfileLifecycleStatus, CredentialProfileSelection, CredentialProfiles,
@@ -59,6 +59,12 @@ struct Cli {
         default_value = "https://api.bilibili.tv"
     )]
     intl_base: String,
+    #[arg(
+        long,
+        env = "BBDOWN_INTL_PASSPORT_BASE",
+        default_value = "https://passport.biliintl.com"
+    )]
+    intl_passport_base: String,
     #[arg(
         long,
         env = "BBDOWN_COMMENT_BASE",
@@ -2026,7 +2032,7 @@ async fn handle_auth(
             handle_access_key_login(&args, credential_runtime)?;
         }
         AuthCommand::RenewAccessKey(args) => {
-            handle_access_key_renewal(&args, credential_runtime)?;
+            handle_access_key_renewal(&args, credential_runtime, client_runtime).await?;
         }
         AuthCommand::Logout => {
             credential_runtime.logout()?;
@@ -2505,16 +2511,17 @@ fn handle_access_key_login(
     Ok(())
 }
 
-fn handle_access_key_renewal(
+async fn handle_access_key_renewal(
     args: &AccessKeyRenewalArgs,
     credential_runtime: &CredentialRuntime,
+    client_runtime: &ClientRuntimeConfig,
 ) -> anyhow::Result<()> {
     let policy = lifecycle_policy_from_seconds(
         args.stale_after_seconds,
         args.expiring_within_seconds,
         current_unix_millis(),
     );
-    let (_profiles, _selected_profile, mut statuses) =
+    let (profiles, _selected_profile, mut statuses) =
         lifecycle_statuses_for_selection(credential_runtime, false, &policy)?;
     let status = statuses
         .pop()
@@ -2532,6 +2539,19 @@ fn handle_access_key_renewal(
     }
 
     if decision.action == AccessKeyRenewalAction::NoAction {
+        return Ok(());
+    }
+
+    if try_access_key_auto_refresh(
+        args,
+        credential_runtime,
+        client_runtime,
+        &profiles,
+        &decision,
+        has_input,
+    )
+    .await?
+    {
         return Ok(());
     }
 
@@ -2574,6 +2594,91 @@ fn handle_access_key_renewal(
         print_human_line("access key saved")?;
     }
     Ok(())
+}
+
+async fn try_access_key_auto_refresh(
+    args: &AccessKeyRenewalArgs,
+    credential_runtime: &CredentialRuntime,
+    client_runtime: &ClientRuntimeConfig,
+    profiles: &CredentialProfiles,
+    decision: &AccessKeyRenewalDecision,
+    has_input: bool,
+) -> anyhow::Result<bool> {
+    if !should_attempt_access_key_auto_refresh(decision, args, has_input) {
+        return Ok(false);
+    }
+    let refresh = access_key_refresh_request_from_profiles(profiles, &decision.profile)?;
+    let client = BiliClient::new(client_runtime.client_config(Credentials::default()));
+    match client.refresh_access_key(&refresh.request).await {
+        Ok(refreshed) => {
+            save_refreshed_access_key(credential_runtime, &refresh, &refreshed, args.json)?;
+            Ok(true)
+        }
+        Err(error) => {
+            print_access_key_auto_refresh_failure(args.json, &error)?;
+            Ok(false)
+        }
+    }
+}
+
+fn save_refreshed_access_key(
+    credential_runtime: &CredentialRuntime,
+    refresh: &StoredAccessKeyRefreshRequest,
+    refreshed: &AccessKeyLoginCredentials,
+    json: bool,
+) -> anyhow::Result<()> {
+    let acquired_at_unix_millis = current_unix_millis();
+    let summary = save_credentials_with_lifecycle_and_secrets(
+        credential_runtime,
+        refreshed.credentials(),
+        [(
+            CredentialKind::AccessKey,
+            access_key_lifecycle_metadata_with_provider(
+                refreshed,
+                acquired_at_unix_millis,
+                refresh.access_key_provider,
+            ),
+        )],
+        [refreshed_access_key_provider_secret(
+            refresh.access_key_provider,
+            &refresh.request,
+            refreshed,
+        )],
+    )?;
+    if json {
+        print_json_line(&serde_json::json!({
+            "event": "refreshed",
+            "kind": "access_key",
+            "refresh_provider": refresh.request.refresh_provider,
+            "refresh_keypair": refresh.request.refresh_keypair,
+        }))?;
+        print_json_line(&serde_json::json!({
+            "event": "saved",
+            "kind": "access_key",
+            "saved": summary,
+        }))
+    } else {
+        print_human_line("access key refreshed")?;
+        print_human_line("access key saved")
+    }
+}
+
+fn print_access_key_auto_refresh_failure(
+    json: bool,
+    error: &bbdown_core::Error,
+) -> anyhow::Result<()> {
+    if json {
+        print_json_line(&serde_json::json!({
+            "event": "refresh_failed",
+            "kind": "access_key",
+            "message": error.to_string(),
+        }))
+    } else {
+        print_human_line(format_args!(
+            "automatic refresh failed: {}",
+            display_human_text(&error.to_string())
+        ))
+    }
 }
 
 fn print_qr_ticket_json(output: &QrLoginTicketOutput) -> anyhow::Result<()> {
@@ -2649,6 +2754,11 @@ fn access_key_automatic_refresh_readiness_label(
         AccessKeyAutomaticRefreshReadiness::MissingRefreshToken => "missing_refresh_token",
         AccessKeyAutomaticRefreshReadiness::MetadataOnlyRefreshToken => {
             "metadata_only_refresh_token"
+        }
+        AccessKeyAutomaticRefreshReadiness::MissingRefreshProvider => "missing_refresh_provider",
+        AccessKeyAutomaticRefreshReadiness::MissingRefreshKeypair => "missing_refresh_keypair",
+        AccessKeyAutomaticRefreshReadiness::UnsupportedRefreshProvider => {
+            "unsupported_refresh_provider"
         }
         _ => "unknown",
     }
@@ -2770,6 +2880,18 @@ fn access_key_lifecycle_metadata(
     credentials: &AccessKeyLoginCredentials,
     acquired_at_unix_millis: u64,
 ) -> CredentialLifecycleMetadata {
+    access_key_lifecycle_metadata_with_provider(
+        credentials,
+        acquired_at_unix_millis,
+        AccessKeyProvider::BalhBiliplus,
+    )
+}
+
+fn access_key_lifecycle_metadata_with_provider(
+    credentials: &AccessKeyLoginCredentials,
+    acquired_at_unix_millis: u64,
+    access_key_provider: AccessKeyProvider,
+) -> CredentialLifecycleMetadata {
     let expires_at_unix_millis = credentials.oauth_expires_at.or_else(|| {
         credentials.expires_in.map(|expires_in| {
             acquired_at_unix_millis.saturating_add(expires_in.saturating_mul(1_000))
@@ -2777,13 +2899,81 @@ fn access_key_lifecycle_metadata(
     });
     let mut metadata = CredentialLifecycleMetadata::default()
         .with_source(CredentialLifecycleSource::AccessKeyLogin)
-        .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+        .with_access_key_provider(access_key_provider)
         .with_acquired_at_unix_millis(acquired_at_unix_millis)
         .with_refresh_token_present(credentials.refresh_token.is_some());
     if let Some(expires_at_unix_millis) = expires_at_unix_millis {
         metadata = metadata.with_expires_at_unix_millis(expires_at_unix_millis);
     }
     metadata
+}
+
+#[derive(Clone, Debug)]
+struct StoredAccessKeyRefreshRequest {
+    access_key_provider: AccessKeyProvider,
+    request: AccessKeyRefreshRequest,
+}
+
+fn should_attempt_access_key_auto_refresh(
+    decision: &AccessKeyRenewalDecision,
+    args: &AccessKeyRenewalArgs,
+    has_input: bool,
+) -> bool {
+    decision.action == AccessKeyRenewalAction::Reauthorize
+        && decision.automatic_refresh_readiness == AccessKeyAutomaticRefreshReadiness::Ready
+        && !args.force
+        && !has_input
+}
+
+fn access_key_refresh_request_from_profiles(
+    profiles: &CredentialProfiles,
+    profile_name: &str,
+) -> anyhow::Result<StoredAccessKeyRefreshRequest> {
+    let credentials = profiles
+        .profile(profile_name)
+        .context("failed to load credential profile")?;
+    let access_key = credentials
+        .access_key
+        .filter(|value| !value.trim().is_empty())
+        .context("selected profile has no access_key")?;
+    let metadata = profiles
+        .profile_metadata(profile_name)
+        .context("failed to load credential profile metadata")?;
+    let access_key_metadata = metadata
+        .credential(CredentialKind::AccessKey)
+        .context("selected profile has no access_key lifecycle metadata")?;
+    let access_key_provider = access_key_metadata
+        .access_key_provider
+        .context("selected profile has no access_key provider metadata")?;
+    let secrets = profiles
+        .profile_secrets(profile_name)
+        .context("failed to load credential profile secrets")?;
+    let secret = secrets
+        .access_key_provider(access_key_provider)
+        .context("selected profile has no access_key refresh secret for its provider")?;
+    let refresh_token = secret
+        .refresh_token
+        .as_ref()
+        .filter(|value| !value.trim().is_empty())
+        .context("selected profile has no access_key refresh token secret")?;
+    let refresh_provider = secret
+        .refresh_provider
+        .context("selected profile has no access_key refresh provider")?;
+    let mut request =
+        AccessKeyRefreshRequest::new(access_key, refresh_token.clone(), refresh_provider)?;
+    if refresh_provider == AccessKeyRefreshProvider::BilibiliMainOauth2 {
+        request = request.with_refresh_keypair(
+            secret
+                .refresh_keypair
+                .context("selected profile has no access_key refresh keypair")?,
+        );
+    } else if let Some(refresh_keypair) = secret.refresh_keypair {
+        request = request.with_refresh_keypair(refresh_keypair);
+    }
+    Ok(StoredAccessKeyRefreshRequest {
+        access_key_provider,
+        request,
+    })
 }
 
 fn access_key_provider_secret(
@@ -2799,6 +2989,25 @@ fn access_key_provider_secret(
         },
     );
     (AccessKeyProvider::BalhBiliplus, secret)
+}
+
+fn refreshed_access_key_provider_secret(
+    provider: AccessKeyProvider,
+    request: &AccessKeyRefreshRequest,
+    credentials: &AccessKeyLoginCredentials,
+) -> (AccessKeyProvider, AccessKeyProviderSecret) {
+    let mut secret = AccessKeyProviderSecret::default()
+        .with_refresh_token(
+            credentials
+                .refresh_token
+                .clone()
+                .unwrap_or_else(|| request.refresh_token.clone()),
+        )
+        .with_refresh_provider(request.refresh_provider);
+    if let Some(refresh_keypair) = request.refresh_keypair {
+        secret = secret.with_refresh_keypair(refresh_keypair);
+    }
+    (provider, secret)
 }
 
 fn read_access_key_login_input(args: &AccessKeyLoginArgs) -> anyhow::Result<String> {
@@ -3015,6 +3224,7 @@ fn endpoints_from_cli(cli: &Cli) -> EndpointConfig {
         .with_api_base(cli.api_base.clone())
         .with_pgc_base(cli.pgc_base.clone())
         .with_intl_base(cli.intl_base.clone())
+        .with_intl_passport_base(cli.intl_passport_base.clone())
         .with_comment_base(cli.comment_base.clone())
         .with_passport_base(cli.passport_base.clone())
         .with_tv_api_base(cli.tv_api_base.clone())
@@ -3759,6 +3969,21 @@ mod tests {
 
         assert_eq!(endpoints.app_grpc_base, defaults.app_grpc_base);
         assert_eq!(endpoints.app_pgc_grpc_base, defaults.app_pgc_grpc_base);
+        assert_eq!(endpoints.intl_passport_base, defaults.intl_passport_base);
+    }
+
+    #[test]
+    fn intl_passport_base_cli_arg_overrides_default() {
+        let cli = Cli::parse_from([
+            "bbdown",
+            "--intl-passport-base",
+            "http://127.0.0.1:8082",
+            "auth",
+            "status",
+        ]);
+        let endpoints = endpoints_from_cli(&cli);
+
+        assert_eq!(endpoints.intl_passport_base, "http://127.0.0.1:8082");
     }
 
     #[test]

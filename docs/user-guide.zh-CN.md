@@ -356,8 +356,12 @@ unknown、stale、expiring、expired 或 `--force` credential 会输出 reauthor
 输入时，命令会在 ticket 后停止，让调用方自行渲染 URL 或 `qr_payload` 并收集浏览器 handoff。
 decision 会包含 `automatic_refresh_readiness`；`metadata_only_refresh_token` 表示上一次
 callback 在 provider secret 保存能力出现前报告过 refresh token；`ready` 表示当前所选 provider
-已经保存 refresh secret。当前命令仍然只输出 decision 或走重新授权；自动静默 refresh 会在下一
-个 credential lifecycle 切片实现。`auth login-web` 打印二维码登录 URL，轮询到扫码确认，并保存得到的
+已经保存 refresh secret、refresh provider，以及该 provider 需要的 keypair。当前选择的
+access key 如果已经 expired、expiring、stale 或 unknown，且状态为 `ready`，同时用户没有传
+`--force`、`--stdin` 或 `--file`，CLI 会先尝试 provider-specific automatic refresh。使用
+`--json` 时，自动刷新成功会输出 `decision`、`refreshed` 和 `saved` 事件，仍不会打印原始
+token。如果 refresh 失败，CLI 会输出 `refresh_failed`，然后回退到普通 authorization ticket，
+这样调用方可以提示用户重新授权而不会丢掉旧 credential。`auth login-web` 打印二维码登录 URL，轮询到扫码确认，并保存得到的
 cookie。`auth login-tv` 使用 TV 二维码流程，保存 TV 专用 access key 供未来 TV/app 流程使
 用，不会覆盖由通用 access-key 命令导入或获取的 intl/Bstar access key。使用 `--json` 时，
 登录命令会打印换行分隔 JSON 事件：`ticket` 在轮询或 handoff 前包含登录 URL 和
@@ -399,6 +403,8 @@ bbdown --pgc-base http://127.0.0.1:8080 --api-base http://127.0.0.1:8080 plan ep
 bbdown --intl-base http://127.0.0.1:8080 plan https://www.bilibili.tv/en/play/34613/341736 --json
 bbdown --comment-base http://127.0.0.1:8080 download av170001 --output-dir downloads
 bbdown --passport-base http://127.0.0.1:8080 auth login-web
+bbdown --passport-base http://127.0.0.1:8080 auth renew-access-key --json
+bbdown --intl-passport-base http://127.0.0.1:8080 auth renew-access-key --json
 bbdown --tv-passport-base http://127.0.0.1:8080 auth login-tv
 bbdown --tv-passport-base http://127.0.0.1:8080 --tv-passport-poll-base http://127.0.0.1:8081 auth login-tv
 bbdown auth login-access-key --auth-base http://127.0.0.1:8080 --callback-origin http://127.0.0.1:3000 --stdin < balh-callback.txt
@@ -406,7 +412,9 @@ bbdown auth login-access-key --auth-base http://127.0.0.1:8080 --callback-origin
 
 当前 intl 支持使用官方 intl 元数据/字幕端点，以及在配置 access key 时使用官方签名 intl
 OGV playurl 端点。弹幕 XML 下载使用可配置的 comment 端点。WEB 二维码登录和通用 token
-health probe 使用 `--passport-base`。TV 二维码生成使用 `--tv-passport-base`；TV 二维码轮询
+health probe 使用 `--passport-base`；Bilibili main OAuth2 access-key refresh 也使用
+`--passport-base`。BiliIntl OAuth2 access-key refresh 使用 `--intl-passport-base`。
+TV 二维码生成使用 `--tv-passport-base`；TV 二维码轮询
 和 TV token health probe 使用 `--tv-passport-poll-base`。如果只提供 `--tv-passport-base`，
 CLI 会让 TV poll base 跟随该覆盖；对 split-host mock 或代理，请显式设置
 `--tv-passport-poll-base`。
