@@ -4,7 +4,7 @@ title: v0.6.0 Credential Lifecycle Roadmap
 status: active
 created: 2026-06-20
 updated: 2026-06-22
-branch: feature/v0.6-provider-secret-storage
+branch: feature/v0.6-access-key-refresh-clients
 pr:
 supersedes: []
 superseded_by:
@@ -108,15 +108,42 @@ superseded_by:
     access or refresh tokens.
   - Bilingual README, user guide, embedding guide, and architecture docs now describe the difference
     between metadata-only refresh-token evidence and a future stored refresh secret.
-- PR 6 is in progress as provider-aware plaintext refresh-secret storage:
+- PR 6 implemented provider-aware plaintext refresh-secret storage:
   - The implementation keeps runtime `Credentials` limited to cookie/access-key values and stores raw
     refresh tokens under `CredentialProfileSecrets`.
   - Access-key lifecycle metadata records the active provider and whether a refresh token was seen,
-    while `AccessKeyRenewalDecision` reports `ready` only when a provider-scoped refresh secret is
-    actually present.
+    while `AccessKeyRenewalDecision` reports refresh-secret presence without leaking raw token
+    values.
   - BALH/BiliPlus callbacks are stored under the `balh_biliplus` provider with refresh provider
     `bilibili_main_oauth2` and keypair family `bili_tv`; BiliPlus itself remains treated as an
     acquisition provider rather than a proven refresh endpoint.
+- PR 7 implements provider-specific access-key refresh clients:
+  - `AccessKeyRefreshRequest` and `BiliClient::refresh_access_key(...)` expose a core API for
+    provider-specific refresh without routing embedders through the CLI.
+  - Bilibili main OAuth2 refresh uses the configured `passport_base`, signed app keypairs
+    (`bili_tv`, `android`, or `android_b`), and the stored provider refresh token.
+  - BiliIntl OAuth2 refresh uses the new configurable `intl_passport_base` and the intl refresh
+    form.
+  - `auth renew-access-key` now attempts non-destructive automatic refresh for ready selected
+    profiles when no `--force`, `--stdin`, or `--file` override is supplied; failures emit
+    `refresh_failed` and fall back to the existing reauthorization ticket path.
+  - `automatic_refresh_readiness=ready` now requires not only a raw refresh secret but also a refresh
+    provider and, for Bilibili main OAuth2, a refresh keypair.
+  - PR review follow-up redacts exact access-key and refresh-token values from automatic refresh
+    failure output, including server error messages that echo request form values.
+  - PR review follow-up keeps lifecycle `refresh_token_present=true` when automatic refresh succeeds
+    without returning a replacement refresh token and the saved provider secret falls back to the
+    previous refresh token.
+  - GitHub Codex review follow-up sends both `access_key` and `access_token` aliases in main
+    Bilibili OAuth2 refresh forms while preserving the selected app keypair signer.
+  - GitHub Codex review follow-up filters empty refresh-response token aliases before falling back
+    to alternate fields, preventing an empty alias from overwriting a usable access key.
+  - GitHub Codex review follow-up preserves explicit
+    `refresh_token_secret_present=false` lifecycle status when provider metadata exists but no
+    provider secret is stored.
+  - GitHub Codex review follow-up routes `bili_tv` main-provider refresh requests to the TV OAuth
+    refresh path under the configured passport base, while Android-family keypairs continue using the
+    main passport refresh path.
 
 ## Out Of Scope For This Line
 
@@ -172,10 +199,60 @@ superseded_by:
   - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/07780f1c323453fd738330fbf8fd70e2899d4409/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.
   - `git diff --check`.
   - `just ci`.
+- PR 6 local validation:
+  - `cargo test -p bbdown-cli access_key --locked`.
+  - `cargo test -p bbdown-cli save_credentials_with_lifecycle_and_secrets_clears_stale_provider_secret --locked`.
+  - `cargo clippy -p bbdown-cli --all-targets --locked -- -D warnings`.
+  - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/07780f1c323453fd738330fbf8fd70e2899d4409/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.
+  - `git diff --check`.
+  - `just ci`.
+- PR 7 local validation:
+  - `cargo test -p bbdown-core access_key_refresh --locked`.
+  - `cargo test -p bbdown-core refreshes_ --locked`.
+  - `cargo test -p bbdown-cli auth_renew_access_key_auto_refreshes_ready_provider_secret --locked`.
+  - `cargo test -p bbdown-cli auth_renew_access_key_auto_refresh --test cli_e2e --locked`.
+  - `cargo test -p bbdown-cli intl_passport_base --locked`.
+  - `cargo test -p bbdown-cli auth_renew_access_key --test cli_e2e --locked`.
+  - `cargo test -p bbdown-core login::tests --locked`.
+  - `cargo fmt --all -- --check`.
+  - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/c192ee2af594cc9cb64cf151261c58b2695513fb/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.
+  - `git diff --check`.
+  - `just ci`.
+  - `just ci`.
+- PR 7 review-fix validation:
+  - `cargo fmt --all -- --check`.
+  - `cargo test -p bbdown-core access_key_refresh --locked`.
+  - `cargo test -p bbdown-core refresh_credentials_ignore_zero_expiry_aliases_when_falling_back --locked`.
+  - `cargo test -p bbdown-cli auth_renew_access_key_auto_refresh --test cli_e2e --locked`.
+  - `cargo test -p bbdown-core refreshes_ --locked`.
+  - `cargo test -p bbdown-cli auth_renew_access_key --test cli_e2e --locked`.
+  - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/c192ee2af594cc9cb64cf151261c58b2695513fb/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.
+  - `git diff --check`.
+  - `just ci`.
+- PR 7 whitespace-secret review-fix validation:
+  - `cargo fmt --all`.
+  - `cargo fmt --all -- --check`.
+  - `cargo test -p bbdown-core whitespace_refresh_token_secret_is_not_lifecycle_ready --locked`.
+  - `cargo test -p bbdown-core credentials --locked`.
+  - `cargo test -p bbdown-cli auth_renew_access_key --test cli_e2e --locked`.
+  - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/c192ee2af594cc9cb64cf151261c58b2695513fb/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.
+  - `git diff --check`.
+  - `just ci`.
+- PR 7 current-head GitHub Codex review-fix validation:
+  - `cargo fmt --all`.
+  - `cargo test -p bbdown-core missing_refresh_secret_reports_false_when_provider_metadata_exists --locked`.
+  - `cargo test -p bbdown-core refreshes_tv_access_key_with_tv_oauth_endpoint --locked`.
+  - `cargo test -p bbdown-core refreshes_android_access_key_with_main_oauth_endpoint --locked`.
+  - `cargo test -p bbdown-core access_key_refresh --locked`.
+  - `cargo test -p bbdown-core refreshes_ --locked`.
+  - `cargo test -p bbdown-cli auth_renew_access_key_auto_refresh --test cli_e2e --locked`.
+  - `cargo test -p bbdown-core credentials --locked`.
+  - `cargo test -p bbdown-cli auth_renew_access_key --test cli_e2e --locked`.
+  - `cargo fmt --all -- --check`.
+  - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/c192ee2af594cc9cb64cf151261c58b2695513fb/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.
+  - `git diff --check`.
 
 ## Next Steps
 
-- Finish PR 6 provider-aware secret storage with deterministic tests, review gates, CI, and merge.
-- Cut PR 7 from updated `master` for provider-specific access-key refresh clients and mocked endpoint
-  coverage.
+- Finish PR 7 provider-specific refresh client validation, review gates, CI, and merge.
 - Continue PR 8 optional credential preflight integration only after refresh outcomes are stable.

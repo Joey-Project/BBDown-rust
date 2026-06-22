@@ -242,12 +242,19 @@ For access-key lifecycle orchestration, evaluate
 `AccessKeyRenewalDecision::from_profile_status(profile_status, force_reauthorization)` after loading
 `CredentialProfiles::profile_lifecycle_status(...)`. A `NoAction` decision means the selected
 profile's access-key metadata is still fresh under the caller's policy; `Reauthorize` means the UI
-should render a new `AccessKeyLoginTicketOutput` and collect another BALH callback. The decision's
-`automatic_refresh_readiness` field is intentionally explicit: `metadata_only_refresh_token` means a
-previous callback reported a refresh token before provider secrets were stored; `ready` means the
-selected profile has a provider-scoped refresh secret that a refresh client can use. Current core
-orchestration still does not perform network refresh by itself; embedders should treat `ready` as a
-precondition for the provider-specific refresh API added in the next slice.
+should either try provider-specific refresh or render a new `AccessKeyLoginTicketOutput` and collect
+another BALH callback. The decision's `automatic_refresh_readiness` field is intentionally explicit:
+`metadata_only_refresh_token` means a previous callback reported a refresh token before provider
+secrets were stored; `ready` means the selected profile has a provider-scoped refresh secret,
+refresh provider, and any provider keypair required for network refresh.
+Build an `AccessKeyRefreshRequest` from the saved access key plus the matching
+`AccessKeyProviderSecret`, then call `BiliClient::refresh_access_key(...)`. The client supports
+Bilibili main OAuth2 refresh through `EndpointConfig::passport_base` and BiliIntl OAuth2 refresh
+through `EndpointConfig::intl_passport_base`; `bili_tv` main-provider keypairs are routed to the TV
+OAuth refresh path. It returns a fresh `AccessKeyLoginCredentials` value so callers can reuse the same
+lifecycle/secret persistence path as initial access-key login. Treat
+network or API refresh failures as non-destructive: keep the old credential and fall back to
+reauthorization UI when policy requires user action.
 Call `BiliClient::check_credential_health()` when an embedding project needs a redacted diagnostic
 report before deciding whether to prompt for login, import a token, or continue with anonymous
 requests. The report includes one probe each for the WEB cookie, generic `access_key`, and TV

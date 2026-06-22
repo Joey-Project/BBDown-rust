@@ -453,8 +453,15 @@ current BiliPlus handoff flow. Lifecycle metadata still records only source, pro
 and refresh-token presence, not raw secret values. `AccessKeyRenewalDecision` turns a selected
 profile lifecycle status into either `NoAction` or `Reauthorize`, and reports
 `automatic_refresh_readiness` separately: `metadata_only_refresh_token` means only an old presence bit
-exists, while `ready` means the selected provider has a stored refresh secret. The network refresh
-client remains a separate provider-specific layer.
+exists, while `ready` means the selected provider has a stored refresh secret, refresh provider, and
+any keypair required by that refresh provider. The provider-specific network refresh layer is exposed
+as `AccessKeyRefreshRequest` plus `BiliClient::refresh_access_key(...)`. Bilibili main OAuth2 refresh
+uses the configured `passport_base` and signed app keypairs, with the `bili_tv` keypair routed to the
+TV OAuth refresh path; BiliIntl OAuth2 refresh uses the configured `intl_passport_base` and its intl
+refresh form. Refresh returns
+`AccessKeyLoginCredentials`, letting CLI and embedders reuse the same lifecycle metadata and
+provider-secret persistence path used by initial access-key acquisition. Failed refresh attempts are
+non-destructive; callers keep the old credential and can fall back to a reauthorization ticket.
 Browser `postMessage` consumers should parse through the ticket/output `credentials_from_message`
 helpers, which validate the sender origin against the trusted auth or callback origin before using
 the raw BALH payload parser.

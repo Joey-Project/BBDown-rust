@@ -521,16 +521,10 @@ impl fmt::Debug for AccessKeyProviderSecret {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("AccessKeyProviderSecret")
-            .field(
-                "has_refresh_token",
-                &self
-                    .refresh_token
-                    .as_deref()
-                    .is_some_and(|value| !value.is_empty()),
-            )
+            .field("has_refresh_token", &self.has_refresh_token())
             .field("refresh_provider", &self.refresh_provider)
             .field("refresh_keypair", &self.refresh_keypair)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -555,7 +549,9 @@ impl AccessKeyProviderSecret {
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.refresh_token.as_deref().is_none_or(str::is_empty)
+        self.refresh_token
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
             && self.refresh_provider.is_none()
             && self.refresh_keypair.is_none()
     }
@@ -564,7 +560,7 @@ impl AccessKeyProviderSecret {
     pub fn has_refresh_token(&self) -> bool {
         self.refresh_token
             .as_deref()
-            .is_some_and(|value| !value.is_empty())
+            .is_some_and(|value| !value.trim().is_empty())
     }
 }
 
@@ -805,6 +801,8 @@ pub struct CredentialLifecycleCredentialStatus {
     pub status: CredentialLifecycleStatus,
     pub source: Option<CredentialLifecycleSource>,
     pub access_key_provider: Option<AccessKeyProvider>,
+    pub refresh_provider: Option<AccessKeyRefreshProvider>,
+    pub refresh_keypair: Option<AccessKeyRefreshKeypair>,
     pub acquired_at_unix_millis: Option<u64>,
     pub checked_at_unix_millis: Option<u64>,
     pub expires_at_unix_millis: Option<u64>,
@@ -822,8 +820,11 @@ impl CredentialLifecycleCredentialStatus {
     ) -> Self {
         let present = kind.is_present_in(credentials);
         let metadata = metadata.cloned().unwrap_or_default();
+        let refresh_secret = access_key_refresh_secret(kind, &metadata, secrets);
         let refresh_token_secret_present =
-            access_key_refresh_secret_present(kind, &metadata, secrets);
+            access_key_refresh_secret_present(kind, &metadata, refresh_secret);
+        let refresh_provider = refresh_secret.and_then(|secret| secret.refresh_provider);
+        let refresh_keypair = refresh_secret.and_then(|secret| secret.refresh_keypair);
         let status = if present {
             CredentialLifecycleStatus::from_metadata(&metadata, policy)
         } else {
@@ -835,6 +836,8 @@ impl CredentialLifecycleCredentialStatus {
             status,
             source: metadata.source,
             access_key_provider: metadata.access_key_provider,
+            refresh_provider,
+            refresh_keypair,
             acquired_at_unix_millis: metadata.acquired_at_unix_millis,
             checked_at_unix_millis: metadata.checked_at_unix_millis,
             expires_at_unix_millis: metadata.expires_at_unix_millis,
@@ -844,20 +847,27 @@ impl CredentialLifecycleCredentialStatus {
     }
 }
 
-fn access_key_refresh_secret_present(
+fn access_key_refresh_secret<'a>(
     kind: CredentialKind,
     metadata: &CredentialLifecycleMetadata,
-    secrets: &CredentialProfileSecrets,
-) -> Option<bool> {
+    secrets: &'a CredentialProfileSecrets,
+) -> Option<&'a AccessKeyProviderSecret> {
     if kind != CredentialKind::AccessKey {
         return None;
     }
     let provider = metadata.access_key_provider?;
-    Some(
-        secrets
-            .access_key_provider(provider)
-            .is_some_and(AccessKeyProviderSecret::has_refresh_token),
-    )
+    secrets.access_key_provider(provider)
+}
+
+fn access_key_refresh_secret_present(
+    kind: CredentialKind,
+    metadata: &CredentialLifecycleMetadata,
+    refresh_secret: Option<&AccessKeyProviderSecret>,
+) -> Option<bool> {
+    if kind != CredentialKind::AccessKey || metadata.access_key_provider.is_none() {
+        return None;
+    }
+    Some(refresh_secret.is_some_and(AccessKeyProviderSecret::has_refresh_token))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -1810,6 +1820,95 @@ mod tests {
             Some(AccessKeyProvider::BalhBiliplus)
         );
         assert_eq!(access_key_status.refresh_token_secret_present, Some(true));
+        Ok(())
+    }
+
+    #[test]
+    fn whitespace_refresh_token_secret_is_not_lifecycle_ready() -> anyhow::Result<()> {
+        assert!(AccessKeyProviderSecret::default().is_empty());
+        assert!(
+            AccessKeyProviderSecret::default()
+                .with_refresh_token("   ")
+                .is_empty()
+        );
+        assert!(
+            !AccessKeyProviderSecret::default()
+                .with_refresh_token("   ")
+                .has_refresh_token()
+        );
+
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "intl",
+            Credentials {
+                cookie: None,
+                access_key: Some("ACCESS_SECRET".to_owned()),
+                tv_access_key: None,
+            },
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+                .with_refresh_token_present(true),
+        );
+        profiles.set_profile_metadata("intl", metadata)?;
+        let mut secrets = CredentialProfileSecrets::default();
+        secrets.set_access_key_provider(
+            AccessKeyProvider::BalhBiliplus,
+            AccessKeyProviderSecret::default()
+                .with_refresh_token("   ")
+                .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+                .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+        );
+        profiles.set_profile_secrets("intl", secrets)?;
+
+        let status = profiles.profile_lifecycle_status(
+            "intl",
+            &CredentialLifecyclePolicy::at_unix_millis(1_700_000_000_000),
+        )?;
+        let access_key_status = status
+            .credential_statuses
+            .iter()
+            .find(|status| status.kind == CredentialKind::AccessKey)
+            .ok_or_else(|| anyhow::anyhow!("access-key status should exist"))?;
+        assert_eq!(access_key_status.refresh_token_secret_present, Some(false));
+        Ok(())
+    }
+
+    #[test]
+    fn missing_refresh_secret_reports_false_when_provider_metadata_exists() -> anyhow::Result<()> {
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "intl",
+            Credentials {
+                cookie: None,
+                access_key: Some("ACCESS_SECRET".to_owned()),
+                tv_access_key: None,
+            },
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+                .with_refresh_token_present(true),
+        );
+        profiles.set_profile_metadata("intl", metadata)?;
+
+        let status = profiles.profile_lifecycle_status(
+            "intl",
+            &CredentialLifecyclePolicy::at_unix_millis(1_700_000_000_000),
+        )?;
+        let access_key_status = status
+            .credential_statuses
+            .iter()
+            .find(|status| status.kind == CredentialKind::AccessKey)
+            .ok_or_else(|| anyhow::anyhow!("access-key status should exist"))?;
+        assert_eq!(access_key_status.refresh_token_secret_present, Some(false));
         Ok(())
     }
 

@@ -399,8 +399,12 @@ the event order is `decision`, then `ticket` when reauthorization is needed, the
 ticket so callers can render the URL or `qr_payload` and collect the browser handoff separately.
 The decision includes `automatic_refresh_readiness`; `metadata_only_refresh_token` means the
 previous callback reported a refresh token before provider secrets were stored, while `ready` means
-the selected provider has a saved refresh secret. Current commands still stop at decision or
-reauthorization; automatic silent refresh is added in the next credential lifecycle slice.
+the selected provider has a saved refresh secret, refresh provider, and any keypair required by that
+provider. When an expired, expiring, stale, or unknown selected access key is `ready`, and the user
+did not pass `--force`, `--stdin`, or `--file`, the CLI first tries provider-specific automatic
+refresh. With `--json`, successful automatic refresh emits `decision`, `refreshed`, and `saved`
+events without printing raw tokens. If refresh fails, the CLI emits `refresh_failed` and falls back
+to the normal authorization ticket so callers can prompt the user without losing the old credential.
 `auth login-web` prints a QR login URL, polls until scan confirmation, and saves the resulting
 cookie. `auth login-tv` uses the TV QR flow and saves a TV-specific access key for future TV/app
 flows without overwriting the generic intl/Bstar access key imported or acquired through the generic
@@ -445,6 +449,8 @@ bbdown --pgc-base http://127.0.0.1:8080 --api-base http://127.0.0.1:8080 plan ep
 bbdown --intl-base http://127.0.0.1:8080 plan https://www.bilibili.tv/en/play/34613/341736 --json
 bbdown --comment-base http://127.0.0.1:8080 download av170001 --output-dir downloads
 bbdown --passport-base http://127.0.0.1:8080 auth login-web
+bbdown --passport-base http://127.0.0.1:8080 auth renew-access-key --json
+bbdown --intl-passport-base http://127.0.0.1:8080 auth renew-access-key --json
 bbdown --tv-passport-base http://127.0.0.1:8080 auth login-tv
 bbdown --tv-passport-base http://127.0.0.1:8080 --tv-passport-poll-base http://127.0.0.1:8081 auth login-tv
 bbdown auth login-access-key --auth-base http://127.0.0.1:8080 --callback-origin http://127.0.0.1:3000 --stdin < balh-callback.txt
@@ -452,7 +458,10 @@ bbdown auth login-access-key --auth-base http://127.0.0.1:8080 --callback-origin
 
 Current intl support uses official intl metadata/subtitle endpoints and the official signed intl OGV
 playurl endpoint with the configured access key when present. Danmaku XML downloads use the
-configurable comment endpoint. WEB QR login and generic token-health probes use `--passport-base`.
+configurable comment endpoint. WEB QR login, generic token-health probes, and Bilibili main OAuth2
+access-key refresh use `--passport-base`. BiliIntl OAuth2 access-key refresh uses
+`--intl-passport-base`. Main-provider `bili_tv` refresh secrets use the TV OAuth refresh path under
+the configured `--passport-base`.
 TV QR generation uses `--tv-passport-base`; TV QR polling and TV token-health probes use
 `--tv-passport-poll-base`. The CLI makes the TV poll base follow `--tv-passport-base` when only that
 TV override is supplied; set `--tv-passport-poll-base` explicitly for split-host mocks or proxies.

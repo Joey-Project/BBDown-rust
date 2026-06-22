@@ -227,12 +227,19 @@ access-key lifecycle orchestration 可以在加载
 `CredentialProfiles::profile_lifecycle_status(...)` 后调用
 `AccessKeyRenewalDecision::from_profile_status(profile_status, force_reauthorization)`。`NoAction`
 decision 表示当前所选 profile 的 access-key metadata 在调用方 policy 下仍是 fresh；
-`Reauthorize` 表示 UI 应渲染新的 `AccessKeyLoginTicketOutput`，并收集下一次 BALH callback。
-decision 中的 `automatic_refresh_readiness` 是刻意显式的：`metadata_only_refresh_token`
-表示上一次 callback 在 provider secret 保存能力出现前报告过 refresh token；`ready` 表示当前
-所选 profile 有 provider-scoped refresh secret，可供 refresh client 使用。当前 core
-orchestration 仍不会自行发起网络 refresh；嵌入方应把 `ready` 视为下一切片 provider-specific
-refresh API 的前置条件。
+`Reauthorize` 表示 UI 应先尝试 provider-specific refresh，或渲染新的
+`AccessKeyLoginTicketOutput` 并收集下一次 BALH callback。decision 中的
+`automatic_refresh_readiness` 是刻意显式的：`metadata_only_refresh_token` 表示上一次
+callback 在 provider secret 保存能力出现前报告过 refresh token；`ready` 表示当前所选 profile
+有 provider-scoped refresh secret、refresh provider，以及该 provider 进行网络 refresh 所需的
+keypair。嵌入方可以用已保存的 access key 和匹配的 `AccessKeyProviderSecret` 构造
+`AccessKeyRefreshRequest`，再调用 `BiliClient::refresh_access_key(...)`。client 支持通过
+`EndpointConfig::passport_base` 进行 Bilibili main OAuth2 refresh，也支持通过
+`EndpointConfig::intl_passport_base` 进行 BiliIntl OAuth2 refresh；`bili_tv` main-provider
+keypair 会路由到 TV OAuth refresh path。成功后会返回新的 `AccessKeyLoginCredentials`，
+调用方可以复用与首次 access-key login 相同的 lifecycle/secret
+持久化路径。网络或 API refresh 失败应视为 non-destructive：保留旧 credential，并在策略需要
+用户介入时回退到重新授权 UI。
 当嵌入项目需要在决定提示登录、导入 token 或继续匿名请求前做脱敏诊断时，可以调用
 `BiliClient::check_credential_health()`。报告会分别包含 WEB cookie、通用 `access_key` 和
 TV `tv_access_key` 的 probe；`kind` 表示凭据槽位，`scope` 表示实际检查的消费场景。通用
