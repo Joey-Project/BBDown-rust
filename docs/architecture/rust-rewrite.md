@@ -443,15 +443,18 @@ historical `balh-login-credentials:` message prefix with either JSON credentials
 callback using `access_key` or `access_token`. `AccessKeyLoginCredentials` preserves optional
 `refresh_token`, absolute `oauth_expires_at`, and relative `expires_in` metadata, but conversion back
 to `Credentials` stores only the generic `access_key`. Embedding callers that own storage should
-copy expiration and refresh-token presence into `CredentialLifecycleMetadata` explicitly. The CLI
-login path does that when it saves the selected profile: absolute expiry values are stored directly,
-relative `expires_in` values are computed from the acquisition time, and only refresh-token presence
-is recorded in lifecycle metadata. `AccessKeyRenewalDecision` turns a selected profile lifecycle
-status into either `NoAction` or `Reauthorize`, and reports `automatic_refresh_readiness` separately
-so embedders can see why silent refresh is unavailable. In the current model,
-`metadata_only_refresh_token` means the BALH callback included a refresh token, but BBDown stored only
-the non-secret presence bit; a future refresh-token store and verified refresh endpoint are required
-before token rotation can happen without user reauthorization.
+copy expiration and refresh-token presence into `CredentialLifecycleMetadata` explicitly, and store
+raw refresh secrets in `CredentialProfileSecrets` rather than runtime `Credentials`. Profile secrets
+are provider-scoped as `profile_secrets.<profile>.access_key.<provider>` so BALH/BiliPlus,
+Bilibili main OAuth2, and BiliIntl OAuth2 refresh behavior can evolve independently. The CLI login
+path stores BALH/BiliPlus refresh secrets in plaintext in the same private credential file, marks the
+refresh provider as `bilibili_main_oauth2`, and records the `bili_tv` keypair family observed for the
+current BiliPlus handoff flow. Lifecycle metadata still records only source, provider, timestamps,
+and refresh-token presence, not raw secret values. `AccessKeyRenewalDecision` turns a selected
+profile lifecycle status into either `NoAction` or `Reauthorize`, and reports
+`automatic_refresh_readiness` separately: `metadata_only_refresh_token` means only an old presence bit
+exists, while `ready` means the selected provider has a stored refresh secret. The network refresh
+client remains a separate provider-specific layer.
 Browser `postMessage` consumers should parse through the ticket/output `credentials_from_message`
 helpers, which validate the sender origin against the trusted auth or callback origin before using
 the raw BALH payload parser.

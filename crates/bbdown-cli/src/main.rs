@@ -4,19 +4,21 @@
 use anyhow::{Context, bail, ensure};
 use bbdown_core::{
     AccessKeyAutomaticRefreshReadiness, AccessKeyLoginConfig, AccessKeyLoginCredentials,
-    AccessKeyLoginTicketOutput, AccessKeyRenewalAction, AccessKeyRenewalDecision,
-    AccessKeyRenewalReason, BiliClient, ClientConfig, CredentialHealthReport,
-    CredentialHealthScope, CredentialHealthStatus, CredentialHealthSummaryStatus, CredentialKind,
-    CredentialLifecycleMetadata, CredentialLifecyclePolicy, CredentialLifecycleSource,
-    CredentialLifecycleStatus, CredentialProfileLifecycleStatus, CredentialProfileSelection,
-    CredentialProfiles, CredentialStore, Credentials, DanmakuFormat, DanmakuUpdateOptions,
-    DownloadArchive, DownloadCancellationToken, DownloadMode, DownloadOptions,
-    DownloadPathTemplates, DownloadPlan, DownloadPreflight, DownloadProgressEvent,
-    DownloadProgressSink, DownloadReport, DuplicateDecision, EndpointConfig, MediaHostOptions,
-    MediaStream, MuxOptions, PlaybackPlan, PlayurlMode, QrLoginKind, QrLoginState, QrLoginTicket,
-    QrLoginTicketOutput, ResolvedContent, RestrictedArea, RestrictedAreaConfig,
-    RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection, StreamQuality,
-    StreamSelection, StreamSet, SubtitleAiPolicy, archive_entry_allows_danmaku_update,
+    AccessKeyLoginTicketOutput, AccessKeyProvider, AccessKeyProviderSecret,
+    AccessKeyRefreshKeypair, AccessKeyRefreshProvider, AccessKeyRenewalAction,
+    AccessKeyRenewalDecision, AccessKeyRenewalReason, BiliClient, ClientConfig,
+    CredentialHealthReport, CredentialHealthScope, CredentialHealthStatus,
+    CredentialHealthSummaryStatus, CredentialKind, CredentialLifecycleMetadata,
+    CredentialLifecyclePolicy, CredentialLifecycleSource, CredentialLifecycleStatus,
+    CredentialProfileLifecycleStatus, CredentialProfileSelection, CredentialProfiles,
+    CredentialStore, Credentials, DanmakuFormat, DanmakuUpdateOptions, DownloadArchive,
+    DownloadCancellationToken, DownloadMode, DownloadOptions, DownloadPathTemplates, DownloadPlan,
+    DownloadPreflight, DownloadProgressEvent, DownloadProgressSink, DownloadReport,
+    DuplicateDecision, EndpointConfig, MediaHostOptions, MediaStream, MuxOptions, PlaybackPlan,
+    PlayurlMode, QrLoginKind, QrLoginState, QrLoginTicket, QrLoginTicketOutput, ResolvedContent,
+    RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind,
+    RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet, SubtitleAiPolicy,
+    archive_entry_allows_danmaku_update,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::ffi::{OsStr, OsString};
@@ -2482,13 +2484,14 @@ fn handle_access_key_login(
     let credentials =
         parse_access_key_login_input(&output, args.message_origin.as_deref(), &input)?;
     let acquired_at_unix_millis = current_unix_millis();
-    let summary = save_credentials_with_lifecycle(
+    let summary = save_credentials_with_lifecycle_and_secrets(
         credential_runtime,
         credentials.credentials(),
         [(
             CredentialKind::AccessKey,
             access_key_lifecycle_metadata(&credentials, acquired_at_unix_millis),
         )],
+        [access_key_provider_secret(&credentials)],
     )?;
     if args.json {
         print_json_line(&serde_json::json!({
@@ -2552,13 +2555,14 @@ fn handle_access_key_renewal(
     let credentials =
         parse_access_key_login_input(&output, args.message_origin.as_deref(), &input)?;
     let acquired_at_unix_millis = current_unix_millis();
-    let summary = save_credentials_with_lifecycle(
+    let summary = save_credentials_with_lifecycle_and_secrets(
         credential_runtime,
         credentials.credentials(),
         [(
             CredentialKind::AccessKey,
             access_key_lifecycle_metadata(&credentials, acquired_at_unix_millis),
         )],
+        [access_key_provider_secret(&credentials)],
     )?;
     if args.json {
         print_json_line(&serde_json::json!({
@@ -2640,6 +2644,7 @@ fn access_key_automatic_refresh_readiness_label(
 ) -> &'static str {
     match readiness {
         AccessKeyAutomaticRefreshReadiness::CredentialMissing => "credential_missing",
+        AccessKeyAutomaticRefreshReadiness::Ready => "ready",
         AccessKeyAutomaticRefreshReadiness::UnsupportedSource => "unsupported_source",
         AccessKeyAutomaticRefreshReadiness::MissingRefreshToken => "missing_refresh_token",
         AccessKeyAutomaticRefreshReadiness::MetadataOnlyRefreshToken => {
@@ -2664,6 +2669,20 @@ fn save_credentials_with_lifecycle(
     credential_runtime: &CredentialRuntime,
     credentials: Credentials,
     lifecycle_metadata: impl IntoIterator<Item = (CredentialKind, CredentialLifecycleMetadata)>,
+) -> anyhow::Result<bbdown_core::CredentialSource> {
+    save_credentials_with_lifecycle_and_secrets(
+        credential_runtime,
+        credentials,
+        lifecycle_metadata,
+        std::iter::empty::<(AccessKeyProvider, AccessKeyProviderSecret)>(),
+    )
+}
+
+fn save_credentials_with_lifecycle_and_secrets(
+    credential_runtime: &CredentialRuntime,
+    credentials: Credentials,
+    lifecycle_metadata: impl IntoIterator<Item = (CredentialKind, CredentialLifecycleMetadata)>,
+    access_key_secrets: impl IntoIterator<Item = (AccessKeyProvider, AccessKeyProviderSecret)>,
 ) -> anyhow::Result<bbdown_core::CredentialSource> {
     let mut profiles = credential_runtime
         .store
@@ -2690,6 +2709,16 @@ fn save_credentials_with_lifecycle(
     profiles
         .set_profile_metadata(&profile_name, profile_metadata)
         .context("failed to update credential lifecycle metadata")?;
+
+    let mut profile_secrets = profiles
+        .profile_secrets(&profile_name)
+        .context("failed to load credential profile secrets")?;
+    for (provider, secret) in access_key_secrets {
+        profile_secrets.set_access_key_provider(provider, secret);
+    }
+    profiles
+        .set_profile_secrets(&profile_name, profile_secrets)
+        .context("failed to update credential provider secrets")?;
     credential_runtime
         .store
         .save_profiles(&profiles)
@@ -2748,12 +2777,28 @@ fn access_key_lifecycle_metadata(
     });
     let mut metadata = CredentialLifecycleMetadata::default()
         .with_source(CredentialLifecycleSource::AccessKeyLogin)
+        .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
         .with_acquired_at_unix_millis(acquired_at_unix_millis)
         .with_refresh_token_present(credentials.refresh_token.is_some());
     if let Some(expires_at_unix_millis) = expires_at_unix_millis {
         metadata = metadata.with_expires_at_unix_millis(expires_at_unix_millis);
     }
     metadata
+}
+
+fn access_key_provider_secret(
+    credentials: &AccessKeyLoginCredentials,
+) -> (AccessKeyProvider, AccessKeyProviderSecret) {
+    let secret = credentials.refresh_token.as_ref().map_or_else(
+        AccessKeyProviderSecret::default,
+        |refresh_token| {
+            AccessKeyProviderSecret::default()
+                .with_refresh_token(refresh_token.clone())
+                .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+                .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv)
+        },
+    );
+    (AccessKeyProvider::BalhBiliplus, secret)
 }
 
 fn read_access_key_login_input(args: &AccessKeyLoginArgs) -> anyhow::Result<String> {
@@ -3368,18 +3413,19 @@ mod tests {
     use super::{
         Cli, CliProgressReporter, CredentialRuntime, DownloadCtrlCAction, DownloadOnlyArg,
         DuplicateDecisionRequest, DuplicatePromptActiveGuard, SingleDownloadValidationArgs,
-        SubtitleAiPolicyArg, access_key_lifecycle_metadata, archive_sidecar_path,
-        credential_profile_selection, download_ctrl_c_action, duplicate_decision_or_report,
-        endpoints_from_cli, ensure_access_key_login_file_is_safe,
+        SubtitleAiPolicyArg, access_key_lifecycle_metadata, access_key_provider_secret,
+        archive_sidecar_path, credential_profile_selection, download_ctrl_c_action,
+        duplicate_decision_or_report, endpoints_from_cli, ensure_access_key_login_file_is_safe,
         ensure_access_key_login_stdin_is_safe, ensure_archive_file_is_not_output_root,
         next_poll_sleep, parse_access_key_login_input, qr_login_lifecycle_metadata,
         remaining_until, restricted_area_from_cli_with_args,
         restricted_area_from_cli_with_env_values, save_credentials,
-        save_credentials_with_lifecycle, should_prompt_duplicate_decision,
-        validate_media_host_spec, validate_single_download_args,
+        save_credentials_with_lifecycle, save_credentials_with_lifecycle_and_secrets,
+        should_prompt_duplicate_decision, validate_media_host_spec, validate_single_download_args,
     };
     use bbdown_core::{
-        AccessKeyLoginConfig, AccessKeyLoginCredentials, CredentialKind,
+        AccessKeyLoginConfig, AccessKeyLoginCredentials, AccessKeyProvider,
+        AccessKeyRefreshKeypair, AccessKeyRefreshProvider, CredentialKind,
         CredentialLifecycleMetadata, CredentialLifecycleSource, CredentialProfileSelection,
         CredentialStore, Credentials, DownloadCancellationToken, DownloadOutputConflict,
         DownloadPreflight, DuplicateDecision, EndpointConfig, QrLoginKind,
@@ -4215,15 +4261,31 @@ mod tests {
             absolute.source,
             Some(CredentialLifecycleSource::AccessKeyLogin)
         );
+        assert_eq!(
+            absolute.access_key_provider,
+            Some(AccessKeyProvider::BalhBiliplus)
+        );
         assert_eq!(absolute.acquired_at_unix_millis, Some(now));
         assert_eq!(absolute.expires_at_unix_millis, Some(now + 120_000));
         assert_eq!(absolute.refresh_token_present, Some(true));
+        let (_, secret) = access_key_provider_secret(&absolute_credentials);
+        assert_eq!(
+            secret.refresh_provider,
+            Some(AccessKeyRefreshProvider::BilibiliMainOauth2)
+        );
+        assert_eq!(
+            secret.refresh_keypair,
+            Some(AccessKeyRefreshKeypair::BiliTv)
+        );
+        assert_eq!(secret.refresh_token.as_deref(), Some("REFRESH"));
 
         let relative_credentials =
             AccessKeyLoginCredentials::from_balh_payload("access_key=ACCESS&expires_in=60")?;
         let relative = access_key_lifecycle_metadata(&relative_credentials, now);
         assert_eq!(relative.expires_at_unix_millis, Some(now + 60_000));
         assert_eq!(relative.refresh_token_present, Some(false));
+        let (_, relative_secret) = access_key_provider_secret(&relative_credentials);
+        assert!(relative_secret.is_empty());
         Ok(())
     }
 
@@ -4277,6 +4339,94 @@ mod tests {
             Some(now + 60_000)
         );
         assert_eq!(access_key_metadata.refresh_token_present, Some(true));
+        Ok(())
+    }
+
+    #[test]
+    fn save_credentials_with_lifecycle_and_secrets_records_access_key_provider_secret()
+    -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let store = CredentialStore::new(temp.path().join("credentials.json"));
+        let runtime =
+            CredentialRuntime::new(store.clone(), CredentialProfileSelection::default_profile());
+        let credentials = AccessKeyLoginCredentials::from_balh_payload(
+            "access_key=ACCESS&refresh_token=REFRESH&expires_in=60",
+        )?;
+        let now = 1_700_000_000_000;
+
+        let summary = save_credentials_with_lifecycle_and_secrets(
+            &runtime,
+            credentials.credentials(),
+            [(
+                CredentialKind::AccessKey,
+                access_key_lifecycle_metadata(&credentials, now),
+            )],
+            [access_key_provider_secret(&credentials)],
+        )?;
+
+        assert!(summary.has_access_key);
+        let profiles = store.load_profiles()?;
+        let secrets = profiles.profile_secrets("default")?;
+        let secret = secrets
+            .access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .ok_or_else(|| anyhow::anyhow!("missing BALH/BiliPlus provider secret"))?;
+        assert_eq!(secret.refresh_token.as_deref(), Some("REFRESH"));
+        assert_eq!(
+            secret.refresh_provider,
+            Some(AccessKeyRefreshProvider::BilibiliMainOauth2)
+        );
+        assert_eq!(
+            secret.refresh_keypair,
+            Some(AccessKeyRefreshKeypair::BiliTv)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn save_credentials_with_lifecycle_and_secrets_clears_stale_provider_secret()
+    -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let store = CredentialStore::new(temp.path().join("credentials.json"));
+        let runtime =
+            CredentialRuntime::new(store.clone(), CredentialProfileSelection::default_profile());
+        let initial_credentials = AccessKeyLoginCredentials::from_balh_payload(
+            "access_key=ACCESS&refresh_token=REFRESH&expires_in=60",
+        )?;
+        let now = 1_700_000_000_000;
+        save_credentials_with_lifecycle_and_secrets(
+            &runtime,
+            initial_credentials.credentials(),
+            [(
+                CredentialKind::AccessKey,
+                access_key_lifecycle_metadata(&initial_credentials, now),
+            )],
+            [access_key_provider_secret(&initial_credentials)],
+        )?;
+
+        let replacement_credentials =
+            AccessKeyLoginCredentials::from_balh_payload("access_key=ACCESS&expires_in=60")?;
+        save_credentials_with_lifecycle_and_secrets(
+            &runtime,
+            replacement_credentials.credentials(),
+            [(
+                CredentialKind::AccessKey,
+                access_key_lifecycle_metadata(&replacement_credentials, now + 1_000),
+            )],
+            [access_key_provider_secret(&replacement_credentials)],
+        )?;
+
+        let profiles = store.load_profiles()?;
+        let metadata = profiles.profile_metadata("default")?;
+        let access_key_metadata = metadata
+            .credential(CredentialKind::AccessKey)
+            .ok_or_else(|| anyhow::anyhow!("missing access-key lifecycle metadata"))?;
+        assert_eq!(access_key_metadata.refresh_token_present, Some(false));
+        let secrets = profiles.profile_secrets("default")?;
+        assert!(
+            secrets
+                .access_key_provider(AccessKeyProvider::BalhBiliplus)
+                .is_none()
+        );
         Ok(())
     }
 

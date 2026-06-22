@@ -162,6 +162,12 @@ pub struct CredentialProfiles {
         deserialize_with = "deserialize_profile_metadata"
     )]
     pub profile_metadata: BTreeMap<String, CredentialProfileMetadata>,
+    #[serde(
+        default,
+        skip_serializing_if = "BTreeMap::is_empty",
+        deserialize_with = "deserialize_profile_secrets"
+    )]
+    pub profile_secrets: BTreeMap<String, CredentialProfileSecrets>,
 }
 
 impl fmt::Debug for CredentialProfiles {
@@ -172,6 +178,7 @@ impl fmt::Debug for CredentialProfiles {
             .field("default_profile", &self.default_profile)
             .field("profiles", &self.profiles)
             .field("profile_metadata", &self.profile_metadata)
+            .field("profile_secrets", &self.profile_secrets)
             .finish()
     }
 }
@@ -183,6 +190,7 @@ impl Default for CredentialProfiles {
             default_profile: DEFAULT_CREDENTIAL_PROFILE.to_owned(),
             profiles: BTreeMap::new(),
             profile_metadata: BTreeMap::new(),
+            profile_secrets: BTreeMap::new(),
         }
     }
 }
@@ -215,12 +223,20 @@ impl CredentialProfiles {
         if credentials.is_empty() {
             self.profiles.remove(&name);
             self.profile_metadata.remove(&name);
+            self.profile_secrets.remove(&name);
         } else {
             let metadata = self.profile_metadata.remove(&name);
             if let (Some(metadata), Some(previous)) = (metadata, self.profiles.get(&name)) {
                 let metadata = metadata.normalize_for_unchanged_credentials(previous, &credentials);
                 if !metadata.is_empty() {
                     self.profile_metadata.insert(name.clone(), metadata);
+                }
+            }
+            let secrets = self.profile_secrets.remove(&name);
+            if let (Some(secrets), Some(previous)) = (secrets, self.profiles.get(&name)) {
+                let secrets = secrets.normalize_for_unchanged_credentials(previous, &credentials);
+                if !secrets.is_empty() {
+                    self.profile_secrets.insert(name.clone(), secrets);
                 }
             }
             self.profiles.insert(name, credentials);
@@ -231,6 +247,7 @@ impl CredentialProfiles {
     pub fn remove_profile(&mut self, name: &str) -> Result<Option<Credentials>> {
         let name = normalize_profile_name(name)?;
         self.profile_metadata.remove(&name);
+        self.profile_secrets.remove(&name);
         Ok(self.profiles.remove(&name))
     }
 
@@ -272,6 +289,31 @@ impl CredentialProfiles {
         Ok(())
     }
 
+    pub fn profile_secrets(&self, name: &str) -> Result<CredentialProfileSecrets> {
+        let name = normalize_profile_name(name)?;
+        Ok(self.profile_secrets.get(&name).cloned().unwrap_or_default())
+    }
+
+    pub fn set_profile_secrets(
+        &mut self,
+        name: &str,
+        secrets: CredentialProfileSecrets,
+    ) -> Result<()> {
+        let name = normalize_profile_name(name)?;
+        let secrets = self
+            .profiles
+            .get(&name)
+            .map_or_else(CredentialProfileSecrets::default, |credentials| {
+                secrets.normalize_for_credentials(credentials)
+            });
+        if secrets.is_empty() {
+            self.profile_secrets.remove(&name);
+        } else {
+            self.profile_secrets.insert(name, secrets);
+        }
+        Ok(())
+    }
+
     pub fn profile_lifecycle_status(
         &self,
         name: &str,
@@ -280,11 +322,13 @@ impl CredentialProfiles {
         let name = normalize_profile_name(name)?;
         let credentials = self.profile(&name)?;
         let metadata = self.profile_metadata(&name)?;
+        let secrets = self.profile_secrets(&name)?;
         Ok(CredentialProfileLifecycleStatus::from_parts(
             name.clone(),
             name == self.default_profile,
             &credentials,
             &metadata,
+            &secrets,
             policy,
         ))
     }
@@ -333,6 +377,20 @@ impl CredentialProfiles {
             }
         }
         self.profile_metadata = profile_metadata;
+        let mut profile_secrets = BTreeMap::new();
+        for (name, secrets) in self.profile_secrets {
+            if name.trim().is_empty() {
+                continue;
+            }
+            let name = normalize_profile_name(&name)?;
+            if let Some(credentials) = self.profiles.get(&name) {
+                let secrets = secrets.normalize_for_credentials(credentials);
+                if !secrets.is_empty() {
+                    profile_secrets.insert(name, secrets);
+                }
+            }
+        }
+        self.profile_secrets = profile_secrets;
         Ok(self)
     }
 }
@@ -382,6 +440,134 @@ impl CredentialProfileMetadata {
     }
 }
 
+#[non_exhaustive]
+#[derive(Clone, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CredentialProfileSecrets {
+    #[serde(
+        default,
+        skip_serializing_if = "BTreeMap::is_empty",
+        deserialize_with = "deserialize_access_key_provider_secrets"
+    )]
+    pub access_key: BTreeMap<AccessKeyProvider, AccessKeyProviderSecret>,
+}
+
+impl fmt::Debug for CredentialProfileSecrets {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CredentialProfileSecrets")
+            .field("access_key", &self.access_key)
+            .finish()
+    }
+}
+
+impl CredentialProfileSecrets {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.access_key
+            .values()
+            .all(AccessKeyProviderSecret::is_empty)
+    }
+
+    #[must_use]
+    pub fn access_key_provider(
+        &self,
+        provider: AccessKeyProvider,
+    ) -> Option<&AccessKeyProviderSecret> {
+        self.access_key.get(&provider)
+    }
+
+    pub fn set_access_key_provider(
+        &mut self,
+        provider: AccessKeyProvider,
+        secret: AccessKeyProviderSecret,
+    ) {
+        if secret.is_empty() {
+            self.access_key.remove(&provider);
+        } else {
+            self.access_key.insert(provider, secret);
+        }
+    }
+
+    fn normalize_for_credentials(mut self, credentials: &Credentials) -> Self {
+        if CredentialKind::AccessKey.is_present_in(credentials) {
+            self.access_key
+                .retain(|_, secret| !AccessKeyProviderSecret::is_empty(secret));
+        } else {
+            self.access_key.clear();
+        }
+        self
+    }
+
+    fn normalize_for_unchanged_credentials(mut self, old: &Credentials, new: &Credentials) -> Self {
+        if !CredentialKind::AccessKey.is_unchanged_between(old, new) {
+            self.access_key.clear();
+        }
+        self.normalize_for_credentials(new)
+    }
+}
+
+#[non_exhaustive]
+#[derive(Clone, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AccessKeyProviderSecret {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh_token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh_provider: Option<AccessKeyRefreshProvider>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh_keypair: Option<AccessKeyRefreshKeypair>,
+}
+
+impl fmt::Debug for AccessKeyProviderSecret {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AccessKeyProviderSecret")
+            .field(
+                "has_refresh_token",
+                &self
+                    .refresh_token
+                    .as_deref()
+                    .is_some_and(|value| !value.is_empty()),
+            )
+            .field("refresh_provider", &self.refresh_provider)
+            .field("refresh_keypair", &self.refresh_keypair)
+            .finish()
+    }
+}
+
+impl AccessKeyProviderSecret {
+    #[must_use]
+    pub fn with_refresh_token(mut self, refresh_token: impl Into<String>) -> Self {
+        self.refresh_token = Some(refresh_token.into());
+        self
+    }
+
+    #[must_use]
+    pub fn with_refresh_provider(mut self, provider: AccessKeyRefreshProvider) -> Self {
+        self.refresh_provider = Some(provider);
+        self
+    }
+
+    #[must_use]
+    pub fn with_refresh_keypair(mut self, keypair: AccessKeyRefreshKeypair) -> Self {
+        self.refresh_keypair = Some(keypair);
+        self
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.refresh_token.as_deref().is_none_or(str::is_empty)
+            && self.refresh_provider.is_none()
+            && self.refresh_keypair.is_none()
+    }
+
+    #[must_use]
+    pub fn has_refresh_token(&self) -> bool {
+        self.refresh_token
+            .as_deref()
+            .is_some_and(|value| !value.is_empty())
+    }
+}
+
 fn deserialize_credential_lifecycle_metadata<'de, D>(
     deserializer: D,
 ) -> std::result::Result<BTreeMap<CredentialKind, CredentialLifecycleMetadata>, D::Error>
@@ -399,6 +585,27 @@ where
             let kind = CredentialKind::from_metadata_key(key)?;
             let metadata = serde_json::from_value(value.clone()).ok()?;
             Some((kind, metadata))
+        })
+        .collect())
+}
+
+fn deserialize_access_key_provider_secrets<'de, D>(
+    deserializer: D,
+) -> std::result::Result<BTreeMap<AccessKeyProvider, AccessKeyProviderSecret>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    let Some(raw_secrets) = value.as_object() else {
+        return Ok(BTreeMap::new());
+    };
+
+    Ok(raw_secrets
+        .iter()
+        .filter_map(|(key, value)| {
+            let provider = AccessKeyProvider::from_storage_key(key)?;
+            let secret = serde_json::from_value(value.clone()).ok()?;
+            Some((provider, secret))
         })
         .collect())
 }
@@ -423,11 +630,33 @@ where
         .collect())
 }
 
+fn deserialize_profile_secrets<'de, D>(
+    deserializer: D,
+) -> std::result::Result<BTreeMap<String, CredentialProfileSecrets>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    let Some(raw_secrets) = value.as_object() else {
+        return Ok(BTreeMap::new());
+    };
+
+    Ok(raw_secrets
+        .iter()
+        .filter_map(|(name, value)| {
+            let secrets = serde_json::from_value(value.clone()).ok()?;
+            Some((name.clone(), secrets))
+        })
+        .collect())
+}
+
 #[non_exhaustive]
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CredentialLifecycleMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<CredentialLifecycleSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_key_provider: Option<AccessKeyProvider>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acquired_at_unix_millis: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -442,6 +671,7 @@ impl CredentialLifecycleMetadata {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.source.is_none()
+            && self.access_key_provider.is_none()
             && self.acquired_at_unix_millis.is_none()
             && self.checked_at_unix_millis.is_none()
             && self.expires_at_unix_millis.is_none()
@@ -451,6 +681,12 @@ impl CredentialLifecycleMetadata {
     #[must_use]
     pub fn with_source(mut self, source: CredentialLifecycleSource) -> Self {
         self.source = Some(source);
+        self
+    }
+
+    #[must_use]
+    pub fn with_access_key_provider(mut self, provider: AccessKeyProvider) -> Self {
+        self.access_key_provider = Some(provider);
         self
     }
 
@@ -529,6 +765,7 @@ impl CredentialProfileLifecycleStatus {
         is_default_profile: bool,
         credentials: &Credentials,
         metadata: &CredentialProfileMetadata,
+        secrets: &CredentialProfileSecrets,
         policy: &CredentialLifecyclePolicy,
     ) -> Self {
         let credential_statuses = CredentialKind::ALL
@@ -539,6 +776,7 @@ impl CredentialProfileLifecycleStatus {
                     kind,
                     credentials,
                     metadata.credential(kind),
+                    secrets,
                     policy,
                 )
             })
@@ -566,10 +804,12 @@ pub struct CredentialLifecycleCredentialStatus {
     pub present: bool,
     pub status: CredentialLifecycleStatus,
     pub source: Option<CredentialLifecycleSource>,
+    pub access_key_provider: Option<AccessKeyProvider>,
     pub acquired_at_unix_millis: Option<u64>,
     pub checked_at_unix_millis: Option<u64>,
     pub expires_at_unix_millis: Option<u64>,
     pub refresh_token_present: Option<bool>,
+    pub refresh_token_secret_present: Option<bool>,
 }
 
 impl CredentialLifecycleCredentialStatus {
@@ -577,10 +817,13 @@ impl CredentialLifecycleCredentialStatus {
         kind: CredentialKind,
         credentials: &Credentials,
         metadata: Option<&CredentialLifecycleMetadata>,
+        secrets: &CredentialProfileSecrets,
         policy: &CredentialLifecyclePolicy,
     ) -> Self {
         let present = kind.is_present_in(credentials);
         let metadata = metadata.cloned().unwrap_or_default();
+        let refresh_token_secret_present =
+            access_key_refresh_secret_present(kind, &metadata, secrets);
         let status = if present {
             CredentialLifecycleStatus::from_metadata(&metadata, policy)
         } else {
@@ -591,12 +834,30 @@ impl CredentialLifecycleCredentialStatus {
             present,
             status,
             source: metadata.source,
+            access_key_provider: metadata.access_key_provider,
             acquired_at_unix_millis: metadata.acquired_at_unix_millis,
             checked_at_unix_millis: metadata.checked_at_unix_millis,
             expires_at_unix_millis: metadata.expires_at_unix_millis,
             refresh_token_present: metadata.refresh_token_present,
+            refresh_token_secret_present,
         }
     }
+}
+
+fn access_key_refresh_secret_present(
+    kind: CredentialKind,
+    metadata: &CredentialLifecycleMetadata,
+    secrets: &CredentialProfileSecrets,
+) -> Option<bool> {
+    if kind != CredentialKind::AccessKey {
+        return None;
+    }
+    let provider = metadata.access_key_provider?;
+    Some(
+        secrets
+            .access_key_provider(provider)
+            .is_some_and(AccessKeyProviderSecret::has_refresh_token),
+    )
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -862,6 +1123,40 @@ pub enum CredentialKind {
     TvAccessKey,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AccessKeyProvider {
+    BalhBiliplus,
+    BilibiliMainOauth2,
+    BiliIntlOauth2,
+}
+
+impl AccessKeyProvider {
+    fn from_storage_key(key: &str) -> Option<Self> {
+        match key {
+            "balh_biliplus" => Some(Self::BalhBiliplus),
+            "bilibili_main_oauth2" => Some(Self::BilibiliMainOauth2),
+            "bili_intl_oauth2" => Some(Self::BiliIntlOauth2),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AccessKeyRefreshProvider {
+    BilibiliMainOauth2,
+    BiliIntlOauth2,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AccessKeyRefreshKeypair {
+    BiliTv,
+    Android,
+    AndroidB,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CredentialHealthScope {
@@ -1082,11 +1377,13 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CredentialHealthProbe, CredentialHealthReport, CredentialHealthScope,
-        CredentialHealthStatus, CredentialHealthSummaryStatus, CredentialKind,
-        CredentialLifecycleMetadata, CredentialLifecyclePolicy, CredentialLifecycleSource,
-        CredentialLifecycleStatus, CredentialProfileMetadata, CredentialProfileSelection,
-        CredentialProfiles, CredentialStore, Credentials, DEFAULT_CREDENTIAL_PROFILE,
+        AccessKeyProvider, AccessKeyProviderSecret, AccessKeyRefreshKeypair,
+        AccessKeyRefreshProvider, CredentialHealthProbe, CredentialHealthReport,
+        CredentialHealthScope, CredentialHealthStatus, CredentialHealthSummaryStatus,
+        CredentialKind, CredentialLifecycleMetadata, CredentialLifecyclePolicy,
+        CredentialLifecycleSource, CredentialLifecycleStatus, CredentialProfileMetadata,
+        CredentialProfileSecrets, CredentialProfileSelection, CredentialProfiles, CredentialStore,
+        Credentials, DEFAULT_CREDENTIAL_PROFILE,
     };
 
     #[test]
@@ -1441,6 +1738,122 @@ mod tests {
                 .and_then(|lifecycle| lifecycle.refresh_token_present),
             Some(true)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn profile_secrets_round_trip_without_debug_leakage() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "intl",
+            Credentials {
+                cookie: None,
+                access_key: Some("access-token".to_owned()),
+                tv_access_key: None,
+            },
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+                .with_refresh_token_present(true),
+        );
+        profiles.set_profile_metadata("intl", metadata)?;
+        let mut secrets = CredentialProfileSecrets::default();
+        secrets.set_access_key_provider(
+            AccessKeyProvider::BalhBiliplus,
+            AccessKeyProviderSecret::default()
+                .with_refresh_token("refresh-secret")
+                .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+                .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+        );
+        profiles.set_profile_secrets("intl", secrets)?;
+
+        store.save_profiles(&profiles)?;
+
+        let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
+        assert_eq!(
+            value["profile_secrets"]["intl"]["access_key"]["balh_biliplus"]["refresh_token"]
+                .as_str(),
+            Some("refresh-secret")
+        );
+        assert_eq!(
+            value["profile_secrets"]["intl"]["access_key"]["balh_biliplus"]["refresh_provider"]
+                .as_str(),
+            Some("bilibili_main_oauth2")
+        );
+        assert_eq!(
+            value["profile_secrets"]["intl"]["access_key"]["balh_biliplus"]["refresh_keypair"]
+                .as_str(),
+            Some("bili_tv")
+        );
+        let debug = format!("{:?}", store.load_profiles()?);
+        assert!(debug.contains("has_refresh_token: true"));
+        assert!(!debug.contains("refresh-secret"));
+
+        let policy = CredentialLifecyclePolicy::at_unix_millis(1_000);
+        let status = store
+            .load_profiles()?
+            .profile_lifecycle_status("intl", &policy)?;
+        let access_key_status = status
+            .credential_statuses
+            .iter()
+            .find(|status| status.kind == CredentialKind::AccessKey)
+            .ok_or_else(|| anyhow::anyhow!("access-key status should exist"))?;
+        assert_eq!(
+            access_key_status.access_key_provider,
+            Some(AccessKeyProvider::BalhBiliplus)
+        );
+        assert_eq!(access_key_status.refresh_token_secret_present, Some(true));
+        Ok(())
+    }
+
+    #[test]
+    fn save_profile_drops_provider_secrets_for_changed_access_key() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "intl",
+            Credentials {
+                cookie: None,
+                access_key: Some("old-access-token".to_owned()),
+                tv_access_key: None,
+            },
+        )?;
+        let mut secrets = CredentialProfileSecrets::default();
+        secrets.set_access_key_provider(
+            AccessKeyProvider::BalhBiliplus,
+            AccessKeyProviderSecret::default()
+                .with_refresh_token("refresh-secret")
+                .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2),
+        );
+        profiles.set_profile_secrets("intl", secrets)?;
+        store.save_profiles(&profiles)?;
+
+        store.save_profile(
+            "intl",
+            &Credentials {
+                cookie: None,
+                access_key: Some("new-access-token".to_owned()),
+                tv_access_key: None,
+            },
+        )?;
+
+        let loaded = store.load_profiles()?;
+        assert_eq!(
+            loaded.profile("intl")?.access_key.as_deref(),
+            Some("new-access-token")
+        );
+        assert!(loaded.profile_secrets("intl")?.is_empty());
+        let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path)?)?;
+        assert!(value.get("profile_secrets").is_none());
         Ok(())
     }
 

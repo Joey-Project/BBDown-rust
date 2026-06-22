@@ -1,7 +1,8 @@
 use assert_cmd::Command;
 use bbdown_core::{
-    CredentialKind, CredentialLifecycleMetadata, CredentialLifecycleSource,
-    CredentialProfileMetadata, CredentialProfiles, CredentialStore, Credentials,
+    AccessKeyProvider, AccessKeyRefreshKeypair, AccessKeyRefreshProvider, CredentialKind,
+    CredentialLifecycleMetadata, CredentialLifecycleSource, CredentialProfileMetadata,
+    CredentialProfiles, CredentialStore, Credentials,
 };
 use httpmock::MockServer;
 use httpmock::prelude::*;
@@ -4181,6 +4182,23 @@ fn auth_login_access_key_message_saves_redacted_credentials() -> anyhow::Result<
         Some(1_710_000_000_000)
     );
     assert_eq!(access_key_metadata.refresh_token_present, Some(true));
+    assert_eq!(
+        access_key_metadata.access_key_provider,
+        Some(AccessKeyProvider::BalhBiliplus)
+    );
+    let secrets = store.load_profiles()?.profile_secrets("default")?;
+    let secret = secrets
+        .access_key_provider(AccessKeyProvider::BalhBiliplus)
+        .ok_or_else(|| anyhow::anyhow!("missing BALH/BiliPlus access-key provider secret"))?;
+    assert_eq!(secret.refresh_token.as_deref(), Some("REFRESH_SECRET"));
+    assert_eq!(
+        secret.refresh_provider,
+        Some(AccessKeyRefreshProvider::BilibiliMainOauth2)
+    );
+    assert_eq!(
+        secret.refresh_keypair,
+        Some(AccessKeyRefreshKeypair::BiliTv)
+    );
     Ok(())
 }
 
@@ -4238,6 +4256,19 @@ fn auth_login_access_key_callback_url_saves_selected_profile() -> anyhow::Result
         Some(CredentialLifecycleSource::AccessKeyLogin)
     );
     assert_eq!(access_key_metadata.refresh_token_present, Some(true));
+    assert_eq!(
+        access_key_metadata.access_key_provider,
+        Some(AccessKeyProvider::BalhBiliplus)
+    );
+    let secrets = store.load_profiles()?.profile_secrets("intl")?;
+    let secret = secrets
+        .access_key_provider(AccessKeyProvider::BalhBiliplus)
+        .ok_or_else(|| anyhow::anyhow!("missing BALH/BiliPlus access-key provider secret"))?;
+    assert_eq!(secret.refresh_token.as_deref(), Some("PROFILE_REFRESH"));
+    assert_eq!(
+        secret.refresh_provider,
+        Some(AccessKeyRefreshProvider::BilibiliMainOauth2)
+    );
     let acquired_at = access_key_metadata
         .acquired_at_unix_millis
         .ok_or_else(|| anyhow::anyhow!("missing access-key acquired_at metadata"))?;
@@ -4380,7 +4411,18 @@ fn auth_renew_access_key_reauthorizes_and_saves_redacted_credentials() -> anyhow
         Some(CredentialLifecycleSource::AccessKeyLogin)
     );
     assert_eq!(access_key_metadata.refresh_token_present, Some(true));
+    assert_eq!(
+        access_key_metadata.access_key_provider,
+        Some(AccessKeyProvider::BalhBiliplus)
+    );
     assert!(access_key_metadata.acquired_at_unix_millis.is_some());
+    let secrets = store.load_profiles()?.profile_secrets("intl")?;
+    let secret = secrets
+        .access_key_provider(AccessKeyProvider::BalhBiliplus)
+        .ok_or_else(|| {
+            anyhow::anyhow!("missing renewed BALH/BiliPlus access-key provider secret")
+        })?;
+    assert_eq!(secret.refresh_token.as_deref(), Some("NEW_REFRESH_SECRET"));
     Ok(())
 }
 
