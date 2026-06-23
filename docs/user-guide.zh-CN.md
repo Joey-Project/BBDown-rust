@@ -376,8 +376,8 @@ provider metadata 的旧版 profile 会让位给 TV key。
 restricted-area proxy fallback 只会在当前输入可能触发 fallback 且已配置通用 `access_key` 时检查
 该 token；缺失通用 key 不会阻断自带认证或允许匿名 fallback 的 restricted-area proxy URL。
 intl/Bstar episode 的 media path 会要求官方 intl metadata、playurl 和 subtitle 请求实际使用的通用
-`access_key`；cover-only 或 danmaku-only download 这类不会调用受保护 intl path 的模式会跳过该
-preflight。短链会先解析为最终支持的 input kind，再做这个判断。intl/Bstar 和 PUGV/cheese
+`access_key`。即使是 cover-only 或 danmaku-only 的 intl episode download，也会检查这个 token，
+因为它们仍然必须先解析受保护的官方 metadata，才能决定要写入哪些 sidecar。短链会先解析为最终支持的 input kind，再做这个判断。intl/Bstar 和 PUGV/cheese
 这类固定来源输入不会继承全局 TV/APP playurl credential requirement。
 `download --only subtitle|danmaku|cover` 会跳过 TV/APP/restricted-proxy stream preflight，因为这些模式
 不会解析 media stream。`warn` 会把 diagnostic 写到 stderr 并继续；`fail` 会在缺少 required credential 或相关

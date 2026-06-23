@@ -172,8 +172,8 @@ superseded_by:
   - If initial archive planning fails with an auth-like credential error before duplicate preflight
     can be inspected, the CLI refreshes a ready generic access key and retries planning once,
     including when local lifecycle metadata had still considered the key fresh.
-  - Sidecar-only cover/danmaku downloads skip playurl credential preflight so stale WEB cookie
-    metadata does not block operations that do not fetch playurl streams.
+  - Sidecar-only cover/danmaku downloads skip TV/APP/restricted-proxy stream preflight so stale WEB
+    cookie metadata does not block operations that do not fetch playurl streams.
   - Authenticated feed inputs such as history, watch-later, following, and space dynamic now add a
     required WEB cookie preflight requirement before hitting account-scoped WEB APIs.
   - Stale optional WEB playurl cookie metadata is warning-only rather than blocking in `fail`, so
@@ -319,17 +319,21 @@ superseded_by:
     `--on-duplicate cancel` now re-enters the CLI cancel-report path instead of letting the library
     executor convert it into an error.
   - Current-head review fixes after GitHub Codex review:
-    - Metadata-only intl/Bstar downloads such as `download --only cover` no longer trigger required
-      intl generic access-key preflight.
+    - Metadata-only intl/Bstar downloads such as `download --only cover` still trigger required
+      intl generic access-key preflight because the protected official metadata request runs before
+      sidecar selection.
     - Selection-required inputs (`ss`, `md`, and cheese season links without `--select`) now fail
       before credential preflight can refresh or rewrite stored credentials.
     - APP playurl access-key selection now accepts access-key provider metadata, so intl OAuth
       generic keys do not preempt a usable TV token.
+    - Archive forced-refresh retry no longer refreshes generic `access_key` when an authenticated
+      feed request is missing a usable WEB cookie.
   - Added mock e2e coverage for these review follow-ups:
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_progress_json_cancel_suppresses_plaintext_preflight --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_reruns_duplicate_preflight_after_deferred_refresh --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e playback_app_uses_tv_access_key_when_generic_key_is_intl_provider --locked`.
-    - `cargo test -p bbdown-cli --test cli_e2e download_only_cover_skips_intl_access_key_credential_preflight --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_only_cover_checks_intl_access_key_credential_preflight --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_generic_key_for_authenticated_feed_cookie_failure --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e plan_selection_required_input_fails_before_credential_preflight_renewal --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_cancel_reports_duplicate_after_deferred_refresh --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_for_generic_api_bad_request --locked`.

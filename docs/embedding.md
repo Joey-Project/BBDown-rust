@@ -292,10 +292,10 @@ anonymously and should not add that required-cookie preflight. Restricted-area p
 treats the generic `access_key` as optional: present keys are checked and may be forwarded by the
 resolver, but missing keys do not block proxy URLs that authenticate themselves or allow anonymous fallback.
 Intl/Bstar episode media paths require the generic `access_key` used by official intl metadata,
-playurl, and subtitle requests; cover-only or danmaku-only paths that do not call protected intl
-requests should skip that preflight. Fixed-source inputs such as intl/Bstar and PUGV/cheese should
-not inherit a caller's global TV/APP playurl credential requirements, and sidecar-only modes should
-skip media-stream preflight.
+playurl, and subtitle requests. Cover-only and danmaku-only intl episode paths should still include
+that requirement because they resolve protected official metadata before writing sidecars.
+Fixed-source inputs such as intl/Bstar and PUGV/cheese should not inherit a caller's global TV/APP
+playurl credential requirements, and sidecar-only modes should skip media-stream preflight.
 The report is a pure value: it lists requirement statuses, warnings/blockers, and the selected
 profile's `AccessKeyRenewalDecision`, but it never mutates credential storage. When embedders accept
 short links, normalize them with

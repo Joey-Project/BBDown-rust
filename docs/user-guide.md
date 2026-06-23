@@ -422,8 +422,9 @@ generic keys are checked before TV keys, while `bili_intl_oauth2` keys and legac
 provider metadata yield to TV keys. Restricted-area proxy fallback checks generic `access_key` only when that key is configured for
 an input where proxy fallback may run. Missing generic keys do not block restricted-area proxy URLs
 that authenticate themselves or allow anonymous fallback. Intl/Bstar episode media paths require the
-generic `access_key` used by the official intl metadata, playurl, and subtitle requests; modes that
-do not call those protected paths, such as cover-only or danmaku-only downloads, skip that preflight.
+generic `access_key` used by the official intl metadata, playurl, and subtitle requests. Even
+cover-only and danmaku-only intl episode downloads check this token because they must resolve the
+protected official metadata before deciding which sidecars to write.
 Short links are resolved to their final supported input kind before this decision. Fixed-source
 inputs such as intl/Bstar and PUGV/cheese do not inherit the global TV/APP playurl credential
 requirements.

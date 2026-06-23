@@ -1456,13 +1456,11 @@ fn media_preflight_context_can_refresh_generic_access_key(
     let report = CredentialPreflightReport::evaluate(
         CredentialPreflightMode::Warn,
         status,
-        credential_preflight_requirements_for_media_paths(
-            context.playurl_mode,
-            &client_runtime.restricted_area,
-            context.restricted_area_proxy_may_run,
-            context.intl_access_key_may_run,
-        ),
+        credential_preflight_requirements_for_context(context, client_runtime),
     );
+    if authenticated_web_api_cookie_unsatisfied(&report) {
+        return false;
+    }
     if app_playurl_selected_tv_access_key(&report)
         && app_playurl_auth_failure_may_have_used_selected_tv_access_key(failure)
     {
@@ -1471,6 +1469,13 @@ fn media_preflight_context_can_refresh_generic_access_key(
     report.requirements.iter().any(|requirement| {
         requirement.selected_kind == Some(CredentialKind::AccessKey)
             && requirement.selected_status != CredentialLifecycleStatus::Missing
+    })
+}
+
+fn authenticated_web_api_cookie_unsatisfied(report: &CredentialPreflightReport) -> bool {
+    report.requirements.iter().any(|requirement| {
+        requirement.request_path == CredentialPreflightRequestPath::AuthenticatedWebApi
+            && !requirement.satisfied
     })
 }
 
@@ -1503,20 +1508,27 @@ fn credential_preflight_report(
     let status = statuses
         .pop()
         .context("failed to evaluate selected credential profile")?;
-    let mut requirements = credential_preflight_requirements_for_media_paths(
-        media_preflight_context.playurl_mode,
-        &client_runtime.restricted_area,
-        media_preflight_context.restricted_area_proxy_may_run,
-        media_preflight_context.intl_access_key_may_run,
-    );
-    if media_preflight_context.web_cookie_required {
-        requirements.push(CredentialPreflightRequirement::authenticated_web_api_cookie());
-    }
     Ok(CredentialPreflightReport::evaluate(
         credential_preflight.mode,
         &status,
-        requirements,
+        credential_preflight_requirements_for_context(media_preflight_context, client_runtime),
     ))
+}
+
+fn credential_preflight_requirements_for_context(
+    context: &MediaCredentialPreflightContext,
+    client_runtime: &ClientRuntimeConfig,
+) -> Vec<CredentialPreflightRequirement> {
+    let mut requirements = credential_preflight_requirements_for_media_paths(
+        context.playurl_mode,
+        &client_runtime.restricted_area,
+        context.restricted_area_proxy_may_run,
+        context.intl_access_key_may_run,
+    );
+    if context.web_cookie_required {
+        requirements.push(CredentialPreflightRequirement::authenticated_web_api_cookie());
+    }
+    requirements
 }
 
 #[derive(Clone, Debug)]
@@ -1604,14 +1616,8 @@ fn input_requires_web_cookie(input: &Input) -> bool {
     )
 }
 
-fn download_mode_may_use_intl_access_key(mode: DownloadMode) -> bool {
-    matches!(
-        mode,
-        DownloadMode::All
-            | DownloadMode::VideoOnly
-            | DownloadMode::AudioOnly
-            | DownloadMode::SubtitleOnly
-    )
+fn download_mode_may_use_intl_access_key(_mode: DownloadMode) -> bool {
+    true
 }
 
 async fn try_access_key_auto_refresh_for_preflight(
@@ -4699,22 +4705,24 @@ mod tests {
         DuplicateDecisionRequest, DuplicatePromptActiveGuard, SingleDownloadValidationArgs,
         SubtitleAiPolicyArg, access_key_lifecycle_metadata, access_key_provider_secret,
         archive_sidecar_path, credential_profile_selection, download_ctrl_c_action,
-        duplicate_decision_or_report, endpoints_from_cli, ensure_access_key_login_file_is_safe,
-        ensure_access_key_login_stdin_is_safe, ensure_archive_file_is_not_output_root,
-        input_may_use_intl_access_key, input_may_use_restricted_area_proxy,
-        input_media_preflight_playurl_mode, input_requires_web_cookie, next_poll_sleep,
-        parse_access_key_login_input, plan_failure_may_be_credential_related,
-        qr_login_lifecycle_metadata, remaining_until, restricted_area_from_cli_with_args,
-        restricted_area_from_cli_with_env_values, save_credentials,
-        save_credentials_with_lifecycle, save_credentials_with_lifecycle_and_secrets,
-        should_prompt_duplicate_decision, validate_media_host_spec, validate_single_download_args,
+        download_mode_may_use_intl_access_key, duplicate_decision_or_report, endpoints_from_cli,
+        ensure_access_key_login_file_is_safe, ensure_access_key_login_stdin_is_safe,
+        ensure_archive_file_is_not_output_root, input_may_use_intl_access_key,
+        input_may_use_restricted_area_proxy, input_media_preflight_playurl_mode,
+        input_requires_web_cookie, next_poll_sleep, parse_access_key_login_input,
+        plan_failure_may_be_credential_related, qr_login_lifecycle_metadata, remaining_until,
+        restricted_area_from_cli_with_args, restricted_area_from_cli_with_env_values,
+        save_credentials, save_credentials_with_lifecycle,
+        save_credentials_with_lifecycle_and_secrets, should_prompt_duplicate_decision,
+        validate_media_host_spec, validate_single_download_args,
     };
     use bbdown_core::{
         AccessKeyLoginConfig, AccessKeyLoginCredentials, AccessKeyProvider,
         AccessKeyRefreshKeypair, AccessKeyRefreshProvider, CredentialKind,
         CredentialLifecycleMetadata, CredentialLifecycleSource, CredentialProfileSelection,
-        CredentialStore, Credentials, DownloadCancellationToken, DownloadOutputConflict,
-        DownloadPreflight, DuplicateDecision, EndpointConfig, Input, PlayurlMode, QrLoginKind,
+        CredentialStore, Credentials, DownloadCancellationToken, DownloadMode,
+        DownloadOutputConflict, DownloadPreflight, DuplicateDecision, EndpointConfig, Input,
+        PlayurlMode, QrLoginKind,
     };
     use clap::Parser as _;
     use std::fs;
@@ -4805,6 +4813,20 @@ mod tests {
             input_media_preflight_playurl_mode(&Input::Aid(170_001), PlayurlMode::App),
             Some(PlayurlMode::App)
         );
+    }
+
+    #[test]
+    fn all_download_modes_may_need_intl_metadata_access_key() {
+        for mode in [
+            DownloadMode::All,
+            DownloadMode::VideoOnly,
+            DownloadMode::AudioOnly,
+            DownloadMode::SubtitleOnly,
+            DownloadMode::DanmakuOnly,
+            DownloadMode::CoverOnly,
+        ] {
+            assert!(download_mode_may_use_intl_access_key(mode));
+        }
     }
 
     #[test]
