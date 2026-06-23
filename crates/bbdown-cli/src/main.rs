@@ -10,17 +10,17 @@ use bbdown_core::{
     ClientConfig, CredentialHealthReport, CredentialHealthScope, CredentialHealthStatus,
     CredentialHealthSummaryStatus, CredentialKind, CredentialLifecycleMetadata,
     CredentialLifecyclePolicy, CredentialLifecycleSource, CredentialLifecycleStatus,
-    CredentialPreflightMode, CredentialPreflightReport, CredentialPreflightRequirement,
-    CredentialProfileLifecycleStatus, CredentialProfileSelection, CredentialProfiles,
-    CredentialStore, Credentials, DanmakuFormat, DanmakuUpdateOptions, DownloadArchive,
-    DownloadCancellationToken, DownloadMode, DownloadOptions, DownloadPathTemplates, DownloadPlan,
-    DownloadPreflight, DownloadProgressEvent, DownloadProgressSink, DownloadReport,
-    DuplicateDecision, EndpointConfig, Input, MediaHostOptions, MediaStream, MuxOptions,
-    PlaybackPlan, PlayurlMode, QrLoginKind, QrLoginState, QrLoginTicket, QrLoginTicketOutput,
-    ResolvedContent, RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy,
-    RestrictedAreaProxyKind, RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet,
-    SubtitleAiPolicy, archive_entry_allows_danmaku_update,
-    credential_preflight_requirements_for_media_paths,
+    CredentialPreflightMode, CredentialPreflightReport, CredentialPreflightRequestPath,
+    CredentialPreflightRequirement, CredentialProfileLifecycleStatus, CredentialProfileSelection,
+    CredentialProfiles, CredentialStore, Credentials, DanmakuFormat, DanmakuUpdateOptions,
+    DownloadArchive, DownloadCancellationToken, DownloadMode, DownloadOptions,
+    DownloadPathTemplates, DownloadPlan, DownloadPreflight, DownloadProgressEvent,
+    DownloadProgressSink, DownloadReport, DuplicateDecision, EndpointConfig, Input,
+    MediaHostOptions, MediaStream, MuxOptions, PlaybackPlan, PlayurlMode, QrLoginKind,
+    QrLoginState, QrLoginTicket, QrLoginTicketOutput, ResolvedContent, RestrictedArea,
+    RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection,
+    StreamQuality, StreamSelection, StreamSet, SubtitleAiPolicy,
+    archive_entry_allows_danmaku_update, credential_preflight_requirements_for_media_paths,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::ffi::{OsStr, OsString};
@@ -1405,6 +1405,7 @@ async fn try_forced_access_key_refresh_for_archive_retry(
     client_runtime: &ClientRuntimeConfig,
     credential_preflight: &CredentialPreflightRuntimeConfig,
     prepared: &mut PreparedMediaRequest,
+    failure: &bbdown_core::Error,
     emit_diagnostics: bool,
 ) -> anyhow::Result<bool> {
     if credential_preflight.mode != CredentialPreflightMode::Renew {
@@ -1413,15 +1414,20 @@ async fn try_forced_access_key_refresh_for_archive_retry(
     let Some(context) = prepared.media_preflight_context.as_ref() else {
         return Ok(false);
     };
-    if !media_preflight_context_may_use_generic_access_key(context, client_runtime) {
-        return Ok(false);
-    }
     let policy = credential_preflight.policy();
     let (profiles, _selected_profile, mut statuses) =
         lifecycle_statuses_for_selection(credential_runtime, false, &policy)?;
     let status = statuses
         .pop()
         .context("failed to evaluate selected credential profile")?;
+    if !media_preflight_context_can_refresh_generic_access_key(
+        context,
+        client_runtime,
+        &status,
+        failure,
+    ) {
+        return Ok(false);
+    }
     let decision = AccessKeyRenewalDecision::from_profile_status(&status, true);
     if decision.automatic_refresh_readiness != AccessKeyAutomaticRefreshReadiness::Ready {
         return Ok(false);
@@ -1441,22 +1447,48 @@ async fn try_forced_access_key_refresh_for_archive_retry(
     Ok(refreshed)
 }
 
-fn media_preflight_context_may_use_generic_access_key(
+fn media_preflight_context_can_refresh_generic_access_key(
     context: &MediaCredentialPreflightContext,
     client_runtime: &ClientRuntimeConfig,
+    status: &CredentialProfileLifecycleStatus,
+    failure: &bbdown_core::Error,
 ) -> bool {
-    credential_preflight_requirements_for_media_paths(
-        context.playurl_mode,
-        &client_runtime.restricted_area,
-        context.restricted_area_proxy_may_run,
-        context.intl_access_key_may_run,
-    )
-    .iter()
-    .any(|requirement| {
-        requirement
-            .credential_kinds
-            .contains(&CredentialKind::AccessKey)
+    let report = CredentialPreflightReport::evaluate(
+        CredentialPreflightMode::Warn,
+        status,
+        credential_preflight_requirements_for_media_paths(
+            context.playurl_mode,
+            &client_runtime.restricted_area,
+            context.restricted_area_proxy_may_run,
+            context.intl_access_key_may_run,
+        ),
+    );
+    if app_playurl_selected_tv_access_key(&report)
+        && app_playurl_auth_failure_may_have_used_selected_tv_access_key(failure)
+    {
+        return false;
+    }
+    report.requirements.iter().any(|requirement| {
+        requirement.selected_kind == Some(CredentialKind::AccessKey)
+            && requirement.selected_status != CredentialLifecycleStatus::Missing
     })
+}
+
+fn app_playurl_selected_tv_access_key(report: &CredentialPreflightReport) -> bool {
+    report.requirements.iter().any(|requirement| {
+        requirement.request_path == CredentialPreflightRequestPath::AppPlayurl
+            && requirement.selected_kind == Some(CredentialKind::TvAccessKey)
+    })
+}
+
+fn app_playurl_auth_failure_may_have_used_selected_tv_access_key(
+    failure: &bbdown_core::Error,
+) -> bool {
+    matches!(
+        failure,
+        bbdown_core::Error::Api { code, message }
+            if matches!(*code, 7 | 16) && auth_like_failure_message(message)
+    )
 }
 
 fn credential_preflight_report(
@@ -2188,6 +2220,7 @@ async fn plan_archive_download_with_deferred_retry_or_report(
                     runtime.client_runtime,
                     runtime.credential_preflight,
                     prepared,
+                    &error,
                     !args.progress_json,
                 )
                 .await
