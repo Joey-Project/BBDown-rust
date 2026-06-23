@@ -478,6 +478,92 @@ fn plan_credential_preflight_fail_blocks_missing_cookie_for_history() -> anyhow:
 }
 
 #[test]
+fn plan_credential_preflight_renew_skips_access_key_refresh_when_required_cookie_is_missing()
+-> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    save_lifecycle_cli_profiles_with_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(1_000)
+            .with_expires_at_unix_millis(2_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    )?;
+    let refresh = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "refresh_token": "AUTO_REFRESH_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+    let history = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/history/cursor")
+            .header_missing("cookie");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -101,
+            "message": "not logged in"
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--playurl-mode")
+        .arg("app")
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("plan")
+        .arg("history")
+        .arg("--select")
+        .arg("latest")
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(stderr.contains("authenticated WEB API requires cookie"));
+    assert!(!stderr.contains("credential preflight: access_key refreshed"));
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load_profile("intl")?
+            .access_key
+            .as_deref(),
+        Some("ACCESS_SECRET")
+    );
+    refresh.assert_calls(0);
+    history.assert_calls(1);
+    Ok(())
+}
+
+#[test]
 fn plan_credential_preflight_fail_allows_public_space_dynamic_without_cookie() -> anyhow::Result<()>
 {
     let server = MockServer::start();
@@ -3207,14 +3293,46 @@ fn download_only_cover_skips_playurl_credential_preflight() -> anyhow::Result<()
 }
 
 #[test]
-fn download_only_cover_checks_intl_access_key_credential_preflight() -> anyhow::Result<()> {
+fn download_only_cover_skips_intl_access_key_credential_preflight() -> anyhow::Result<()> {
+    let server = MockServer::start();
     let temp = tempfile::tempdir()?;
     let credential_file = temp.path().join("credentials.json");
     let output_dir = temp.path().join("downloads");
+    let cover_url = format!("{}/intl-cover.jpg", server.base_url());
+    let season = server.mock(|when, then| {
+        when.method(GET)
+            .path("/intl/gateway/v2/ogv/view/app/season")
+            .query_param("ep_id", "341736")
+            .query_param("platform", "android")
+            .query_param("s_locale", "zh_SG")
+            .query_param("mobi_app", "bstar_a")
+            .query_param_missing("access_key");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "result": {
+                "season_id": 34613,
+                "title": "Intl Season",
+                "cover": cover_url,
+                "modules": [{
+                    "data": {
+                        "episodes": [
+                            {"aid": 7, "cid": 70, "id": 341_736, "title": "1", "long_title": "Start"}
+                        ]
+                    }
+                }]
+            }
+        }));
+    });
+    let cover = server.mock(|when, then| {
+        when.method(GET).path("/intl-cover.jpg");
+        then.status(200).body("intl cover");
+    });
 
     let output = bbdown_command()?
         .arg("--credential-file")
         .arg(&credential_file)
+        .arg("--intl-base")
+        .arg(server.base_url())
         .arg("--credential-preflight")
         .arg("fail")
         .arg("download")
@@ -3225,14 +3343,17 @@ fn download_only_cover_checks_intl_access_key_credential_preflight() -> anyhow::
         .arg("cover")
         .arg("--json")
         .assert()
-        .failure()
+        .success()
         .get_output()
         .clone();
-    let stderr = String::from_utf8(output.stderr)?;
+    let json: Value = serde_json::from_slice(&output.stdout)?;
 
-    assert!(output.stdout.is_empty());
-    assert!(stderr.contains("credential preflight failed"));
-    assert!(stderr.contains("intl playurl requires access_key"));
+    assert_eq!(
+        fs::read_to_string(downloaded_file_path(&json, "cover")?)?,
+        "intl cover"
+    );
+    season.assert_calls(1);
+    cover.assert_calls(1);
     Ok(())
 }
 
@@ -3933,7 +4054,8 @@ fn download_archive_does_not_complete_deferred_refresh_for_authenticated_feed_co
 
 #[test]
 #[allow(clippy::too_many_lines)]
-fn download_archive_does_not_refresh_for_optional_web_api_login_failure() -> anyhow::Result<()> {
+fn download_archive_does_not_refresh_for_optional_web_api_auth_like_failure() -> anyhow::Result<()>
+{
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;
     let credential_file = temp.path().join("credentials.json");
@@ -3968,8 +4090,8 @@ fn download_archive_does_not_refresh_for_optional_web_api_login_failure() -> any
             .query_param("platform", "web")
             .header("cookie", "SESSDATA=COOKIE_SECRET");
         then.status(200).json_body_obj(&serde_json::json!({
-            "code": -101,
-            "message": "not logged in"
+            "code": -403,
+            "message": "unauthorized"
         }));
     });
     let refresh_mock = server.mock(|when, then| {
@@ -4019,7 +4141,7 @@ fn download_archive_does_not_refresh_for_optional_web_api_login_failure() -> any
         .clone();
     let stderr = String::from_utf8(output.stderr)?;
 
-    assert!(stderr.contains("not logged in"));
+    assert!(stderr.contains("unauthorized"));
     assert_eq!(
         CredentialStore::new(credential_file)
             .load_profile("intl")?

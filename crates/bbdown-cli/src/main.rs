@@ -1647,8 +1647,14 @@ fn input_requires_web_cookie(input: &Input) -> bool {
     )
 }
 
-fn download_mode_may_use_intl_access_key(_mode: DownloadMode) -> bool {
-    true
+fn download_mode_may_use_intl_access_key(mode: DownloadMode) -> bool {
+    matches!(
+        mode,
+        DownloadMode::All
+            | DownloadMode::VideoOnly
+            | DownloadMode::AudioOnly
+            | DownloadMode::SubtitleOnly
+    )
 }
 
 async fn try_access_key_auto_refresh_for_preflight(
@@ -2324,8 +2330,7 @@ fn plan_failure_may_be_credential_related(error: &bbdown_core::Error) -> bool {
 }
 
 fn api_failure_may_be_credential_related(code: i64, message: &str) -> bool {
-    (code == -101 && access_key_specific_failure_message(message))
-        || (matches!(code, -400 | -403 | 7 | 16) && auth_like_failure_message(message))
+    matches!(code, -101 | -400 | -403 | 7 | 16) && access_key_specific_failure_message(message)
 }
 
 fn http_status_failure_may_be_credential_related(status: u16, message: &str) -> bool {
@@ -2382,10 +2387,11 @@ fn restricted_area_resolver_failure_may_be_credential_related(message: &str) -> 
     lower.contains("restricted-area resolver failed")
         && ((lower.contains("api code -101")
             && (access_key_specific_failure_message(&lower) || lower.contains("pgcproxy")))
-            || (lower.contains("api code -403") && auth_like_failure_message(&lower))
-            || (lower.contains("api code -400") && auth_like_failure_message(&lower))
-            || (lower.contains("api code 7") && auth_like_failure_message(&lower))
-            || (lower.contains("api code 16") && auth_like_failure_message(&lower))
+            || ((lower.contains("api code -403")
+                || lower.contains("api code -400")
+                || lower.contains("api code 7")
+                || lower.contains("api code 16"))
+                && access_key_specific_failure_message(&lower))
             || ((lower.contains("401") || lower.contains("403") || lower.contains("unauthorized"))
                 && access_key_refresh_failure_message(&lower)))
 }
@@ -4889,16 +4895,17 @@ mod tests {
     }
 
     #[test]
-    fn all_download_modes_may_need_intl_metadata_access_key() {
+    fn only_media_and_subtitle_download_modes_may_need_intl_access_key() {
         for mode in [
             DownloadMode::All,
             DownloadMode::VideoOnly,
             DownloadMode::AudioOnly,
             DownloadMode::SubtitleOnly,
-            DownloadMode::DanmakuOnly,
-            DownloadMode::CoverOnly,
         ] {
             assert!(download_mode_may_use_intl_access_key(mode));
+        }
+        for mode in [DownloadMode::DanmakuOnly, DownloadMode::CoverOnly] {
+            assert!(!download_mode_may_use_intl_access_key(mode));
         }
     }
 
@@ -4934,7 +4941,13 @@ mod tests {
                 message: "unauthorized access token".to_owned(),
             }
         ));
-        assert!(plan_failure_may_be_credential_related(
+        assert!(!plan_failure_may_be_credential_related(
+            &bbdown_core::Error::Api {
+                code: -403,
+                message: "unauthorized".to_owned(),
+            }
+        ));
+        assert!(!plan_failure_may_be_credential_related(
             &bbdown_core::Error::Api {
                 code: -400,
                 message: "auth failed".to_owned(),
@@ -4982,6 +4995,11 @@ mod tests {
         assert!(!plan_failure_may_be_credential_related(
             &bbdown_core::Error::AccessRestricted(
                 "restricted-area resolver failed for hk: API code -101: not logged in".to_owned(),
+            )
+        ));
+        assert!(!plan_failure_may_be_credential_related(
+            &bbdown_core::Error::AccessRestricted(
+                "restricted-area resolver failed for hk: API code -403: unauthorized".to_owned(),
             )
         ));
         assert!(plan_failure_may_be_credential_related(

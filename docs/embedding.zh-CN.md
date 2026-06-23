@@ -270,9 +270,10 @@ playurl 要求 `tv_access_key`；APP playurl 接受 `tv_access_key` 或通用 `a
 `CredentialPreflightRequirement::authenticated_web_api_cookie()`；公开的 space dynamic 页面可以匿名访问，
 不应加入这个 required-cookie preflight。restricted-area proxy fallback
 会把通用 `access_key` 视为 optional：已存在的 key 会被检查并可能由 resolver 转发，缺失 key 不会阻断
-自带认证或允许匿名 fallback 的 proxy URL。intl/Bstar episode 的 media path 会要求官方 intl
-metadata、playurl 和 subtitle 请求实际使用的通用 `access_key`。cover-only 和 danmaku-only 的
-intl episode path 仍应包含这个 requirement，因为它们写入 sidecar 前也要解析受保护的官方 metadata。
+自带认证或允许匿名 fallback 的 proxy URL。intl/Bstar episode 的 media 和 subtitle path 会要求官方
+intl metadata、playurl 和 subtitle 请求实际使用的通用 `access_key`。cover-only 和 danmaku-only 的
+intl episode path 应跳过这个 access-key requirement，因为它们只需要 metadata 和 sidecar endpoint；
+如果 profile 里存在 access key，metadata 请求仍可带上它。
 intl/Bstar 和 PUGV/cheese 这类固定来源输入不应继承调用方的全局 TV/APP playurl credential
 requirement，sidecar-only mode 也应跳过 media-stream preflight。
 这个 report 是纯值：它会列出 requirement status、warning/blocker，以及当前所选

@@ -319,9 +319,9 @@ superseded_by:
     `--on-duplicate cancel` now re-enters the CLI cancel-report path instead of letting the library
     executor convert it into an error.
   - Current-head review fixes after GitHub Codex review:
-    - Metadata-only intl/Bstar downloads such as `download --only cover` still trigger required
-      intl generic access-key preflight because the protected official metadata request runs before
-      sidecar selection.
+    - Metadata-only intl/Bstar downloads such as `download --only cover` and `download --only danmaku`
+      now skip required intl generic access-key preflight; media and subtitle modes still preflight
+      the generic key because they request intl playurl or subtitle endpoints.
     - Selection-required inputs (`ss`, `md`, and cheese season links without `--select`) now fail
       before credential preflight can refresh or rewrite stored credentials.
     - APP playurl access-key selection now accepts access-key provider metadata, so intl OAuth
@@ -336,21 +336,25 @@ superseded_by:
     - Authenticated WEB feed `-101 not logged in` failures are now attributed to the WEB cookie path
       for history/watch-later/following inputs, so archive deferred or forced access-key retry does
       not refresh and persist a generic `access_key` when the selected profile's cookie was rejected.
-    - Generic API `-101` failures now require explicit access-key, access-token, or credential
-      wording before archive retry refreshes a generic `access_key`, so private favorite or other
-      optional-cookie WEB API login failures do not mutate stored tokens; restricted-area PgcProxy
-      `-101` remains refreshable because that resolver path is access-key-bearing even after
-      diagnostics redact token wording.
+    - Generic API `-101`, `-400`, `-403`, `7`, and `16` failures now require explicit access-key,
+      access-token, or credential wording before archive retry refreshes a generic `access_key`, so
+      private favorite or other optional-cookie WEB API login/auth failures do not mutate stored
+      tokens; restricted-area PgcProxy `-101` remains refreshable because that resolver path is
+      access-key-bearing even after diagnostics redact token wording.
+    - Immediate credential preflight renewal now skips generic access-key refresh when the same
+      report still has an unsatisfied required non-access-key requirement, such as missing WEB
+      cookies for history/watch-later/following inputs.
     - Crate-local README files now document the provider-aware APP credential order for embedders,
       matching the top-level and embedding docs.
   - Added mock e2e coverage for these review follow-ups:
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_progress_json_cancel_suppresses_plaintext_preflight --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_reruns_duplicate_preflight_after_deferred_refresh --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e playback_app_uses_tv_access_key_when_generic_key_is_intl_provider --locked`.
-    - `cargo test -p bbdown-cli --test cli_e2e download_only_cover_checks_intl_access_key_credential_preflight --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_only_cover_skips_intl_access_key_credential_preflight --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e plan_credential_preflight_renew_skips_access_key_refresh_when_required_cookie_is_missing --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_generic_key_for_authenticated_feed_cookie_failure --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_complete_deferred_refresh_for_authenticated_feed_cookie_failure --locked`.
-    - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_for_optional_web_api_login_failure --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_for_optional_web_api_auth_like_failure --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e plan_selection_required_input_fails_before_credential_preflight_renewal --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_cancel_reports_duplicate_after_deferred_refresh --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_for_generic_api_bad_request --locked`.
