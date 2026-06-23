@@ -5,9 +5,25 @@ use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const DEFAULT_CREDENTIAL_PROFILE: &str = "default";
 const CREDENTIAL_PROFILES_VERSION: u32 = 1;
+const CREDENTIAL_LOCK_STALE_AFTER_MILLIS: u64 = 30 * 60 * 1_000;
+const CREDENTIAL_LOCK_RELEASE_RETRY_MILLIS: u64 = 10;
+static CREDENTIAL_LOCK_COUNTER: AtomicU64 = AtomicU64::new(1);
+#[cfg(test)]
+static CREDENTIAL_LOCK_RELEASE_RETRY_OBSERVER: std::sync::Mutex<
+    Option<std::sync::mpsc::Sender<CredentialLockReleaseRetryEvent>>,
+> = std::sync::Mutex::new(None);
+
+#[cfg(test)]
+#[derive(Clone, Debug)]
+struct CredentialLockReleaseRetryEvent {
+    path: PathBuf,
+    token: String,
+}
 
 #[non_exhaustive]
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -1208,13 +1224,14 @@ impl CredentialStore {
     }
 
     pub fn save(&self, credentials: &Credentials) -> Result<()> {
+        let guard = self.acquire_update_lock()?;
         if self.path.exists() && self.file_uses_profiles()? {
             let mut profiles = self.load_profiles()?;
             let default_profile = profiles.default_profile.clone();
             profiles.set_profile(&default_profile, credentials.clone())?;
-            self.save_profiles(&profiles)
+            self.save_profiles_locked(&profiles, &guard)
         } else {
-            self.write_credentials(credentials)
+            self.write_credentials_locked(credentials, &guard)
         }
     }
 
@@ -1227,8 +1244,77 @@ impl CredentialStore {
     }
 
     pub fn save_profiles(&self, profiles: &CredentialProfiles) -> Result<()> {
+        let guard = self.acquire_update_lock()?;
+        self.save_profiles_locked(profiles, &guard)
+    }
+
+    pub fn update_profiles<T>(
+        &self,
+        update: impl FnOnce(&mut CredentialProfiles) -> Result<T>,
+    ) -> Result<T> {
+        let guard = self.acquire_update_lock()?;
+        let mut profiles = self.load_profiles()?;
+        let before = profiles.clone();
+        let output = update(&mut profiles)?;
+        if profiles != before {
+            self.save_profiles_locked(&profiles, &guard)?;
+        }
+        Ok(output)
+    }
+
+    pub fn update_profile(
+        &self,
+        profile: &str,
+        update: impl FnOnce(Credentials) -> Result<Credentials>,
+    ) -> Result<Credentials> {
+        let profile = normalize_profile_name(profile)?;
+        self.update_profiles(|profiles| {
+            let credentials = profiles.profile(&profile)?;
+            let updated = update(credentials)?;
+            profiles.set_profile(&profile, updated.clone())?;
+            Ok(updated)
+        })
+    }
+
+    pub fn update_selected_profile(
+        &self,
+        selection: &CredentialProfileSelection,
+        update: impl FnOnce(Credentials) -> Result<Credentials>,
+    ) -> Result<Credentials> {
+        match selection {
+            CredentialProfileSelection::Default => self.update_default_profile(update),
+            CredentialProfileSelection::Named(profile) => self.update_profile(profile, update),
+        }
+    }
+
+    fn save_profiles_locked(
+        &self,
+        profiles: &CredentialProfiles,
+        guard: &CredentialStoreUpdateLock,
+    ) -> Result<()> {
         let profiles = profiles.clone().normalize()?;
-        self.write_bytes(&serde_json::to_vec_pretty(&profiles)?)
+        self.write_bytes_locked(&serde_json::to_vec_pretty(&profiles)?, guard)
+    }
+
+    fn update_default_profile(
+        &self,
+        update: impl FnOnce(Credentials) -> Result<Credentials>,
+    ) -> Result<Credentials> {
+        let guard = self.acquire_update_lock()?;
+        if self.file_uses_profiles()? {
+            let mut profiles = self.load_profiles()?;
+            let profile = profiles.default_profile.clone();
+            let credentials = profiles.profile(&profile)?;
+            let updated = update(credentials)?;
+            profiles.set_profile(&profile, updated.clone())?;
+            self.save_profiles_locked(&profiles, &guard)?;
+            Ok(updated)
+        } else {
+            let credentials = self.load_credentials_unlocked()?;
+            let updated = update(credentials)?;
+            self.write_credentials_locked(&updated, &guard)?;
+            Ok(updated)
+        }
     }
 
     pub fn load_profile(&self, profile: &str) -> Result<Credentials> {
@@ -1246,9 +1332,8 @@ impl CredentialStore {
     }
 
     pub fn save_profile(&self, profile: &str, credentials: &Credentials) -> Result<()> {
-        let mut profiles = self.load_profiles()?;
-        profiles.set_profile(profile, credentials.clone())?;
-        self.save_profiles(&profiles)
+        self.update_profile(profile, |_| Ok(credentials.clone()))?;
+        Ok(())
     }
 
     pub fn save_selected_profile(
@@ -1263,20 +1348,36 @@ impl CredentialStore {
     }
 
     pub fn remove_profile(&self, profile: &str) -> Result<Option<Credentials>> {
+        let guard = self.acquire_update_lock()?;
         let file_uses_profiles = self.file_uses_profiles()?;
         let mut profiles = self.load_profiles()?;
         let removed = profiles.remove_profile(profile)?;
         if removed.is_some() || file_uses_profiles {
-            self.save_profiles(&profiles)?;
+            self.save_profiles_locked(&profiles, &guard)?;
         }
         Ok(removed)
     }
 
-    fn write_credentials(&self, credentials: &Credentials) -> Result<()> {
-        self.write_bytes(&serde_json::to_vec_pretty(credentials)?)
+    fn write_credentials_locked(
+        &self,
+        credentials: &Credentials,
+        guard: &CredentialStoreUpdateLock,
+    ) -> Result<()> {
+        self.write_bytes_locked(&serde_json::to_vec_pretty(credentials)?, guard)
     }
 
-    fn write_bytes(&self, bytes: &[u8]) -> Result<()> {
+    fn load_credentials_unlocked(&self) -> Result<Credentials> {
+        if !self.path.exists() {
+            return Ok(Credentials::default());
+        }
+        let raw = fs::read_to_string(&self.path)?;
+        if raw.trim().is_empty() {
+            return Ok(Credentials::default());
+        }
+        Ok(parse_credential_profiles(&raw)?.default_credentials())
+    }
+
+    fn write_bytes_locked(&self, bytes: &[u8], guard: &CredentialStoreUpdateLock) -> Result<()> {
         if let Some(parent) = self
             .path
             .parent()
@@ -1284,7 +1385,9 @@ impl CredentialStore {
         {
             fs::create_dir_all(parent)?;
         }
-        write_private_file(&self.path, bytes)
+        write_private_file(&self.path, bytes, || {
+            acquire_replace_coordination_guard(guard)
+        })
     }
 
     fn file_uses_profiles(&self) -> Result<bool> {
@@ -1299,7 +1402,38 @@ impl CredentialStore {
         Ok(is_profile_document(&value))
     }
 
+    fn acquire_update_lock(&self) -> Result<CredentialStoreUpdateLock> {
+        if let Some(parent) = self
+            .path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            fs::create_dir_all(parent)?;
+        }
+        let lock_path = private_lock_path(&self.path);
+        loop {
+            let Some(_coordination_guard) = acquire_lock_coordination_guard(&lock_path)? else {
+                return Err(Error::InvalidInput(format!(
+                    "credential store is locked by another update: {}",
+                    lock_path.display()
+                )));
+            };
+            if let Some(lock) = try_create_lock_file(&lock_path)? {
+                return Ok(lock);
+            }
+            if remove_stale_lock_file(&lock_path)? {
+                continue;
+            }
+            return Err(Error::InvalidInput(format!(
+                "credential store is locked by another update: {}",
+                lock_path.display()
+            )));
+        }
+    }
+
     pub fn clear(&self) -> Result<()> {
+        let guard = self.acquire_update_lock()?;
+        let _replace_guard = acquire_replace_coordination_guard(&guard)?;
         match fs::remove_file(&self.path) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -1310,6 +1444,81 @@ impl CredentialStore {
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
+    }
+}
+
+#[derive(Debug)]
+struct CredentialStoreUpdateLock {
+    path: PathBuf,
+    token: String,
+    coordinate_release: bool,
+}
+
+impl CredentialStoreUpdateLock {
+    fn is_current(&self) -> Result<bool> {
+        let raw = match fs::read_to_string(&self.path) {
+            Ok(raw) => raw,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(Error::Io(error)),
+        };
+        Ok(parse_lock_token(&raw) == Some(self.token.as_str()))
+    }
+
+    fn ensure_current(&self) -> Result<()> {
+        if self.is_current()? {
+            Ok(())
+        } else {
+            Err(Error::InvalidInput(format!(
+                "credential store lock was reclaimed before write: {}",
+                self.path.display()
+            )))
+        }
+    }
+}
+
+#[cfg(test)]
+fn observe_lock_release_retry(path: &Path, token: &str) {
+    let Ok(observer) = CREDENTIAL_LOCK_RELEASE_RETRY_OBSERVER.lock() else {
+        return;
+    };
+    if let Some(sender) = observer.as_ref() {
+        let _ = sender.send(CredentialLockReleaseRetryEvent {
+            path: path.to_path_buf(),
+            token: token.to_owned(),
+        });
+    }
+}
+
+impl Drop for CredentialStoreUpdateLock {
+    fn drop(&mut self) {
+        loop {
+            let _coordination_guard = if self.coordinate_release {
+                match acquire_lock_coordination_guard(&self.path) {
+                    Ok(Some(guard)) => Some(guard),
+                    Ok(None) => match self.is_current() {
+                        Ok(true) => {
+                            #[cfg(test)]
+                            observe_lock_release_retry(&self.path, &self.token);
+                            std::thread::sleep(std::time::Duration::from_millis(
+                                CREDENTIAL_LOCK_RELEASE_RETRY_MILLIS,
+                            ));
+                            continue;
+                        }
+                        Ok(false) | Err(_) => return,
+                    },
+                    Err(_) => return,
+                }
+            } else {
+                None
+            };
+            let Ok(raw) = fs::read_to_string(&self.path) else {
+                return;
+            };
+            if parse_lock_token(&raw) == Some(self.token.as_str()) {
+                let _ = fs::remove_file(&self.path);
+            }
+            return;
+        }
     }
 }
 
@@ -1348,7 +1557,11 @@ fn normalize_profile_name(name: &str) -> Result<String> {
 }
 
 #[cfg(unix)]
-fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
+fn write_private_file(
+    path: &Path,
+    bytes: &[u8],
+    acquire_replace_guard: impl FnOnce() -> Result<CredentialStoreUpdateLock>,
+) -> Result<()> {
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     let tmp_path = private_temp_path(path);
     match fs::remove_file(&tmp_path) {
@@ -1364,6 +1577,13 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
     file.write_all(bytes)?;
     file.sync_all()?;
     drop(file);
+    let _replace_guard = match acquire_replace_guard() {
+        Ok(guard) => guard,
+        Err(error) => {
+            let _ = fs::remove_file(&tmp_path);
+            return Err(error);
+        }
+    };
     fs::rename(&tmp_path, path).map_err(|error| {
         let _ = fs::remove_file(&tmp_path);
         Error::Io(error)
@@ -1381,28 +1601,384 @@ fn private_temp_path(path: &Path) -> std::path::PathBuf {
     path.with_file_name(format!(".{file_name}.tmp-{}", std::process::id()))
 }
 
+fn private_lock_path(path: &Path) -> std::path::PathBuf {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("credentials");
+    path.with_file_name(format!(".{file_name}.lock"))
+}
+
+fn reclaim_lock_path(lock_path: &Path) -> std::path::PathBuf {
+    let file_name = lock_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(".credentials.lock");
+    lock_path.with_file_name(format!("{file_name}.reclaim"))
+}
+
+fn current_unix_millis() -> u64 {
+    system_time_unix_millis(SystemTime::now())
+}
+
+fn system_time_unix_millis(time: SystemTime) -> u64 {
+    time.duration_since(UNIX_EPOCH).map_or(0, |duration| {
+        u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+    })
+}
+
+fn next_credential_lock_token(created_at_unix_millis: u64) -> String {
+    let counter = CREDENTIAL_LOCK_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{}-{created_at_unix_millis}-{counter}", std::process::id())
+}
+
+fn try_create_lock_file(lock_path: &Path) -> Result<Option<CredentialStoreUpdateLock>> {
+    try_create_lock_file_with_release_mode(lock_path, true, |file, token, created_at| {
+        writeln!(file, "token={token}")?;
+        writeln!(file, "pid={}", std::process::id())?;
+        writeln!(file, "created_at_unix_millis={created_at}")?;
+        file.sync_all()?;
+        Ok(())
+    })
+}
+
+fn try_create_coordination_lock_file(
+    lock_path: &Path,
+) -> Result<Option<CredentialStoreUpdateLock>> {
+    try_create_lock_file_with_release_mode(lock_path, false, |file, token, created_at| {
+        writeln!(file, "token={token}")?;
+        writeln!(file, "pid={}", std::process::id())?;
+        writeln!(file, "created_at_unix_millis={created_at}")?;
+        file.sync_all()?;
+        Ok(())
+    })
+}
+
+#[cfg(test)]
+fn try_create_lock_file_with_metadata_writer(
+    lock_path: &Path,
+    write_metadata: impl FnOnce(&mut fs::File, &str, u64) -> Result<()>,
+) -> Result<Option<CredentialStoreUpdateLock>> {
+    try_create_lock_file_with_release_mode(lock_path, true, write_metadata)
+}
+
+fn try_create_lock_file_with_release_mode(
+    lock_path: &Path,
+    coordinate_release: bool,
+    write_metadata: impl FnOnce(&mut fs::File, &str, u64) -> Result<()>,
+) -> Result<Option<CredentialStoreUpdateLock>> {
+    let mut options = OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    match options.open(lock_path) {
+        Ok(mut file) => {
+            let created_at = current_unix_millis();
+            let token = next_credential_lock_token(created_at);
+            let mut pending_lock = PendingCredentialStoreUpdateLock {
+                path: lock_path.to_owned(),
+                cleanup: true,
+            };
+            if let Err(error) = write_metadata(&mut file, &token, created_at) {
+                drop(file);
+                drop(pending_lock);
+                return Err(error);
+            }
+            pending_lock.cleanup = false;
+            Ok(Some(CredentialStoreUpdateLock {
+                path: lock_path.to_owned(),
+                token,
+                coordinate_release,
+            }))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(None),
+        Err(error) => Err(Error::Io(error)),
+    }
+}
+
+struct PendingCredentialStoreUpdateLock {
+    path: PathBuf,
+    cleanup: bool,
+}
+
+impl Drop for PendingCredentialStoreUpdateLock {
+    fn drop(&mut self) {
+        if self.cleanup {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
+fn acquire_lock_coordination_guard(lock_path: &Path) -> Result<Option<CredentialStoreUpdateLock>> {
+    let reclaim_lock_path = reclaim_lock_path(lock_path);
+    loop {
+        if let Some(reclaim_guard) = try_create_coordination_lock_file(&reclaim_lock_path)? {
+            return Ok(Some(reclaim_guard));
+        }
+        if remove_dead_owner_lock_file(&reclaim_lock_path)? {
+            continue;
+        }
+        if !remove_stale_lock_file(&reclaim_lock_path)? {
+            return Ok(None);
+        }
+    }
+}
+
+fn acquire_replace_coordination_guard(
+    guard: &CredentialStoreUpdateLock,
+) -> Result<CredentialStoreUpdateLock> {
+    let Some(coordination_guard) = acquire_lock_coordination_guard(&guard.path)? else {
+        return Err(Error::InvalidInput(format!(
+            "credential store lock was reclaimed before write: {}",
+            guard.path.display()
+        )));
+    };
+    guard.ensure_current()?;
+    Ok(coordination_guard)
+}
+
+fn remove_stale_lock_file(lock_path: &Path) -> Result<bool> {
+    let raw = match fs::read_to_string(lock_path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+        Err(error) => return Err(Error::Io(error)),
+    };
+    let Some(created_at) = lock_created_at_unix_millis(lock_path, &raw) else {
+        return Ok(false);
+    };
+    if current_unix_millis().saturating_sub(created_at) < CREDENTIAL_LOCK_STALE_AFTER_MILLIS {
+        return Ok(false);
+    }
+    if lock_owner_may_still_be_running(&raw) {
+        return Ok(false);
+    }
+    let expected = LockFileIdentity::from_raw(&raw);
+    remove_lock_file_if_matches(lock_path, &expected)
+}
+
+fn remove_dead_owner_lock_file(lock_path: &Path) -> Result<bool> {
+    let raw = match fs::read_to_string(lock_path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+        Err(error) => return Err(Error::Io(error)),
+    };
+    if !lock_owner_is_known_dead(&raw) {
+        return Ok(false);
+    }
+    let expected = LockFileIdentity::from_raw(&raw);
+    remove_lock_file_if_matches(lock_path, &expected)
+}
+
+enum LockFileIdentity<'a> {
+    Token(&'a str),
+    Raw(&'a str),
+}
+
+impl<'a> LockFileIdentity<'a> {
+    fn from_raw(raw: &'a str) -> Self {
+        parse_lock_token(raw).map_or(Self::Raw(raw), Self::Token)
+    }
+}
+
+fn remove_lock_file_if_matches(lock_path: &Path, expected: &LockFileIdentity<'_>) -> Result<bool> {
+    let current = match fs::read_to_string(lock_path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+        Err(error) => return Err(Error::Io(error)),
+    };
+    let matches = match expected {
+        LockFileIdentity::Token(token) => parse_lock_token(&current) == Some(*token),
+        LockFileIdentity::Raw(raw) => current == *raw,
+    };
+    if !matches {
+        return Ok(false);
+    }
+    match fs::remove_file(lock_path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(Error::Io(error)),
+    }
+}
+
+fn lock_created_at_unix_millis(lock_path: &Path, raw: &str) -> Option<u64> {
+    if let Some(created_at) = parse_lock_created_at_unix_millis(raw) {
+        return Some(created_at);
+    }
+    match fs::metadata(lock_path).and_then(|metadata| metadata.modified()) {
+        Ok(modified) => Some(system_time_unix_millis(modified)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(0),
+        Err(_) => None,
+    }
+}
+
+fn parse_lock_token(raw: &str) -> Option<&str> {
+    raw.lines()
+        .find_map(|line| line.strip_prefix("token=").map(str::trim))
+        .filter(|token| !token.is_empty())
+}
+
+fn lock_owner_may_still_be_running(raw: &str) -> bool {
+    parse_lock_owner_pid(raw).is_some_and(process_may_still_be_running)
+}
+
+fn lock_owner_is_known_dead(raw: &str) -> bool {
+    parse_lock_owner_pid(raw).is_some_and(|pid| !process_may_still_be_running(pid))
+}
+
+fn parse_lock_owner_pid(raw: &str) -> Option<u32> {
+    raw.lines().find_map(|line| {
+        line.strip_prefix("pid=")?
+            .trim()
+            .parse::<u32>()
+            .ok()
+            .filter(|pid| *pid > 0)
+    })
+}
+
+#[cfg(unix)]
+fn process_may_still_be_running(pid: u32) -> bool {
+    if pid == std::process::id() {
+        return true;
+    }
+    if Path::new("/proc").exists() {
+        return fs::metadata(format!("/proc/{pid}")).is_ok();
+    }
+    process_exists_by_kill_probe(pid).unwrap_or(true)
+}
+
+#[cfg(unix)]
+fn process_exists_by_kill_probe(pid: u32) -> Option<bool> {
+    let output = std::process::Command::new("/bin/kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .env("LC_ALL", "C")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .or_else(|_| {
+            std::process::Command::new("kill")
+                .arg("-0")
+                .arg(pid.to_string())
+                .env("LC_ALL", "C")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::piped())
+                .output()
+        })
+        .ok()?;
+    if output.status.success() {
+        return Some(true);
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).to_ascii_lowercase();
+    if stderr.contains("no such process")
+        || stderr.contains("invalid process")
+        || stderr.contains("illegal process")
+    {
+        Some(false)
+    } else {
+        Some(true)
+    }
+}
+
+#[cfg(windows)]
+fn process_may_still_be_running(pid: u32) -> bool {
+    if pid == std::process::id() {
+        return true;
+    }
+    process_exists_by_tasklist(pid).unwrap_or(true)
+}
+
+#[cfg(windows)]
+fn process_exists_by_tasklist(pid: u32) -> Option<bool> {
+    let filter = format!("PID eq {pid}");
+    let output = std::process::Command::new("tasklist")
+        .args(["/FI", &filter, "/FO", "CSV", "/NH"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let needle = format!("\",\"{pid}\",");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Some(stdout.lines().any(|line| line.contains(&needle)))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn process_may_still_be_running(_pid: u32) -> bool {
+    true
+}
+
+fn parse_lock_created_at_unix_millis(raw: &str) -> Option<u64> {
+    raw.lines().find_map(|line| {
+        line.strip_prefix("created_at_unix_millis=")?
+            .trim()
+            .parse::<u64>()
+            .ok()
+    })
+}
+
 #[cfg(not(unix))]
-fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
-    let mut file = OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(path)?;
+fn write_private_file(
+    path: &Path,
+    bytes: &[u8],
+    acquire_replace_guard: impl FnOnce() -> Result<CredentialStoreUpdateLock>,
+) -> Result<()> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty());
+    let mut file = match parent {
+        Some(parent) => tempfile::NamedTempFile::new_in(parent)?,
+        None => tempfile::NamedTempFile::new_in(".")?,
+    };
     file.write_all(bytes)?;
+    file.as_file().sync_all()?;
+    let _replace_guard = acquire_replace_guard()?;
+    file.persist(path).map_err(std::io::Error::from)?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use super::private_temp_path;
     use super::{
         AccessKeyProvider, AccessKeyProviderSecret, AccessKeyRefreshKeypair,
-        AccessKeyRefreshProvider, CredentialHealthProbe, CredentialHealthReport,
+        AccessKeyRefreshProvider, CREDENTIAL_LOCK_RELEASE_RETRY_OBSERVER,
+        CREDENTIAL_LOCK_STALE_AFTER_MILLIS, CredentialHealthProbe, CredentialHealthReport,
         CredentialHealthScope, CredentialHealthStatus, CredentialHealthSummaryStatus,
         CredentialKind, CredentialLifecycleMetadata, CredentialLifecyclePolicy,
-        CredentialLifecycleSource, CredentialLifecycleStatus, CredentialProfileMetadata,
-        CredentialProfileSecrets, CredentialProfileSelection, CredentialProfiles, CredentialStore,
-        Credentials, DEFAULT_CREDENTIAL_PROFILE,
+        CredentialLifecycleSource, CredentialLifecycleStatus, CredentialLockReleaseRetryEvent,
+        CredentialProfileMetadata, CredentialProfileSecrets, CredentialProfileSelection,
+        CredentialProfiles, CredentialStore, CredentialStoreUpdateLock, Credentials,
+        DEFAULT_CREDENTIAL_PROFILE, current_unix_millis, parse_lock_token, private_lock_path,
+        reclaim_lock_path, try_create_coordination_lock_file, try_create_lock_file,
+        try_create_lock_file_with_metadata_writer,
     };
+    use std::io::Write;
+
+    struct CredentialLockReleaseRetryObserverGuard;
+
+    impl Drop for CredentialLockReleaseRetryObserverGuard {
+        fn drop(&mut self) {
+            if let Ok(mut observer) = CREDENTIAL_LOCK_RELEASE_RETRY_OBSERVER.lock() {
+                *observer = None;
+            }
+        }
+    }
+
+    fn install_lock_release_retry_observer(
+        sender: std::sync::mpsc::Sender<CredentialLockReleaseRetryEvent>,
+    ) -> anyhow::Result<CredentialLockReleaseRetryObserverGuard> {
+        let mut observer = CREDENTIAL_LOCK_RELEASE_RETRY_OBSERVER.lock().map_err(|_| {
+            anyhow::anyhow!("credential lock release observer should not be poisoned")
+        })?;
+        *observer = Some(sender);
+        Ok(CredentialLockReleaseRetryObserverGuard)
+    }
 
     #[test]
     fn stores_credentials_without_leaking_values_in_summary() -> anyhow::Result<()> {
@@ -1724,6 +2300,637 @@ mod tests {
             profiles.profile("intl")?.cookie.as_deref(),
             Some("SESSDATA=updated-intl")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn update_profile_preserves_other_profiles_and_secret_metadata() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let store = CredentialStore::new(temp.path().join("credentials.json"));
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            DEFAULT_CREDENTIAL_PROFILE,
+            Credentials::default().with_cookie("SESSDATA=default"),
+        )?;
+        let mut default_metadata = CredentialProfileMetadata::default();
+        default_metadata.set_credential(
+            CredentialKind::Cookie,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::ManualImport)
+                .with_checked_at_unix_millis(1_700_000_000_000),
+        );
+        profiles.set_profile_metadata(DEFAULT_CREDENTIAL_PROFILE, default_metadata)?;
+        profiles.set_profile("intl", Credentials::default().with_access_key("ACCESS"))?;
+        let mut intl_metadata = CredentialProfileMetadata::default();
+        intl_metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+                .with_acquired_at_unix_millis(1_700_000_000_000)
+                .with_refresh_token_present(true),
+        );
+        profiles.set_profile_metadata("intl", intl_metadata)?;
+        let mut intl_secrets = CredentialProfileSecrets::default();
+        intl_secrets.set_access_key_provider(
+            AccessKeyProvider::BalhBiliplus,
+            AccessKeyProviderSecret::default()
+                .with_refresh_token("REFRESH")
+                .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+                .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+        );
+        profiles.set_profile_secrets("intl", intl_secrets)?;
+        store.save_profiles(&profiles)?;
+
+        let updated = store.update_profile("intl", |mut credentials| {
+            credentials.tv_access_key = Some("TV".to_owned());
+            Ok(credentials)
+        })?;
+
+        assert_eq!(updated.access_key.as_deref(), Some("ACCESS"));
+        assert_eq!(updated.tv_access_key.as_deref(), Some("TV"));
+        let profiles = store.load_profiles()?;
+        assert_eq!(
+            profiles
+                .profile(DEFAULT_CREDENTIAL_PROFILE)?
+                .cookie
+                .as_deref(),
+            Some("SESSDATA=default")
+        );
+        assert!(
+            profiles
+                .profile_metadata(DEFAULT_CREDENTIAL_PROFILE)?
+                .credential(CredentialKind::Cookie)
+                .is_some()
+        );
+        assert!(
+            profiles
+                .profile_metadata("intl")?
+                .credential(CredentialKind::AccessKey)
+                .is_some()
+        );
+        assert_eq!(
+            profiles
+                .profile_secrets("intl")?
+                .access_key_provider(AccessKeyProvider::BalhBiliplus)
+                .and_then(|secret| secret.refresh_token.as_deref()),
+            Some("REFRESH")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn update_selected_profile_uses_current_default_profile() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let store = CredentialStore::new(temp.path().join("credentials.json"));
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            DEFAULT_CREDENTIAL_PROFILE,
+            Credentials::default().with_cookie("SESSDATA=default"),
+        )?;
+        profiles.set_profile("intl", Credentials::default().with_access_key("ACCESS"))?;
+        profiles.set_default_profile("intl")?;
+        store.save_profiles(&profiles)?;
+
+        store.update_selected_profile(
+            &CredentialProfileSelection::default_profile(),
+            |mut stored| {
+                stored.tv_access_key = Some("TV".to_owned());
+                Ok(stored)
+            },
+        )?;
+
+        assert_eq!(
+            store
+                .load_profile(DEFAULT_CREDENTIAL_PROFILE)?
+                .cookie
+                .as_deref(),
+            Some("SESSDATA=default")
+        );
+        assert_eq!(
+            store.load_profile("intl")?.access_key.as_deref(),
+            Some("ACCESS")
+        );
+        assert_eq!(
+            store.load_profile("intl")?.tv_access_key.as_deref(),
+            Some("TV")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn update_selected_profile_preserves_flat_default_store_format() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        store.save(&Credentials {
+            cookie: Some("SESSDATA=default".to_owned()),
+            access_key: Some("ACCESS".to_owned()),
+            tv_access_key: None,
+        })?;
+
+        store.update_selected_profile(
+            &CredentialProfileSelection::default_profile(),
+            |mut stored| {
+                stored.tv_access_key = Some("TV".to_owned());
+                Ok(stored)
+            },
+        )?;
+
+        let raw: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path)?)?;
+        assert!(raw.get("profiles").is_none());
+        assert!(raw.get("default_profile").is_none());
+        assert_eq!(
+            raw.get("cookie").and_then(serde_json::Value::as_str),
+            Some("SESSDATA=default")
+        );
+        assert_eq!(
+            raw.get("access_key").and_then(serde_json::Value::as_str),
+            Some("ACCESS")
+        );
+        assert_eq!(
+            raw.get("tv_access_key").and_then(serde_json::Value::as_str),
+            Some("TV")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn update_profiles_noop_does_not_create_missing_store() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+
+        store.update_profiles(|profiles| {
+            assert_eq!(profiles.default_credentials(), Credentials::default());
+            Ok(())
+        })?;
+
+        assert!(!path.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn update_profiles_noop_preserves_flat_store_format() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        store.save(&Credentials {
+            cookie: Some("SESSDATA=default".to_owned()),
+            access_key: None,
+            tv_access_key: None,
+        })?;
+        let before = std::fs::read_to_string(&path)?;
+
+        store.update_profiles(|profiles| {
+            assert_eq!(
+                profiles.default_credentials().cookie.as_deref(),
+                Some("SESSDATA=default")
+            );
+            Ok(())
+        })?;
+
+        assert_eq!(std::fs::read_to_string(path)?, before);
+        Ok(())
+    }
+
+    #[test]
+    fn update_profiles_reports_lock_contention() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        let lock_path = private_lock_path(&path);
+        std::fs::write(&lock_path, "other process")?;
+
+        let Err(error) = store.update_profile("intl", Ok) else {
+            anyhow::bail!("lock contention must fail");
+        };
+
+        assert!(error.to_string().contains("credential store is locked"));
+        assert_eq!(std::fs::read_to_string(lock_path)?, "other process");
+        Ok(())
+    }
+
+    #[test]
+    fn update_profiles_reclaims_stale_lock() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        let lock_path = private_lock_path(&path);
+        let stale_created_at = current_unix_millis()
+            .saturating_sub(CREDENTIAL_LOCK_STALE_AFTER_MILLIS)
+            .saturating_sub(1);
+        std::fs::write(
+            &lock_path,
+            format!("created_at_unix_millis={stale_created_at}\n"),
+        )?;
+
+        store.update_profile("intl", |mut credentials| {
+            credentials.access_key = Some("ACCESS".to_owned());
+            Ok(credentials)
+        })?;
+
+        assert_eq!(
+            store.load_profile("intl")?.access_key.as_deref(),
+            Some("ACCESS")
+        );
+        assert!(!lock_path.exists());
+        Ok(())
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn process_liveness_reports_current_process() {
+        assert!(super::process_may_still_be_running(std::process::id()));
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn update_profiles_reclaims_stale_lock_with_dead_owner() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        let lock_path = private_lock_path(&path);
+        let stale_created_at = current_unix_millis()
+            .saturating_sub(CREDENTIAL_LOCK_STALE_AFTER_MILLIS)
+            .saturating_sub(1);
+        std::fs::write(
+            &lock_path,
+            format!(
+                "token=dead-owner\npid={}\ncreated_at_unix_millis={stale_created_at}\n",
+                u32::MAX
+            ),
+        )?;
+
+        store.update_profile("intl", |mut credentials| {
+            credentials.access_key = Some("ACCESS".to_owned());
+            Ok(credentials)
+        })?;
+
+        assert_eq!(
+            store.load_profile("intl")?.access_key.as_deref(),
+            Some("ACCESS")
+        );
+        assert!(!lock_path.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn update_profiles_keeps_stale_lock_with_live_owner() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        let lock_path = private_lock_path(&path);
+        let stale_created_at = current_unix_millis()
+            .saturating_sub(CREDENTIAL_LOCK_STALE_AFTER_MILLIS)
+            .saturating_sub(1);
+        let live_lock = format!(
+            "token=live-owner\npid={}\ncreated_at_unix_millis={stale_created_at}\n",
+            std::process::id()
+        );
+        std::fs::write(&lock_path, &live_lock)?;
+
+        let Err(error) = store.update_profile("intl", |mut credentials| {
+            credentials.access_key = Some("ACCESS".to_owned());
+            Ok(credentials)
+        }) else {
+            anyhow::bail!("live stale lock owner must not be reclaimed");
+        };
+
+        assert!(error.to_string().contains("credential store is locked"));
+        assert_eq!(std::fs::read_to_string(lock_path)?, live_lock);
+        Ok(())
+    }
+
+    #[test]
+    fn stale_lock_reclaim_contention_preserves_existing_lock() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        let lock_path = private_lock_path(&path);
+        let stale_created_at = current_unix_millis()
+            .saturating_sub(CREDENTIAL_LOCK_STALE_AFTER_MILLIS)
+            .saturating_sub(1);
+        let stale_lock = format!("token=stale-owner\ncreated_at_unix_millis={stale_created_at}\n");
+        std::fs::write(&lock_path, &stale_lock)?;
+        std::fs::write(reclaim_lock_path(&lock_path), "another reclaim")?;
+
+        let Err(error) = store.update_profile("intl", Ok) else {
+            anyhow::bail!("reclaim contention must fail");
+        };
+
+        assert!(error.to_string().contains("credential store is locked"));
+        assert_eq!(std::fs::read_to_string(lock_path)?, stale_lock);
+        Ok(())
+    }
+
+    #[test]
+    fn update_profiles_waits_for_lock_coordination_guard() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        let lock_path = private_lock_path(&path);
+        let Some(_coordination_guard) =
+            try_create_coordination_lock_file(&reclaim_lock_path(&lock_path))?
+        else {
+            anyhow::bail!("coordination guard should be acquired");
+        };
+
+        let Err(error) = store.update_profile("intl", |mut credentials| {
+            credentials.access_key = Some("ACCESS".to_owned());
+            Ok(credentials)
+        }) else {
+            anyhow::bail!("coordination contention must fail");
+        };
+
+        assert!(error.to_string().contains("credential store is locked"));
+        assert!(!lock_path.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn lock_release_waits_for_lock_coordination_guard() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        let lock_path = private_lock_path(&path);
+        let guard = store.acquire_update_lock()?;
+        let Some(coordination_guard) =
+            try_create_coordination_lock_file(&reclaim_lock_path(&lock_path))?
+        else {
+            anyhow::bail!("coordination guard should be acquired");
+        };
+
+        let guard_token = guard.token.clone();
+        let (retry_tx, retry_rx) = std::sync::mpsc::channel();
+        let _retry_observer = install_lock_release_retry_observer(retry_tx)?;
+        let (release_done_tx, release_done_rx) = std::sync::mpsc::channel();
+        let lock_path_for_thread = lock_path.clone();
+        let release = std::thread::spawn(move || {
+            drop(guard);
+            let _ = release_done_tx.send(lock_path_for_thread.exists());
+        });
+
+        let retry_event = {
+            let started_at = std::time::Instant::now();
+            loop {
+                match retry_rx.try_recv() {
+                    Ok(event) => break event,
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        anyhow::bail!("release retry observer disconnected");
+                    }
+                }
+                if let Ok(lock_exists) = release_done_rx.try_recv() {
+                    anyhow::bail!(
+                        "release completed before retry was observed; lock exists: {lock_exists}"
+                    );
+                }
+                if started_at.elapsed() > std::time::Duration::from_secs(5) {
+                    anyhow::bail!("release retry was not observed");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        };
+        assert_eq!(retry_event.path, lock_path);
+        assert_eq!(retry_event.token, guard_token);
+        assert!(matches!(
+            release_done_rx.recv_timeout(std::time::Duration::from_millis(
+                super::CREDENTIAL_LOCK_RELEASE_RETRY_MILLIS.saturating_mul(5),
+            )),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+        assert!(lock_path.exists());
+
+        drop(coordination_guard);
+        let lock_exists_after_release =
+            release_done_rx.recv_timeout(std::time::Duration::from_secs(1))?;
+        let Ok(()) = release.join() else {
+            anyhow::bail!("release thread should not panic");
+        };
+        assert!(!lock_exists_after_release);
+        assert!(!lock_path.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn lock_release_recovers_dead_owner_coordination_guard() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        let lock_path = private_lock_path(&path);
+        let reclaim_path = reclaim_lock_path(&lock_path);
+        let guard = store.acquire_update_lock()?;
+        std::fs::write(
+            &reclaim_path,
+            format!(
+                "token=dead-reclaim\npid=4294967295\ncreated_at_unix_millis={}\n",
+                current_unix_millis()
+            ),
+        )?;
+
+        drop(guard);
+
+        assert!(!lock_path.exists());
+        assert!(!reclaim_path.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn update_profiles_reclaims_stale_reclaim_lock() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        let lock_path = private_lock_path(&path);
+        let stale_created_at = current_unix_millis()
+            .saturating_sub(CREDENTIAL_LOCK_STALE_AFTER_MILLIS)
+            .saturating_sub(1);
+        std::fs::write(
+            &lock_path,
+            format!("token=stale-owner\ncreated_at_unix_millis={stale_created_at}\n"),
+        )?;
+        std::fs::write(
+            reclaim_lock_path(&lock_path),
+            format!("token=stale-reclaim\ncreated_at_unix_millis={stale_created_at}\n"),
+        )?;
+
+        store.update_profile("intl", |mut credentials| {
+            credentials.access_key = Some("ACCESS".to_owned());
+            Ok(credentials)
+        })?;
+
+        assert_eq!(
+            store.load_profile("intl")?.access_key.as_deref(),
+            Some("ACCESS")
+        );
+        assert!(!lock_path.exists());
+        assert!(!reclaim_lock_path(&lock_path).exists());
+        Ok(())
+    }
+
+    #[test]
+    fn try_create_lock_file_cleans_up_after_metadata_write_error() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let lock_path = private_lock_path(&temp.path().join("credentials.json"));
+
+        let Err(error) =
+            try_create_lock_file_with_metadata_writer(&lock_path, |file, token, _created_at| {
+                writeln!(file, "token={token}")?;
+                Err(crate::Error::InvalidInput(
+                    "metadata write failed".to_owned(),
+                ))
+            })
+        else {
+            anyhow::bail!("metadata write failure must fail lock creation");
+        };
+
+        assert!(error.to_string().contains("metadata write failed"));
+        assert!(!lock_path.exists());
+        assert!(try_create_lock_file(&lock_path)?.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn stale_lock_owner_drop_does_not_remove_reclaimed_lock() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        let lock_path = private_lock_path(&path);
+        let stale_created_at = current_unix_millis()
+            .saturating_sub(CREDENTIAL_LOCK_STALE_AFTER_MILLIS)
+            .saturating_sub(1);
+        let stale_token = "stale-owner";
+        std::fs::write(
+            &lock_path,
+            format!("token={stale_token}\ncreated_at_unix_millis={stale_created_at}\n"),
+        )?;
+        let stale_guard = CredentialStoreUpdateLock {
+            path: lock_path.clone(),
+            token: stale_token.to_owned(),
+            coordinate_release: true,
+        };
+
+        let active_guard = store.acquire_update_lock()?;
+        let active_lock = std::fs::read_to_string(&lock_path)?;
+        assert_ne!(parse_lock_token(&active_lock), Some(stale_token));
+
+        drop(stale_guard);
+
+        assert_eq!(std::fs::read_to_string(&lock_path)?, active_lock);
+        drop(active_guard);
+        assert!(!lock_path.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn stale_lock_owner_resume_after_reclaim_does_not_write_stale_snapshot() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        let competing_store = CredentialStore::new(path.clone());
+        store.save_profile(
+            "intl",
+            &Credentials {
+                cookie: None,
+                access_key: Some("INITIAL".to_owned()),
+                tv_access_key: None,
+            },
+        )?;
+
+        let lock_path = private_lock_path(&path);
+        let Err(error) = store.update_profiles::<()>(|profiles| {
+            let mut stale_credentials = profiles.profile("intl")?;
+            stale_credentials.access_key = Some("STALE".to_owned());
+            profiles.set_profile("intl", stale_credentials)?;
+
+            let raw_lock = std::fs::read_to_string(&lock_path)?;
+            let token = parse_lock_token(&raw_lock)
+                .ok_or_else(|| crate::Error::InvalidInput("lock token should exist".to_owned()))?
+                .to_owned();
+            let stale_created_at = current_unix_millis()
+                .saturating_sub(CREDENTIAL_LOCK_STALE_AFTER_MILLIS)
+                .saturating_sub(1);
+            std::fs::write(
+                &lock_path,
+                format!("token={token}\ncreated_at_unix_millis={stale_created_at}\n"),
+            )?;
+
+            competing_store.update_profile("intl", |mut credentials| {
+                credentials.access_key = Some("NEWER".to_owned());
+                Ok(credentials)
+            })?;
+            Ok(())
+        }) else {
+            anyhow::bail!("resumed stale lock owner must fail before writing");
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("credential store lock was reclaimed before write")
+        );
+        assert_eq!(
+            store.load_profile("intl")?.access_key.as_deref(),
+            Some("NEWER")
+        );
+        assert!(!lock_path.exists());
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn write_credentials_fences_after_temp_file_write_before_replace() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        store.save(&Credentials {
+            cookie: None,
+            access_key: Some("INITIAL".to_owned()),
+            tv_access_key: None,
+        })?;
+
+        let lock_path = private_lock_path(&path);
+        let guard = store.acquire_update_lock()?;
+        std::fs::write(
+            &lock_path,
+            "token=newer-writer\npid=1\ncreated_at_unix_millis=1\n",
+        )?;
+
+        let Err(error) = store.write_credentials_locked(
+            &Credentials {
+                cookie: None,
+                access_key: Some("STALE".to_owned()),
+                tv_access_key: None,
+            },
+            &guard,
+        ) else {
+            anyhow::bail!("reclaimed writer must fail before replacing the credential file");
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("credential store lock was reclaimed before write")
+        );
+        assert_eq!(store.load()?.access_key.as_deref(), Some("INITIAL"));
+        assert!(!private_temp_path(&path).exists());
+        Ok(())
+    }
+
+    #[test]
+    fn update_profiles_releases_lock_after_update_error() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+
+        let Err(error) =
+            store.update_profiles::<()>(|_| Err(crate::Error::InvalidInput("boom".to_owned())))
+        else {
+            anyhow::bail!("update error must fail");
+        };
+
+        assert!(error.to_string().contains("boom"));
+        assert!(!private_lock_path(&path).exists());
         Ok(())
     }
 

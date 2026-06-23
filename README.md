@@ -233,14 +233,28 @@ access key. The command reports `automatic_refresh_readiness` so embedders can d
 that says a refresh token was present from a provider-scoped stored refresh secret. Refresh secrets
 are stored in the same private credential file as plaintext provider sections and are redacted from
 status, debug, and JSON output. When the selected provider is `ready`, `auth renew-access-key`
-can refresh the generic access key non-interactively. `plan`, `playback`, and `download` also accept
-`--credential-preflight warn|fail|renew` so callers can check the selected profile before media
-requests, including intl/Bstar media paths that use the generic `access_key`. The same controls are
-available as `BBDOWN_CREDENTIAL_PREFLIGHT`, `BBDOWN_CREDENTIAL_STALE_AFTER_SECONDS`, and
-`BBDOWN_CREDENTIAL_EXPIRING_WITHIN_SECONDS`. WEB playurl cookies are optional and stale cookie
-metadata is warning-only so anonymous public videos can still proceed; authenticated feed inputs such
-as history, watch-later, and following require a WEB cookie. Public space dynamic pages can run
-anonymously and do not add the required-cookie preflight. Restricted-area proxy
+can refresh the generic access key non-interactively. Credential imports, access-key login, and
+renewal save only the selected profile, reloading the latest profile document under a cooperative
+store lock before merging new credential, lifecycle, and provider-secret fields. This avoids
+overwriting other profiles or concurrently refreshed provider secrets from another `bbdown` process.
+Stale lock files whose owner process can be confirmed gone, plus older lock files without owner-pid
+metadata, are reclaimed after a short recovery window; still-running or unverifiable owners are not
+reclaimed. Lock acquisition
+and stale reclaim are serialized by the same companion guard. Each write checks that its lock token
+is still current after the temporary file is written and immediately before replacing the credential
+file, and lock release checks the same token before deletion, so a live writer cannot overwrite a
+newer store after being reclaimed or remove a newer writer's lock after recovery.
+If a slower automatic refresh response no longer matches the current selected profile name or that
+profile's credential/refresh-secret state, JSON output emits `refresh_skipped` with
+`reason=profile_changed` and leaves the current credential store untouched.
+`plan`, `playback`, and `download` also accept `--credential-preflight warn|fail|renew` so callers
+can check the selected profile before media requests, including intl/Bstar media paths that use the
+generic `access_key`. The same controls are available as `BBDOWN_CREDENTIAL_PREFLIGHT`,
+`BBDOWN_CREDENTIAL_STALE_AFTER_SECONDS`, and `BBDOWN_CREDENTIAL_EXPIRING_WITHIN_SECONDS`. WEB
+playurl cookies are optional and stale cookie metadata is warning-only so anonymous public videos can
+still proceed; authenticated feed inputs such as history, watch-later, and following require a WEB
+cookie. Public space dynamic pages can run anonymously and do not add the required-cookie preflight.
+Restricted-area proxy
 preflight checks the generic `access_key` only when one is configured; missing proxy access keys do
 not block proxy URLs that authenticate themselves or allow anonymous fallback. Preflight diagnostics
 are written to stderr so JSON stdout remains a single plan or report, and `download --progress-json`

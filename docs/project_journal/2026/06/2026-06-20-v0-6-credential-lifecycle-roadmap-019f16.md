@@ -4,7 +4,7 @@ title: v0.6.0 Credential Lifecycle Roadmap
 status: active
 created: 2026-06-20
 updated: 2026-06-23
-branch: feature/v0.6-credential-preflight
+branch: feature/v0.6-multi-account-lifecycle-polish
 pr:
 supersedes: []
 superseded_by:
@@ -183,6 +183,63 @@ superseded_by:
     continues with media resolution.
   - Bilingual README, user guide, embedding guide, and architecture docs now describe the preflight
     strategy and embedding surface.
+- PR 9 implements multi-account lifecycle polish:
+  - `CredentialStore::update_profiles`, `update_profile`, and `update_selected_profile` provide
+    embedding-friendly incremental update APIs that reload the latest profile document before
+    saving.
+  - Incremental credential writes use a private cooperative lock beside the credential file, so
+    cooperating `bbdown` processes do not overwrite each other's profile updates with stale
+    snapshots.
+  - CLI credential imports, access-key login, access-key reauthorization, and automatic access-key
+    refresh now write through the same selected-profile merge path.
+  - Selected-profile renewal preserves other profiles, unrelated credential kinds, and provider
+    refresh secrets that are not part of the current mutation.
+  - Offline review follow-up prevents a slower automatic refresh response from overwriting a newer
+    selected-profile access key or provider refresh secret by rechecking the current store under the
+    update lock before saving.
+  - Offline review follow-up lets stale lock files left by interrupted credential writers be
+    reclaimed after a short recovery window, and lock release now checks a per-guard token before
+    deleting the lock so stale owners cannot remove a newer writer's lock.
+  - Final offline review follow-up serializes stale-lock reclaim with a companion reclaim guard and
+    makes stale reclaim guards recoverable too; no-op `update_profiles` closures leave the on-disk
+    store untouched.
+  - Final offline review follow-up also makes failed lock metadata initialization clean up the
+    just-created pending lock before returning the write error.
+  - Final offline review follow-up fences credential-file replacement on the active guard token.
+    Independent PR review follow-up tightens that fence to run after the private temporary file is
+    written and immediately before the final replace, so a stale writer that resumes after its lock
+    was reclaimed cannot write an old snapshot over a newer store.
+  - Independent PR review follow-up also serializes normal lock acquisition through the companion
+    reclaim guard, so a stale reclaimer cannot remove a newly-created writer lock.
+  - Independent PR review follow-up adds access-key provider metadata to the automatic refresh
+    stale-response guard, so a stale response cannot switch a profile back to an older provider.
+  - GitHub Codex review follow-up adds the current selected profile name to the automatic refresh
+    stale-response guard, so an implicit-default refresh response is skipped if another process
+    changes `default_profile` while the network request is in flight.
+  - Offline review follow-up moves the `#[cfg(not(unix))]` credential writer away from direct
+    truncate-in-place writes and onto a `tempfile::NamedTempFile` replace path with the same
+    post-temp-write lock fencing as Unix.
+  - Independent PR review follow-up changes stale-lock reclaim to leave lock files owned by
+    still-running or unverifiable processes in place, using an unsafe-free liveness check, so a live
+    writer cannot be reclaimed while it is paused between the final token check and destructive
+    replace/remove.
+  - Follow-up review found that a purely conservative liveness check made normal crashed-writer
+    locks unrecoverable on macOS and Windows; stale reclaim now uses safe `/proc`, Unix `kill -0`,
+    or Windows `tasklist` probes where available, while still treating unprobeable owners as live.
+  - GitHub Codex review follow-up extends the reclaim guard across destructive replace, clear, and
+    lock-release operations, and keeps non-Unix bare-path temporary credential files beside the
+    target path instead of the OS temp directory.
+  - Follow-up review found that lock release must wait when a coordination guard is briefly held;
+    release now retries while the same token is still current and has a test-only retry observer to
+    deterministically cover that contention path.
+  - A later Codex review found that dead-owner `.lock.reclaim` files should not make release wait
+    for the full stale-lock window; coordination acquisition now removes reclaim locks whose owner
+    pid is known dead before falling back to the normal stale-timeout policy.
+  - Offline review follow-up keeps default-profile incremental writes on legacy flat JSON stores in
+    the flat credential shape, while named profile writes and existing profile documents still use
+    the versioned profile document.
+  - Bilingual README, user guide, embedding guide, and architecture docs now describe selected
+    profile writes and the store-lock behavior.
 
 ## Out Of Scope For This Line
 
@@ -458,8 +515,44 @@ superseded_by:
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_generic_key_when_pgc_app_http_status_used_tv_key --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_generic_key_when_pgc_app_grpc_status_used_tv_key --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_retries_plan_after_app_http_forbidden_with_fresh_refreshable_access_key --locked`.
+- PR 9 current checkpoint:
+  - `cargo fmt --all`.
+  - `cargo fmt --all -- --check`.
+  - `cargo test -p bbdown-core credentials::tests::update_ -- --nocapture`.
+  - `cargo test -p bbdown-core credentials::tests::update_profiles_reclaims_stale_lock --locked`.
+  - `cargo test -p bbdown-core stale_lock_owner_drop_does_not_remove_reclaimed_lock --locked`.
+  - `cargo test -p bbdown-core stale_lock_reclaim_contention_preserves_existing_lock --locked`.
+  - `cargo test -p bbdown-core update_profiles_reclaims_stale_reclaim_lock --locked`.
+  - `cargo test -p bbdown-core try_create_lock_file_cleans_up_after_metadata_write_error --locked`.
+  - `cargo test -p bbdown-core stale_lock_owner_resume_after_reclaim_does_not_write_stale_snapshot --locked`.
+  - `cargo test -p bbdown-core write_credentials_fences_after_temp_file_write_before_replace --locked`.
+  - `cargo test -p bbdown-core update_profiles_keeps_stale_lock_with_live_owner --locked`.
+  - `cargo test -p bbdown-core update_profiles_reclaims_stale_lock_with_dead_owner --locked`.
+  - `cargo test -p bbdown-core update_profiles_waits_for_lock_coordination_guard --locked`.
+  - `cargo test -p bbdown-cli stale_auto_refresh_save_skips_when_provider_metadata_changed --bin bbdown --locked`.
+  - `cargo test -p bbdown-cli stale_auto_refresh_save_skips_when_default_profile_changed --bin bbdown --locked`.
+  - `cargo check -p bbdown-core --target x86_64-pc-windows-gnu --locked` was attempted for the
+    non-Unix writer path, but the local toolchain is missing `x86_64-w64-mingw32-gcc` required by
+    `ring`.
+  - `cargo test -p bbdown-core update_selected_profile_preserves_flat_default_store_format --locked`.
+  - `cargo test -p bbdown-core update_profiles_noop --locked`.
+  - `cargo test -p bbdown-cli save_credentials_ --bin bbdown -- --nocapture`.
+  - `cargo test -p bbdown-cli save_credentials_merges_with_current_store --bin bbdown --locked`.
+  - `cargo test -p bbdown-cli stale_auto_refresh --bin bbdown --locked`.
+  - `cargo test -p bbdown-cli stale_auto_refresh_skip_does_not_recreate_logged_out_store --bin bbdown --locked`.
+  - `cargo test -p bbdown-cli stale_auto_refresh_save_does_not_overwrite_newer_profile_secret --bin bbdown --locked`.
+  - `cargo test -p bbdown-cli auth_renew_access_key_auto_refreshes_ready_provider_secret --test cli_e2e -- --nocapture`.
+  - `cargo test -p bbdown-core credentials --locked`.
+  - `cargo test -p bbdown-cli save_credentials_ --bin bbdown --locked`.
+  - `cargo test -p bbdown-cli auth_renew_access_key_auto_refresh --test cli_e2e --locked`.
+  - `cargo clippy --workspace --all-targets --locked -- -D warnings`.
+  - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/5f1ab3fa5d9f7d534507216a2d6f765694f9b710/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.
+  - `git diff --check`.
+  - `just ci`.
+  - `just ci`.
 
 ## Next Steps
 
-- Finish PR 8 local full validation, review gates, CI, and merge.
-- Continue PR 9 multi-account lifecycle polish after preflight behavior is stable on `master`.
+- Finish PR 9 full validation, review gates, CI, and merge.
+- Continue PR 10 release prep for `v0.6.0` after multi-account lifecycle polish is stable on
+  `master`.

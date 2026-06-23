@@ -363,7 +363,19 @@ access key 如果已经 expired、expiring、stale 或 unknown，且状态为 `r
 `--force`、`--stdin` 或 `--file`，CLI 会先尝试 provider-specific automatic refresh。使用
 `--json` 时，自动刷新成功会输出 `decision`、`refreshed` 和 `saved` 事件，仍不会打印原始
 token。如果 refresh 失败，CLI 会输出 `refresh_failed`，然后回退到普通 authorization ticket，
-这样调用方可以提示用户重新授权而不会丢掉旧 credential。`plan`、`playback` 或 `download`
+这样调用方可以提示用户重新授权而不会丢掉旧 credential。如果另一个协作进程在较旧 refresh
+response 保存前改变了当前选择的 profile name，或改变了该 profile 的 credential / refresh-secret
+状态，CLI 会输出 `refresh_skipped`，并带上 `reason=profile_changed`，同时保持当前 store 不变。
+所有 credential import、access-key login
+和 access-key renewal 写入都是 selected-profile update：CLI 会在协作 credential-store lock 内
+重新读取最新 profile document，只 merge 当前选择的 profile，然后写回私有文件。其它 profile、
+无关 credential kind，以及另一个协作进程刚更新的 provider refresh secret 都会保留。被中断的
+credential 写入留下、且可以确认 owner 进程已退出的 stale lock file，以及旧式没有 owner-pid
+metadata 的 lock，会在一个较短恢复窗口后自动接管；仍在运行或无法确认是否退出的 owner 不会被接管。每次写入都会在临时文件
+写入完成后、真正替换 credential file 前，校验自己的 lock token 仍然有效；lock 获取和 stale
+reclaim 会用同一个 companion guard 串行化，释放 lock 前也会校验同一个 token，因此仍在运行的
+writer 不会在被接管后覆盖较新的 store，也不会删掉新 writer 的 lock。
+`plan`、`playback` 或 `download`
 可以配合全局 `--credential-preflight warn|fail|renew`，在解析 media stream 前检查当前选择的
 profile。preflight 会按 request path 推导所需 credential：WEB playurl 把 cookie 视为
 optional，所以匿名公开视频仍可工作；stale optional WEB playurl cookie metadata 只会 warning，
