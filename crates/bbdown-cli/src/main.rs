@@ -1638,11 +1638,24 @@ fn app_playurl_selected_tv_access_key(report: &CredentialPreflightReport) -> boo
 fn app_playurl_auth_failure_may_have_used_selected_tv_access_key(
     failure: &bbdown_core::Error,
 ) -> bool {
-    matches!(
-        failure,
-        bbdown_core::Error::Api { code, message }
-            if matches!(*code, 7 | 16) && auth_like_failure_message(message)
-    )
+    match failure {
+        bbdown_core::Error::Api { code, message } => {
+            matches!(*code, 7 | 16) && auth_like_failure_message(message)
+        }
+        bbdown_core::Error::Http(error) => error.status().is_some_and(|status| {
+            http_status_failure_may_be_credential_related(status.as_u16(), &error.to_string())
+        }),
+        bbdown_core::Error::AccessRestricted(_)
+        | bbdown_core::Error::Cancelled { .. }
+        | bbdown_core::Error::InvalidInput(_)
+        | bbdown_core::Error::SelectionRequired { .. }
+        | bbdown_core::Error::Unsupported(_)
+        | bbdown_core::Error::MissingField(_)
+        | bbdown_core::Error::Url(_)
+        | bbdown_core::Error::Json(_)
+        | bbdown_core::Error::Io(_)
+        | bbdown_core::Error::MuxFailed { .. } => false,
+    }
 }
 
 fn credential_preflight_report(

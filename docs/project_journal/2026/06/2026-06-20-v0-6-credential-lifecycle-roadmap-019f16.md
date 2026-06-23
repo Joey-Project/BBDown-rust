@@ -407,6 +407,9 @@ superseded_by:
     - Independent review follow-up broadens access-token evidence matching to `access_token` and
       `access-token` spellings while preserving conservative redaction for token-bearing
       diagnostics.
+    - Independent review follow-up extends the APP-selected-TV-key retry exclusion to HTTP 401/403
+      failures, so a PGC APP request that actually used `tv_access_key` cannot rotate generic
+      access keys merely because restricted-area proxy preflight also selected a generic key.
     - Crate-local README files now document the provider-aware APP credential order for embedders,
       matching the top-level and embedding docs.
   - Added mock e2e coverage for these review follow-ups:
@@ -446,6 +449,8 @@ superseded_by:
     - `cargo test -p bbdown-core --lib json_status_path_matching_accepts_endpoint_prefixes --locked`.
     - `cargo test -p bbdown-cli --bin bbdown plan_failure_classifier --locked`.
     - `cargo test -p bbdown-core --lib resolver_error_message --locked`.
+    - `cargo test -p bbdown-cli --bin bbdown generic_access_key_retry_requires_failure_path_that_uses_access_key --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_generic_key_when_pgc_app_http_status_used_tv_key --locked`.
 
 ## Next Steps
 

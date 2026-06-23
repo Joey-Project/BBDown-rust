@@ -3852,6 +3852,138 @@ fn download_archive_does_not_refresh_generic_key_when_app_uses_intl_tv_key() -> 
 
 #[test]
 #[allow(clippy::too_many_lines)]
+fn download_archive_does_not_refresh_generic_key_when_pgc_app_http_status_used_tv_key()
+-> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    save_lifecycle_cli_profiles_with_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BiliIntlOauth2)
+            .with_acquired_at_unix_millis(9_000_000_000_000)
+            .with_expires_at_unix_millis(9_000_000_060_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BiliIntlOauth2,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BiliIntlOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::Android),
+    )?;
+    let store = CredentialStore::new(credential_file.clone());
+    let mut profiles = store.load_profiles()?;
+    profiles.set_profile(
+        "intl",
+        Credentials::default()
+            .with_access_key("ACCESS_SECRET")
+            .with_tv_access_key("TV_SECRET"),
+    )?;
+    let mut metadata = profiles.profile_metadata("intl")?;
+    metadata.set_credential(
+        CredentialKind::TvAccessKey,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::TvQrLogin)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+    );
+    profiles.set_profile_metadata("intl", metadata)?;
+    store.save_profiles(&profiles)?;
+
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/view/web/season")
+            .query_param("ep_id", "1000");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "result": {
+                "season_id": 123,
+                "title": "Restricted Season",
+                "episodes": [
+                    {"aid": 10, "bvid": "BV1aa", "cid": 100, "id": 1000, "ep_id": 1000, "title": "1", "long_title": "Start"}
+                ]
+            }
+        }));
+    });
+    let app_playurl = server.mock(|when, then| {
+        when.method(POST)
+            .path("/bilibili.pgc.gateway.player.v2.PlayURL/PlayView")
+            .header("content-type", "application/grpc")
+            .header("authorization", "identify_v1 TV_SECRET")
+            .header_exists("x-bili-metadata-bin")
+            .header_missing("cookie");
+        then.status(401).body("tv key unauthorized");
+    });
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/intl/passport-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET")
+            .form_urlencoded_tuple("refresh_token", "OLD_REFRESH_SECRET");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "refresh_token": "AUTO_REFRESH_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--pgc-base")
+        .arg(server.base_url())
+        .arg("--app-pgc-grpc-base")
+        .arg(server.base_url())
+        .arg("--intl-passport-base")
+        .arg(server.base_url())
+        .arg("--playurl-mode")
+        .arg("app")
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("--restricted-area")
+        .arg("hk")
+        .arg("--restricted-area-proxy")
+        .arg(format!("hk={}/proxy-playurl", server.base_url()))
+        .arg("download")
+        .arg("ep1000")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(stderr.contains("401 Unauthorized"));
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load_profile("intl")?
+            .access_key
+            .as_deref(),
+        Some("ACCESS_SECRET")
+    );
+    app_playurl.assert_calls(1);
+    refresh_mock.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
 fn download_archive_does_not_refresh_generic_key_for_authenticated_feed_cookie_failure()
 -> anyhow::Result<()> {
     let server = MockServer::start();
