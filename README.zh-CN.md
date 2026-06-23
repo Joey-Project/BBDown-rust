@@ -90,10 +90,12 @@ BBDown-compatible TV HTTP playurl 端点解析。TV mode 使用 `auth login-tv` 
 access key，并可用 `--tv-api-base` / `BBDOWN_TV_API_BASE` 覆盖端点。
 设置 `--playurl-mode app` 或 `BBDOWN_PLAYURL_MODE=app` 后，普通视频和 PGC 分集会通过
 BBDown-compatible APP gRPC playurl 端点解析。APP mode 优先使用
-`Credentials::tv_access_key`，没有 TV token 时回退到通用 `Credentials::access_key`；mock
-或代理端点可用 `--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` 和 `--app-pgc-grpc-base` /
-`BBDOWN_APP_PGC_GRPC_BASE` 覆盖；普通视频 APP 默认使用 `https://grpc.biliapi.net`，PGC
-APP 默认跟随 BBDown reference host `https://app.bilibili.com`。PGC APP gRPC
+Bilibili main/BALH 通用 `Credentials::access_key`，再回退到 `Credentials::tv_access_key`；如果当前
+profile 把通用 key 标记为 `bili_intl_oauth2`，或者这个 profile 来自旧版扁平 credential file
+而没有 provider metadata，APP mode 会优先使用 TV key，只有没有 TV key 时才回退到该通用
+key。mock 或代理端点可用 `--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` 和
+`--app-pgc-grpc-base` / `BBDOWN_APP_PGC_GRPC_BASE` 覆盖；普通视频和 PGC APP 默认都使用
+`https://grpc.biliapi.net`。PGC APP gRPC
 响应如果带有区域限制或 preview-only 信号，仍会回退到已配置的 restricted-area HTTP playurl
 proxy；信号可以来自区域限制消息、APP permission-denied gRPC status 或 PGC response-body
 metadata。proxy fallback URL 只会使用通用导入
@@ -179,9 +181,9 @@ WEB cookie，目前只包含普通视频 `archive` 历史记录。稍后再看�
 `watch-later`、`watch_later`、`later`、`toview` 或
 `https://www.bilibili.com/watchlater` 或 `https://www.bilibili.com/list/watchlater`，需要已
 认证的 WEB cookie，并包含该账号稍后再看列表中的普通视频。关注输入可使用 `following`、
-`https://t.bilibili.com/` 或 `https://www.bilibili.com/account/dynamic`；空间动态输入使用
-`https://space.bilibili.com/<mid>/dynamic`。动态 feed 输入需要已认证的 WEB cookie，目前只
-包含普通视频 archive 卡片。
+`https://t.bilibili.com/` 或 `https://www.bilibili.com/account/dynamic`，需要已认证的 WEB
+cookie，目前包含普通视频 archive 卡片。空间动态输入使用
+`https://space.bilibili.com/<mid>/dynamic`，可以匿名访问，目前包含公开普通视频 archive 卡片。
 
 管理本地凭据：
 
@@ -216,12 +218,29 @@ unknown、stale、expiring、expired 或 forced credential 会返回 BiliPlus/BA
 同一个命令如果传入 `--stdin` 或 `--file`，就会完成这次重新授权并保存新的通用 access key。
 命令会报告 `automatic_refresh_readiness`，方便嵌入方区分“metadata 显示曾出现 refresh
 token”和“本地已经按 provider 保存 refresh secret”。refresh secret 会以明文 provider section
-保存在同一个私有 credential file 中，并在 status、debug 和 JSON 输出中脱敏；当前版本在所选
-provider 有已保存 secret 时会报告 `ready`，但静默 refresh 会在下一个 credential lifecycle
-切片实现。二维码登录命令会轮询 Bilibili 二维码状态机，并只保存最终得到的凭
-据。WEB 二维码登录保存 cookie；TV 二维码登录保存 TV 专用 access key，不会覆盖由通用
-access-key 命令导入或获取的 intl/Bstar access key。使用 `--json` 时，登录命令输出换行分
-隔 JSON 事件：先输出带登录 URL 和 `qr_payload` 的 `ticket` 事件，再在凭据保存后输出
+保存在同一个私有 credential file 中，并在 status、debug 和 JSON 输出中脱敏。所选 provider
+状态为 `ready` 时，`auth renew-access-key` 可以非交互刷新通用 access key。`plan`、
+`playback` 和 `download` 也支持 `--credential-preflight warn|fail|renew`，方便调用方在 media
+request 前检查当前 profile，也会覆盖使用通用 `access_key` 的 intl/Bstar media path；同样可以用
+`BBDOWN_CREDENTIAL_PREFLIGHT`、`BBDOWN_CREDENTIAL_STALE_AFTER_SECONDS` 和
+`BBDOWN_CREDENTIAL_EXPIRING_WITHIN_SECONDS` 配置。WEB playurl cookie 是 optional，stale
+cookie metadata 只会 warning，不会阻断匿名公开视频；history、watch-later 和 following
+这类账号级 feed 输入会要求 WEB cookie。公开的 space dynamic 页面可以匿名访问，不会加入
+required-cookie preflight。preflight 对 restricted-area proxy 只有在
+已配置通用 `access_key` 时才检查该 token；缺失 proxy access key 不会阻断自带认证或允许匿名
+fallback 的 proxy URL。diagnostic 会写到 stderr，JSON stdout 仍保持为单个 plan 或 report
+payload；`download --progress-json` 会抑制 preflight 纯文本 diagnostic，但失败时最终 CLI error
+行仍可能写到 stderr，因此 wrapper 应只解析 JSON object line。对 archive 下载，如果初次 plan
+成功，`--credential-preflight renew` 会把自动
+access-key refresh 延后到 duplicate handling 之后，因此 `--on-duplicate cancel` 会停止且不会
+调用 refresh endpoint 或重写已保存 credential。如果初次 archive planning 因类似 auth 的
+credential 错误失败，即使本地 lifecycle metadata 仍认为该 key fresh，CLI 也会刷新 ready
+的通用 access key 并重试一次 planning，然后才报告失败。
+二维码登录命令会轮询
+Bilibili 二维码状态机，并只保存最终得到的凭据。WEB 二维码登录保存 cookie；TV 二维码登录保存
+TV 专用 access key，不会覆盖由通用 access-key 命令导入或获取的 intl/Bstar access key。
+使用 `--json` 时，登录命令输出换行分隔 JSON 事件：先输出带登录 URL 和 `qr_payload` 的
+`ticket` 事件，再在凭据保存后输出
 `saved` 事件。当前 WEB 和 TV 登录流程会直接使用扫码 URL 作为 QR payload。请把登录 URL
 和 QR payload 当成临时登录密钥；状态输出和 `saved` 事件只暴露脱敏布尔值。
 `auth health` 会在不打印密钥值的情况下检查已配置凭据：WEB cookie 通过 web nav 端点检查；

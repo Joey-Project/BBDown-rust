@@ -98,8 +98,9 @@ History input uses the web history cursor endpoint, requires an authenticated co
 filters to normal-video `archive` records that can plan through the normal video pipeline.
 Watch-later input uses the web toview endpoint, requires an authenticated cookie, and emits normal
 videos from the authenticated account's watch-later list.
-Following and space dynamic inputs use the web dynamic feed endpoints, also require an
-authenticated cookie, and currently emit normal-video archive cards. The
+Following input uses the authenticated dynamic feed endpoint and requires an authenticated cookie.
+Space dynamic input uses the public space dynamic feed endpoint, can run anonymously, and currently
+emits normal-video archive cards. The
 CLI will later add interactive prompting, but the library keeps season-like contracts explicit so
 integrations cannot accidentally download a full season.
 
@@ -173,9 +174,12 @@ codec strings.
 The same planning path honors `PlayurlMode::Tv` and `PlayurlMode::App`, so `DownloadPlan` and
 `PlaybackPlan` can expose `NormalTv`, `PgcTv`, `NormalApp`, or `PgcApp` sources without changing the
 downstream request-spec shape. TV mode uses `Credentials::tv_access_key`. APP/gRPC mode uses
-`Credentials::tv_access_key` first, falls back to `Credentials::access_key`, sends BBDown-compatible
-protobuf gRPC frames, reads gRPC status from both initial headers and trailing metadata, and
-normalizes APP DASH/FLV replies into `StreamSet`. APP DASH width, height, and frame-rate metadata
+Bilibili main/BALH generic `Credentials::access_key` values before `Credentials::tv_access_key`; callers can
+set `ClientConfig::with_access_key_provider(Some(AccessKeyProvider::BiliIntlOauth2))` so intl-only
+generic keys yield to TV keys, while legacy profiles without provider metadata also keep the
+TV-key-first behavior. APP/gRPC sends BBDown-compatible protobuf gRPC frames, reads gRPC
+status from both initial headers and trailing metadata, and normalizes APP DASH/FLV replies into
+`StreamSet`. APP DASH width, height, and frame-rate metadata
 is preserved on the same `MediaStream` fields used by HTTP playurl modes. APP legacy FLV replies
 can contain segment sets for multiple qualities; because `StreamSet::flv_segments` is a single
 ordered list, the normalizer keeps one highest-quality FLV candidate instead of concatenating
@@ -365,10 +369,10 @@ base URL. Proxy playurl responses may use the official `data` / `result` wrapper
 shapes where `dash` / `durl`, `timelength`, and quality metadata are returned at the top level.
 Legacy string status fields such as `result: "suee"` are tolerated for these top-level helper
 payloads.
-When a generic access key is present in
-`Credentials::access_key`, proxy requests include it as `access_key`; the TV-specific access key is
-not reused for this flow. Bilibili cookies are intentionally omitted from restricted-area proxy
-requests.
+When a generic access key is present in `Credentials::access_key`, proxy requests include it as
+`access_key`; missing generic keys are allowed so deployments can use proxy URLs with their own
+authentication or anonymous fallback. The TV-specific access key is not reused for this flow.
+Bilibili cookies are intentionally omitted from restricted-area proxy requests.
 
 When proxy fallback succeeds, `DownloadEntry.source` is `PgcProxy` and `DownloadEntry.diagnostics`
 contains the official failed attempt plus the successful proxy attempt. When all candidates fail,
@@ -462,6 +466,24 @@ refresh form. Refresh returns
 `AccessKeyLoginCredentials`, letting CLI and embedders reuse the same lifecycle metadata and
 provider-secret persistence path used by initial access-key acquisition. Failed refresh attempts are
 non-destructive; callers keep the old credential and can fall back to a reauthorization ticket.
+Media credential preflight is modeled as an explicit policy layer rather than hidden behavior inside
+`BiliClient::plan_download`. `CredentialPreflightReport` evaluates the selected profile lifecycle
+status against request-path requirements and returns serializable requirement statuses, issues, and
+the associated access-key renewal decision. Request-path evaluation mirrors the credential actually
+used by the client, including APP playurl's provider-aware `access_key` / `tv_access_key` tie-breaker
+that treats missing provider metadata as the legacy TV-key-first case, and optional restricted-area proxy access-key checks only when proxy candidates are configured and
+the current media input may use PGC proxy fallback. Intl/Bstar media inputs add the generic
+`access_key` requirement because the official intl metadata, playurl, and subtitle request path
+sends that token when it is configured. The CLI normalizes raw inputs through
+`BiliClient::parse_input(...)` first, so short links are classified by their redirect target, while
+fixed-source inputs such as intl/Bstar and PUGV/cheese avoid unrelated global TV/APP credential
+requirements. The CLI applies that report before `plan`, `playback`, and `download`: `warn` writes
+diagnostics to stderr, `fail` blocks before stream resolution, and `renew` attempts
+provider-specific generic access-key refresh only when the report says the selected profile is
+ready. Download modes that do not resolve media streams skip TV/APP/restricted-proxy stream
+preflight, and `download --progress-json` suppresses plaintext preflight diagnostics while still
+allowing the final CLI error line on stderr after a failure. This keeps embedders in control of
+storage mutation while still sharing the same requirement model as the CLI.
 Browser `postMessage` consumers should parse through the ticket/output `credentials_from_message`
 helpers, which validate the sender origin against the trusted auth or callback origin before using
 the raw BALH payload parser.

@@ -2212,6 +2212,7 @@ mod tests {
                 tv_passport_base: server.base_url(),
                 tv_passport_poll_base: server.base_url(),
             },
+            access_key_provider: None,
             credentials: Credentials {
                 cookie: Some("SESSDATA=old".to_owned()),
                 access_key: None,

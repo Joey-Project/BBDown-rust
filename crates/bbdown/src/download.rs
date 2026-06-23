@@ -47,6 +47,11 @@ pub enum DownloadMode {
 }
 
 impl DownloadMode {
+    #[must_use]
+    pub const fn requires_media_streams(self) -> bool {
+        matches!(self, Self::All | Self::VideoOnly | Self::AudioOnly)
+    }
+
     const fn allows_mux(self) -> bool {
         matches!(self, Self::All)
     }

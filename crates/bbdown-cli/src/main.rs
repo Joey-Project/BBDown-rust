@@ -10,15 +10,17 @@ use bbdown_core::{
     ClientConfig, CredentialHealthReport, CredentialHealthScope, CredentialHealthStatus,
     CredentialHealthSummaryStatus, CredentialKind, CredentialLifecycleMetadata,
     CredentialLifecyclePolicy, CredentialLifecycleSource, CredentialLifecycleStatus,
-    CredentialProfileLifecycleStatus, CredentialProfileSelection, CredentialProfiles,
-    CredentialStore, Credentials, DanmakuFormat, DanmakuUpdateOptions, DownloadArchive,
-    DownloadCancellationToken, DownloadMode, DownloadOptions, DownloadPathTemplates, DownloadPlan,
-    DownloadPreflight, DownloadProgressEvent, DownloadProgressSink, DownloadReport,
-    DuplicateDecision, EndpointConfig, MediaHostOptions, MediaStream, MuxOptions, PlaybackPlan,
-    PlayurlMode, QrLoginKind, QrLoginState, QrLoginTicket, QrLoginTicketOutput, ResolvedContent,
-    RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind,
-    RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet, SubtitleAiPolicy,
-    archive_entry_allows_danmaku_update,
+    CredentialPreflightMode, CredentialPreflightReport, CredentialPreflightRequestPath,
+    CredentialPreflightRequirement, CredentialProfileLifecycleStatus, CredentialProfileSelection,
+    CredentialProfiles, CredentialStore, Credentials, DanmakuFormat, DanmakuUpdateOptions,
+    DownloadArchive, DownloadCancellationToken, DownloadMode, DownloadOptions,
+    DownloadPathTemplates, DownloadPlan, DownloadPreflight, DownloadProgressEvent,
+    DownloadProgressSink, DownloadReport, DuplicateDecision, EndpointConfig, Input,
+    MediaHostOptions, MediaStream, MuxOptions, PlaybackPlan, PlayurlMode, QrLoginKind,
+    QrLoginState, QrLoginTicket, QrLoginTicketOutput, ResolvedContent, RestrictedArea,
+    RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection,
+    StreamQuality, StreamSelection, StreamSet, SubtitleAiPolicy,
+    archive_entry_allows_danmaku_update, credential_preflight_requirements_for_media_paths,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::ffi::{OsStr, OsString};
@@ -121,6 +123,26 @@ struct Cli {
     credential_file: Option<PathBuf>,
     #[arg(long, env = "BBDOWN_CREDENTIAL_PROFILE", value_name = "NAME")]
     credential_profile: Option<String>,
+    #[arg(
+        long,
+        env = "BBDOWN_CREDENTIAL_PREFLIGHT",
+        value_enum,
+        default_value = "off",
+        value_name = "MODE"
+    )]
+    credential_preflight: CredentialPreflightModeArg,
+    #[arg(
+        long,
+        env = "BBDOWN_CREDENTIAL_STALE_AFTER_SECONDS",
+        default_value_t = 7 * 24 * 60 * 60
+    )]
+    credential_stale_after_seconds: u64,
+    #[arg(
+        long,
+        env = "BBDOWN_CREDENTIAL_EXPIRING_WITHIN_SECONDS",
+        default_value_t = 24 * 60 * 60
+    )]
+    credential_expiring_within_seconds: u64,
     #[arg(long, env = "BBDOWN_REQUEST_TIMEOUT_SECONDS", default_value_t = 30)]
     request_timeout_seconds: u64,
     #[command(subcommand)]
@@ -370,12 +392,32 @@ enum PlayurlModeArg {
     App,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+enum CredentialPreflightModeArg {
+    Off,
+    Warn,
+    Fail,
+    Renew,
+}
+
 impl From<PlayurlModeArg> for PlayurlMode {
     fn from(value: PlayurlModeArg) -> Self {
         match value {
             PlayurlModeArg::Web => Self::Web,
             PlayurlModeArg::Tv => Self::Tv,
             PlayurlModeArg::App => Self::App,
+        }
+    }
+}
+
+impl From<CredentialPreflightModeArg> for CredentialPreflightMode {
+    fn from(value: CredentialPreflightModeArg) -> Self {
+        match value {
+            CredentialPreflightModeArg::Off => Self::Off,
+            CredentialPreflightModeArg::Warn => Self::Warn,
+            CredentialPreflightModeArg::Fail => Self::Fail,
+            CredentialPreflightModeArg::Renew => Self::Renew,
         }
     }
 }
@@ -751,6 +793,11 @@ async fn run() -> anyhow::Result<()> {
     let request_timeout = Duration::from_secs(cli.request_timeout_seconds);
     let client_runtime =
         ClientRuntimeConfig::new(endpoints, restricted_area, playurl_mode, request_timeout);
+    let credential_preflight = CredentialPreflightRuntimeConfig::new(
+        cli.credential_preflight.into(),
+        cli.credential_stale_after_seconds,
+        cli.credential_expiring_within_seconds,
+    );
     let credential_runtime = CredentialRuntime::new(
         CredentialStore::new(credential_path(cli.credential_file)?),
         credential_profile_selection(cli.credential_profile)?,
@@ -760,13 +807,35 @@ async fn run() -> anyhow::Result<()> {
             handle_info(&credential_runtime, &client_runtime, url, select, json).await?;
         }
         Command::Plan { url, select, json } => {
-            handle_plan(&credential_runtime, &client_runtime, url, select, json).await?;
+            handle_plan(
+                &credential_runtime,
+                &client_runtime,
+                &credential_preflight,
+                url,
+                select,
+                json,
+            )
+            .await?;
         }
         Command::Playback { url, select, json } => {
-            handle_playback(&credential_runtime, &client_runtime, url, select, json).await?;
+            handle_playback(
+                &credential_runtime,
+                &client_runtime,
+                &credential_preflight,
+                url,
+                select,
+                json,
+            )
+            .await?;
         }
         Command::Download(args) => {
-            handle_download_cli(&credential_runtime, &client_runtime, *args).await?;
+            handle_download_cli(
+                &credential_runtime,
+                &client_runtime,
+                &credential_preflight,
+                *args,
+            )
+            .await?;
         }
         Command::Danmaku { command } => {
             handle_danmaku(command, &credential_runtime, &client_runtime).await?;
@@ -789,6 +858,7 @@ fn anyhow_error_is_cancelled(error: &anyhow::Error) -> bool {
 async fn handle_download_cli(
     credentials: &CredentialRuntime,
     client_runtime: &ClientRuntimeConfig,
+    credential_preflight: &CredentialPreflightRuntimeConfig,
     args: DownloadCliArgs,
 ) -> anyhow::Result<()> {
     ensure!(
@@ -836,7 +906,13 @@ async fn handle_download_cli(
         archive_file: args.archive_file,
         on_duplicate: args.on_duplicate.map(Into::into),
     };
-    handle_download(credentials, client_runtime, command_args).await
+    handle_download(
+        credentials,
+        client_runtime,
+        credential_preflight,
+        command_args,
+    )
+    .await
 }
 
 struct DownloadCommandArgs {
@@ -1020,11 +1096,49 @@ impl ClientRuntimeConfig {
     }
 
     fn client_config(&self, credentials: Credentials) -> ClientConfig {
+        self.client_config_with_access_key_provider(credentials, None)
+    }
+
+    fn client_config_with_access_key_provider(
+        &self,
+        credentials: Credentials,
+        access_key_provider: Option<AccessKeyProvider>,
+    ) -> ClientConfig {
         ClientConfig::new(self.endpoints.clone(), credentials)
+            .with_access_key_provider(access_key_provider)
             .with_restricted_area(self.restricted_area.clone())
             .with_playurl_mode(self.playurl_mode)
             .with_user_agent("bbdown-rs/0.1")
             .with_request_timeout(self.request_timeout)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CredentialPreflightRuntimeConfig {
+    mode: CredentialPreflightMode,
+    stale_after_seconds: u64,
+    expiring_within_seconds: u64,
+}
+
+impl CredentialPreflightRuntimeConfig {
+    fn new(
+        mode: CredentialPreflightMode,
+        stale_after_seconds: u64,
+        expiring_within_seconds: u64,
+    ) -> Self {
+        Self {
+            mode,
+            stale_after_seconds,
+            expiring_within_seconds,
+        }
+    }
+
+    fn policy(&self) -> CredentialLifecyclePolicy {
+        lifecycle_policy_from_seconds(
+            self.stale_after_seconds,
+            self.expiring_within_seconds,
+            current_unix_millis(),
+        )
     }
 }
 
@@ -1070,6 +1184,20 @@ impl CredentialRuntime {
             .profile_name()
             .map_or_else(|| profiles.default_profile.clone(), str::to_owned)
     }
+
+    fn selected_access_key_provider(&self) -> anyhow::Result<Option<AccessKeyProvider>> {
+        let profiles = self
+            .store
+            .load_profiles()
+            .context("failed to load credential profiles")?;
+        let selected_profile = self.selected_profile_name(&profiles);
+        let metadata = profiles
+            .profile_metadata(&selected_profile)
+            .context("failed to load selected credential profile metadata")?;
+        Ok(metadata
+            .credential(CredentialKind::AccessKey)
+            .and_then(|metadata| metadata.access_key_provider))
+    }
 }
 
 fn credential_profile_selection(
@@ -1100,15 +1228,643 @@ async fn handle_info(
     Ok(())
 }
 
+async fn prepare_credentials_for_media_request(
+    credential_runtime: &CredentialRuntime,
+    client_runtime: &ClientRuntimeConfig,
+    credential_preflight: &CredentialPreflightRuntimeConfig,
+    request: MediaCredentialPreflightRequest<'_>,
+) -> anyhow::Result<PreparedMediaRequest> {
+    if credential_preflight.mode == CredentialPreflightMode::Off {
+        return Ok(PreparedMediaRequest {
+            credentials: credential_runtime.load()?,
+            access_key_provider: credential_runtime.selected_access_key_provider()?,
+            parsed_input: None,
+            media_preflight_context: None,
+            deferred_preflight: None,
+        });
+    }
+
+    let media_preflight_context = media_credential_preflight_context_for_input(
+        client_runtime,
+        request.raw_input,
+        request.selection,
+        request.requires_media_streams,
+        request.intl_access_key_may_run,
+    )
+    .await?;
+    let mut report = credential_preflight_report(
+        credential_runtime,
+        client_runtime,
+        credential_preflight,
+        &media_preflight_context,
+    )?;
+    let defer_renewal = request.renewal_timing == CredentialPreflightRenewalTiming::Deferred
+        && report.should_attempt_access_key_renewal();
+    if report.should_attempt_access_key_renewal() && !defer_renewal {
+        let profiles = credential_runtime
+            .store
+            .load_profiles()
+            .context("failed to load credential profiles")?;
+        if try_access_key_auto_refresh_for_preflight(
+            credential_runtime,
+            client_runtime,
+            &profiles,
+            &report.access_key_renewal,
+            request.emit_diagnostics,
+        )
+        .await?
+        {
+            report = credential_preflight_report(
+                credential_runtime,
+                client_runtime,
+                credential_preflight,
+                &media_preflight_context,
+            )?;
+        }
+    }
+
+    if !defer_renewal && request.emit_diagnostics {
+        emit_credential_preflight_warnings(&report);
+    }
+    if !defer_renewal && report.has_blocking_issues() {
+        let messages = report
+            .issues
+            .iter()
+            .filter(|issue| issue.blocking)
+            .map(|issue| issue.message.as_str())
+            .collect::<Vec<_>>()
+            .join("; ");
+        bail!("credential preflight failed: {messages}");
+    }
+    let deferred_preflight = defer_renewal.then(|| DeferredMediaCredentialPreflight {
+        context: media_preflight_context.clone(),
+        report,
+    });
+    Ok(PreparedMediaRequest {
+        credentials: credential_runtime.load()?,
+        access_key_provider: credential_runtime.selected_access_key_provider()?,
+        parsed_input: Some(media_preflight_context.input.clone()),
+        media_preflight_context: Some(media_preflight_context),
+        deferred_preflight,
+    })
+}
+
+#[derive(Clone, Copy, Debug)]
+struct MediaCredentialPreflightRequest<'a> {
+    raw_input: &'a str,
+    selection: Option<&'a Selection>,
+    requires_media_streams: bool,
+    intl_access_key_may_run: bool,
+    renewal_timing: CredentialPreflightRenewalTiming,
+    emit_diagnostics: bool,
+}
+
+struct PreparedMediaRequest {
+    credentials: Credentials,
+    access_key_provider: Option<AccessKeyProvider>,
+    parsed_input: Option<Input>,
+    media_preflight_context: Option<MediaCredentialPreflightContext>,
+    deferred_preflight: Option<DeferredMediaCredentialPreflight>,
+}
+
+impl PreparedMediaRequest {
+    fn client_config(&self, client_runtime: &ClientRuntimeConfig) -> ClientConfig {
+        client_runtime.client_config_with_access_key_provider(
+            self.credentials.clone(),
+            self.access_key_provider,
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CredentialPreflightRenewalTiming {
+    Immediate,
+    Deferred,
+}
+
+struct DeferredMediaCredentialPreflight {
+    context: MediaCredentialPreflightContext,
+    report: CredentialPreflightReport,
+}
+
+async fn complete_deferred_media_preflight_renewal(
+    credential_runtime: &CredentialRuntime,
+    client_runtime: &ClientRuntimeConfig,
+    credential_preflight: &CredentialPreflightRuntimeConfig,
+    prepared: &mut PreparedMediaRequest,
+    failure: Option<&bbdown_core::Error>,
+    emit_diagnostics: bool,
+) -> anyhow::Result<bool> {
+    let Some(deferred) = prepared.deferred_preflight.take() else {
+        return Ok(false);
+    };
+    let mut refreshed = false;
+    let mut report = deferred.report;
+    if report.should_attempt_access_key_renewal()
+        && failure.is_none_or(|failure| {
+            media_preflight_report_can_refresh_generic_access_key_for_failure(
+                &deferred.context,
+                &report,
+                failure,
+            )
+        })
+    {
+        let profiles = credential_runtime
+            .store
+            .load_profiles()
+            .context("failed to load credential profiles")?;
+        refreshed = try_access_key_auto_refresh_for_preflight(
+            credential_runtime,
+            client_runtime,
+            &profiles,
+            &report.access_key_renewal,
+            emit_diagnostics,
+        )
+        .await?;
+        if refreshed {
+            report = credential_preflight_report(
+                credential_runtime,
+                client_runtime,
+                credential_preflight,
+                &deferred.context,
+            )?;
+            prepared.credentials = credential_runtime.load()?;
+            prepared.access_key_provider = credential_runtime.selected_access_key_provider()?;
+        }
+    }
+
+    if emit_diagnostics {
+        emit_credential_preflight_warnings(&report);
+    }
+    if report.has_blocking_issues() {
+        let messages = report
+            .issues
+            .iter()
+            .filter(|issue| issue.blocking)
+            .map(|issue| issue.message.as_str())
+            .collect::<Vec<_>>()
+            .join("; ");
+        bail!("credential preflight failed: {messages}");
+    }
+    Ok(refreshed)
+}
+
+async fn try_forced_access_key_refresh_for_archive_retry(
+    credential_runtime: &CredentialRuntime,
+    client_runtime: &ClientRuntimeConfig,
+    credential_preflight: &CredentialPreflightRuntimeConfig,
+    prepared: &mut PreparedMediaRequest,
+    failure: &bbdown_core::Error,
+    emit_diagnostics: bool,
+) -> anyhow::Result<bool> {
+    if credential_preflight.mode != CredentialPreflightMode::Renew {
+        return Ok(false);
+    }
+    let Some(context) = prepared.media_preflight_context.as_ref() else {
+        return Ok(false);
+    };
+    let policy = credential_preflight.policy();
+    let (profiles, _selected_profile, mut statuses) =
+        lifecycle_statuses_for_selection(credential_runtime, false, &policy)?;
+    let status = statuses
+        .pop()
+        .context("failed to evaluate selected credential profile")?;
+    if !media_preflight_context_can_refresh_generic_access_key(
+        context,
+        client_runtime,
+        &status,
+        failure,
+    ) {
+        return Ok(false);
+    }
+    let decision = AccessKeyRenewalDecision::from_profile_status(&status, true);
+    if decision.automatic_refresh_readiness != AccessKeyAutomaticRefreshReadiness::Ready {
+        return Ok(false);
+    }
+    let refreshed = try_access_key_auto_refresh_for_preflight(
+        credential_runtime,
+        client_runtime,
+        &profiles,
+        &decision,
+        emit_diagnostics,
+    )
+    .await?;
+    if refreshed {
+        prepared.credentials = credential_runtime.load()?;
+        prepared.access_key_provider = credential_runtime.selected_access_key_provider()?;
+    }
+    Ok(refreshed)
+}
+
+fn media_preflight_context_can_refresh_generic_access_key(
+    context: &MediaCredentialPreflightContext,
+    client_runtime: &ClientRuntimeConfig,
+    status: &CredentialProfileLifecycleStatus,
+    failure: &bbdown_core::Error,
+) -> bool {
+    let report = CredentialPreflightReport::evaluate(
+        CredentialPreflightMode::Warn,
+        status,
+        credential_preflight_requirements_for_context(context, client_runtime),
+    );
+    media_preflight_report_can_refresh_generic_access_key_for_failure(context, &report, failure)
+}
+
+fn media_preflight_report_can_refresh_generic_access_key_for_failure(
+    context: &MediaCredentialPreflightContext,
+    report: &CredentialPreflightReport,
+    failure: &bbdown_core::Error,
+) -> bool {
+    if authenticated_web_api_failure_may_have_used_cookie(context, failure) {
+        return false;
+    }
+    if non_generic_access_key_json_http_failure(failure) {
+        return false;
+    }
+    if authenticated_web_api_cookie_missing(report) {
+        return false;
+    }
+    if app_playurl_selected_tv_access_key(report)
+        && app_playurl_auth_failure_may_have_used_selected_tv_access_key(failure)
+    {
+        return false;
+    }
+    if !failure_may_have_used_generic_access_key(context, failure) {
+        return false;
+    }
+    report.requirements.iter().any(|requirement| {
+        requirement.selected_kind == Some(CredentialKind::AccessKey)
+            && requirement.selected_status != CredentialLifecycleStatus::Missing
+    })
+}
+
+fn failure_may_have_used_generic_access_key(
+    context: &MediaCredentialPreflightContext,
+    failure: &bbdown_core::Error,
+) -> bool {
+    match failure {
+        bbdown_core::Error::AccessRestricted(message) => {
+            context.restricted_area_proxy_may_run
+                && restricted_area_resolver_failure_may_be_credential_related(message)
+        }
+        bbdown_core::Error::Api { .. } | bbdown_core::Error::Http(_) => {
+            (context.playurl_mode == Some(PlayurlMode::App) || context.intl_access_key_may_run)
+                && plan_failure_may_be_credential_related(failure)
+        }
+        bbdown_core::Error::Cancelled { .. }
+        | bbdown_core::Error::InvalidInput(_)
+        | bbdown_core::Error::SelectionRequired { .. }
+        | bbdown_core::Error::Unsupported(_)
+        | bbdown_core::Error::MissingField(_)
+        | bbdown_core::Error::Url(_)
+        | bbdown_core::Error::Json(_)
+        | bbdown_core::Error::Io(_)
+        | bbdown_core::Error::MuxFailed { .. } => false,
+    }
+}
+
+fn authenticated_web_api_failure_may_have_used_cookie(
+    context: &MediaCredentialPreflightContext,
+    failure: &bbdown_core::Error,
+) -> bool {
+    if !context.web_cookie_required {
+        return false;
+    }
+    match failure {
+        bbdown_core::Error::Api { code, message } => {
+            *code == -101 && !access_key_specific_failure_message(message)
+        }
+        bbdown_core::Error::Http(_) => cookie_authenticated_api_http_failure(failure),
+        bbdown_core::Error::AccessRestricted(_)
+        | bbdown_core::Error::Cancelled { .. }
+        | bbdown_core::Error::InvalidInput(_)
+        | bbdown_core::Error::SelectionRequired { .. }
+        | bbdown_core::Error::Unsupported(_)
+        | bbdown_core::Error::MissingField(_)
+        | bbdown_core::Error::Url(_)
+        | bbdown_core::Error::Json(_)
+        | bbdown_core::Error::Io(_)
+        | bbdown_core::Error::MuxFailed { .. } => false,
+    }
+}
+
+fn cookie_authenticated_api_http_failure(failure: &bbdown_core::Error) -> bool {
+    let bbdown_core::Error::Http(error) = failure else {
+        return false;
+    };
+    let Some(status) = error.status() else {
+        return false;
+    };
+    if !matches!(status.as_u16(), 401 | 403) {
+        return false;
+    }
+    error
+        .url()
+        .is_some_and(|url| cookie_authenticated_api_path(url.path()))
+}
+
+fn non_generic_access_key_json_http_failure(failure: &bbdown_core::Error) -> bool {
+    let bbdown_core::Error::Http(error) = failure else {
+        return false;
+    };
+    let Some(status) = error.status() else {
+        return false;
+    };
+    if !matches!(status.as_u16(), 401 | 403) {
+        return false;
+    }
+    error
+        .url()
+        .is_some_and(|url| non_generic_access_key_json_path(url.path()))
+}
+
+fn non_generic_access_key_json_path(path: &str) -> bool {
+    const NON_GENERIC_ACCESS_KEY_JSON_ENDPOINT_PATHS: &[&str] = &[
+        "/x/web-interface/view",
+        "/x/web-interface/nav",
+        "/x/tag/archive/tags",
+        "/pgc/view/web/season",
+        "/pgc/review/user",
+        "/pgc/player/web/v2/playurl",
+        "/pugv/view/web/season",
+        "/pugv/view/web/ep/list",
+        "/pugv/player/web/playurl",
+        "/x/v3/fav/folder/created/list-all",
+        "/x/v3/fav/resource/list",
+        "/x/v1/medialist/info",
+        "/x/v2/medialist/resource/list",
+        "/x/polymer/web-space/seasons_archives_list",
+        "/x/series/archives",
+        "/x/series/series",
+        "/x/space/wbi/arc/search",
+        "/x/web-interface/wbi/index/top/feed/rcmd",
+        "/x/player/playurl",
+        "/x/player/v2",
+    ];
+    endpoint_path_matches_any(path, NON_GENERIC_ACCESS_KEY_JSON_ENDPOINT_PATHS)
+        || cookie_authenticated_api_path(path)
+}
+
+fn cookie_authenticated_api_path(path: &str) -> bool {
+    const COOKIE_AUTHENTICATED_API_ENDPOINT_PATHS: &[&str] = &[
+        "/x/web-interface/history/cursor",
+        "/x/v2/history/toview",
+        "/x/polymer/web-dynamic/v1/feed/all",
+        "/x/polymer/web-dynamic/v1/feed/space",
+    ];
+    endpoint_path_matches_any(path, COOKIE_AUTHENTICATED_API_ENDPOINT_PATHS)
+}
+
+fn endpoint_path_matches_any(path: &str, endpoints: &[&str]) -> bool {
+    endpoints
+        .iter()
+        .any(|endpoint| path == *endpoint || path.ends_with(endpoint))
+}
+
+fn authenticated_web_api_cookie_missing(report: &CredentialPreflightReport) -> bool {
+    report.requirements.iter().any(|requirement| {
+        requirement.request_path == CredentialPreflightRequestPath::AuthenticatedWebApi
+            && requirement.selected_status == CredentialLifecycleStatus::Missing
+    })
+}
+
+fn app_playurl_selected_tv_access_key(report: &CredentialPreflightReport) -> bool {
+    report.requirements.iter().any(|requirement| {
+        requirement.request_path == CredentialPreflightRequestPath::AppPlayurl
+            && requirement.selected_kind == Some(CredentialKind::TvAccessKey)
+    })
+}
+
+fn app_playurl_auth_failure_may_have_used_selected_tv_access_key(
+    failure: &bbdown_core::Error,
+) -> bool {
+    match failure {
+        bbdown_core::Error::Api { code, message } => {
+            matches!(*code, 7 | 16)
+                && (auth_like_failure_message(message)
+                    || message == "APP playurl gRPC request failed")
+        }
+        bbdown_core::Error::Http(error) => error.status().is_some_and(|status| {
+            http_status_failure_may_be_credential_related(status.as_u16(), &error.to_string())
+        }),
+        bbdown_core::Error::AccessRestricted(_)
+        | bbdown_core::Error::Cancelled { .. }
+        | bbdown_core::Error::InvalidInput(_)
+        | bbdown_core::Error::SelectionRequired { .. }
+        | bbdown_core::Error::Unsupported(_)
+        | bbdown_core::Error::MissingField(_)
+        | bbdown_core::Error::Url(_)
+        | bbdown_core::Error::Json(_)
+        | bbdown_core::Error::Io(_)
+        | bbdown_core::Error::MuxFailed { .. } => false,
+    }
+}
+
+fn credential_preflight_report(
+    credential_runtime: &CredentialRuntime,
+    client_runtime: &ClientRuntimeConfig,
+    credential_preflight: &CredentialPreflightRuntimeConfig,
+    media_preflight_context: &MediaCredentialPreflightContext,
+) -> anyhow::Result<CredentialPreflightReport> {
+    let policy = credential_preflight.policy();
+    let (_profiles, _selected_profile, mut statuses) =
+        lifecycle_statuses_for_selection(credential_runtime, false, &policy)?;
+    let status = statuses
+        .pop()
+        .context("failed to evaluate selected credential profile")?;
+    Ok(CredentialPreflightReport::evaluate(
+        credential_preflight.mode,
+        &status,
+        credential_preflight_requirements_for_context(media_preflight_context, client_runtime),
+    ))
+}
+
+fn credential_preflight_requirements_for_context(
+    context: &MediaCredentialPreflightContext,
+    client_runtime: &ClientRuntimeConfig,
+) -> Vec<CredentialPreflightRequirement> {
+    let mut requirements = credential_preflight_requirements_for_media_paths(
+        context.playurl_mode,
+        &client_runtime.restricted_area,
+        context.restricted_area_proxy_may_run,
+        context.intl_access_key_may_run,
+    );
+    if context.web_cookie_required {
+        requirements.push(CredentialPreflightRequirement::authenticated_web_api_cookie());
+    }
+    requirements
+}
+
+#[derive(Clone, Debug)]
+struct MediaCredentialPreflightContext {
+    input: Input,
+    playurl_mode: Option<PlayurlMode>,
+    restricted_area_proxy_may_run: bool,
+    intl_access_key_may_run: bool,
+    web_cookie_required: bool,
+}
+
+async fn media_credential_preflight_context_for_input(
+    client_runtime: &ClientRuntimeConfig,
+    raw_input: &str,
+    selection: Option<&Selection>,
+    requires_media_streams: bool,
+    intl_access_key_may_run: bool,
+) -> anyhow::Result<MediaCredentialPreflightContext> {
+    let client = BiliClient::new(client_runtime.client_config(Credentials::default()));
+    let input = client.parse_input(raw_input).await?;
+    ensure_input_selection_for_media_preflight(&input, selection)?;
+    let playurl_mode = if requires_media_streams {
+        input_media_preflight_playurl_mode(&input, client_runtime.playurl_mode)
+    } else {
+        None
+    };
+    Ok(MediaCredentialPreflightContext {
+        input: input.clone(),
+        playurl_mode,
+        restricted_area_proxy_may_run: requires_media_streams
+            && !client_runtime.restricted_area.proxies.is_empty()
+            && input_may_use_restricted_area_proxy(&input),
+        intl_access_key_may_run: intl_access_key_may_run && input_may_use_intl_access_key(&input),
+        web_cookie_required: input_requires_web_cookie(&input),
+    })
+}
+
+fn ensure_input_selection_for_media_preflight(
+    input: &Input,
+    selection: Option<&Selection>,
+) -> anyhow::Result<()> {
+    if selection.is_none()
+        && let Some(input_kind) = selection_required_input_kind(input)
+    {
+        return Err(bbdown_core::Error::SelectionRequired { input_kind }.into());
+    }
+    Ok(())
+}
+
+fn selection_required_input_kind(input: &Input) -> Option<&'static str> {
+    match input {
+        Input::Season(_) => Some("season"),
+        Input::Media(_) => Some("media"),
+        Input::CheeseSeason(_) => Some("cheese season"),
+        _ => None,
+    }
+}
+
+fn input_media_preflight_playurl_mode(
+    input: &Input,
+    configured: PlayurlMode,
+) -> Option<PlayurlMode> {
+    match input {
+        Input::IntlEpisode(_) => None,
+        Input::CheeseEpisode(_) | Input::CheeseSeason(_) => Some(PlayurlMode::Web),
+        _ => Some(configured),
+    }
+}
+
+fn input_may_use_restricted_area_proxy(input: &Input) -> bool {
+    matches!(
+        input,
+        Input::Episode(_) | Input::Season(_) | Input::Media(_) | Input::ShortLink(_)
+    )
+}
+
+fn input_may_use_intl_access_key(input: &Input) -> bool {
+    matches!(input, Input::IntlEpisode(_))
+}
+
+fn input_requires_web_cookie(input: &Input) -> bool {
+    matches!(
+        input,
+        Input::FollowingFeed | Input::History | Input::WatchLater
+    )
+}
+
+fn download_mode_may_use_intl_access_key(mode: DownloadMode) -> bool {
+    matches!(
+        mode,
+        DownloadMode::All
+            | DownloadMode::VideoOnly
+            | DownloadMode::AudioOnly
+            | DownloadMode::SubtitleOnly
+    )
+}
+
+async fn try_access_key_auto_refresh_for_preflight(
+    credential_runtime: &CredentialRuntime,
+    client_runtime: &ClientRuntimeConfig,
+    profiles: &CredentialProfiles,
+    decision: &AccessKeyRenewalDecision,
+    emit_diagnostics: bool,
+) -> anyhow::Result<bool> {
+    let refresh = match access_key_refresh_request_from_profiles(profiles, &decision.profile) {
+        Ok(refresh) => refresh,
+        Err(error) => {
+            if emit_diagnostics {
+                eprintln!(
+                    "credential preflight warning: automatic access_key refresh setup failed: {}",
+                    display_human_text(&error.to_string())
+                );
+            }
+            return Ok(false);
+        }
+    };
+    let client = BiliClient::new(client_runtime.client_config(Credentials::default()));
+    match client.refresh_access_key(&refresh.request).await {
+        Ok(refreshed) => {
+            let _summary =
+                save_refreshed_access_key_silent(credential_runtime, &refresh, &refreshed)?;
+            if emit_diagnostics {
+                eprintln!("credential preflight: access_key refreshed");
+            }
+            Ok(true)
+        }
+        Err(error) => {
+            let message = redact_access_key_refresh_error(&error, &refresh.request);
+            if emit_diagnostics {
+                eprintln!(
+                    "credential preflight warning: automatic access_key refresh failed: {}",
+                    display_human_text(&message)
+                );
+            }
+            Ok(false)
+        }
+    }
+}
+
+fn emit_credential_preflight_warnings(report: &CredentialPreflightReport) {
+    for issue in report.issues.iter().filter(|issue| !issue.blocking) {
+        eprintln!("credential preflight warning: {}", issue.message);
+    }
+}
+
 async fn handle_plan(
     credentials: &CredentialRuntime,
     client_runtime: &ClientRuntimeConfig,
+    credential_preflight: &CredentialPreflightRuntimeConfig,
     url: String,
     select: Option<Selection>,
     json: bool,
 ) -> anyhow::Result<()> {
-    let client = BiliClient::new(client_runtime.client_config(credentials.load()?));
-    let plan = client.plan_download(&url, select).await?;
+    let prepared = prepare_credentials_for_media_request(
+        credentials,
+        client_runtime,
+        credential_preflight,
+        MediaCredentialPreflightRequest {
+            raw_input: &url,
+            selection: select.as_ref(),
+            requires_media_streams: true,
+            intl_access_key_may_run: true,
+            renewal_timing: CredentialPreflightRenewalTiming::Immediate,
+            emit_diagnostics: true,
+        },
+    )
+    .await?;
+    let client = BiliClient::new(prepared.client_config(client_runtime));
+    let plan = match prepared.parsed_input {
+        Some(input) => client.plan(input, select).await?,
+        None => client.plan_download(&url, select).await?,
+    };
     if json {
         println!("{}", serde_json::to_string_pretty(&plan)?);
     } else {
@@ -1120,12 +1876,30 @@ async fn handle_plan(
 async fn handle_playback(
     credentials: &CredentialRuntime,
     client_runtime: &ClientRuntimeConfig,
+    credential_preflight: &CredentialPreflightRuntimeConfig,
     url: String,
     select: Option<Selection>,
     json: bool,
 ) -> anyhow::Result<()> {
-    let client = BiliClient::new(client_runtime.client_config(credentials.load()?));
-    let plan = client.plan_playback(&url, select).await?;
+    let prepared = prepare_credentials_for_media_request(
+        credentials,
+        client_runtime,
+        credential_preflight,
+        MediaCredentialPreflightRequest {
+            raw_input: &url,
+            selection: select.as_ref(),
+            requires_media_streams: true,
+            intl_access_key_may_run: true,
+            renewal_timing: CredentialPreflightRenewalTiming::Immediate,
+            emit_diagnostics: true,
+        },
+    )
+    .await?;
+    let client = BiliClient::new(prepared.client_config(client_runtime));
+    let plan = match prepared.parsed_input {
+        Some(input) => client.plan_playback_input(input, select).await?,
+        None => client.plan_playback(&url, select).await?,
+    };
     if json {
         println!("{}", serde_json::to_string_pretty(&plan)?);
     } else {
@@ -1277,11 +2051,43 @@ fn media_stream_summary(label: &str, stream: &MediaStream) -> String {
 async fn handle_download(
     credentials: &CredentialRuntime,
     client_runtime: &ClientRuntimeConfig,
+    credential_preflight: &CredentialPreflightRuntimeConfig,
     args: DownloadCommandArgs,
 ) -> anyhow::Result<()> {
-    let client = BiliClient::new(client_runtime.client_config(credentials.load()?));
     let progress = CliProgressReporter {
         json: args.progress_json,
+    };
+    let renewal_timing = if args.archive_file.is_some() {
+        CredentialPreflightRenewalTiming::Deferred
+    } else {
+        CredentialPreflightRenewalTiming::Immediate
+    };
+    let prepared = match prepare_credentials_for_media_request(
+        credentials,
+        client_runtime,
+        credential_preflight,
+        MediaCredentialPreflightRequest {
+            raw_input: &args.url,
+            selection: args.select.as_ref(),
+            requires_media_streams: args.options.mode.requires_media_streams(),
+            intl_access_key_may_run: download_mode_may_use_intl_access_key(args.options.mode),
+            renewal_timing,
+            emit_diagnostics: !args.progress_json,
+        },
+    )
+    .await
+    {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            emit_cli_plan_failed(
+                progress,
+                &args.url,
+                &args.options.output_dir,
+                0,
+                error.to_string(),
+            );
+            return Err(error);
+        }
     };
     let cancellation = DownloadCancellationToken::new();
     let duplicate_prompt_active = Arc::new(AtomicBool::new(false));
@@ -1290,33 +2096,51 @@ async fn handle_download(
         Arc::clone(&duplicate_prompt_active),
     );
     let json = args.json;
-    let report = match args.archive_file.clone() {
-        Some(archive_file) => {
-            let Some(report) = handle_archive_download(
-                &client,
-                args,
-                archive_file,
+    let report = if let Some(archive_file) = args.archive_file.clone() {
+        let Some(report) = handle_archive_download(
+            ArchiveDownloadRuntime {
+                credential_runtime: credentials,
+                client_runtime,
+                credential_preflight,
                 progress,
+                cancellation: &cancellation,
+                duplicate_prompt_active: &duplicate_prompt_active,
+            },
+            prepared,
+            args,
+            archive_file,
+        )
+        .await?
+        else {
+            return Ok(());
+        };
+        report
+    } else {
+        let client = BiliClient::new(prepared.client_config(client_runtime));
+        let input_title = args.url.clone();
+        let output_dir = args.options.output_dir.clone();
+        let plan = plan_download_or_report(
+            &client,
+            DownloadPlanningRequest {
+                raw: &args.url,
+                parsed_input: prepared.parsed_input,
+                selection: args.select,
+                mode: args.options.mode,
+                input_title: &input_title,
+                output_dir: &output_dir,
+                progress,
+                cancellation: &cancellation,
+            },
+        )
+        .await?;
+        client
+            .download_plan_with_progress_and_cancellation(
+                &plan,
+                args.options,
+                &progress,
                 &cancellation,
-                &duplicate_prompt_active,
             )
             .await?
-            else {
-                return Ok(());
-            };
-            report
-        }
-        None => {
-            client
-                .download_input_with_progress_and_cancellation(
-                    &args.url,
-                    args.select,
-                    args.options,
-                    &progress,
-                    &cancellation,
-                )
-                .await?
-        }
     };
     if json {
         println!("{}", serde_json::to_string_pretty(&report)?);
@@ -1326,27 +2150,34 @@ async fn handle_download(
     Ok(())
 }
 
+struct ArchiveDownloadRuntime<'a> {
+    credential_runtime: &'a CredentialRuntime,
+    client_runtime: &'a ClientRuntimeConfig,
+    credential_preflight: &'a CredentialPreflightRuntimeConfig,
+    progress: CliProgressReporter,
+    cancellation: &'a DownloadCancellationToken,
+    duplicate_prompt_active: &'a AtomicBool,
+}
+
 async fn handle_archive_download(
-    client: &BiliClient,
+    runtime: ArchiveDownloadRuntime<'_>,
+    mut prepared: PreparedMediaRequest,
     args: DownloadCommandArgs,
     archive_file: PathBuf,
-    progress: CliProgressReporter,
-    cancellation: &DownloadCancellationToken,
-    duplicate_prompt_active: &AtomicBool,
 ) -> anyhow::Result<Option<DownloadReport>> {
+    let progress = runtime.progress;
+    let cancellation = runtime.cancellation;
+    let duplicate_prompt_active = runtime.duplicate_prompt_active;
+    let mut client = BiliClient::new(prepared.client_config(runtime.client_runtime));
     let input_title = args.url.clone();
     let output_dir = args.options.output_dir.clone();
-    let plan = plan_archive_download_or_report(
-        client,
-        ArchivePlanningRequest {
-            raw: &args.url,
-            selection: args.select,
-            mode: args.options.mode,
-            input_title: &input_title,
-            output_dir: &output_dir,
-            progress,
-            cancellation,
-        },
+    let mut plan = plan_archive_download_with_deferred_retry_or_report(
+        &runtime,
+        &mut client,
+        &mut prepared,
+        &args,
+        &input_title,
+        &output_dir,
     )
     .await?;
     let mut archive = load_archive_or_report(
@@ -1355,64 +2186,62 @@ async fn handle_archive_download(
         &plan.title,
         &args.options.output_dir,
     )?;
-    let preflight = match DownloadPreflight::inspect(&plan, &args.options, Some(&archive)) {
-        Ok(preflight) => preflight,
-        Err(error) => {
-            emit_cli_plan_failed(
-                progress,
-                &plan.title,
-                &args.options.output_dir,
-                0,
-                error.to_string(),
-            );
-            return Err(error.into());
-        }
-    };
-    let stdin_is_terminal = io::stdin().is_terminal();
-    let duplicate_prompt_printed_preflight = should_prompt_duplicate_decision(
-        args.on_duplicate,
-        args.json,
+    let mut preflight =
+        inspect_download_preflight_or_report(&plan, &args.options, &archive, progress)?;
+    let mut duplicate_decision = archive_duplicate_decision_or_report(
+        &args,
+        &plan,
         &preflight,
-        stdin_is_terminal,
-    );
-    let decision = duplicate_decision_or_report(DuplicateDecisionRequest {
-        on_duplicate: args.on_duplicate,
-        json: args.json,
-        stdin_is_terminal,
-        preflight: &preflight,
         progress,
-        title: &plan.title,
         cancellation,
         duplicate_prompt_active,
-    })?;
-    let execution_decision = if args.on_duplicate.is_none() && !preflight.requires_decision() {
-        DuplicateDecision::Cancel
-    } else {
-        decision
-    };
-    if preflight.requires_decision() && decision == DuplicateDecision::Cancel {
-        report_archive_duplicate_cancel(
-            args.json,
-            duplicate_prompt_printed_preflight,
-            progress,
-            &plan.title,
-            &preflight,
-        )?;
+    )?;
+    if duplicate_decision == ArchiveDuplicateDecision::Cancelled {
         return Ok(None);
     }
-    let decision_output_dir =
-        decision_output_dir_or_report(&preflight, decision, progress, &plan.title)?;
-    if let Err(error) = ensure_archive_file_is_not_output_root(&archive_file, &decision_output_dir)
-    {
-        emit_cli_plan_failed(
-            progress,
-            &plan.title,
-            &decision_output_dir,
-            0,
-            error.to_string(),
-        );
-        return Err(error);
+    let refreshed = complete_deferred_archive_preflight_renewal_or_report(
+        &runtime,
+        &mut prepared,
+        &args,
+        &plan,
+    )
+    .await?;
+    if refreshed {
+        (client, plan) = replan_archive_download_after_refresh_or_report(
+            &runtime,
+            &prepared,
+            &args,
+            &input_title,
+            &output_dir,
+        )
+        .await?;
+        let previous_preflight = preflight;
+        preflight = inspect_download_preflight_or_report(&plan, &args.options, &archive, progress)?;
+        duplicate_decision = archive_duplicate_decision_after_refresh_or_report(
+            &runtime,
+            &args,
+            &plan,
+            &previous_preflight,
+            &preflight,
+            duplicate_decision,
+        )?;
+        if duplicate_decision == ArchiveDuplicateDecision::Cancelled {
+            return Ok(None);
+        }
     }
+    let Some(execution_decision) =
+        archive_execution_duplicate_decision(&args, &preflight, duplicate_decision)
+    else {
+        return Ok(None);
+    };
+    let decision_output_dir =
+        decision_output_dir_or_report(&preflight, execution_decision, progress, &plan.title)?;
+    ensure_archive_file_is_not_decision_output_root_or_report(
+        &archive_file,
+        &decision_output_dir,
+        progress,
+        &plan.title,
+    )?;
     let archive_progress = DeferredPlanCompletedProgress::new(progress);
     let report = client
         .download_plan_with_archive_preflight_decision_with_progress_and_cancellation(
@@ -1430,8 +2259,398 @@ async fn handle_archive_download(
     Ok(Some(report))
 }
 
-struct ArchivePlanningRequest<'a> {
+async fn replan_archive_download_after_refresh_or_report(
+    runtime: &ArchiveDownloadRuntime<'_>,
+    prepared: &PreparedMediaRequest,
+    args: &DownloadCommandArgs,
+    input_title: &str,
+    output_dir: &Path,
+) -> anyhow::Result<(BiliClient, DownloadPlan)> {
+    let client = BiliClient::new(prepared.client_config(runtime.client_runtime));
+    let plan = plan_archive_download_or_report(
+        &client,
+        args,
+        prepared.parsed_input.clone(),
+        input_title,
+        output_dir,
+        runtime.progress,
+        runtime.cancellation,
+    )
+    .await?;
+    Ok((client, plan))
+}
+
+async fn complete_deferred_archive_preflight_renewal_or_report(
+    runtime: &ArchiveDownloadRuntime<'_>,
+    prepared: &mut PreparedMediaRequest,
+    args: &DownloadCommandArgs,
+    plan: &DownloadPlan,
+) -> anyhow::Result<bool> {
+    complete_deferred_archive_preflight_renewal_for_target(
+        runtime,
+        prepared,
+        args,
+        &plan.title,
+        &args.options.output_dir,
+        None,
+    )
+    .await
+}
+
+fn archive_duplicate_decision_after_refresh_or_report(
+    runtime: &ArchiveDownloadRuntime<'_>,
+    args: &DownloadCommandArgs,
+    plan: &DownloadPlan,
+    previous_preflight: &DownloadPreflight,
+    preflight: &DownloadPreflight,
+    current_decision: ArchiveDuplicateDecision,
+) -> anyhow::Result<ArchiveDuplicateDecision> {
+    if preflight.requires_decision() && preflight != previous_preflight {
+        archive_duplicate_decision_or_report(
+            args,
+            plan,
+            preflight,
+            runtime.progress,
+            runtime.cancellation,
+            runtime.duplicate_prompt_active,
+        )
+    } else {
+        Ok(current_decision)
+    }
+}
+
+fn archive_execution_duplicate_decision(
+    args: &DownloadCommandArgs,
+    preflight: &DownloadPreflight,
+    duplicate_decision: ArchiveDuplicateDecision,
+) -> Option<DuplicateDecision> {
+    match duplicate_decision {
+        ArchiveDuplicateDecision::Decision(decision)
+            if args.on_duplicate.is_some() || preflight.requires_decision() =>
+        {
+            Some(decision)
+        }
+        ArchiveDuplicateDecision::Decision(_) | ArchiveDuplicateDecision::NoDecisionRequired => {
+            Some(DuplicateDecision::Cancel)
+        }
+        ArchiveDuplicateDecision::Cancelled => None,
+    }
+}
+
+async fn complete_deferred_archive_preflight_renewal_for_target(
+    runtime: &ArchiveDownloadRuntime<'_>,
+    prepared: &mut PreparedMediaRequest,
+    args: &DownloadCommandArgs,
+    title: &str,
+    output_dir: &Path,
+    failure: Option<&bbdown_core::Error>,
+) -> anyhow::Result<bool> {
+    match complete_deferred_media_preflight_renewal(
+        runtime.credential_runtime,
+        runtime.client_runtime,
+        runtime.credential_preflight,
+        prepared,
+        failure,
+        !args.progress_json,
+    )
+    .await
+    {
+        Ok(refreshed) => Ok(refreshed),
+        Err(error) => {
+            emit_cli_plan_failed(runtime.progress, title, output_dir, 0, error.to_string());
+            Err(error)
+        }
+    }
+}
+
+async fn plan_archive_download_with_deferred_retry_or_report(
+    runtime: &ArchiveDownloadRuntime<'_>,
+    client: &mut BiliClient,
+    prepared: &mut PreparedMediaRequest,
+    args: &DownloadCommandArgs,
+    input_title: &str,
+    output_dir: &Path,
+) -> anyhow::Result<DownloadPlan> {
+    let request = DownloadPlanningRequest {
+        raw: &args.url,
+        parsed_input: prepared.parsed_input.clone(),
+        selection: args.select.clone(),
+        mode: args.options.mode,
+        input_title,
+        output_dir,
+        progress: runtime.progress,
+        cancellation: runtime.cancellation,
+    };
+    match plan_download(client, &request).await {
+        Ok(plan) => Ok(plan),
+        Err(error) if plan_failure_may_be_credential_related(&error) => {
+            let refreshed = if prepared.deferred_preflight.is_some() {
+                complete_deferred_archive_preflight_renewal_for_target(
+                    runtime,
+                    prepared,
+                    args,
+                    input_title,
+                    output_dir,
+                    Some(&error),
+                )
+                .await?
+            } else {
+                match try_forced_access_key_refresh_for_archive_retry(
+                    runtime.credential_runtime,
+                    runtime.client_runtime,
+                    runtime.credential_preflight,
+                    prepared,
+                    &error,
+                    !args.progress_json,
+                )
+                .await
+                {
+                    Ok(refreshed) => refreshed,
+                    Err(refresh_error) => {
+                        emit_cli_plan_failed(
+                            runtime.progress,
+                            input_title,
+                            output_dir,
+                            0,
+                            refresh_error.to_string(),
+                        );
+                        return Err(refresh_error);
+                    }
+                }
+            };
+            if refreshed {
+                *client = BiliClient::new(prepared.client_config(runtime.client_runtime));
+                match plan_download(client, &request).await {
+                    Ok(plan) => Ok(plan),
+                    Err(error) => {
+                        emit_plan_error_for_request(&request, &error);
+                        Err(error.into())
+                    }
+                }
+            } else {
+                emit_plan_error_for_request(&request, &error);
+                Err(error.into())
+            }
+        }
+        Err(error) => {
+            emit_plan_error_for_request(&request, &error);
+            Err(error.into())
+        }
+    }
+}
+
+fn plan_failure_may_be_credential_related(error: &bbdown_core::Error) -> bool {
+    match error {
+        bbdown_core::Error::Api { code, message } => {
+            api_failure_may_be_credential_related(*code, message)
+        }
+        bbdown_core::Error::Http(error) => error.status().is_some_and(|status| {
+            http_status_failure_may_be_credential_related(status.as_u16(), &error.to_string())
+        }),
+        bbdown_core::Error::AccessRestricted(message) => {
+            restricted_area_resolver_failure_may_be_credential_related(message)
+        }
+        bbdown_core::Error::Cancelled { .. }
+        | bbdown_core::Error::InvalidInput(_)
+        | bbdown_core::Error::SelectionRequired { .. }
+        | bbdown_core::Error::Unsupported(_)
+        | bbdown_core::Error::MissingField(_)
+        | bbdown_core::Error::Url(_)
+        | bbdown_core::Error::Json(_)
+        | bbdown_core::Error::Io(_)
+        | bbdown_core::Error::MuxFailed { .. } => false,
+    }
+}
+
+fn api_failure_may_be_credential_related(code: i64, message: &str) -> bool {
+    match code {
+        -101 | -400 | -403 | 7 => access_key_specific_failure_message(message),
+        16 => {
+            access_key_specific_failure_message(message)
+                || message == "APP playurl gRPC request failed"
+        }
+        _ => false,
+    }
+}
+
+fn http_status_failure_may_be_credential_related(status: u16, message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    (status == 401 && lower.contains("unauthorized"))
+        || (status == 403
+            && (lower.contains("forbidden") || access_key_refresh_failure_message(&lower)))
+}
+
+fn access_key_refresh_failure_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    access_key_specific_failure_message(&lower)
+        || lower.contains("not login")
+        || lower.contains("no login")
+}
+
+fn access_key_specific_failure_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("access_key")
+        || lower.contains("access key")
+        || lower.contains("access_token")
+        || lower.contains("access-token")
+        || lower.contains("access token")
+}
+
+fn bili_account_not_logged_in_message(message: &str) -> bool {
+    message.contains("账号未登录")
+        || message.contains("账号未登陆")
+        || message.contains("帳號未登錄")
+        || message.contains("帳號未登入")
+}
+
+fn auth_like_failure_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("access_key")
+        || lower.contains("access key")
+        || lower.contains("credential")
+        || lower.contains("token")
+        || lower.contains("unauthorized")
+        || lower.contains("not login")
+        || lower.contains("no login")
+        || contains_auth_word(&lower)
+}
+
+fn contains_auth_word(message: &str) -> bool {
+    message
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .any(|word| {
+            matches!(
+                word,
+                "auth"
+                    | "oauth"
+                    | "authenticate"
+                    | "authenticated"
+                    | "authentication"
+                    | "authorize"
+                    | "authorized"
+                    | "authorization"
+            )
+        })
+}
+
+fn restricted_area_resolver_failure_may_be_credential_related(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("restricted-area resolver failed")
+        && ((lower.contains("api code -101")
+            && (access_key_specific_failure_message(&lower)
+                || bili_account_not_logged_in_message(message)))
+            || ((lower.contains("api code -403")
+                || lower.contains("api code -400")
+                || lower.contains("api code 7")
+                || lower.contains("api code 16"))
+                && access_key_specific_failure_message(&lower))
+            || (lower.contains("http status")
+                && (lower.contains("401")
+                    || lower.contains("403")
+                    || lower.contains("unauthorized"))
+                && access_key_specific_failure_message(&lower)))
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ArchiveDuplicateDecision {
+    Decision(DuplicateDecision),
+    NoDecisionRequired,
+    Cancelled,
+}
+
+fn archive_duplicate_decision_or_report(
+    args: &DownloadCommandArgs,
+    plan: &DownloadPlan,
+    preflight: &DownloadPreflight,
+    progress: CliProgressReporter,
+    cancellation: &DownloadCancellationToken,
+    duplicate_prompt_active: &AtomicBool,
+) -> anyhow::Result<ArchiveDuplicateDecision> {
+    let stdin_is_terminal = io::stdin().is_terminal();
+    let suppress_human_preflight = args.json || args.progress_json;
+    let duplicate_prompt_printed_preflight = should_prompt_duplicate_decision(
+        args.on_duplicate,
+        suppress_human_preflight,
+        preflight,
+        stdin_is_terminal,
+    );
+    let decision = duplicate_decision_or_report(DuplicateDecisionRequest {
+        on_duplicate: args.on_duplicate,
+        suppress_human_preflight,
+        stdin_is_terminal,
+        preflight,
+        progress,
+        title: &plan.title,
+        cancellation,
+        duplicate_prompt_active,
+    })?;
+    let Some(decision) = decision else {
+        return Ok(ArchiveDuplicateDecision::NoDecisionRequired);
+    };
+    if preflight.requires_decision() && decision == DuplicateDecision::Cancel {
+        report_archive_duplicate_cancel(
+            args.json,
+            suppress_human_preflight,
+            duplicate_prompt_printed_preflight,
+            progress,
+            &plan.title,
+            preflight,
+        )?;
+        return Ok(ArchiveDuplicateDecision::Cancelled);
+    }
+    Ok(ArchiveDuplicateDecision::Decision(decision))
+}
+
+async fn plan_archive_download_or_report(
+    client: &BiliClient,
+    args: &DownloadCommandArgs,
+    parsed_input: Option<Input>,
+    input_title: &str,
+    output_dir: &Path,
+    progress: CliProgressReporter,
+    cancellation: &DownloadCancellationToken,
+) -> anyhow::Result<DownloadPlan> {
+    plan_download_or_report(
+        client,
+        DownloadPlanningRequest {
+            raw: &args.url,
+            parsed_input,
+            selection: args.select.clone(),
+            mode: args.options.mode,
+            input_title,
+            output_dir,
+            progress,
+            cancellation,
+        },
+    )
+    .await
+}
+
+fn inspect_download_preflight_or_report(
+    plan: &DownloadPlan,
+    options: &DownloadOptions,
+    archive: &DownloadArchive,
+    progress: CliProgressReporter,
+) -> anyhow::Result<DownloadPreflight> {
+    match DownloadPreflight::inspect(plan, options, Some(archive)) {
+        Ok(preflight) => Ok(preflight),
+        Err(error) => {
+            emit_cli_plan_failed(
+                progress,
+                &plan.title,
+                &options.output_dir,
+                0,
+                error.to_string(),
+            );
+            Err(error.into())
+        }
+    }
+}
+
+#[derive(Clone)]
+struct DownloadPlanningRequest<'a> {
     raw: &'a str,
+    parsed_input: Option<Input>,
     selection: Option<Selection>,
     mode: DownloadMode,
     input_title: &'a str,
@@ -1440,36 +2659,56 @@ struct ArchivePlanningRequest<'a> {
     cancellation: &'a DownloadCancellationToken,
 }
 
-async fn plan_archive_download_or_report(
+async fn plan_download_or_report(
     client: &BiliClient,
-    request: ArchivePlanningRequest<'_>,
+    request: DownloadPlanningRequest<'_>,
 ) -> anyhow::Result<DownloadPlan> {
-    let plan_result = tokio::select! {
-        result = client.plan_download_with_mode(request.raw, request.selection, request.mode) => result,
-        () = request.cancellation.cancelled() => Err(request.cancellation.cancelled_error()),
-    };
-    match plan_result {
+    match plan_download(client, &request).await {
         Ok(plan) => Ok(plan),
         Err(error) => {
-            if error.is_cancelled() {
-                emit_cli_plan_cancelled(
-                    request.progress,
-                    request.input_title,
-                    request.output_dir,
-                    0,
-                    error.to_string(),
-                );
-            } else {
-                emit_cli_plan_failed(
-                    request.progress,
-                    request.input_title,
-                    request.output_dir,
-                    0,
-                    error.to_string(),
-                );
-            }
+            emit_plan_error_for_request(&request, &error);
             Err(error.into())
         }
+    }
+}
+
+async fn plan_download(
+    client: &BiliClient,
+    request: &DownloadPlanningRequest<'_>,
+) -> bbdown_core::Result<DownloadPlan> {
+    let plan_result = tokio::select! {
+        result = async {
+            match request.parsed_input.clone() {
+                Some(input) => client
+                    .plan_with_download_mode(input, request.selection.clone(), request.mode)
+                    .await,
+                None => client
+                    .plan_download_with_mode(request.raw, request.selection.clone(), request.mode)
+                    .await,
+            }
+        } => result,
+        () = request.cancellation.cancelled() => Err(request.cancellation.cancelled_error()),
+    };
+    plan_result
+}
+
+fn emit_plan_error_for_request(request: &DownloadPlanningRequest<'_>, error: &bbdown_core::Error) {
+    if error.is_cancelled() {
+        emit_cli_plan_cancelled(
+            request.progress,
+            request.input_title,
+            request.output_dir,
+            0,
+            error.to_string(),
+        );
+    } else {
+        emit_cli_plan_failed(
+            request.progress,
+            request.input_title,
+            request.output_dir,
+            0,
+            error.to_string(),
+        );
     }
 }
 
@@ -1493,7 +2732,7 @@ fn load_archive_or_report(
 #[derive(Clone, Copy)]
 struct DuplicateDecisionRequest<'a> {
     on_duplicate: Option<DuplicateDecision>,
-    json: bool,
+    suppress_human_preflight: bool,
     stdin_is_terminal: bool,
     preflight: &'a DownloadPreflight,
     progress: CliProgressReporter,
@@ -1504,10 +2743,10 @@ struct DuplicateDecisionRequest<'a> {
 
 fn duplicate_decision_or_report(
     request: DuplicateDecisionRequest<'_>,
-) -> anyhow::Result<DuplicateDecision> {
+) -> anyhow::Result<Option<DuplicateDecision>> {
     match duplicate_decision(
         request.on_duplicate,
-        request.json,
+        request.suppress_human_preflight,
         request.stdin_is_terminal,
         request.preflight,
         request.cancellation,
@@ -1559,6 +2798,19 @@ fn decision_output_dir_or_report(
     }
 }
 
+fn ensure_archive_file_is_not_decision_output_root_or_report(
+    archive_file: &Path,
+    decision_output_dir: &Path,
+    progress: CliProgressReporter,
+    title: &str,
+) -> anyhow::Result<()> {
+    if let Err(error) = ensure_archive_file_is_not_output_root(archive_file, decision_output_dir) {
+        emit_cli_plan_failed(progress, title, decision_output_dir, 0, error.to_string());
+        return Err(error);
+    }
+    Ok(())
+}
+
 fn save_archive_or_report(
     archive: &DownloadArchive,
     archive_file: &Path,
@@ -1594,6 +2846,7 @@ fn save_archive_or_report(
 
 fn report_archive_duplicate_cancel(
     json: bool,
+    suppress_human_preflight: bool,
     duplicate_prompt_printed_preflight: bool,
     progress: CliProgressReporter,
     title: &str,
@@ -1614,7 +2867,7 @@ fn report_archive_duplicate_cancel(
             }))?
         );
     } else {
-        if !duplicate_prompt_printed_preflight {
+        if !duplicate_prompt_printed_preflight && !suppress_human_preflight {
             print_duplicate_preflight(preflight);
         }
         println!("download canceled");
@@ -1925,27 +3178,27 @@ fn path_component_key(component: Component<'_>) -> String {
 
 fn duplicate_decision(
     explicit: Option<DuplicateDecision>,
-    json: bool,
+    suppress_human_preflight: bool,
     stdin_is_terminal: bool,
     preflight: &DownloadPreflight,
     cancellation: &DownloadCancellationToken,
     duplicate_prompt_active: &AtomicBool,
-) -> anyhow::Result<DuplicateDecision> {
+) -> anyhow::Result<Option<DuplicateDecision>> {
     if cancellation.is_cancelled() {
         return Err(cancellation.cancelled_error().into());
     }
     if let Some(decision) = explicit {
-        return Ok(decision);
+        return Ok(Some(decision));
     }
     if !preflight.requires_decision() {
-        return Ok(DuplicateDecision::Replace);
+        return Ok(None);
     }
-    if json || !stdin_is_terminal {
+    if suppress_human_preflight || !stdin_is_terminal {
         bail!(
             "download archive found an existing record or output conflict; pass --on-duplicate replace, keep-both, or cancel"
         );
     }
-    prompt_duplicate_decision(preflight, cancellation, duplicate_prompt_active)
+    prompt_duplicate_decision(preflight, cancellation, duplicate_prompt_active).map(Some)
 }
 
 fn should_prompt_duplicate_decision(
@@ -2652,26 +3905,7 @@ fn save_refreshed_access_key(
     refreshed: &AccessKeyLoginCredentials,
     json: bool,
 ) -> anyhow::Result<()> {
-    let acquired_at_unix_millis = current_unix_millis();
-    let refreshed_secret = refreshed_access_key_provider_secret(
-        refresh.access_key_provider,
-        &refresh.request,
-        refreshed,
-    );
-    let summary = save_credentials_with_lifecycle_and_secrets(
-        credential_runtime,
-        refreshed.credentials(),
-        [(
-            CredentialKind::AccessKey,
-            access_key_lifecycle_metadata_with_provider(
-                refreshed,
-                acquired_at_unix_millis,
-                refresh.access_key_provider,
-                refreshed_secret.1.has_refresh_token(),
-            ),
-        )],
-        [refreshed_secret],
-    )?;
+    let summary = save_refreshed_access_key_silent(credential_runtime, refresh, refreshed)?;
     if json {
         print_json_line(&serde_json::json!({
             "event": "refreshed",
@@ -2688,6 +3922,33 @@ fn save_refreshed_access_key(
         print_human_line("access key refreshed")?;
         print_human_line("access key saved")
     }
+}
+
+fn save_refreshed_access_key_silent(
+    credential_runtime: &CredentialRuntime,
+    refresh: &StoredAccessKeyRefreshRequest,
+    refreshed: &AccessKeyLoginCredentials,
+) -> anyhow::Result<bbdown_core::CredentialSource> {
+    let acquired_at_unix_millis = current_unix_millis();
+    let refreshed_secret = refreshed_access_key_provider_secret(
+        refresh.access_key_provider,
+        &refresh.request,
+        refreshed,
+    );
+    save_credentials_with_lifecycle_and_secrets(
+        credential_runtime,
+        refreshed.credentials(),
+        [(
+            CredentialKind::AccessKey,
+            access_key_lifecycle_metadata_with_provider(
+                refreshed,
+                acquired_at_unix_millis,
+                refresh.access_key_provider,
+                refreshed_secret.1.has_refresh_token(),
+            ),
+        )],
+        [refreshed_secret],
+    )
 }
 
 fn print_access_key_auto_refresh_failure(
@@ -2987,7 +4248,10 @@ fn access_key_refresh_request_from_profiles(
         .context("failed to load credential profile")?;
     let access_key = credentials
         .access_key
-        .filter(|value| !value.trim().is_empty())
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
         .context("selected profile has no access_key")?;
     let metadata = profiles
         .profile_metadata(profile_name)
@@ -3006,14 +4270,15 @@ fn access_key_refresh_request_from_profiles(
         .context("selected profile has no access_key refresh secret for its provider")?;
     let refresh_token = secret
         .refresh_token
-        .as_ref()
-        .filter(|value| !value.trim().is_empty())
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
         .context("selected profile has no access_key refresh token secret")?;
     let refresh_provider = secret
         .refresh_provider
         .context("selected profile has no access_key refresh provider")?;
-    let mut request =
-        AccessKeyRefreshRequest::new(access_key, refresh_token.clone(), refresh_provider)?;
+    let mut request = AccessKeyRefreshRequest::new(access_key, refresh_token, refresh_provider)?;
     if refresh_provider == AccessKeyRefreshProvider::BilibiliMainOauth2 {
         request = request.with_refresh_keypair(
             secret
@@ -3675,23 +4940,32 @@ fn _assert_credentials_send_sync(_: Credentials) {}
 mod tests {
     use super::{
         Cli, CliProgressReporter, CredentialRuntime, DownloadCtrlCAction, DownloadOnlyArg,
-        DuplicateDecisionRequest, DuplicatePromptActiveGuard, SingleDownloadValidationArgs,
-        SubtitleAiPolicyArg, access_key_lifecycle_metadata, access_key_provider_secret,
-        archive_sidecar_path, credential_profile_selection, download_ctrl_c_action,
-        duplicate_decision_or_report, endpoints_from_cli, ensure_access_key_login_file_is_safe,
-        ensure_access_key_login_stdin_is_safe, ensure_archive_file_is_not_output_root,
-        next_poll_sleep, parse_access_key_login_input, qr_login_lifecycle_metadata,
-        remaining_until, restricted_area_from_cli_with_args,
-        restricted_area_from_cli_with_env_values, save_credentials,
-        save_credentials_with_lifecycle, save_credentials_with_lifecycle_and_secrets,
-        should_prompt_duplicate_decision, validate_media_host_spec, validate_single_download_args,
+        DuplicateDecisionRequest, DuplicatePromptActiveGuard, MediaCredentialPreflightContext,
+        SingleDownloadValidationArgs, SubtitleAiPolicyArg, access_key_lifecycle_metadata,
+        access_key_provider_secret, access_key_refresh_request_from_profiles, archive_sidecar_path,
+        credential_profile_selection, download_ctrl_c_action,
+        download_mode_may_use_intl_access_key, duplicate_decision_or_report, endpoints_from_cli,
+        ensure_access_key_login_file_is_safe, ensure_access_key_login_stdin_is_safe,
+        ensure_archive_file_is_not_output_root, http_status_failure_may_be_credential_related,
+        input_may_use_intl_access_key, input_may_use_restricted_area_proxy,
+        input_media_preflight_playurl_mode, input_requires_web_cookie,
+        media_preflight_report_can_refresh_generic_access_key_for_failure, next_poll_sleep,
+        non_generic_access_key_json_path, parse_access_key_login_input,
+        plan_failure_may_be_credential_related, qr_login_lifecycle_metadata, remaining_until,
+        restricted_area_from_cli_with_args, restricted_area_from_cli_with_env_values,
+        save_credentials, save_credentials_with_lifecycle,
+        save_credentials_with_lifecycle_and_secrets, should_prompt_duplicate_decision,
+        validate_media_host_spec, validate_single_download_args,
     };
     use bbdown_core::{
         AccessKeyLoginConfig, AccessKeyLoginCredentials, AccessKeyProvider,
-        AccessKeyRefreshKeypair, AccessKeyRefreshProvider, CredentialKind,
-        CredentialLifecycleMetadata, CredentialLifecycleSource, CredentialProfileSelection,
-        CredentialStore, Credentials, DownloadCancellationToken, DownloadOutputConflict,
-        DownloadPreflight, DuplicateDecision, EndpointConfig, QrLoginKind,
+        AccessKeyProviderSecret, AccessKeyRefreshKeypair, AccessKeyRefreshProvider, CredentialKind,
+        CredentialLifecycleMetadata, CredentialLifecyclePolicy, CredentialLifecycleSource,
+        CredentialPreflightMode, CredentialPreflightReport, CredentialPreflightRequirement,
+        CredentialProfileMetadata, CredentialProfileSecrets, CredentialProfileSelection,
+        CredentialProfiles, CredentialStore, Credentials, DownloadCancellationToken, DownloadMode,
+        DownloadOutputConflict, DownloadPreflight, DuplicateDecision, EndpointConfig, Input,
+        PlayurlMode, QrLoginKind,
     };
     use clap::Parser as _;
     use std::fs;
@@ -3722,6 +4996,421 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn restricted_area_proxy_input_classifier_matches_pgc_planner_inputs() {
+        assert!(input_may_use_restricted_area_proxy(&Input::Episode(1000)));
+        assert!(input_may_use_restricted_area_proxy(&Input::Season(123)));
+        assert!(input_may_use_restricted_area_proxy(&Input::Media(456)));
+        assert!(input_may_use_restricted_area_proxy(&Input::ShortLink(
+            "https://b23.tv/example".to_owned()
+        )));
+        assert!(!input_may_use_restricted_area_proxy(&Input::Aid(170_001)));
+        assert!(!input_may_use_restricted_area_proxy(&Input::Bvid(
+            "BV1xx411c7mD".to_owned()
+        )));
+        assert!(!input_may_use_restricted_area_proxy(&Input::FavoriteList {
+            media_id: Some(456),
+            owner_mid: None,
+        }));
+        assert!(!input_may_use_restricted_area_proxy(
+            &Input::RecommendationFeed
+        ));
+        assert!(!input_may_use_restricted_area_proxy(&Input::IntlEpisode(
+            341_736
+        )));
+        assert!(input_may_use_intl_access_key(&Input::IntlEpisode(341_736)));
+        assert!(!input_may_use_intl_access_key(&Input::Episode(1000)));
+        assert!(!input_may_use_restricted_area_proxy(&Input::CheeseEpisode(
+            101
+        )));
+    }
+
+    #[test]
+    fn web_cookie_input_classifier_matches_account_scoped_feed_inputs() {
+        assert!(input_requires_web_cookie(&Input::History));
+        assert!(input_requires_web_cookie(&Input::WatchLater));
+        assert!(input_requires_web_cookie(&Input::FollowingFeed));
+        assert!(!input_requires_web_cookie(&Input::SpaceDynamic(123)));
+        assert!(!input_requires_web_cookie(&Input::RecommendationFeed));
+        assert!(!input_requires_web_cookie(&Input::FavoriteList {
+            media_id: Some(456),
+            owner_mid: None,
+        }));
+        assert!(!input_requires_web_cookie(&Input::Aid(170_001)));
+        assert!(!input_requires_web_cookie(&Input::IntlEpisode(341_736)));
+    }
+
+    #[test]
+    fn media_preflight_playurl_mode_uses_fixed_source_for_intl_and_cheese_inputs() {
+        assert_eq!(
+            input_media_preflight_playurl_mode(&Input::IntlEpisode(341_736), PlayurlMode::App),
+            None
+        );
+        assert_eq!(
+            input_media_preflight_playurl_mode(&Input::CheeseEpisode(101), PlayurlMode::Tv),
+            Some(PlayurlMode::Web)
+        );
+        assert_eq!(
+            input_media_preflight_playurl_mode(&Input::Aid(170_001), PlayurlMode::App),
+            Some(PlayurlMode::App)
+        );
+    }
+
+    #[test]
+    fn generic_access_key_retry_requires_failure_path_that_uses_access_key() -> anyhow::Result<()> {
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "intl",
+            Credentials::default().with_access_key("ACCESS_SECRET"),
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+                .with_acquired_at_unix_millis(1_000)
+                .with_expires_at_unix_millis(2_000)
+                .with_refresh_token_present(true),
+        );
+        profiles.set_profile_metadata("intl", metadata)?;
+        let mut secrets = CredentialProfileSecrets::default();
+        secrets.set_access_key_provider(
+            AccessKeyProvider::BalhBiliplus,
+            AccessKeyProviderSecret::default()
+                .with_refresh_token("OLD_REFRESH_SECRET")
+                .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+                .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+        );
+        profiles.set_profile_secrets("intl", secrets)?;
+        let status = profiles
+            .profile_lifecycle_status("intl", &CredentialLifecyclePolicy::at_unix_millis(10_000))?;
+        let report = CredentialPreflightReport::evaluate(
+            CredentialPreflightMode::Warn,
+            &status,
+            [CredentialPreflightRequirement::restricted_area_access_key()],
+        );
+        let context = MediaCredentialPreflightContext {
+            input: Input::Episode(1000),
+            playurl_mode: Some(PlayurlMode::Web),
+            restricted_area_proxy_may_run: true,
+            intl_access_key_may_run: false,
+            web_cookie_required: false,
+        };
+
+        assert!(
+            !media_preflight_report_can_refresh_generic_access_key_for_failure(
+                &context,
+                &report,
+                &bbdown_core::Error::Api {
+                    code: -101,
+                    message: "账号未登录".to_owned(),
+                },
+            )
+        );
+        assert!(media_preflight_report_can_refresh_generic_access_key_for_failure(
+            &context,
+            &report,
+            &bbdown_core::Error::AccessRestricted(
+                "restricted-area resolver failed: PgcProxy area=hk Failed (API code -101: redacted diagnostic message (access key diagnostic))"
+                    .to_owned(),
+            ),
+        ));
+
+        let app_report = CredentialPreflightReport::evaluate(
+            CredentialPreflightMode::Warn,
+            &status,
+            [CredentialPreflightRequirement::app_playurl_access_key()],
+        );
+        let account_feed_app_context = MediaCredentialPreflightContext {
+            input: Input::History,
+            playurl_mode: Some(PlayurlMode::App),
+            restricted_area_proxy_may_run: false,
+            intl_access_key_may_run: false,
+            web_cookie_required: true,
+        };
+        assert!(
+            media_preflight_report_can_refresh_generic_access_key_for_failure(
+                &account_feed_app_context,
+                &app_report,
+                &bbdown_core::Error::Api {
+                    code: -101,
+                    message: "expired access_key".to_owned(),
+                },
+            )
+        );
+        assert!(
+            !media_preflight_report_can_refresh_generic_access_key_for_failure(
+                &account_feed_app_context,
+                &app_report,
+                &bbdown_core::Error::Api {
+                    code: -101,
+                    message: "not logged in".to_owned(),
+                },
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn access_key_refresh_request_trims_stored_tokens() -> anyhow::Result<()> {
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "intl",
+            Credentials::default().with_access_key(" ACCESS_SECRET "),
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+                .with_acquired_at_unix_millis(1_000)
+                .with_expires_at_unix_millis(2_000)
+                .with_refresh_token_present(true),
+        );
+        profiles.set_profile_metadata("intl", metadata)?;
+        let mut secrets = CredentialProfileSecrets::default();
+        secrets.set_access_key_provider(
+            AccessKeyProvider::BalhBiliplus,
+            AccessKeyProviderSecret::default()
+                .with_refresh_token(" OLD_REFRESH_SECRET ")
+                .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+                .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+        );
+        profiles.set_profile_secrets("intl", secrets)?;
+
+        let refresh = access_key_refresh_request_from_profiles(&profiles, "intl")?;
+
+        assert_eq!(refresh.request.access_key, "ACCESS_SECRET");
+        assert_eq!(refresh.request.refresh_token, "OLD_REFRESH_SECRET");
+        Ok(())
+    }
+
+    #[test]
+    fn only_media_and_subtitle_download_modes_may_need_intl_access_key() {
+        for mode in [
+            DownloadMode::All,
+            DownloadMode::VideoOnly,
+            DownloadMode::AudioOnly,
+            DownloadMode::SubtitleOnly,
+        ] {
+            assert!(download_mode_may_use_intl_access_key(mode));
+        }
+        for mode in [DownloadMode::DanmakuOnly, DownloadMode::CoverOnly] {
+            assert!(!download_mode_may_use_intl_access_key(mode));
+        }
+    }
+
+    #[test]
+    fn plan_failure_classifier_only_treats_auth_like_bad_request_as_credentials() {
+        assert!(!plan_failure_may_be_credential_related(
+            &bbdown_core::Error::Api {
+                code: -101,
+                message: "not logged in".to_owned(),
+            }
+        ));
+        assert!(!plan_failure_may_be_credential_related(
+            &bbdown_core::Error::Api {
+                code: -101,
+                message: "账号未登录".to_owned(),
+            }
+        ));
+        assert!(plan_failure_may_be_credential_related(
+            &bbdown_core::Error::Api {
+                code: -101,
+                message: "expired access_key".to_owned(),
+            }
+        ));
+        assert!(plan_failure_may_be_credential_related(
+            &bbdown_core::Error::Api {
+                code: -400,
+                message: "expired access_key".to_owned(),
+            }
+        ));
+        assert!(plan_failure_may_be_credential_related(
+            &bbdown_core::Error::Api {
+                code: 16,
+                message: "access key expired".to_owned(),
+            }
+        ));
+        assert!(plan_failure_may_be_credential_related(
+            &bbdown_core::Error::Api {
+                code: 16,
+                message: "APP playurl gRPC request failed".to_owned(),
+            }
+        ));
+        assert!(plan_failure_may_be_credential_related(
+            &bbdown_core::Error::Api {
+                code: -403,
+                message: "unauthorized access token".to_owned(),
+            }
+        ));
+        assert!(!plan_failure_may_be_credential_related(
+            &bbdown_core::Error::Api {
+                code: -403,
+                message: "unauthorized".to_owned(),
+            }
+        ));
+        assert!(!plan_failure_may_be_credential_related(
+            &bbdown_core::Error::Api {
+                code: -400,
+                message: "auth failed".to_owned(),
+            }
+        ));
+        assert!(!plan_failure_may_be_credential_related(
+            &bbdown_core::Error::Api {
+                code: -400,
+                message: "invalid parameter: qn".to_owned(),
+            }
+        ));
+        assert!(!plan_failure_may_be_credential_related(
+            &bbdown_core::Error::Api {
+                code: -400,
+                message: "author id invalid".to_owned(),
+            }
+        ));
+        assert!(!plan_failure_may_be_credential_related(
+            &bbdown_core::Error::Api {
+                code: 7,
+                message: "area restricted".to_owned(),
+            }
+        ));
+        assert!(!plan_failure_may_be_credential_related(
+            &bbdown_core::Error::Api {
+                code: -403,
+                message: "area restricted".to_owned(),
+            }
+        ));
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn plan_failure_classifier_requires_access_key_evidence_for_http_statuses() {
+        assert!(!plan_failure_may_be_credential_related(
+            &bbdown_core::Error::AccessRestricted(
+                "restricted-area resolver failed for hk: API code 7: area restricted".to_owned(),
+            )
+        ));
+        assert!(!plan_failure_may_be_credential_related(
+            &bbdown_core::Error::AccessRestricted(
+                "restricted-area resolver failed for hk: API code -400: author id invalid"
+                    .to_owned(),
+            )
+        ));
+        assert!(!plan_failure_may_be_credential_related(
+            &bbdown_core::Error::AccessRestricted(
+                "restricted-area resolver failed for hk: API code -101: not logged in".to_owned(),
+            )
+        ));
+        assert!(!plan_failure_may_be_credential_related(
+            &bbdown_core::Error::AccessRestricted(
+                "restricted-area resolver failed for hk: API code -403: unauthorized".to_owned(),
+            )
+        ));
+        assert!(!plan_failure_may_be_credential_related(
+            &bbdown_core::Error::AccessRestricted(
+                "restricted-area resolver failed for hk: API code -403: invalid proxy credential"
+                    .to_owned(),
+            )
+        ));
+        assert!(!plan_failure_may_be_credential_related(
+            &bbdown_core::Error::AccessRestricted(
+                "restricted-area resolver failed: PgcProxy area=hk Failed (API code -101: redacted diagnostic message)"
+                    .to_owned(),
+            )
+        ));
+        assert!(plan_failure_may_be_credential_related(
+            &bbdown_core::Error::AccessRestricted(
+                "restricted-area resolver failed: PgcProxy area=hk Failed (API code -101: redacted diagnostic message (access key diagnostic))"
+                    .to_owned(),
+            )
+        ));
+        assert!(plan_failure_may_be_credential_related(
+            &bbdown_core::Error::AccessRestricted(
+                "restricted-area resolver failed: PgcProxy area=hk Failed (API code -101: 账号未登录)"
+                    .to_owned(),
+            )
+        ));
+        assert!(!plan_failure_may_be_credential_related(
+            &bbdown_core::Error::AccessRestricted(
+                "restricted-area resolver failed for hk: HTTP error: HTTP status client error (403 Forbidden)"
+                    .to_owned(),
+            )
+        ));
+        assert!(!plan_failure_may_be_credential_related(
+            &bbdown_core::Error::AccessRestricted(
+                "restricted-area resolver failed for hk: HTTP error: HTTP status client error (401 Unauthorized)"
+                    .to_owned(),
+            )
+        ));
+        assert!(plan_failure_may_be_credential_related(
+            &bbdown_core::Error::AccessRestricted(
+                "restricted-area resolver failed for hk: API code 16: access key expired"
+                    .to_owned(),
+            )
+        ));
+        assert!(plan_failure_may_be_credential_related(
+            &bbdown_core::Error::AccessRestricted(
+                "restricted-area resolver failed for hk: HTTP error: HTTP status client error (403 Forbidden): access token expired"
+                    .to_owned(),
+            )
+        ));
+        assert!(plan_failure_may_be_credential_related(
+            &bbdown_core::Error::AccessRestricted(
+                "restricted-area resolver failed for hk: HTTP error: HTTP status client error (403 Forbidden): access_token expired"
+                    .to_owned(),
+            )
+        ));
+        assert!(plan_failure_may_be_credential_related(
+            &bbdown_core::Error::AccessRestricted(
+                "restricted-area resolver failed for hk: HTTP error: HTTP status client error (403 Forbidden): access-token expired"
+                    .to_owned(),
+            )
+        ));
+        assert!(plan_failure_may_be_credential_related(
+            &bbdown_core::Error::AccessRestricted(
+                "restricted-area resolver failed for hk: HTTP error: HTTP status client error (401 Unauthorized): access_key expired"
+                    .to_owned(),
+            )
+        ));
+        assert!(http_status_failure_may_be_credential_related(
+            401,
+            "HTTP status client error (401 Unauthorized)"
+        ));
+        assert!(http_status_failure_may_be_credential_related(
+            401,
+            "HTTP status client error (401 Unauthorized): expired access token"
+        ));
+        assert!(http_status_failure_may_be_credential_related(
+            403,
+            "HTTP status client error (403 Forbidden): expired access_token"
+        ));
+        assert!(http_status_failure_may_be_credential_related(
+            403,
+            "HTTP status client error (403 Forbidden): expired access-token"
+        ));
+        assert!(http_status_failure_may_be_credential_related(
+            403,
+            "HTTP status client error (403 Forbidden)"
+        ));
+        assert!(!http_status_failure_may_be_credential_related(
+            403,
+            "HTTP status client error (403 blocked)"
+        ));
+        assert!(http_status_failure_may_be_credential_related(
+            403,
+            "HTTP status client error (403 Forbidden): expired access_key"
+        ));
+        assert!(non_generic_access_key_json_path("/x/web-interface/view"));
+        assert!(non_generic_access_key_json_path(
+            "/pgc/player/web/v2/playurl"
+        ));
+        assert!(!non_generic_access_key_json_path(
+            "/intl/gateway/v2/ogv/playurl"
+        ));
     }
 
     #[test]
@@ -3975,7 +5664,7 @@ mod tests {
 
         let result = duplicate_decision_or_report(DuplicateDecisionRequest {
             on_duplicate: None,
-            json: false,
+            suppress_human_preflight: false,
             stdin_is_terminal: true,
             preflight: &preflight,
             progress: CliProgressReporter { json: false },

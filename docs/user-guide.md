@@ -108,9 +108,10 @@ Watch-later input accepts `watchlater`, `watch-later`, `watch_later`, `later`, `
 an authenticated web cookie and emits normal videos from the authenticated account's watch-later
 list.
 Following feed input accepts `following`, `https://t.bilibili.com/`, and
-`https://www.bilibili.com/account/dynamic`. Space dynamic feed input accepts
-`https://space.bilibili.com/<mid>/dynamic`. These dynamic feed inputs require an authenticated web
-cookie and currently emit normal-video archive cards; non-video dynamic cards are skipped.
+`https://www.bilibili.com/account/dynamic`. It requires an authenticated web cookie and currently
+emits normal-video archive cards from the authenticated account's following feed. Space dynamic feed
+input accepts `https://space.bilibili.com/<mid>/dynamic`, can run anonymously, and currently emits
+public normal-video archive cards; non-video dynamic cards are skipped.
 
 ## Download Plans
 
@@ -184,10 +185,13 @@ PGC episodes, uses the TV-specific access key saved by `auth login-tv`, and can 
 or proxy with `--tv-api-base` / `BBDOWN_TV_API_BASE`.
 Use `--playurl-mode app` or `BBDOWN_PLAYURL_MODE=app` when a downstream integration needs media
 request specs from BBDown-compatible APP gRPC playurl endpoints. APP mode applies to normal videos
-and PGC episodes, uses the saved TV access key first and then the generic imported access key, and
-can be pointed at mocks or proxies with `--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` and
-`--app-pgc-grpc-base` / `BBDOWN_APP_PGC_GRPC_BASE`; the normal-video APP default uses
-`https://grpc.biliapi.net`, and the PGC APP default uses the same gRPC host. PGC APP gRPC
+and PGC episodes. It uses a Bilibili main/BALH generic access key before the saved TV access key;
+when the selected profile marks the generic key as `bili_intl_oauth2`, or when the profile has no
+provider metadata because it came from a legacy flat credential file, APP mode prefers the TV key
+and only falls back to that generic key when no TV key is available. It can be pointed at mocks or proxies
+with `--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` and `--app-pgc-grpc-base` /
+`BBDOWN_APP_PGC_GRPC_BASE`; the normal-video APP default uses `https://grpc.biliapi.net`, and the
+PGC APP default uses the same gRPC host. PGC APP gRPC
 restricted or preview-only signals still fall back to
 configured restricted-area HTTP playurl proxies when reported by region-limit messages, APP
 permission-denied gRPC status, or PGC response-body metadata. Proxy fallback URLs use only the
@@ -405,6 +409,46 @@ did not pass `--force`, `--stdin`, or `--file`, the CLI first tries provider-spe
 refresh. With `--json`, successful automatic refresh emits `decision`, `refreshed`, and `saved`
 events without printing raw tokens. If refresh fails, the CLI emits `refresh_failed` and falls back
 to the normal authorization ticket so callers can prompt the user without losing the old credential.
+Use the global `--credential-preflight warn|fail|renew` option with `plan`, `playback`, or
+`download` when a media request should check the selected profile before resolving streams.
+Preflight derives the expected credential requirements from the selected request path: WEB playurl
+treats cookies as optional so anonymous public videos still work, and stale optional WEB playurl
+cookie metadata is warning-only. Account-scoped feed inputs such as history, watch-later, and
+following require a WEB cookie before the resolver hits their authenticated APIs. Public space
+dynamic pages can run anonymously and do not add the required-cookie preflight. TV
+playurl requires `tv_access_key`, APP playurl accepts either generic `access_key` or
+`tv_access_key`, and the selected profile's access-key provider decides the tie-breaker: Bilibili main/BALH
+generic keys are checked before TV keys, while `bili_intl_oauth2` keys and legacy profiles with no
+provider metadata yield to TV keys. Restricted-area proxy fallback checks generic `access_key` only when that key is configured for
+an input where proxy fallback may run. Missing generic keys do not block restricted-area proxy URLs
+that authenticate themselves or allow anonymous fallback. Intl/Bstar episode media and subtitle
+paths require the generic `access_key` used by the official intl metadata, playurl, and subtitle
+requests. Cover-only and danmaku-only intl episode downloads skip this access-key preflight because
+they only need metadata and sidecar endpoints; if an access key is present, metadata requests still
+include it.
+Short links are resolved to their final supported input kind before this decision. Fixed-source
+inputs such as intl/Bstar and PUGV/cheese do not inherit the global TV/APP playurl credential
+requirements.
+`download --only subtitle|danmaku|cover` skips TV/APP/restricted-proxy stream preflight because
+those modes do not resolve media streams. `warn` writes diagnostics to stderr and continues, `fail`
+aborts before network stream resolution when a required credential is missing or has non-fresh
+lifecycle metadata, and `renew` first tries provider-specific generic access-key refresh when the
+selected profile is refresh-ready. Preflight never writes to stdout, so `--json` output remains a
+single JSON plan, playback plan, or download report. `download --progress-json` suppresses plaintext preflight
+diagnostics, but the final CLI error line may still be written to stderr on failure; wrappers should
+parse only JSON object lines. In `renew` mode, missing required non-access-key credentials still stop
+generic access-key auto-refresh, but present credentials with stale, expiring, expired, or unknown
+lifecycle metadata do not prevent refreshing a ready generic access key; the subsequent request still
+proves whether those credentials work. Stored credential values are trimmed before request use, and
+whitespace-only values are treated as missing. For archive downloads, `renew` defers automatic access-key refresh
+until after duplicate handling when the initial plan succeeds, so `--on-duplicate cancel` stops
+without calling refresh endpoints or rewriting stored credentials. If initial archive planning fails
+with an auth-like credential error, the CLI refreshes a ready generic access key and retries planning
+once before reporting the failure, including cases where local lifecycle metadata had still
+considered the key fresh. Tune the local lifecycle policy with global `--credential-stale-after-seconds` and
+`--credential-expiring-within-seconds`, or the equivalent `BBDOWN_CREDENTIAL_PREFLIGHT`,
+`BBDOWN_CREDENTIAL_STALE_AFTER_SECONDS`, and `BBDOWN_CREDENTIAL_EXPIRING_WITHIN_SECONDS`
+environment variables.
 `auth login-web` prints a QR login URL, polls until scan confirmation, and saves the resulting
 cookie. `auth login-tv` uses the TV QR flow and saves a TV-specific access key for future TV/app
 flows without overwriting the generic intl/Bstar access key imported or acquired through the generic
@@ -418,8 +462,9 @@ WEB and TV QR login record lifecycle source and acquisition time, but only recor
 upstream response provides a reliable expiry field.
 
 `auth status` keeps the legacy selected-profile JSON shape and only reports redacted credential
-booleans. Add `--profiles` to include the selected credential profile name, whether each reported
-profile is the default or selected profile, local lifecycle status, per-credential lifecycle
+booleans; whitespace-only stored credential values are reported as missing. Add `--profiles` to
+include the selected credential profile name, whether each reported profile is the default or
+selected profile, local lifecycle status, per-credential lifecycle
 metadata, and non-secret guidance. Add `--all-profiles` to report every saved profile; without it,
 the profile output is limited to the selected profile. `--stale-after-seconds` and
 `--expiring-within-seconds` tune the local lifecycle policy for status and human health guidance.

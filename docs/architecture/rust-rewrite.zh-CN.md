@@ -85,9 +85,9 @@ episode id。空批量集合在默认/all selection 下会解析为空 selected 
 卡片被跳过后为显式 index selection 在安全上限内继续请求后续 `fresh_idx` 刷新批次。观看历
 史输入使用 WEB history cursor 端点，需要已认证 cookie，且当前只保留可以通过普通视频
 pipeline 规划的普通视频 `archive` 记录。稍后再看输入使用 WEB toview 端点，需要已认证
-cookie，并输出该账号稍后再看列表中的普通视频。关注和空间动态输入使用 WEB dynamic feed 端点，也
-需要已认证 cookie，且当前只输出普通视频 archive 卡片。CLI 未来会增加交互式提示，但
-library 保持 season-like 契约显式，避免集成方意外下载整季。
+cookie，并输出该账号稍后再看列表中的普通视频。关注输入使用已认证 dynamic feed 端点，需要已认证
+cookie；空间动态输入使用公开 space dynamic feed 端点，可以匿名访问，且当前只输出普通视频
+archive 卡片。CLI 未来会增加交互式提示，但 library 保持 season-like 契约显式，避免集成方意外下载整季。
 
 Mode-aware planning 使用同一套 resolver 分发，但 sidecar-only mode 会跳过媒体 stream 解
 析。当调用方需要为 archive preflight 或 UI 决策生成非默认 `DownloadMode` 的 plan 时，使
@@ -152,7 +152,8 @@ exact codec 字符串、codec family、`format_key`、score/preferred 信号和�
 同一 planning 路径会遵守 `PlayurlMode::Tv` 和 `PlayurlMode::App`，因此 `DownloadPlan` 和
 `PlaybackPlan` 可以暴露 `NormalTv`、`PgcTv`、`NormalApp` 或 `PgcApp` source，同时不改变下
 游 request-spec shape。TV mode 使用 `Credentials::tv_access_key`。APP/gRPC mode 优先使用
-`Credentials::tv_access_key`，再回退到 `Credentials::access_key`，发送 BBDown-compatible
+Bilibili main/BALH 通用 `Credentials::access_key`，再回退到 `Credentials::tv_access_key`；intl provider
+和没有 provider metadata 的旧版 profile 会优先使用 TV key。APP/gRPC 发送 BBDown-compatible
 protobuf gRPC frame，会从 initial headers 和 trailing metadata 读取 gRPC status，并把 APP
 DASH/FLV 响应规范化为 `StreamSet`。APP DASH 的 width、height 和 frame-rate metadata 会
 保留在 HTTP playurl mode 共用的 `MediaStream` 字段上。APP legacy FLV 响应可能包含多个清
@@ -319,8 +320,8 @@ business state 等 PGC response-body metadata。非区域类官方失败会保�
 使用较老 helper 形态，把 `dash` / `durl`、`timelength` 和质量元数据返回在顶层。对这些顶
 层 helper payload，legacy 字符串状态字段（例如 `result: "suee"`）会被容忍。
 当 `Credentials::access_key` 中存在通用 access key 时，代理请求会把它作为 `access_key`
-包含；TV 专用 access key 不会复用到这个流程。Bilibili cookie 会有意从受限区域代理请求
-中省略。
+包含；缺失通用 key 也允许继续，以支持自带认证或匿名 fallback 的 proxy URL。TV 专用 access
+key 不会复用到这个流程。Bilibili cookie 会有意从受限区域代理请求中省略。
 
 代理回退成功时，`DownloadEntry.source` 为 `PgcProxy`，`DownloadEntry.diagnostics` 包含
 官方失败尝试和成功代理尝试。当所有候选失败时，返回的 access-restricted error 会摘要有序
@@ -405,6 +406,23 @@ refresh form。refresh 成功会返回 `AccessKeyLoginCredentials`，
 CLI 和嵌入方可以复用与首次 access-key 获取相同的 lifecycle metadata 和 provider-secret
 持久化路径。失败的 refresh 尝试是 non-destructive；调用方保留旧 credential，并可回退到
 reauthorization ticket。
+media credential preflight 被建模为显式 policy layer，而不是隐藏在
+`BiliClient::plan_download` 内部的行为。`CredentialPreflightReport` 会把当前所选 profile 的
+lifecycle status 与 request-path requirement 做评估，并返回可序列化的 requirement status、
+issue，以及关联的 access-key renewal decision。request-path 评估会对齐 client 实际使用的
+credential，包括 APP playurl 的 provider-aware `access_key` / `tv_access_key` 顺序，并把缺失
+provider metadata 视为旧版 TV-key-first case；只有配置了
+proxy 候选且当前 media input 可能使用 PGC proxy fallback 时才检查 optional restricted-area
+proxy access-key credential。intl/Bstar media input 会额外加入通用 `access_key` requirement，
+因为官方 intl metadata、playurl 和 subtitle request path 在配置该 token 时会实际发送它。CLI
+会先通过 `BiliClient::parse_input(...)` 规范化 raw input，因此短链会按 redirect target 分类，
+而 intl/Bstar 和 PUGV/cheese 这类固定来源输入会避开无关的全局 TV/APP credential requirement。
+CLI 会在 `plan`、`playback` 和 `download` 前应用这个 report：`warn` 把 diagnostic 写到 stderr，
+`fail` 在 stream resolution 前阻断，`renew` 只在 report 显示当前 profile 已 refresh-ready
+时尝试 provider-specific generic access-key refresh。不解析 media stream 的下载模式会跳过
+TV/APP/restricted-proxy stream preflight；`download --progress-json` 会抑制 preflight 纯文本
+diagnostic，但失败后的最终 CLI error 行仍可能写到 stderr。这样嵌入方仍能控制 storage mutation，
+同时和 CLI 共享同一套 requirement model。
 browser `postMessage` consumer 应通过 ticket/output 的 `credentials_from_message` helper
 解析，它会先把 sender origin 与可信 auth origin 或 callback origin 校验，再使用 raw BALH
 payload parser。

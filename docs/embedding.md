@@ -103,9 +103,14 @@ For BBDown-compatible APP gRPC playurl resolution, set
 `ClientConfig::with_playurl_mode(PlayurlMode::App)`. Configure
 `EndpointConfig::with_app_grpc_base` for normal-video mocks or proxies and
 `EndpointConfig::with_app_pgc_grpc_base` for PGC mocks or proxies. The normal-video default uses
-`https://grpc.biliapi.net`; the PGC default uses the same gRPC host. APP mode uses
-`Credentials::tv_access_key` first and falls back to `Credentials::access_key`, emits
-`StreamSource::NormalApp` or `StreamSource::PgcApp`, and normalizes protobuf DASH/FLV media into
+`https://grpc.biliapi.net`; the PGC default uses the same gRPC host. APP mode uses Bilibili main/BALH
+generic `Credentials::access_key` values before `Credentials::tv_access_key`; pass
+`ClientConfig::with_access_key_provider(Some(AccessKeyProvider::BiliIntlOauth2))` when the generic
+key came from intl OAuth so APP mode can prefer the TV key and only fall back to that generic key
+when no TV key is available. Legacy credentials without provider metadata also keep the
+TV-key-first APP behavior for compatibility. It emits `StreamSource::NormalApp` or
+`StreamSource::PgcApp`, and
+normalizes protobuf DASH/FLV media into
 the same `StreamSet` and `PlaybackPlan` surfaces as the HTTP modes. PGC APP gRPC restricted or
 preview-only signals still enter the configured restricted-area HTTP playurl proxy fallback when
 they are carried by region-limit messages, APP permission-denied gRPC status, or PGC response-body
@@ -269,12 +274,49 @@ Profile documents can also be evaluated without network I/O through
 `CredentialProfiles::lifecycle_statuses(policy)`. `CredentialLifecyclePolicy` requires an explicit
 `now_unix_millis` value so embedders can make deterministic stale/expiring decisions in UI,
 background jobs, or tests.
+For plan/download preflight, build a `CredentialPreflightReport` from the selected profile lifecycle
+status and the media request context. `CredentialPreflightReport::from_client_context(...)` is the
+conservative client-config form, while `CredentialPreflightReport::from_media_request_context(...)`
+lets embedders skip restricted-area proxy requirements for inputs that cannot use PGC proxy fallback.
+Use `CredentialPreflightReport::from_media_paths_context(...)` when the resolved source has no
+WEB/TV/APP playurl path, such as intl/Bstar inputs that should check only the intl generic
+`access_key`. These forms mirror the credential the client would send: WEB playurl cookies are
+optional, TV playurl requires `tv_access_key`, APP playurl accepts either generic `access_key` or
+`tv_access_key` and uses provider metadata as the tie-breaker when both are stored: Bilibili
+main/BALH generic keys are checked before TV keys, while `bili_intl_oauth2` keys and legacy profiles
+with no provider metadata yield to TV keys. Stale optional WEB playurl cookies are warnings rather than blockers so public anonymous
+requests can still proceed. Account-scoped feed inputs such as history, watch-later, and following
+should add `CredentialPreflightRequirement::authenticated_web_api_cookie()` because they hit
+authenticated WEB APIs before selecting media streams. Public space dynamic pages can run
+anonymously and should not add that required-cookie preflight. Restricted-area proxy fallback
+treats the generic `access_key` as optional: present keys are checked and may be forwarded by the
+resolver, but missing keys do not block proxy URLs that authenticate themselves or allow anonymous fallback.
+Intl/Bstar episode media and subtitle paths require the generic `access_key` used by official intl
+metadata, playurl, and subtitle requests. Cover-only and danmaku-only intl episode paths should skip
+that access-key requirement because they only need metadata and sidecar endpoints; metadata requests
+can still include an access key when one is present.
+Fixed-source inputs such as intl/Bstar and PUGV/cheese should not inherit a caller's global TV/APP
+playurl credential requirements, and sidecar-only modes should skip media-stream preflight.
+The report is a pure value: it lists requirement statuses, warnings/blockers, and the selected
+profile's `AccessKeyRenewalDecision`, but it never mutates credential storage. When embedders accept
+short links, normalize them with
+`BiliClient::parse_input(...)` before deciding whether PGC proxy fallback or intl access-key
+preflight may run.
+Embedding projects can treat blockers as fail-fast UI, warnings as non-blocking banners, or call
+`should_attempt_access_key_renewal()` before using `BiliClient::refresh_access_key(...)` and saving
+the refreshed credentials through their own storage layer. The renewal predicate requires missing
+non-access-key credentials to be fixed first, but present non-access-key credentials with stale,
+expiring, expired, or unknown lifecycle metadata do not block a ready generic access-key refresh.
+Whitespace-only stored credential strings are treated as missing when lifecycle status and redacted
+presence booleans are computed. Request builders trim stored credential strings before use and
+omit them when the trimmed value is empty.
 
 ```rust,no_run
 use bbdown_core::{
     AccessKeyLoginConfig, AccessKeyLoginCredentials, AccessKeyLoginTicketOutput, BiliClient,
     ClientConfig, CredentialKind, CredentialLifecyclePolicy, CredentialLifecycleStatus,
-    CredentialProfileSelection, CredentialStore, Credentials,
+    CredentialPreflightMode, CredentialPreflightReport, CredentialProfileSelection,
+    CredentialStore, Credentials, PlayurlMode, RestrictedAreaConfig,
 };
 
 async fn check_credentials() {
@@ -306,6 +348,22 @@ fn access_key_lifecycle_status(
         .into_iter()
         .find(|status| status.kind == CredentialKind::AccessKey)
         .map(|status| status.status))
+}
+
+fn plan_preflight_report(
+    store: &CredentialStore,
+    profile: &str,
+    now_unix_millis: u64,
+) -> bbdown_core::Result<CredentialPreflightReport> {
+    let profiles = store.load_profiles()?;
+    let policy = CredentialLifecyclePolicy::at_unix_millis(now_unix_millis);
+    let status = profiles.profile_lifecycle_status(profile, &policy)?;
+    Ok(CredentialPreflightReport::from_client_context(
+        CredentialPreflightMode::Warn,
+        &status,
+        PlayurlMode::Web,
+        &RestrictedAreaConfig::default(),
+    ))
 }
 
 fn access_key_login_ticket() -> bbdown_core::Result<AccessKeyLoginTicketOutput> {

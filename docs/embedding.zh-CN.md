@@ -98,8 +98,11 @@ TV mode 当前适用于普通视频和 PGC 分集。
 `ClientConfig::with_playurl_mode(PlayurlMode::App)`。普通视频 mock 或代理使用
 `EndpointConfig::with_app_grpc_base`，PGC mock 或代理使用
 `EndpointConfig::with_app_pgc_grpc_base`；普通视频和 PGC 默认都使用
-`https://grpc.biliapi.net`。APP mode 优先使用
-`Credentials::tv_access_key`，再回退到 `Credentials::access_key`；输出
+`https://grpc.biliapi.net`。APP mode 会优先使用 Bilibili main/BALH 通用
+`Credentials::access_key`，再回退到 `Credentials::tv_access_key`；如果 generic key 来自 intl OAuth，请通过
+`ClientConfig::with_access_key_provider(Some(AccessKeyProvider::BiliIntlOauth2))` 告诉 core，
+这样 APP mode 会优先使用 TV key，只有没有 TV key 时才回退到该通用 key。没有 provider
+metadata 的旧版 credential 也会为了兼容保留 APP TV-key-first 行为。它会输出
 `StreamSource::NormalApp` 或 `StreamSource::PgcApp`，并把 protobuf DASH/FLV 媒体规范化到与
 HTTP modes 相同的 `StreamSet` 和 `PlaybackPlan` 表面。PGC APP gRPC 失败如果带有可识别的
 restricted 或 preview-only 信号，仍会进入已配置的 restricted-area HTTP playurl proxy
@@ -252,12 +255,44 @@ profile document 也可以在不发网络请求的情况下通过
 `CredentialProfiles::lifecycle_statuses(policy)` 做 lifecycle 评估。`CredentialLifecyclePolicy`
 要求调用方显式传入 `now_unix_millis`，方便 embedding app 在 UI、后台任务和测试中得到确定
 的 stale/expiring 结果。
+plan/download preflight 可以用当前所选 profile 的 lifecycle status 和 media request context
+构造 `CredentialPreflightReport`。`CredentialPreflightReport::from_client_context(...)` 是保守
+的 client-config 形式；`CredentialPreflightReport::from_media_request_context(...)` 允许
+embedding app 对不会使用 PGC proxy fallback 的输入跳过 restricted-area proxy requirement。
+当 resolved source 没有 WEB/TV/APP playurl path 时，例如 intl/Bstar 输入只应该检查 intl 通用
+`access_key`，请使用 `CredentialPreflightReport::from_media_paths_context(...)`。这些形式都会对齐
+client 实际会发送的 credential：WEB playurl 的 cookie 是 optional；TV
+playurl 要求 `tv_access_key`；APP playurl 接受 `tv_access_key` 或通用 `access_key` 任一可用，
+并按 provider metadata 决定两者都存在时的顺序：Bilibili main/BALH generic key 先于 TV key；
+`bili_intl_oauth2` key 和没有 provider metadata 的旧版 profile 会让位给 TV key。stale optional WEB playurl cookie 只会产生 warning，
+不会成为 blocker，因此公开视频可以继续以匿名路径运行。history、watch-later 和 following
+这类账号级 feed 输入会在选择 media stream 前访问已认证 WEB API，应额外加入
+`CredentialPreflightRequirement::authenticated_web_api_cookie()`；公开的 space dynamic 页面可以匿名访问，
+不应加入这个 required-cookie preflight。restricted-area proxy fallback
+会把通用 `access_key` 视为 optional：已存在的 key 会被检查并可能由 resolver 转发，缺失 key 不会阻断
+自带认证或允许匿名 fallback 的 proxy URL。intl/Bstar episode 的 media 和 subtitle path 会要求官方
+intl metadata、playurl 和 subtitle 请求实际使用的通用 `access_key`。cover-only 和 danmaku-only 的
+intl episode path 应跳过这个 access-key requirement，因为它们只需要 metadata 和 sidecar endpoint；
+如果 profile 里存在 access key，metadata 请求仍可带上它。
+intl/Bstar 和 PUGV/cheese 这类固定来源输入不应继承调用方的全局 TV/APP playurl credential
+requirement，sidecar-only mode 也应跳过 media-stream preflight。
+这个 report 是纯值：它会列出 requirement status、warning/blocker，以及当前所选
+profile 的 `AccessKeyRenewalDecision`，但不会修改 credential storage。embedding app 如果接受短链，
+应该先用 `BiliClient::parse_input(...)` 规范化输入，再判断 PGC proxy fallback 或 intl access-key
+preflight 是否可能运行。嵌入项目可以把 blocker 作为 fail-fast UI，把 warning 作为非阻断 banner，或在
+`should_attempt_access_key_renewal()` 为 true 时调用 `BiliClient::refresh_access_key(...)`，
+并通过自己的存储层保存刷新后的 credential。该 renewal predicate 会要求先补齐缺失的非
+access-key credential；但已存在且 lifecycle metadata 为 stale、expiring、expired 或 unknown
+的非 access-key credential 不会阻止 refresh-ready 的通用 access key 刷新。计算 lifecycle
+status 和脱敏 presence 布尔值时，只含空白字符的已保存 credential 字符串会按 missing 处理。
+request builder 会在使用前 trim 已保存 credential；trim 后为空的值不会写入请求。
 
 ```rust,no_run
 use bbdown_core::{
     AccessKeyLoginConfig, AccessKeyLoginCredentials, AccessKeyLoginTicketOutput, BiliClient,
     ClientConfig, CredentialKind, CredentialLifecyclePolicy, CredentialLifecycleStatus,
-    CredentialProfileSelection, CredentialStore, Credentials,
+    CredentialPreflightMode, CredentialPreflightReport, CredentialProfileSelection,
+    CredentialStore, Credentials, PlayurlMode, RestrictedAreaConfig,
 };
 
 async fn check_credentials() {
@@ -289,6 +324,22 @@ fn access_key_lifecycle_status(
         .into_iter()
         .find(|status| status.kind == CredentialKind::AccessKey)
         .map(|status| status.status))
+}
+
+fn plan_preflight_report(
+    store: &CredentialStore,
+    profile: &str,
+    now_unix_millis: u64,
+) -> bbdown_core::Result<CredentialPreflightReport> {
+    let profiles = store.load_profiles()?;
+    let policy = CredentialLifecyclePolicy::at_unix_millis(now_unix_millis);
+    let status = profiles.profile_lifecycle_status(profile, &policy)?;
+    Ok(CredentialPreflightReport::from_client_context(
+        CredentialPreflightMode::Warn,
+        &status,
+        PlayurlMode::Web,
+        &RestrictedAreaConfig::default(),
+    ))
 }
 
 fn access_key_login_ticket() -> bbdown_core::Result<AccessKeyLoginTicketOutput> {

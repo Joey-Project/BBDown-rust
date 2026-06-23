@@ -3,8 +3,8 @@ id: 20260620-019f16-v0-6-credential-lifecycle-roadmap
 title: v0.6.0 Credential Lifecycle Roadmap
 status: active
 created: 2026-06-20
-updated: 2026-06-22
-branch: feature/v0.6-access-key-refresh-clients
+updated: 2026-06-23
+branch: feature/v0.6-credential-preflight
 pr:
 supersedes: []
 superseded_by:
@@ -144,6 +144,45 @@ superseded_by:
   - GitHub Codex review follow-up routes `bili_tv` main-provider refresh requests to the TV OAuth
     refresh path under the configured passport base, while Android-family keypairs continue using the
     main passport refresh path.
+- PR 8 implements optional credential preflight for media planning/downloading:
+  - `CredentialPreflightReport` exposes a pure core evaluator for selected-profile lifecycle status,
+    media request-path requirements, warnings/blockers, and the selected access-key renewal decision.
+  - Request-path requirements distinguish WEB optional cookies, TV `tv_access_key`, APP generic
+    `access_key` with `tv_access_key` fallback, intl/Bstar generic `access_key`, and optional
+    restricted-area proxy generic `access_key` when that proxy fallback may run.
+  - CLI `plan`, `playback`, and `download` support global `--credential-preflight off|warn|fail|renew`
+    plus lifecycle window overrides.
+  - `warn` writes diagnostics to stderr while keeping JSON stdout as a single payload; `fail`
+    aborts before stream resolution when required credentials are missing or relevant lifecycle
+    metadata is non-fresh.
+  - Preflight parses media input once, reuses that parsed `Input` for plan/playback/download
+    planning, avoids b23 short-link double resolution, and prevents renewal before raw input
+    validation succeeds.
+  - Core embedders can use `CredentialPreflightReport::from_media_paths_context(...)` to express
+    fixed-source paths such as intl/Bstar without inheriting unrelated WEB/TV/APP playurl
+    requirements.
+  - Sidecar-only download modes skip TV/APP/restricted-proxy stream preflight, fixed-source
+    intl/Bstar and PUGV inputs avoid unrelated global TV/APP credential requirements, intl/Bstar does
+    not inherit unrelated WEB cookie lifecycle failures, and `download --progress-json` suppresses
+    plaintext preflight diagnostics while wrappers still parse only JSON object lines because final
+    CLI errors may also appear on stderr.
+  - Archive downloads defer `renew` automatic access-key refresh until after duplicate handling when
+    initial planning succeeds, so `--on-duplicate cancel` does not call refresh endpoints or mutate
+    stored credentials.
+  - If initial archive planning fails with an auth-like credential error before duplicate preflight
+    can be inspected, the CLI refreshes a ready generic access key and retries planning once,
+    including when local lifecycle metadata had still considered the key fresh.
+  - Sidecar-only cover/danmaku downloads skip TV/APP/restricted-proxy stream preflight so stale WEB
+    cookie metadata does not block operations that do not fetch playurl streams.
+  - Authenticated feed inputs such as history, watch-later, following, and space dynamic now add a
+    required WEB cookie preflight requirement before hitting account-scoped WEB APIs.
+  - Stale optional WEB playurl cookie metadata is warning-only rather than blocking in `fail`, so
+    public anonymous WEB playurl requests can continue when a stored cookie is non-fresh.
+  - `renew` attempts provider-specific generic access-key refresh for refresh-ready selected
+    profiles, saves the refreshed credential non-interactively, reloads credentials, and then
+    continues with media resolution.
+  - Bilingual README, user guide, embedding guide, and architecture docs now describe the preflight
+    strategy and embedding surface.
 
 ## Out Of Scope For This Line
 
@@ -218,7 +257,6 @@ superseded_by:
   - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/c192ee2af594cc9cb64cf151261c58b2695513fb/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.
   - `git diff --check`.
   - `just ci`.
-  - `just ci`.
 - PR 7 review-fix validation:
   - `cargo fmt --all -- --check`.
   - `cargo test -p bbdown-core access_key_refresh --locked`.
@@ -251,8 +289,177 @@ superseded_by:
   - `cargo fmt --all -- --check`.
   - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/c192ee2af594cc9cb64cf151261c58b2695513fb/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.
   - `git diff --check`.
+- PR 8 local validation:
+  - `cargo fmt --check`.
+  - `cargo test -p bbdown-core credential_preflight --locked`.
+  - `cargo test -p bbdown-core --test public_api --locked`.
+  - `cargo test -p bbdown-cli credential_preflight --locked`.
+  - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/5f1ab3fa5d9f7d534507216a2d6f765694f9b710/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.
+  - `git diff --check`.
+  - `just ci`.
+- PR 8 review-fix validation:
+  - `cargo fmt --all -- --check`.
+  - `git diff --check`.
+  - `cargo test -p bbdown-cli --test cli_e2e download_archive_retries_plan_after_deferred_credential_refresh --locked`.
+  - `cargo test -p bbdown-cli --test cli_e2e download_archive_cancel_defers_credential_preflight_renewal --locked`.
+  - `cargo test -p bbdown-cli --test cli_e2e download_progress_json_reports_credential_preflight_failure --locked`.
+  - `cargo test -p bbdown-core --lib credential_preflight --locked`.
+  - `cargo clippy --workspace --all-targets --locked -- -D warnings`.
+- PR 8 second review-fix checkpoint:
+  - `--progress-json --on-duplicate cancel` now suppresses duplicate preflight plaintext on stderr while still emitting the `plan_cancelled` event.
+  - Archive downloads now distinguish "no duplicate decision was required" from a real `replace` decision, then rerun duplicate preflight decision handling when deferred credential refresh changes the plan/preflight into a conflict.
+  - Archive credential retry now treats generic API `-400` as refresh-worthy only when the message looks auth/access-key related, avoiding credential mutation for ordinary invalid-parameter failures.
+  - Archive credential retry now also message-filters API `-403`, gRPC `7`, and gRPC `16`, so
+    region/permission failures such as `area restricted` do not trigger forced access-key refresh or
+    rewrite local credentials.
+  - User-facing and architecture docs now describe APP-mode credential order as provider-aware:
+    Bilibili main/BALH generic `access_key` values are checked before `tv_access_key`, while
+    `bili_intl_oauth2` generic keys and legacy profiles without provider metadata yield to TV keys.
+  - If deferred credential refresh changes archive preflight into a duplicate conflict, explicit
+    `--on-duplicate cancel` now re-enters the CLI cancel-report path instead of letting the library
+    executor convert it into an error.
+  - Current-head review fixes after GitHub Codex review:
+    - Metadata-only intl/Bstar downloads such as `download --only cover` and `download --only danmaku`
+      now skip required intl generic access-key preflight; media and subtitle modes still preflight
+      the generic key because they request intl playurl or subtitle endpoints.
+    - Selection-required inputs (`ss`, `md`, and cheese season links without `--select`) now fail
+      before credential preflight can refresh or rewrite stored credentials.
+    - APP playurl access-key selection now accepts access-key provider metadata, so intl OAuth
+      generic keys do not preempt a usable TV token.
+    - Archive forced-refresh retry no longer refreshes generic `access_key` when an authenticated
+      feed request is missing a usable WEB cookie.
+    - Auth-like archive retry classification now matches auth/OAuth words instead of a raw `auth`
+      substring, so non-auth errors such as `author id invalid` do not refresh access keys.
+    - Bare HTTP 401/403 and restricted-area proxy `401 Unauthorized` / `403 Forbidden` summaries no
+      longer trigger automatic generic access-key refresh unless the error also carries explicit
+      access-key/token/login evidence.
+    - Authenticated WEB feed `-101 not logged in` failures are now attributed to the WEB cookie path
+      for history/watch-later/following inputs, so archive deferred or forced access-key retry does
+      not refresh and persist a generic `access_key` when the selected profile's cookie was rejected.
+    - Generic API `-101`, `-400`, `-403`, `7`, and `16` failures now require explicit access-key,
+      access-token, or credential wording before archive retry refreshes a generic `access_key`, so
+      private favorite or other optional-cookie WEB API login/auth failures do not mutate stored
+      tokens; restricted-area PgcProxy `-101` remains refreshable because that resolver path is
+      access-key-bearing even after diagnostics redact token wording.
+    - Immediate credential preflight renewal now skips generic access-key refresh when the same
+      report still has an unsatisfied required non-access-key requirement, such as missing WEB
+      cookies for history/watch-later/following inputs.
+    - Local offline review follow-up narrows that guard to missing required non-access-key
+      credentials, so stale/expiring/expired/unknown but present WEB cookies no longer block a
+      refresh-ready generic access-key renewal; subsequent network requests still prove whether the
+      WEB cookie works.
+    - Local independent review follow-up treats whitespace-only stored cookie/access-key values as
+      missing for lifecycle status and redacted presence booleans, matching the request builders that
+      trim token values before sending them.
+    - Current-head independent review follow-up aligns request-side credential normalization with
+      lifecycle/preflight semantics: request builders now trim stored cookie/access-key values before
+      sending them, omit values that become empty, and fall back across APP generic/TV keys instead
+      of letting whitespace-only keys shadow usable alternatives.
+    - Current-head offline review follow-up widens archive retry refresh classification for common
+      access-key expiry surfaces that do not spell out `access_key`, including Bilibili Chinese
+      `account not logged in` API messages and APP gRPC code 16 without a grpc-message, while
+      preserving proxy-owned credential-error negatives.
+    - Current-head independent review follow-up removes the broad `PgcProxy` + `-101` archive retry
+      shortcut, so restricted-area proxy failures still need access-key-specific diagnostic evidence
+      before refreshing and rewriting the generic access key. The core resolver now preserves that
+      evidence as a non-secret `access key diagnostic` marker after redacting raw `access_key`
+      diagnostics, allowing true access-key failures to retry without exposing key names or values.
+    - GitHub Codex review follow-up gates archive retry refresh on the failed request path: generic
+      access-key refresh is allowed for APP/intl access-key request failures or restricted-area
+      proxy resolver failures, but not for official PGC WEB failures that happen before the proxy
+      request can send the generic access key.
+    - Independent review follow-up tightens the path gate further so account-scoped feed inputs can
+      still refresh APP access-key `-101` failures, while plain WEB cookie `-101` failures remain
+      non-refreshable. Restricted-area proxy `-101` summaries with Bilibili `账号未登录` wording now
+      also count as access-key refresh evidence.
+    - Offline review follow-up trims stored access-key and refresh-token values before constructing
+      automatic refresh requests, aligning `--credential-preflight renew` with request-side
+      credential normalization.
+    - Local independent review follow-up removes bare `credential` wording from access-key-specific
+      archive retry classification, preventing proxy-owned errors such as `invalid proxy credential`
+      from refreshing and rewriting the generic Bilibili access key.
+    - Current-head review follow-up removes generic API `-101 账号未登录` from the access-key retry
+      classifier so optional cookie-carrying WEB API failures such as favorite-list login rejection
+      do not rotate generic access keys; restricted-area resolver summaries still treat proxy-owned
+      bare HTTP 401/403 and `账号未登录` as retryable because that path can send the generic
+      access key.
+    - Current-head independent review follow-up preserves URL context only for known
+      cookie-authenticated feed JSON HTTP status failures, then suppresses generic access-key
+      archive retry for those authenticated feed endpoints when they return bare HTTP 401/403. APP
+      playurl and intl HTTP status failures still redact URLs and remain eligible for access-key
+      refresh when the configured request path can actually send the generic access key.
+    - Current-head Codex and independent review follow-up expands safe JSON HTTP-status URL
+      preservation to known non-generic-access-key WEB/PGC/PUGV/list/playurl metadata paths while
+      stripping query, fragment, and userinfo before storing the URL on the error. Archive retry now
+      uses those paths to suppress generic access-key refresh for metadata, account-feed, and
+      official WEB playurl HTTP 401/403 failures that did not send the generic key.
+    - Restricted-area proxy bare HTTP 401/403 summaries no longer trigger generic access-key refresh
+      unless the diagnostic includes explicit access-key or access-token evidence. APP and intl
+      access-key request failures that surface as URL-redacted bare HTTP 401/403 remain refreshable
+      when the selected request path can actually send the generic key.
+    - Current-head independent review follow-up includes WBI `/x/web-interface/nav` HTTP status
+      failures in the same non-generic-access-key path gate, preventing recommendation/space WBI key
+      prefetch failures from rotating generic access keys merely because the eventual media stream
+      mode is APP.
+    - Follow-up also makes those HTTP-status path gates endpoint-suffix aware, so supported
+      path-prefixed endpoint bases such as `/bili/api/x/web-interface/nav` classify the same way as
+      direct Bilibili endpoint paths.
+    - Independent review follow-up broadens access-token evidence matching to `access_token` and
+      `access-token` spellings while preserving conservative redaction for token-bearing
+      diagnostics.
+    - Independent review follow-up extends the APP-selected-TV-key retry exclusion to HTTP 401/403
+      failures, so a PGC APP request that actually used `tv_access_key` cannot rotate generic
+      access keys merely because restricted-area proxy preflight also selected a generic key.
+    - The same TV-key exclusion now covers APP gRPC code 16 responses without `grpc-message`, whose
+      generic core error text is otherwise treated as access-key-refreshable for APP playurl.
+    - Independent review follow-up lets bare `403 Forbidden` HTTP status failures reach the
+      existing context/path refresh gate, so generic APP/intl access-key requests can refresh while
+      WEB/cookie/restricted proxy failures remain blocked by their stricter gates.
+    - Crate-local README files now document the provider-aware APP credential order for embedders,
+      matching the top-level and embedding docs.
+  - Added mock e2e coverage for these review follow-ups:
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_progress_json_cancel_suppresses_plaintext_preflight --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_reruns_duplicate_preflight_after_deferred_refresh --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e playback_app_uses_tv_access_key_when_generic_key_is_intl_provider --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_only_cover_skips_intl_access_key_credential_preflight --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e plan_credential_preflight_renew_skips_access_key_refresh_when_required_cookie_is_missing --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_generic_key_for_authenticated_feed_cookie_failure --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_complete_deferred_refresh_for_authenticated_feed_cookie_failure --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_for_optional_web_api_auth_like_failure --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e plan_selection_required_input_fails_before_credential_preflight_renewal --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_cancel_reports_duplicate_after_deferred_refresh --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_for_generic_api_bad_request --locked`.
+    - `cargo test -p bbdown-core --lib credential --locked`.
+    - `cargo test -p bbdown-cli --bin bbdown plan_failure_classifier --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_retries_app_access_key_when_required_cookie_is_stale_but_present --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e auth_renew_access_key --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e credential_preflight --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh --locked`.
+    - `just ci`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_for_app_area_restricted_status --locked`.
+    - `cargo test -p bbdown-cli --bin bbdown plan_failure_classifier --locked`.
+    - `cargo test -p bbdown-cli --bin bbdown generic_access_key_retry_requires_failure_path_that_uses_access_key --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_for_pgc_web_failure_before_proxy --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_retries_restricted_proxy_after_deferred_credential_refresh --locked`.
+    - `cargo test -p bbdown-cli --bin bbdown plan_failure_classifier --locked`.
+    - `cargo test -p bbdown-cli --bin bbdown access_key_refresh_request_trims_stored_tokens --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_for_optional_web_api_not_logged_in --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_generic_key_for_authenticated_feed_http_status --locked`.
+    - `cargo test -p bbdown-core --lib renew_mode_skips_access_key_refresh_when_required_cookie_is_missing --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_generic_key_for_video_metadata_http_status --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_retries_app_access_key_after_http_unauthorized_status --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_for_restricted_proxy_http_auth_status_without_key_evidence --locked`.
+    - `cargo test -p bbdown-core --lib intl_access_key_is_redacted_from_http_errors --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_generic_key_for_wbi_nav_http_status --locked`.
+    - `cargo test -p bbdown-core --lib json_status_path_matching_accepts_endpoint_prefixes --locked`.
+    - `cargo test -p bbdown-cli --bin bbdown plan_failure_classifier --locked`.
+    - `cargo test -p bbdown-core --lib resolver_error_message --locked`.
+    - `cargo test -p bbdown-cli --bin bbdown generic_access_key_retry_requires_failure_path_that_uses_access_key --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_generic_key_when_pgc_app_http_status_used_tv_key --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_generic_key_when_pgc_app_grpc_status_used_tv_key --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_retries_plan_after_app_http_forbidden_with_fresh_refreshable_access_key --locked`.
 
 ## Next Steps
 
-- Finish PR 7 provider-specific refresh client validation, review gates, CI, and merge.
-- Continue PR 8 optional credential preflight integration only after refresh outcomes are stable.
+- Finish PR 8 local full validation, review gates, CI, and merge.
+- Continue PR 9 multi-account lifecycle polish after preflight behavior is stable on `master`.

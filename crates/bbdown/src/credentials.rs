@@ -82,9 +82,17 @@ impl Credentials {
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.cookie.as_deref().unwrap_or_default().is_empty()
-            && self.access_key.as_deref().unwrap_or_default().is_empty()
-            && self.tv_access_key.as_deref().unwrap_or_default().is_empty()
+        self.cookie
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
+            && self
+                .access_key
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+            && self
+                .tv_access_key
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
     }
 
     #[must_use]
@@ -93,15 +101,15 @@ impl Credentials {
             has_cookie: self
                 .cookie
                 .as_deref()
-                .is_some_and(|value| !value.is_empty()),
+                .is_some_and(|value| !value.trim().is_empty()),
             has_access_key: self
                 .access_key
                 .as_deref()
-                .is_some_and(|value| !value.is_empty()),
+                .is_some_and(|value| !value.trim().is_empty()),
             has_tv_access_key: self
                 .tv_access_key
                 .as_deref()
-                .is_some_and(|value| !value.is_empty()),
+                .is_some_and(|value| !value.trim().is_empty()),
         }
     }
 }
@@ -134,15 +142,15 @@ impl CredentialKind {
             Self::Cookie => credentials
                 .cookie
                 .as_deref()
-                .filter(|value| !value.is_empty()),
+                .filter(|value| !value.trim().is_empty()),
             Self::AccessKey => credentials
                 .access_key
                 .as_deref()
-                .filter(|value| !value.is_empty()),
+                .filter(|value| !value.trim().is_empty()),
             Self::TvAccessKey => credentials
                 .tv_access_key
                 .as_deref()
-                .filter(|value| !value.is_empty()),
+                .filter(|value| !value.trim().is_empty()),
         }
     }
 }
@@ -1416,6 +1424,41 @@ mod tests {
                 has_access_key: true,
                 has_tv_access_key: true,
             }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn whitespace_only_credentials_are_treated_as_missing() -> anyhow::Result<()> {
+        let credentials = Credentials {
+            cookie: Some("   ".to_owned()),
+            access_key: Some("\t".to_owned()),
+            tv_access_key: Some("\n".to_owned()),
+        };
+
+        assert!(credentials.is_empty());
+        assert_eq!(
+            credentials.redacted_summary(),
+            super::CredentialSource {
+                has_cookie: false,
+                has_access_key: false,
+                has_tv_access_key: false,
+            }
+        );
+
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile("default", credentials)?;
+        let status = profiles.profile_lifecycle_status(
+            "default",
+            &CredentialLifecyclePolicy::at_unix_millis(1_000),
+        )?;
+
+        assert!(
+            status
+                .credential_statuses
+                .iter()
+                .all(|credential| !credential.present
+                    && credential.status == CredentialLifecycleStatus::Missing)
         );
         Ok(())
     }

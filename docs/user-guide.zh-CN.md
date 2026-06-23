@@ -98,9 +98,10 @@ WEB cookie，目前只输出普通视频 `archive` 记录；PGC、直播或专�
 `https://www.bilibili.com/watchlater` 和 `https://www.bilibili.com/list/watchlater`。它需要
 已认证的 WEB cookie，并输出该账号稍后再看列表中的普通视频。
 关注 feed 输入支持 `following`、`https://t.bilibili.com/` 和
-`https://www.bilibili.com/account/dynamic`。空间动态 feed 输入支持
-`https://space.bilibili.com/<mid>/dynamic`。这些动态 feed 输入需要已认证的 WEB cookie，目
-前只输出普通视频 archive 卡片；非视频动态卡片会被跳过。
+`https://www.bilibili.com/account/dynamic`。它需要已认证的 WEB cookie，目前输出该账号关
+注 feed 中的普通视频 archive 卡片。空间动态 feed 输入支持
+`https://space.bilibili.com/<mid>/dynamic`，可以匿名访问，目前输出公开普通视频 archive 卡
+片；非视频动态卡片会被跳过。
 
 ## 下载计划
 
@@ -167,9 +168,10 @@ TV mode 适用于普通视频和 PGC 分集，使用 `auth login-tv` 保存的 T
 `--tv-api-base` / `BBDOWN_TV_API_BASE` 指向 mock 或代理。
 当下游集成需要来自 BBDown-compatible APP gRPC playurl 端点的媒体请求规格时，可以使用
 `--playurl-mode app` 或 `BBDOWN_PLAYURL_MODE=app`。APP mode 适用于普通视频和 PGC 分集，
-会优先使用已保存的 TV access key，再回退到通用导入 access key；mock 或代理可通过
-`--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` 和 `--app-pgc-grpc-base` /
-`BBDOWN_APP_PGC_GRPC_BASE` 配置；普通视频和 PGC APP 默认都使用
+会优先使用 Bilibili main/BALH 通用 access key，再回退到已保存的 TV access key；如果当前
+profile 把通用 key 标记为 `bili_intl_oauth2`，或者 profile 来自旧版扁平 credential file 而没有
+provider metadata，APP mode 会优先使用 TV key，只有没有 TV key 时才回退到该通用 key。mock 或代理可通过 `--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` 和
+`--app-pgc-grpc-base` / `BBDOWN_APP_PGC_GRPC_BASE` 配置；普通视频和 PGC APP 默认都使用
 `https://grpc.biliapi.net`。PGC APP gRPC restricted 或 preview-only
 信号仍会回退到已配置的 restricted-area HTTP playurl proxy；
 信号可以来自区域限制消息、APP permission-denied gRPC status 或 PGC response-body metadata。
@@ -361,7 +363,41 @@ access key 如果已经 expired、expiring、stale 或 unknown，且状态为 `r
 `--force`、`--stdin` 或 `--file`，CLI 会先尝试 provider-specific automatic refresh。使用
 `--json` 时，自动刷新成功会输出 `decision`、`refreshed` 和 `saved` 事件，仍不会打印原始
 token。如果 refresh 失败，CLI 会输出 `refresh_failed`，然后回退到普通 authorization ticket，
-这样调用方可以提示用户重新授权而不会丢掉旧 credential。`auth login-web` 打印二维码登录 URL，轮询到扫码确认，并保存得到的
+这样调用方可以提示用户重新授权而不会丢掉旧 credential。`plan`、`playback` 或 `download`
+可以配合全局 `--credential-preflight warn|fail|renew`，在解析 media stream 前检查当前选择的
+profile。preflight 会按 request path 推导所需 credential：WEB playurl 把 cookie 视为
+optional，所以匿名公开视频仍可工作；stale optional WEB playurl cookie metadata 只会 warning，
+不会阻断。history、watch-later 和 following 这类账号级 feed 输入会在 resolver
+访问已认证 API 之前要求 WEB cookie；公开的 space dynamic 页面可以匿名访问，不会加入
+required-cookie preflight。TV playurl 要求 `tv_access_key`；APP playurl 接受通用
+`access_key` 或 `tv_access_key` 任一可用，并按当前 profile 的 access-key provider 决定两者
+都存在时的顺序：Bilibili main/BALH generic key 先于 TV key 检查；`bili_intl_oauth2` key 和没有
+provider metadata 的旧版 profile 会让位给 TV key。
+restricted-area proxy fallback 只会在当前输入可能触发 fallback 且已配置通用 `access_key` 时检查
+该 token；缺失通用 key 不会阻断自带认证或允许匿名 fallback 的 restricted-area proxy URL。
+intl/Bstar episode 的 media 和 subtitle path 会要求官方 intl metadata、playurl 和 subtitle 请求实际使用的通用
+`access_key`。cover-only 和 danmaku-only 的 intl episode download 会跳过这个 access-key
+preflight，因为它们只需要 metadata 和 sidecar endpoint；如果 profile 里存在 access key，metadata
+请求仍会带上它。短链会先解析为最终支持的 input kind，再做这个判断。intl/Bstar 和 PUGV/cheese
+这类固定来源输入不会继承全局 TV/APP playurl credential requirement。
+`download --only subtitle|danmaku|cover` 会跳过 TV/APP/restricted-proxy stream preflight，因为这些模式
+不会解析 media stream。`warn` 会把 diagnostic 写到 stderr 并继续；`fail` 会在缺少 required credential 或相关
+credential lifecycle metadata 不是 fresh 时，在网络 stream resolution 前中止；`renew` 会在
+当前 profile refresh-ready 时先尝试 provider-specific generic access-key refresh。preflight
+不会写 stdout，因此 `--json` 仍保持单个 JSON plan、playback plan 或 download report。
+`download --progress-json` 会抑制 preflight 纯文本 diagnostic，但失败时最终 CLI error 行仍可能
+写到 stderr；wrapper 应只解析 JSON object line。在 `renew` 模式下，缺失 required 的非
+access-key credential 仍会阻止通用 access-key 自动刷新；但已存在且 lifecycle metadata 为
+stale、expiring、expired 或 unknown 的 credential 不会阻止 refresh-ready 的通用 access key
+刷新，后续实际请求仍会验证这些 credential 是否可用。对 archive 下载，如果初次 plan 成功，
+`renew` 会把自动 access-key refresh 延后到 duplicate handling 之后，因此 `--on-duplicate cancel`
+会停止且不会调用 refresh endpoint 或重写已保存 credential。如果初次 archive planning 因类似
+auth 的 credential 错误失败，即使本地 lifecycle metadata 仍认为该 key fresh，CLI 也会刷新
+ready 的通用 access key 并重试一次 planning，然后才报告失败。可通过全局
+`--credential-stale-after-seconds` 和 `--credential-expiring-within-seconds`，或等价的
+`BBDOWN_CREDENTIAL_PREFLIGHT`、`BBDOWN_CREDENTIAL_STALE_AFTER_SECONDS` 和
+`BBDOWN_CREDENTIAL_EXPIRING_WITHIN_SECONDS` 环境变量调整本地 lifecycle policy。
+`auth login-web` 打印二维码登录 URL，轮询到扫码确认，并保存得到的
 cookie。`auth login-tv` 使用 TV 二维码流程，保存 TV 专用 access key 供未来 TV/app 流程使
 用，不会覆盖由通用 access-key 命令导入或获取的 intl/Bstar access key。使用 `--json` 时，
 登录命令会打印换行分隔 JSON 事件：`ticket` 在轮询或 handoff 前包含登录 URL 和
@@ -372,7 +408,9 @@ cookie。`auth login-tv` 使用 TV 二维码流程，保存 TV 专用 access key
 WEB 和 TV 二维码登录会记录 lifecycle source 和获取时间；只有上游响应提供可靠过期字段时
 才会记录 expiry。
 
-`auth status` 会保留旧的 selected-profile JSON 形态，只报告脱敏凭据布尔值。加
+`auth status` 会保留旧的 selected-profile JSON 形态，只报告脱敏凭据布尔值；只含空白字符的
+已保存 credential 会按 missing 报告。发送请求前会 trim 已保存 credential；trim 后为空的
+值同样按 missing 处理。加
 `--profiles` 后，会输出所选 credential profile 名称、每个返回 profile 是否为默认或当前选
 中 profile、本地 lifecycle status、逐 credential lifecycle metadata，以及不含密钥的操作建
 议。再加 `--all-profiles` 会报告所有已保存 profile；不加时，profile 输出只包含当前选中

@@ -1,4 +1,5 @@
 use crate::app_playurl;
+use crate::credentials::AccessKeyProvider;
 use crate::download::DownloadMode;
 use crate::feed_list::{
     FeedListFetchMode, feed_list_fetch_mode, feed_list_info_fetch_mode, push_unique_feed_list_item,
@@ -36,6 +37,10 @@ const DYNAMIC_FEED_FEATURES: &str = "itemOpusStyle,listOnlyfans,opusBigCover,onl
 const RECOMMENDATION_MIN_PAGE_SIZE: u32 = 20;
 const RECOMMENDATION_MAX_PAGE_SIZE: u32 = 30;
 const RECOMMENDATION_MAX_REFRESH_PAGES: u32 = 10;
+
+fn request_credential_value(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
 
 #[non_exhaustive]
 #[derive(Clone, Debug)]
@@ -153,6 +158,7 @@ pub enum PlayurlMode {
 pub struct ClientConfig {
     pub endpoints: EndpointConfig,
     pub credentials: Credentials,
+    pub access_key_provider: Option<AccessKeyProvider>,
     pub restricted_area: RestrictedAreaConfig,
     pub playurl_mode: PlayurlMode,
     pub user_agent: String,
@@ -164,6 +170,7 @@ impl Default for ClientConfig {
         Self {
             endpoints: EndpointConfig::default(),
             credentials: Credentials::default(),
+            access_key_provider: None,
             restricted_area: RestrictedAreaConfig::default(),
             playurl_mode: PlayurlMode::default(),
             user_agent: "bbdown-rs/0.1".to_owned(),
@@ -191,6 +198,12 @@ impl ClientConfig {
     #[must_use]
     pub fn with_credentials(mut self, credentials: Credentials) -> Self {
         self.credentials = credentials;
+        self
+    }
+
+    #[must_use]
+    pub fn with_access_key_provider(mut self, provider: Option<AccessKeyProvider>) -> Self {
+        self.access_key_provider = provider;
         self
     }
 
@@ -515,12 +528,7 @@ impl BiliClient {
     async fn check_cookie_health(&self) -> CredentialHealthProbe {
         const ENDPOINT: &str = "web_nav";
         const SCOPE: CredentialHealthScope = CredentialHealthScope::WebCookie;
-        let Some(cookie) = self
-            .config
-            .credentials
-            .cookie
-            .as_deref()
-            .filter(|value| !value.is_empty())
+        let Some(cookie) = request_credential_value(self.config.credentials.cookie.as_deref())
         else {
             return CredentialHealthProbe::missing(CredentialKind::Cookie, SCOPE);
         };
@@ -545,12 +553,11 @@ impl BiliClient {
         scope: CredentialHealthScope,
     ) -> CredentialHealthProbe {
         const ENDPOINT: &str = "oauth2_info";
-        let token = match kind {
+        let token = request_credential_value(match kind {
             CredentialKind::Cookie => return CredentialHealthProbe::missing(kind, scope),
             CredentialKind::AccessKey => self.config.credentials.access_key.as_deref(),
             CredentialKind::TvAccessKey => self.config.credentials.tv_access_key.as_deref(),
-        }
-        .filter(|value| !value.is_empty());
+        });
         let Some(token) = token else {
             return CredentialHealthProbe::missing(kind, scope);
         };
@@ -991,7 +998,7 @@ impl BiliClient {
         self.plan_collection(collection, planning_mode).await
     }
 
-    async fn parse_input(&self, raw: &str) -> Result<Input> {
+    pub async fn parse_input(&self, raw: &str) -> Result<Input> {
         match Input::parse(raw)? {
             Input::ShortLink(short_link) => self.resolve_short_link_input(&short_link).await,
             input => Ok(input),
@@ -2356,7 +2363,9 @@ impl BiliClient {
                 .append_pair("platform", "android")
                 .append_pair("s_locale", "zh_SG")
                 .append_pair("mobi_app", "bstar_a");
-            if let Some(access_key) = self.config.credentials.access_key.as_deref() {
+            if let Some(access_key) =
+                request_credential_value(self.config.credentials.access_key.as_deref())
+            {
                 query.append_pair("access_key", access_key);
             }
         }
@@ -2695,7 +2704,7 @@ impl BiliClient {
                     aid,
                     cid,
                     None,
-                    self.config.credentials.tv_access_key.as_deref(),
+                    request_credential_value(self.config.credentials.tv_access_key.as_deref()),
                 );
             }
             StreamSource::PugvWeb => {
@@ -2722,7 +2731,7 @@ impl BiliClient {
                 for (key, value) in intl_ogv_playurl_params(
                     epid,
                     cid,
-                    self.config.credentials.access_key.as_deref(),
+                    request_credential_value(self.config.credentials.access_key.as_deref()),
                     current_unix_timestamp(),
                 ) {
                     query.append_pair(key, &value);
@@ -2834,7 +2843,7 @@ impl BiliClient {
             aid,
             cid,
             Some(epid),
-            self.config.credentials.tv_access_key.as_deref(),
+            request_credential_value(self.config.credentials.tv_access_key.as_deref()),
         );
         let streams = self.fetch_playurl_stream_set_without_cookie(url).await?;
         Ok(ResolvedStreamSet::official(StreamSource::PgcTv, streams))
@@ -2963,11 +2972,7 @@ impl BiliClient {
     }
 
     fn pgc_proxy_playurl_access_key(&self) -> Option<&str> {
-        self.config
-            .credentials
-            .access_key
-            .as_deref()
-            .filter(|value| !value.is_empty())
+        request_credential_value(self.config.credentials.access_key.as_deref())
     }
 
     async fn collect_app_grpc_response(response: reqwest::Response) -> Result<AppGrpcResponse> {
@@ -3027,7 +3032,9 @@ impl BiliClient {
                         .append_pair("episode_id", &epid.to_string())
                         .append_pair("platform", "web")
                         .append_pair("s_locale", "en_US");
-                    if let Some(access_key) = self.config.credentials.access_key.as_deref() {
+                    if let Some(access_key) =
+                        request_credential_value(self.config.credentials.access_key.as_deref())
+                    {
                         query.append_pair("access_key", access_key);
                     }
                 }
@@ -3057,18 +3064,16 @@ impl BiliClient {
     }
 
     fn app_playurl_access_key(&self) -> Option<&str> {
-        self.config
-            .credentials
-            .tv_access_key
-            .as_deref()
-            .filter(|value| !value.is_empty())
-            .or_else(|| {
-                self.config
-                    .credentials
-                    .access_key
-                    .as_deref()
-                    .filter(|value| !value.is_empty())
-            })
+        let generic_access_key =
+            request_credential_value(self.config.credentials.access_key.as_deref());
+        let tv_access_key =
+            request_credential_value(self.config.credentials.tv_access_key.as_deref());
+        match self.config.access_key_provider {
+            Some(AccessKeyProvider::BalhBiliplus | AccessKeyProvider::BilibiliMainOauth2) => {
+                generic_access_key.or(tv_access_key)
+            }
+            Some(AccessKeyProvider::BiliIntlOauth2) | None => tv_access_key.or(generic_access_key),
+        }
     }
 
     async fn get_json<T>(&self, url: Url) -> Result<T>
@@ -3089,6 +3094,7 @@ impl BiliClient {
     where
         T: for<'de> Deserialize<'de>,
     {
+        let preserve_status_url = preserves_json_status_url_for_path(url.path());
         let response = self
             .http
             .get(url)
@@ -3099,7 +3105,7 @@ impl BiliClient {
             .map_err(Self::http_error_without_url)?;
         let response = response
             .error_for_status()
-            .map_err(Self::http_error_without_url)?;
+            .map_err(|error| Self::http_json_status_error(error, preserve_status_url))?;
         response
             .json::<T>()
             .await
@@ -3127,7 +3133,7 @@ impl BiliClient {
         );
         if include_cookie
             && let Some(cookie) = self.config.credentials.cookie.as_deref()
-            && !cookie.is_empty()
+            && let Some(cookie) = request_credential_value(Some(cookie))
         {
             let value = HeaderValue::from_str(cookie)
                 .map_err(|_| Error::InvalidInput("invalid cookie header".to_owned()))?;
@@ -3138,6 +3144,19 @@ impl BiliClient {
 
     pub(crate) fn http_error_without_url(error: reqwest::Error) -> Error {
         Error::Http(error.without_url())
+    }
+
+    fn http_json_status_error(error: reqwest::Error, preserve_status_url: bool) -> Error {
+        if preserve_status_url && error.status().is_some() {
+            let classification_url = error.url().cloned().map(status_classification_url);
+            let error = if let Some(url) = classification_url {
+                error.with_url(url)
+            } else {
+                error
+            };
+            return Error::Http(error);
+        }
+        Self::http_error_without_url(error)
     }
 
     pub(crate) fn endpoint_url(base: &str, path: &str) -> Result<Url> {
@@ -4630,7 +4649,7 @@ fn append_tv_playurl_params(
     access_key: Option<&str>,
 ) {
     let mut params = Vec::new();
-    if let Some(access_key) = access_key.filter(|value| !value.is_empty()) {
+    if let Some(access_key) = request_credential_value(access_key) {
         params.push(("access_key", access_key.to_owned()));
     }
     params.extend([
@@ -4710,9 +4729,53 @@ fn append_pgc_playurl_params(
     if let Some(area) = area {
         query.append_pair("area", area.as_str());
     }
-    if let Some(access_key) = access_key.filter(|value| !value.is_empty()) {
+    if let Some(access_key) = request_credential_value(access_key) {
         query.append_pair("access_key", access_key);
     }
+}
+
+fn status_classification_url(mut url: Url) -> Url {
+    let _ = url.set_username("");
+    let _ = url.set_password(None);
+    url.set_query(None);
+    url.set_fragment(None);
+    url
+}
+
+fn preserves_json_status_url_for_path(path: &str) -> bool {
+    const JSON_STATUS_URL_ENDPOINT_PATHS: &[&str] = &[
+        "/x/web-interface/view",
+        "/x/web-interface/nav",
+        "/x/tag/archive/tags",
+        "/pgc/view/web/season",
+        "/pgc/review/user",
+        "/pgc/player/web/v2/playurl",
+        "/pugv/view/web/season",
+        "/pugv/view/web/ep/list",
+        "/pugv/player/web/playurl",
+        "/x/v3/fav/folder/created/list-all",
+        "/x/v3/fav/resource/list",
+        "/x/v1/medialist/info",
+        "/x/v2/medialist/resource/list",
+        "/x/polymer/web-space/seasons_archives_list",
+        "/x/series/archives",
+        "/x/series/series",
+        "/x/space/wbi/arc/search",
+        "/x/web-interface/wbi/index/top/feed/rcmd",
+        "/x/web-interface/history/cursor",
+        "/x/v2/history/toview",
+        "/x/polymer/web-dynamic/v1/feed/all",
+        "/x/polymer/web-dynamic/v1/feed/space",
+        "/x/player/playurl",
+        "/x/player/v2",
+    ];
+    endpoint_path_matches_any(path, JSON_STATUS_URL_ENDPOINT_PATHS)
+}
+
+fn endpoint_path_matches_any(path: &str, endpoints: &[&str]) -> bool {
+    endpoints
+        .iter()
+        .any(|endpoint| path == *endpoint || path.ends_with(endpoint))
 }
 
 fn is_restricted_area_fallback_error(source: &StreamSource, error: &Error) -> bool {
@@ -4856,7 +4919,14 @@ fn resolver_attempt(
 fn resolver_error_message(error: &Error) -> String {
     match error {
         Error::Api { code, message } => {
-            format!("API code {code}: {}", sanitize_diagnostic_text(message))
+            let mut diagnostic = format!("API code {code}: {}", sanitize_diagnostic_text(message));
+            if diagnostic_mentions_access_key(message) {
+                let lower = diagnostic.to_ascii_lowercase();
+                if !lower.contains("access key") && !lower.contains("access token") {
+                    diagnostic.push_str(" (access key diagnostic)");
+                }
+            }
+            diagnostic
         }
         Error::AccessRestricted(message) => {
             format!("access restricted: {}", sanitize_diagnostic_text(message))
@@ -4946,6 +5016,15 @@ fn sanitize_diagnostic_text(raw: &str) -> String {
     } else {
         redacted
     }
+}
+
+fn diagnostic_mentions_access_key(raw: &str) -> bool {
+    let lower = raw.to_ascii_lowercase();
+    lower.contains("access_key")
+        || lower.contains("access key")
+        || lower.contains("access_token")
+        || lower.contains("access-token")
+        || lower.contains("access token")
 }
 
 fn credential_health_error(
@@ -5784,7 +5863,7 @@ fn intl_ogv_playurl_params(
     timestamp: u64,
 ) -> Vec<(&'static str, String)> {
     let mut params = Vec::new();
-    if let Some(access_key) = access_key.filter(|value| !value.is_empty()) {
+    if let Some(access_key) = request_credential_value(access_key) {
         params.push(("access_key", access_key.to_owned()));
     }
     params.extend([
@@ -5861,22 +5940,24 @@ mod tests {
     use super::{
         BiliClient, ClientConfig, EndpointConfig, INTL_OGV_APP_SECRET, INTL_OGV_APPKEY,
         MediaListKind, PlayUrlRoot, PlayurlMode, RestrictedArea, RestrictedAreaConfig,
-        RestrictedAreaProxy, TV_PLAYURL_APP_SECRET, TV_PLAYURL_APPKEY, decode_app_grpc_stream_set,
-        intl_ogv_playurl_params, oauth2_info_params, sign_ordered_params,
+        RestrictedAreaProxy, TV_PLAYURL_APP_SECRET, TV_PLAYURL_APPKEY, append_pgc_playurl_params,
+        append_tv_playurl_params, decode_app_grpc_stream_set, intl_ogv_playurl_params,
+        oauth2_info_params, sign_ordered_params,
     };
     use crate::{
-        CodecFamily, CredentialHealthScope, CredentialHealthStatus, CredentialKind, Credentials,
-        EpisodeMetadata, Error, IndexSelection, IndexSelector, Input, PageMetadata,
-        ResolvedContent, SeasonMetadata, Selection, StreamSource, SubtitleFormat,
+        AccessKeyProvider, CodecFamily, CredentialHealthScope, CredentialHealthStatus,
+        CredentialKind, Credentials, EpisodeMetadata, Error, IndexSelection, IndexSelector, Input,
+        PageMetadata, ResolvedContent, SeasonMetadata, Selection, StreamSource, SubtitleFormat,
         VideoCollectionItem, VideoCollectionKind, VideoCollectionMetadata, VideoMetadata,
         app_playurl,
     };
     use http_body_util::BodyExt as _;
     use httpmock::MockServer;
     use httpmock::prelude::*;
-    use reqwest::header::{HeaderMap, HeaderValue};
+    use reqwest::header::{COOKIE, HeaderMap, HeaderValue};
     use std::convert::Infallible;
     use std::time::{Duration, Instant};
+    use url::Url;
 
     #[tokio::test]
     async fn credential_health_reports_missing_credentials() {
@@ -5949,9 +6030,9 @@ mod tests {
         });
         let mut client = test_client(&server);
         client.config.credentials = Credentials::default()
-            .with_cookie("SESSDATA=COOKIE_SECRET")
-            .with_access_key("ACCESS_SECRET")
-            .with_tv_access_key("TV_SECRET");
+            .with_cookie(" SESSDATA=COOKIE_SECRET ")
+            .with_access_key(" ACCESS_SECRET ")
+            .with_tv_access_key(" TV_SECRET ");
 
         let report = client.check_credential_health().await;
 
@@ -5994,6 +6075,40 @@ mod tests {
         cookie_mock.assert_calls(1);
         access_key_mock.assert_calls(1);
         tv_access_key_mock.assert_calls(1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn credential_health_treats_blank_credentials_as_missing() {
+        let server = MockServer::start();
+        let mut client = test_client(&server);
+        client.config.credentials = Credentials::default()
+            .with_cookie("   ")
+            .with_access_key("   ")
+            .with_tv_access_key("   ");
+
+        let report = client.check_credential_health().await;
+
+        assert_eq!(report.probes.len(), 3);
+        assert!(report.probes.iter().all(|probe| {
+            probe.status == CredentialHealthStatus::Missing
+                && probe.endpoint.is_none()
+                && probe.api_code.is_none()
+        }));
+    }
+
+    #[test]
+    fn request_headers_trim_stored_cookie() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let mut client = test_client(&server);
+        client.config.credentials = Credentials::default().with_cookie(" SESSDATA=COOKIE_SECRET ");
+
+        let headers = client.headers(true)?;
+
+        assert_eq!(
+            headers.get(COOKIE).and_then(|value| value.to_str().ok()),
+            Some("SESSDATA=COOKIE_SECRET")
+        );
         Ok(())
     }
 
@@ -6093,12 +6208,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn credential_health_checks_raw_stored_access_key_value() -> anyhow::Result<()> {
+    async fn credential_health_trims_stored_access_key_value() -> anyhow::Result<()> {
         let server = MockServer::start();
         let access_key_mock = server.mock(|when, then| {
             when.method(GET)
                 .path("/x/passport-login/oauth2/info")
-                .query_param("access_key", "ACCESS_SECRET ")
+                .query_param("access_key", "ACCESS_SECRET")
                 .query_param("appkey", INTL_OGV_APPKEY)
                 .query_param("mobi_app", "bstar_a")
                 .query_param_exists("ts")
@@ -6111,7 +6226,7 @@ mod tests {
         });
         let mut client = test_client(&server);
         client.config.credentials =
-            Credentials::default().with_access_key("ACCESS_SECRET ".to_owned());
+            Credentials::default().with_access_key(" ACCESS_SECRET ".to_owned());
 
         let report = client.check_credential_health().await;
 
@@ -6622,6 +6737,35 @@ mod tests {
         );
     }
 
+    #[test]
+    fn playurl_query_params_trim_or_omit_access_keys() -> anyhow::Result<()> {
+        let mut tv_url = Url::parse("https://example.test/playurl")?;
+        append_tv_playurl_params(&mut tv_url, 10, 100, Some(1000), Some(" TV_ACCESS "));
+        assert!(tv_url.as_str().contains("access_key=TV_ACCESS"));
+
+        let mut blank_tv_url = Url::parse("https://example.test/playurl")?;
+        append_tv_playurl_params(&mut blank_tv_url, 10, 100, None, Some("   "));
+        assert!(!blank_tv_url.as_str().contains("access_key="));
+
+        let mut pgc_url = Url::parse("https://example.test/pgc/playurl")?;
+        append_pgc_playurl_params(
+            &mut pgc_url,
+            10,
+            100,
+            1000,
+            Some(RestrictedArea::Hk),
+            Some(" ACCESS_SECRET "),
+        );
+        assert!(pgc_url.as_str().contains("access_key=ACCESS_SECRET"));
+
+        let params = intl_ogv_playurl_params(341_736, 70, Some(" intl-token "), 1_234_567_890);
+        assert!(params.contains(&("access_key", "intl-token".to_owned())));
+
+        let blank_params = intl_ogv_playurl_params(341_736, 70, Some("   "), 1_234_567_890);
+        assert!(!blank_params.iter().any(|(key, _)| *key == "access_key"));
+        Ok(())
+    }
+
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn plans_video_download_with_streams_subtitles_and_danmaku() -> anyhow::Result<()> {
@@ -6940,6 +7084,92 @@ mod tests {
         assert_eq!(entry.streams.audios[0].codecs.as_deref(), Some("mp4a.40.2"));
         assert_eq!(entry.streams.flv_segments[0].order, 1);
         Ok(())
+    }
+
+    #[test]
+    fn app_playurl_access_key_uses_tv_key_before_intl_provider_access_key() {
+        let client = BiliClient::new(
+            ClientConfig::default()
+                .with_credentials(
+                    Credentials::default()
+                        .with_access_key("INTL_ACCESS")
+                        .with_tv_access_key("TV_ACCESS"),
+                )
+                .with_access_key_provider(Some(AccessKeyProvider::BiliIntlOauth2)),
+        );
+
+        assert_eq!(client.app_playurl_access_key(), Some("TV_ACCESS"));
+    }
+
+    #[test]
+    fn app_playurl_access_key_uses_legacy_tv_key_before_unclassified_access_key() {
+        let client = BiliClient::new(
+            ClientConfig::default().with_credentials(
+                Credentials::default()
+                    .with_access_key("LEGACY_ACCESS")
+                    .with_tv_access_key("TV_ACCESS"),
+            ),
+        );
+
+        assert_eq!(client.app_playurl_access_key(), Some("TV_ACCESS"));
+    }
+
+    #[test]
+    fn app_playurl_access_key_keeps_generic_key_before_main_provider_tv_key() {
+        let client = BiliClient::new(
+            ClientConfig::default()
+                .with_credentials(
+                    Credentials::default()
+                        .with_access_key("ACCESS_SECRET")
+                        .with_tv_access_key("TV_ACCESS"),
+                )
+                .with_access_key_provider(Some(AccessKeyProvider::BalhBiliplus)),
+        );
+
+        assert_eq!(client.app_playurl_access_key(), Some("ACCESS_SECRET"));
+    }
+
+    #[test]
+    fn app_playurl_access_key_keeps_generic_key_before_bilibili_main_tv_key() {
+        let client = BiliClient::new(
+            ClientConfig::default()
+                .with_credentials(
+                    Credentials::default()
+                        .with_access_key("MAIN_ACCESS")
+                        .with_tv_access_key("TV_ACCESS"),
+                )
+                .with_access_key_provider(Some(AccessKeyProvider::BilibiliMainOauth2)),
+        );
+
+        assert_eq!(client.app_playurl_access_key(), Some("MAIN_ACCESS"));
+    }
+
+    #[test]
+    fn app_playurl_access_key_falls_back_when_main_provider_key_is_blank() {
+        let client = BiliClient::new(
+            ClientConfig::default()
+                .with_credentials(
+                    Credentials::default()
+                        .with_access_key("   ")
+                        .with_tv_access_key(" TV_ACCESS "),
+                )
+                .with_access_key_provider(Some(AccessKeyProvider::BalhBiliplus)),
+        );
+
+        assert_eq!(client.app_playurl_access_key(), Some("TV_ACCESS"));
+    }
+
+    #[test]
+    fn app_playurl_access_key_falls_back_when_legacy_tv_key_is_blank() {
+        let client = BiliClient::new(
+            ClientConfig::default().with_credentials(
+                Credentials::default()
+                    .with_access_key(" LEGACY_ACCESS ")
+                    .with_tv_access_key("   "),
+            ),
+        );
+
+        assert_eq!(client.app_playurl_access_key(), Some("LEGACY_ACCESS"));
     }
 
     #[tokio::test]
@@ -9500,6 +9730,7 @@ mod tests {
                 tv_passport_base: server.base_url(),
                 tv_passport_poll_base: server.base_url(),
             },
+            access_key_provider: None,
             credentials: Credentials {
                 cookie: None,
                 access_key: Some("TOKEN_SHOULD_REDACT_12345".to_owned()),
@@ -9709,6 +9940,7 @@ mod tests {
                 tv_passport_base: server.base_url(),
                 tv_passport_poll_base: server.base_url(),
             },
+            access_key_provider: None,
             credentials: Credentials {
                 cookie: None,
                 access_key: Some("intl-token".to_owned()),
@@ -10420,21 +10652,13 @@ mod tests {
             endpoints: EndpointConfig {
                 api_base: server.base_url(),
                 pgc_base: server.base_url(),
-                intl_base: server.base_url(),
-                intl_passport_base: server.base_url(),
                 comment_base: server.base_url(),
-                passport_base: server.base_url(),
-                tv_api_base: server.base_url(),
-                app_grpc_base: server.base_url(),
-                app_pgc_grpc_base: server.base_url(),
-                tv_passport_base: server.base_url(),
-                tv_passport_poll_base: server.base_url(),
+                ..EndpointConfig::default()
             },
-            credentials: Credentials {
-                cookie: Some("SESSDATA=COOKIE_SECRET".to_owned()),
-                access_key: Some("ACCESS_SECRET".to_owned()),
-                tv_access_key: None,
-            },
+            access_key_provider: None,
+            credentials: Credentials::default()
+                .with_cookie("SESSDATA=COOKIE_SECRET")
+                .with_access_key("ACCESS_SECRET"),
             restricted_area: RestrictedAreaConfig {
                 area_hint: Some(RestrictedArea::Hk),
                 proxies: vec![RestrictedAreaProxy::playurl(
@@ -10532,6 +10756,7 @@ mod tests {
                 tv_passport_base: server.base_url(),
                 tv_passport_poll_base: server.base_url(),
             },
+            access_key_provider: None,
             credentials: Credentials::default(),
             restricted_area: RestrictedAreaConfig {
                 area_hint: Some(RestrictedArea::Hk),
@@ -10625,6 +10850,7 @@ mod tests {
                     tv_passport_base: server.base_url(),
                     tv_passport_poll_base: server.base_url(),
                 },
+                access_key_provider: None,
                 credentials: Credentials {
                     cookie: None,
                     access_key: Some("ACCESS_SECRET".to_owned()),
@@ -10703,6 +10929,7 @@ mod tests {
                 tv_passport_base: server.base_url(),
                 tv_passport_poll_base: server.base_url(),
             },
+            access_key_provider: None,
             credentials: Credentials {
                 cookie: Some("SESSDATA=COOKIE_SECRET".to_owned()),
                 access_key: Some("ACCESS_SECRET".to_owned()),
@@ -10884,12 +11111,14 @@ mod tests {
     fn resolver_error_message_redacts_sensitive_values() {
         let message = super::resolver_error_message(&Error::Api {
             code: -40301,
-            message: "proxy rejected https://user:pass@proxy.example/api?proxy_token=PROXY_SECRET&access_key=ACCESS_SECRET cookie=SESSDATA=COOKIE_SECRET token=TOKEN_SECRET jwt=JWT_SECRET x-api-key: API_KEY_SECRET authorization: Bearer AUTH_SECRET".to_owned(),
+            message: "proxy rejected https://user:pass@proxy.example/api?proxy_token=PROXY_SECRET&access_key=ACCESS_SECRET&access_token=ACCESS_TOKEN_SECRET cookie=SESSDATA=COOKIE_SECRET token=TOKEN_SECRET jwt=JWT_SECRET x-api-key: API_KEY_SECRET authorization: Bearer AUTH_SECRET".to_owned(),
         });
 
         assert!(message.starts_with("API code -40301:"));
+        assert!(message.contains("access key diagnostic"));
         for sensitive in [
             "ACCESS_SECRET",
+            "ACCESS_TOKEN_SECRET",
             "PROXY_SECRET",
             "COOKIE_SECRET",
             "TOKEN_SECRET",
@@ -10898,6 +11127,7 @@ mod tests {
             "AUTH_SECRET",
             "proxy_token",
             "access_key",
+            "access_token",
             "x-api-key",
             "authorization",
             "cookie",
@@ -10908,6 +11138,32 @@ mod tests {
                 "message leaked {sensitive}: {message}"
             );
         }
+    }
+
+    #[test]
+    fn resolver_error_message_does_not_mark_proxy_credentials_as_access_key() {
+        let message = super::resolver_error_message(&Error::Api {
+            code: -101,
+            message: "proxy rejected invalid proxy credential".to_owned(),
+        });
+
+        assert_eq!(
+            message,
+            "API code -101: proxy rejected invalid proxy credential"
+        );
+    }
+
+    #[test]
+    fn resolver_error_message_marks_access_token_spelling_as_access_key_diagnostic() {
+        let message = super::resolver_error_message(&Error::Api {
+            code: -101,
+            message: "proxy rejected access-token expired".to_owned(),
+        });
+
+        assert_eq!(
+            message,
+            "API code -101: redacted diagnostic message (access key diagnostic)"
+        );
     }
 
     #[test]
@@ -10952,6 +11208,7 @@ mod tests {
                 tv_passport_base: "http://127.0.0.1:1".to_owned(),
                 tv_passport_poll_base: "http://127.0.0.1:1".to_owned(),
             },
+            access_key_provider: None,
             credentials: Credentials::default(),
             restricted_area: RestrictedAreaConfig::default(),
             playurl_mode: PlayurlMode::Web,
@@ -11165,6 +11422,19 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn json_status_path_matching_accepts_endpoint_prefixes() {
+        assert!(super::preserves_json_status_url_for_path(
+            "/bili/api/x/web-interface/nav"
+        ));
+        assert!(super::preserves_json_status_url_for_path(
+            "/bili/api/x/player/playurl"
+        ));
+        assert!(!super::preserves_json_status_url_for_path(
+            "/bili/api/x/passport-login/oauth2/info"
+        ));
+    }
+
     fn test_client(server: &MockServer) -> BiliClient {
         BiliClient::new(ClientConfig {
             endpoints: EndpointConfig {
@@ -11180,6 +11450,7 @@ mod tests {
                 tv_passport_base: server.base_url(),
                 tv_passport_poll_base: server.base_url(),
             },
+            access_key_provider: None,
             credentials: Credentials::default(),
             restricted_area: RestrictedAreaConfig::default(),
             playurl_mode: PlayurlMode::Web,

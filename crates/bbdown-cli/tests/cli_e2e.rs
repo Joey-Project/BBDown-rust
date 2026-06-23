@@ -39,6 +39,9 @@ const CLI_OVERRIDE_ENV_VARS: &[&str] = &[
     "BBDOWN_RESTRICTED_API_PROXY",
     "BBDOWN_CREDENTIAL_FILE",
     "BBDOWN_CREDENTIAL_PROFILE",
+    "BBDOWN_CREDENTIAL_PREFLIGHT",
+    "BBDOWN_CREDENTIAL_STALE_AFTER_SECONDS",
+    "BBDOWN_CREDENTIAL_EXPIRING_WITHIN_SECONDS",
     "BBDOWN_REQUEST_TIMEOUT_SECONDS",
     "BBDOWN_COOKIE",
     "BBDOWN_ACCESS_KEY",
@@ -352,6 +355,671 @@ fn plan_json_resolves_mock_video_streams() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test]
+fn plan_credential_preflight_warn_keeps_json_stdout_clean() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    mock_video_stream_plan_endpoints(&server);
+    let store = CredentialStore::new(credential_file.clone());
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_profile(
+        "default",
+        Credentials::default().with_cookie("SESSDATA=COOKIE_SECRET"),
+    )?;
+    let mut metadata = CredentialProfileMetadata::default();
+    metadata.set_credential(
+        CredentialKind::Cookie,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::WebQrLogin)
+            .with_checked_at_unix_millis(1),
+    );
+    profiles.set_profile_metadata("default", metadata)?;
+    store.save_profiles(&profiles)?;
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--credential-preflight")
+        .arg("warn")
+        .arg("--credential-stale-after-seconds")
+        .arg("1")
+        .arg("plan")
+        .arg("av170001")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let stdout_json: Value = serde_json::from_slice(&output.stdout)?;
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert_eq!(stdout_json["title"], "Mock video");
+    assert!(stderr.contains("credential preflight warning"));
+    assert!(stderr.contains("cookie for WEB playurl has stale lifecycle metadata"));
+    assert!(!String::from_utf8(output.stdout)?.contains("credential preflight"));
+    Ok(())
+}
+
+#[test]
+fn plan_credential_preflight_fail_warns_on_stale_optional_web_cookie() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    mock_video_stream_plan_endpoints(&server);
+    let store = CredentialStore::new(credential_file.clone());
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_profile(
+        "default",
+        Credentials::default().with_cookie("SESSDATA=COOKIE_SECRET"),
+    )?;
+    let mut metadata = CredentialProfileMetadata::default();
+    metadata.set_credential(
+        CredentialKind::Cookie,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::WebQrLogin)
+            .with_checked_at_unix_millis(1),
+    );
+    profiles.set_profile_metadata("default", metadata)?;
+    store.save_profiles(&profiles)?;
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--credential-preflight")
+        .arg("fail")
+        .arg("--credential-stale-after-seconds")
+        .arg("1")
+        .arg("plan")
+        .arg("av170001")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let stdout_json: Value = serde_json::from_slice(&output.stdout)?;
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert_eq!(stdout_json["title"], "Mock video");
+    assert!(stderr.contains("credential preflight warning"));
+    assert!(stderr.contains("cookie for WEB playurl has stale lifecycle metadata"));
+    Ok(())
+}
+
+#[test]
+fn plan_credential_preflight_fail_blocks_missing_cookie_for_history() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-preflight")
+        .arg("fail")
+        .arg("plan")
+        .arg("history")
+        .arg("--select")
+        .arg("latest")
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(output.stdout.is_empty());
+    assert!(stderr.contains("credential preflight failed"));
+    assert!(stderr.contains("authenticated WEB API requires cookie"));
+    Ok(())
+}
+
+#[test]
+fn plan_credential_preflight_renew_skips_access_key_refresh_when_required_cookie_is_missing()
+-> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    save_lifecycle_cli_profiles_with_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(1_000)
+            .with_expires_at_unix_millis(2_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    )?;
+    let refresh = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "refresh_token": "AUTO_REFRESH_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+    let history = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/history/cursor")
+            .header_missing("cookie");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -101,
+            "message": "not logged in"
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--playurl-mode")
+        .arg("app")
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("plan")
+        .arg("history")
+        .arg("--select")
+        .arg("latest")
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(stderr.contains("authenticated WEB API requires cookie"));
+    assert!(!stderr.contains("credential preflight: access_key refreshed"));
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load_profile("intl")?
+            .access_key
+            .as_deref(),
+        Some("ACCESS_SECRET")
+    );
+    refresh.assert_calls(0);
+    history.assert_calls(1);
+    Ok(())
+}
+
+#[test]
+fn plan_credential_preflight_fail_allows_public_space_dynamic_without_cookie() -> anyhow::Result<()>
+{
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    mock_space_dynamic_collection(&server);
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/playurl")
+            .query_param("avid", "170001")
+            .query_param("cid", "9988")
+            .query_param("try_look", "1");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "dash": {
+                    "duration": 3,
+                    "video": [{
+                        "id": 80,
+                        "baseUrl": "https://video.example/space-dynamic.m4s",
+                        "base_url": "https://video.example/space-dynamic.m4s"
+                    }],
+                    "audio": []
+                }
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/v2")
+            .query_param("aid", "170001")
+            .query_param("cid", "9988");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {"subtitle": {"subtitles": []}}
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--credential-preflight")
+        .arg("fail")
+        .arg("plan")
+        .arg("https://space.bilibili.com/123/dynamic")
+        .arg("--select")
+        .arg("latest")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let json: Value = serde_json::from_slice(&output.stdout)?;
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert_eq!(json["entries"][0]["title"], "Space dynamic video");
+    assert!(!stderr.contains("credential preflight failed"));
+    assert!(!stderr.contains("authenticated WEB API requires cookie"));
+    Ok(())
+}
+
+#[test]
+fn plan_credential_preflight_fail_blocks_stale_intl_access_key() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let store = CredentialStore::new(credential_file.clone());
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_profile(
+        "default",
+        Credentials::default().with_access_key("INTL_ACCESS_SECRET"),
+    )?;
+    let mut metadata = CredentialProfileMetadata::default();
+    metadata.set_credential(
+        CredentialKind::AccessKey,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_checked_at_unix_millis(1),
+    );
+    profiles.set_profile_metadata("default", metadata)?;
+    store.save_profiles(&profiles)?;
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-preflight")
+        .arg("fail")
+        .arg("--credential-stale-after-seconds")
+        .arg("1")
+        .arg("plan")
+        .arg("https://www.bilibili.tv/en/play/34613/341736")
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(output.stdout.is_empty());
+    assert!(stderr.contains("credential preflight failed"));
+    assert!(stderr.contains("access_key for intl playurl has stale lifecycle metadata"));
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn plan_credential_preflight_fail_allows_missing_restricted_access_key() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/view/web/season")
+            .query_param("ep_id", "1000");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "result": {
+                "season_id": 123,
+                "title": "Restricted Season",
+                "episodes": [
+                    {"aid": 10, "bvid": "BV1aa", "cid": 100, "id": 1000, "ep_id": 1000, "title": "1", "long_title": "Start"}
+                ]
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/player/web/v2/playurl")
+            .query_param("ep_id", "1000");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -40301,
+            "message": "area restricted"
+        }));
+    });
+    let proxy_mock = server.mock(|when, then| {
+        when.method(GET)
+            .path("/proxy-playurl")
+            .query_param("ep_id", "1000")
+            .query_param("area", "hk")
+            .query_param_missing("access_key")
+            .header_missing("cookie");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "timelength": 3000,
+            "accept_quality": [80],
+            "accept_description": ["1080P"],
+            "support_formats": [{"quality": 80, "new_description": "1080P"}],
+            "dash": {
+                "duration": 3,
+                "video": [{
+                    "id": 80,
+                    "baseUrl": "https://proxy.example/video.m4s",
+                    "base_url": "https://proxy.example/video.m4s"
+                }],
+                "audio": []
+            }
+        }));
+    });
+    mock_empty_player_v2(&server, "10", "100");
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--pgc-base")
+        .arg(server.base_url())
+        .arg("--credential-preflight")
+        .arg("fail")
+        .arg("--restricted-area")
+        .arg("hk")
+        .arg("--restricted-area-proxy")
+        .arg(format!("hk={}/proxy-playurl", server.base_url()))
+        .arg("plan")
+        .arg("ep1000")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let json: Value = serde_json::from_slice(&output.stdout)?;
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert_eq!(json["entries"][0]["source"], "pgc_proxy");
+    assert!(!stderr.contains("credential preflight failed"));
+    assert!(!stderr.contains("restricted-area proxy requires access_key"));
+    proxy_mock.assert_calls(1);
+    Ok(())
+}
+
+#[test]
+fn plan_credential_preflight_fail_allows_pgc_tv_with_restricted_proxy_configured()
+-> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_profile(
+        "default",
+        Credentials::default().with_tv_access_key("TV_ACCESS"),
+    )?;
+    let mut metadata = CredentialProfileMetadata::default();
+    metadata.set_credential(
+        CredentialKind::TvAccessKey,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::TvQrLogin)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+    );
+    profiles.set_profile_metadata("default", metadata)?;
+    CredentialStore::new(credential_file.clone()).save_profiles(&profiles)?;
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/view/web/season")
+            .query_param("ep_id", "1000");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "result": {
+                "season_id": 123,
+                "title": "TV Season",
+                "episodes": [
+                    {"aid": 10, "bvid": "BV1aa", "cid": 100, "id": 1000, "ep_id": 1000, "title": "1", "long_title": "Start"}
+                ]
+            }
+        }));
+    });
+    let tv_playurl = server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/player/api/playurltv")
+            .query_param("ep_id", "1000")
+            .query_param("access_key", "TV_ACCESS")
+            .query_param("appkey", "4409e2ce8ffd12b8")
+            .query_param("cid", "100")
+            .query_param("object_id", "10")
+            .query_param_exists("sign");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "dash": {
+                    "duration": 3,
+                    "video": [{
+                        "id": 80,
+                        "baseUrl": "https://tv.example/video.m4s",
+                        "base_url": "https://tv.example/video.m4s"
+                    }],
+                    "audio": []
+                }
+            }
+        }));
+    });
+    mock_empty_player_v2(&server, "10", "100");
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--pgc-base")
+        .arg(server.base_url())
+        .arg("--tv-api-base")
+        .arg(server.base_url())
+        .arg("--credential-preflight")
+        .arg("fail")
+        .arg("--playurl-mode")
+        .arg("tv")
+        .arg("--restricted-area-proxy")
+        .arg("hk=https://proxy.example/playurl")
+        .arg("plan")
+        .arg("ep1000")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output)?;
+
+    tv_playurl.assert();
+    assert_eq!(json["entries"][0]["source"], "pgc_tv");
+    Ok(())
+}
+
+#[test]
+fn plan_credential_preflight_fail_allows_public_video_with_restricted_proxy_configured()
+-> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    mock_video_stream_plan_endpoints(&server);
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--credential-preflight")
+        .arg("fail")
+        .arg("--restricted-area-proxy")
+        .arg("hk=https://proxy.example/playurl")
+        .arg("plan")
+        .arg("av170001")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let stdout_json: Value = serde_json::from_slice(&output.stdout)?;
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert_eq!(stdout_json["title"], "Mock video");
+    assert!(!stderr.contains("restricted-area proxy requires access_key"));
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn plan_credential_preflight_renew_refreshes_restricted_access_key() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    save_lifecycle_cli_profiles_with_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(1_000)
+            .with_expires_at_unix_millis(2_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    )?;
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET")
+            .form_urlencoded_tuple("refresh_token", "OLD_REFRESH_SECRET")
+            .form_urlencoded_tuple("appkey", "4409e2ce8ffd12b8")
+            .form_urlencoded_tuple_exists("sign");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "refresh_token": "AUTO_REFRESH_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/view/web/season")
+            .query_param("ep_id", "1000");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "result": {
+                "season_id": 123,
+                "title": "Restricted Season",
+                "episodes": [
+                    {"aid": 10, "bvid": "BV1aa", "cid": 100, "id": 1000, "ep_id": 1000, "title": "1", "long_title": "Start"}
+                ]
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/player/web/v2/playurl")
+            .query_param("ep_id", "1000");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -40301,
+            "message": "area restricted"
+        }));
+    });
+    let proxy_mock = server.mock(|when, then| {
+        when.method(GET)
+            .path("/proxy-playurl")
+            .query_param("ep_id", "1000")
+            .query_param("area", "hk")
+            .query_param("access_key", "AUTO_ACCESS_SECRET")
+            .header_missing("cookie");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "timelength": 3000,
+            "accept_quality": [80],
+            "accept_description": ["1080P"],
+            "support_formats": [{"quality": 80, "new_description": "1080P"}],
+            "dash": {
+                "duration": 3,
+                "video": [{
+                    "id": 80,
+                    "baseUrl": "https://proxy.example/video.m4s",
+                    "base_url": "https://proxy.example/video.m4s"
+                }],
+                "audio": []
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/v2")
+            .query_param("aid", "10")
+            .query_param("cid", "100");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {"subtitle": {"subtitles": []}}
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--pgc-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("--restricted-area")
+        .arg("hk")
+        .arg("--restricted-area-proxy")
+        .arg(format!("hk={}/proxy-playurl", server.base_url()))
+        .arg("plan")
+        .arg("ep1000")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let plan: Value = serde_json::from_slice(&output.stdout)?;
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert_eq!(plan["entries"][0]["source"], "pgc_proxy");
+    assert!(stderr.contains("credential preflight: access_key refreshed"));
+    for secret in ["ACCESS_SECRET", "OLD_REFRESH_SECRET", "AUTO_ACCESS_SECRET"] {
+        assert!(!stderr.contains(secret));
+    }
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load_profile("intl")?
+            .access_key
+            .as_deref(),
+        Some("AUTO_ACCESS_SECRET")
+    );
+    refresh_mock.assert_calls(1);
+    proxy_mock.assert_calls(1);
+    Ok(())
+}
+
 fn mock_video_stream_plan_endpoints(server: &MockServer) {
     server.mock(|when, then| {
         when.method(GET)
@@ -651,6 +1319,60 @@ fn playback_json_uses_app_playurl_mode() -> anyhow::Result<()> {
     assert_eq!(json["entries"][0]["variants"][0]["width"], 1920);
     assert_eq!(json["entries"][0]["variants"][0]["height"], 1080);
     assert_eq!(json["entries"][0]["variants"][0]["frame_rate"], "60");
+    Ok(())
+}
+
+#[test]
+fn playback_app_uses_tv_access_key_when_generic_key_is_intl_provider() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_profile(
+        "default",
+        Credentials::default()
+            .with_access_key("INTL_ACCESS")
+            .with_tv_access_key("TV_ACCESS"),
+    )?;
+    let mut metadata = CredentialProfileMetadata::default();
+    metadata.set_credential(
+        CredentialKind::AccessKey,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BiliIntlOauth2),
+    );
+    profiles.set_profile_metadata("default", metadata)?;
+    CredentialStore::new(credential_file.clone()).save_profiles(&profiles)?;
+    mock_playback_metadata(&server);
+    let app_response = app_play_view_response_frame("https://app.example/video.m4s")?;
+    let app_playurl = server.mock(|when, then| {
+        when.method(POST)
+            .path("/bilibili.app.playurl.v1.PlayURL/PlayView")
+            .header("content-type", "application/grpc")
+            .header("authorization", "identify_v1 TV_ACCESS")
+            .header_exists("x-bili-metadata-bin")
+            .header_missing("cookie");
+        then.status(200).body(app_response.clone());
+    });
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--app-grpc-base")
+        .arg(server.base_url())
+        .arg("--playurl-mode")
+        .arg("app")
+        .arg("playback")
+        .arg("av170001")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+
+    app_playurl.assert();
+    assert_eq!(json["entries"][0]["source"], "normal_app");
     Ok(())
 }
 
@@ -1078,6 +1800,10 @@ fn plan_json_resolves_mock_favorite_collection_streams() -> anyhow::Result<()> {
         .arg(&credential_file)
         .arg("--api-base")
         .arg(server.base_url())
+        .arg("--credential-preflight")
+        .arg("fail")
+        .arg("--restricted-area-proxy")
+        .arg("hk=https://proxy.example/playurl")
         .arg("plan")
         .arg("fav456")
         .arg("--select")
@@ -1307,6 +2033,59 @@ fn mock_following_collection(server: &MockServer) {
                 "title": "Following video",
                 "desc": "Following description",
                 "owner": {"mid": 1, "name": "Tester"},
+                "pages": [{"page": 1, "cid": 9988, "part": "Main", "duration": 3}]
+            }
+        }));
+    });
+}
+
+fn mock_space_dynamic_collection(server: &MockServer) {
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/polymer/web-dynamic/v1/feed/space")
+            .query_param("host_mid", "123")
+            .query_param("platform", "web");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "has_more": false,
+                "offset": "offset-1",
+                "items": [{
+                    "type": "DYNAMIC_TYPE_AV",
+                    "visible": true,
+                    "modules": {
+                        "module_author": {
+                            "mid": 123,
+                            "name": "Uploader",
+                            "pub_ts": 1_700_000_001_i64
+                        },
+                        "module_dynamic": {
+                            "major": {
+                                "type": "MAJOR_TYPE_ARCHIVE",
+                                "archive": {
+                                    "aid": "170001",
+                                    "bvid": "BV1xx411c7mD",
+                                    "cover": "https://example.invalid/space-dynamic.jpg"
+                                }
+                            }
+                        }
+                    }
+                }]
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/view")
+            .query_param("aid", "170001");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "aid": 170_001,
+                "bvid": "BV1xx411c7mD",
+                "title": "Space dynamic video",
+                "desc": "Space dynamic description",
+                "owner": {"mid": 123, "name": "Uploader"},
                 "pages": [{"page": 1, "cid": 9988, "part": "Main", "duration": 3}]
             }
         }));
@@ -1722,6 +2501,20 @@ fn download_progress_json_writes_events_to_stderr() -> anyhow::Result<()> {
     let credential_file = temp.path().join("credentials.json");
     let output_dir = temp.path().join("downloads");
     mock_minimal_download(&server);
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_profile(
+        "default",
+        Credentials::default().with_cookie("SESSDATA=COOKIE_SECRET"),
+    )?;
+    let mut metadata = CredentialProfileMetadata::default();
+    metadata.set_credential(
+        CredentialKind::Cookie,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::WebQrLogin)
+            .with_checked_at_unix_millis(1),
+    );
+    profiles.set_profile_metadata("default", metadata)?;
+    CredentialStore::new(credential_file.clone()).save_profiles(&profiles)?;
 
     let mut command = bbdown_command()?;
     command
@@ -1729,6 +2522,10 @@ fn download_progress_json_writes_events_to_stderr() -> anyhow::Result<()> {
         .arg(&credential_file)
         .arg("--api-base")
         .arg(server.base_url())
+        .arg("--credential-preflight")
+        .arg("warn")
+        .arg("--credential-stale-after-seconds")
+        .arg("1")
         .arg("download")
         .arg("av170001")
         .arg("--output-dir")
@@ -1755,6 +2552,58 @@ fn download_progress_json_writes_events_to_stderr() -> anyhow::Result<()> {
         event["type"] == "file_completed" && event["kind"] == "audio" && event["total_bytes"] == 5
     }));
     assert!(events.iter().any(|event| event["type"] == "plan_completed"));
+    Ok(())
+}
+
+#[test]
+fn download_progress_json_reports_credential_preflight_failure() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let store = CredentialStore::new(credential_file.clone());
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_profile(
+        "default",
+        Credentials::default().with_access_key("INTL_ACCESS_SECRET"),
+    )?;
+    let mut metadata = CredentialProfileMetadata::default();
+    metadata.set_credential(
+        CredentialKind::AccessKey,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_checked_at_unix_millis(1),
+    );
+    profiles.set_profile_metadata("default", metadata)?;
+    store.save_profiles(&profiles)?;
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-preflight")
+        .arg("fail")
+        .arg("--credential-stale-after-seconds")
+        .arg("1")
+        .arg("download")
+        .arg("https://www.bilibili.tv/en/play/34613/341736")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--json")
+        .arg("--progress-json")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+
+    assert!(output.stdout.is_empty());
+    let events = json_object_lines(&output.stderr)?;
+    assert!(events.iter().any(|event| {
+        event["type"] == "plan_failed"
+            && event["completed_entries"] == 0
+            && event["error"].as_str().is_some_and(|error| {
+                error.contains("credential preflight failed")
+                    && error.contains("access_key for intl playurl has stale lifecycle metadata")
+            })
+    }));
     Ok(())
 }
 
@@ -2328,6 +3177,10 @@ fn download_only_cover_skips_playurl_resolution() -> anyhow::Result<()> {
         .arg(&credential_file)
         .arg("--api-base")
         .arg(server.base_url())
+        .arg("--playurl-mode")
+        .arg("tv")
+        .arg("--credential-preflight")
+        .arg("fail")
         .arg("download")
         .arg("av170001")
         .arg("--output-dir")
@@ -2388,6 +3241,195 @@ fn download_only_cover_with_archive_skips_playurl_resolution() -> anyhow::Result
 }
 
 #[test]
+fn download_only_cover_skips_playurl_credential_preflight() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_profile(
+        "default",
+        Credentials::default().with_cookie("SESSDATA=COOKIE_SECRET"),
+    )?;
+    let mut metadata = CredentialProfileMetadata::default();
+    metadata.set_credential(
+        CredentialKind::Cookie,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(1),
+    );
+    profiles.set_profile_metadata("default", metadata)?;
+    CredentialStore::new(credential_file.clone()).save_profiles(&profiles)?;
+    mock_minimal_cover_metadata(&server);
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--credential-preflight")
+        .arg("fail")
+        .arg("--credential-stale-after-seconds")
+        .arg("1")
+        .arg("download")
+        .arg("av170001")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--only")
+        .arg("cover")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output)?;
+
+    assert_eq!(
+        fs::read_to_string(downloaded_file_path(&json, "cover")?)?,
+        "cover"
+    );
+    Ok(())
+}
+
+#[test]
+fn download_only_cover_skips_intl_access_key_credential_preflight() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let cover_url = format!("{}/intl-cover.jpg", server.base_url());
+    let season = server.mock(|when, then| {
+        when.method(GET)
+            .path("/intl/gateway/v2/ogv/view/app/season")
+            .query_param("ep_id", "341736")
+            .query_param("platform", "android")
+            .query_param("s_locale", "zh_SG")
+            .query_param("mobi_app", "bstar_a")
+            .query_param_missing("access_key");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "result": {
+                "season_id": 34613,
+                "title": "Intl Season",
+                "cover": cover_url,
+                "modules": [{
+                    "data": {
+                        "episodes": [
+                            {"aid": 7, "cid": 70, "id": 341_736, "title": "1", "long_title": "Start"}
+                        ]
+                    }
+                }]
+            }
+        }));
+    });
+    let cover = server.mock(|when, then| {
+        when.method(GET).path("/intl-cover.jpg");
+        then.status(200).body("intl cover");
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--intl-base")
+        .arg(server.base_url())
+        .arg("--credential-preflight")
+        .arg("fail")
+        .arg("download")
+        .arg("https://www.bilibili.tv/en/play/34613/341736")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--only")
+        .arg("cover")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let json: Value = serde_json::from_slice(&output.stdout)?;
+
+    assert_eq!(
+        fs::read_to_string(downloaded_file_path(&json, "cover")?)?,
+        "intl cover"
+    );
+    season.assert_calls(1);
+    cover.assert_calls(1);
+    Ok(())
+}
+
+#[test]
+fn plan_selection_required_input_fails_before_credential_preflight_renewal() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    save_lifecycle_cli_profiles_with_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(1_000)
+            .with_expires_at_unix_millis(2_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    )?;
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "refresh_token": "AUTO_REFRESH_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--app-grpc-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--playurl-mode")
+        .arg("app")
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("plan")
+        .arg("ss123")
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(stderr.contains("season links require an explicit selection"));
+    refresh_mock.assert_calls(0);
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load_profile("intl")?
+            .access_key
+            .as_deref(),
+        Some("ACCESS_SECRET")
+    );
+    Ok(())
+}
+
+#[test]
 fn download_archive_cancel_reports_preflight_json() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;
@@ -2429,6 +3471,2561 @@ fn download_archive_cancel_reports_preflight_json() -> anyhow::Result<()> {
             && event["completed_entries"] == 0
             && event["error"] == "archive or output conflict requires a decision"
     }));
+    Ok(())
+}
+
+#[test]
+fn download_archive_progress_json_cancel_suppresses_plaintext_preflight() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    mock_minimal_download(&server);
+
+    archive_download_command(&credential_file, &server, &output_dir, &archive_file, None)?
+        .assert()
+        .success();
+
+    let output = archive_download_command_without_json(
+        &credential_file,
+        &server,
+        &output_dir,
+        &archive_file,
+        Some("cancel"),
+    )?
+    .arg("--progress-json")
+    .assert()
+    .success()
+    .get_output()
+    .clone();
+    let stderr_text = String::from_utf8_lossy(&output.stderr);
+    let stdout_text = String::from_utf8(output.stdout)?;
+    let events = json_lines(&output.stderr)?;
+
+    assert_eq!(stdout_text.trim(), "download canceled");
+    assert!(!stderr_text.contains("possible duplicate download"));
+    assert!(!stderr_text.contains("archive record:"));
+    assert!(events.iter().any(|event| {
+        event["type"] == "plan_cancelled"
+            && event["completed_entries"] == 0
+            && event["error"] == "archive or output conflict requires a decision"
+    }));
+    Ok(())
+}
+
+#[test]
+fn download_archive_cancel_defers_credential_preflight_renewal() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    save_lifecycle_cli_profiles_with_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(1_000)
+            .with_expires_at_unix_millis(2_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    )?;
+    mock_minimal_download(&server);
+    archive_download_command(&credential_file, &server, &output_dir, &archive_file, None)?
+        .assert()
+        .success();
+
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET")
+            .form_urlencoded_tuple("refresh_token", "OLD_REFRESH_SECRET")
+            .form_urlencoded_tuple("appkey", "4409e2ce8ffd12b8")
+            .form_urlencoded_tuple_exists("sign");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "refresh_token": "AUTO_REFRESH_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+    let app_response = app_play_view_response_frame("https://app.example/video.m4s")?;
+    let app_playurl = server.mock(|when, then| {
+        when.method(POST)
+            .path("/bilibili.app.playurl.v1.PlayURL/PlayView")
+            .header("content-type", "application/grpc")
+            .header("authorization", "identify_v1 ACCESS_SECRET")
+            .header_exists("x-bili-metadata-bin")
+            .header_missing("cookie");
+        then.status(200).body(app_response.clone());
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--app-grpc-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--playurl-mode")
+        .arg("app")
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("download")
+        .arg("av170001")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--on-duplicate")
+        .arg("cancel")
+        .arg("--no-mux")
+        .arg("--no-subtitles")
+        .arg("--no-danmaku")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let json: Value = serde_json::from_slice(&output.stdout)?;
+
+    assert_eq!(json["status"], "canceled");
+    app_playurl.assert_calls(1);
+    refresh_mock.assert_calls(0);
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load_profile("intl")?
+            .access_key
+            .as_deref(),
+        Some("ACCESS_SECRET")
+    );
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn download_archive_retries_plan_after_auth_failure_with_fresh_refreshable_access_key()
+-> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    save_lifecycle_cli_profiles_with_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(9_000_000_000_000)
+            .with_expires_at_unix_millis(9_000_000_060_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    )?;
+    mock_minimal_video_metadata(&server);
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET")
+            .form_urlencoded_tuple("refresh_token", "OLD_REFRESH_SECRET")
+            .form_urlencoded_tuple("appkey", "4409e2ce8ffd12b8")
+            .form_urlencoded_tuple_exists("sign");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "refresh_token": "AUTO_REFRESH_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+    let stale_app_playurl = server.mock(|when, then| {
+        when.method(POST)
+            .path("/bilibili.app.playurl.v1.PlayURL/PlayView")
+            .header("content-type", "application/grpc")
+            .header("authorization", "identify_v1 ACCESS_SECRET")
+            .header_exists("x-bili-metadata-bin")
+            .header_missing("cookie");
+        then.status(200).header("grpc-status", "16");
+    });
+    let app_response = app_play_view_response_frame(&format!("{}/video.m4s", server.base_url()))?;
+    let refreshed_app_playurl = server.mock(|when, then| {
+        when.method(POST)
+            .path("/bilibili.app.playurl.v1.PlayURL/PlayView")
+            .header("content-type", "application/grpc")
+            .header("authorization", "identify_v1 AUTO_ACCESS_SECRET")
+            .header_exists("x-bili-metadata-bin")
+            .header_missing("cookie");
+        then.status(200).body(app_response.clone());
+    });
+    server.mock(|when, then| {
+        when.method(GET).path("/video.m4s");
+        then.status(200).body("v".repeat(1000));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--app-grpc-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--playurl-mode")
+        .arg("app")
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("download")
+        .arg("av170001")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--json")
+        .arg("--progress-json")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let report: Value = serde_json::from_slice(&output.stdout)?;
+    let events = json_object_lines(&output.stderr)?;
+
+    assert_eq!(report["entries"][0]["files"][0]["kind"], "video");
+    assert!(!events.iter().any(|event| event["type"] == "plan_failed"));
+    assert!(events.iter().any(|event| event["type"] == "plan_completed"));
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load_profile("intl")?
+            .access_key
+            .as_deref(),
+        Some("AUTO_ACCESS_SECRET")
+    );
+    stale_app_playurl.assert_calls(1);
+    refresh_mock.assert_calls(1);
+    refreshed_app_playurl.assert_calls(1);
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn download_archive_retries_plan_after_app_http_forbidden_with_fresh_refreshable_access_key()
+-> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    save_lifecycle_cli_profiles_with_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(9_000_000_000_000)
+            .with_expires_at_unix_millis(9_000_000_060_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    )?;
+    mock_minimal_video_metadata(&server);
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET")
+            .form_urlencoded_tuple("refresh_token", "OLD_REFRESH_SECRET")
+            .form_urlencoded_tuple("appkey", "4409e2ce8ffd12b8")
+            .form_urlencoded_tuple_exists("sign");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "refresh_token": "AUTO_REFRESH_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+    let stale_app_playurl = server.mock(|when, then| {
+        when.method(POST)
+            .path("/bilibili.app.playurl.v1.PlayURL/PlayView")
+            .header("content-type", "application/grpc")
+            .header("authorization", "identify_v1 ACCESS_SECRET")
+            .header_exists("x-bili-metadata-bin")
+            .header_missing("cookie");
+        then.status(403);
+    });
+    let app_response = app_play_view_response_frame(&format!("{}/video.m4s", server.base_url()))?;
+    let refreshed_app_playurl = server.mock(|when, then| {
+        when.method(POST)
+            .path("/bilibili.app.playurl.v1.PlayURL/PlayView")
+            .header("content-type", "application/grpc")
+            .header("authorization", "identify_v1 AUTO_ACCESS_SECRET")
+            .header_exists("x-bili-metadata-bin")
+            .header_missing("cookie");
+        then.status(200).body(app_response.clone());
+    });
+    server.mock(|when, then| {
+        when.method(GET).path("/video.m4s");
+        then.status(200).body("v".repeat(1000));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--app-grpc-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--playurl-mode")
+        .arg("app")
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("download")
+        .arg("av170001")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let report: Value = serde_json::from_slice(&output.stdout)?;
+
+    assert_eq!(report["entries"][0]["files"][0]["kind"], "video");
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load_profile("intl")?
+            .access_key
+            .as_deref(),
+        Some("AUTO_ACCESS_SECRET")
+    );
+    stale_app_playurl.assert_calls(1);
+    refresh_mock.assert_calls(1);
+    refreshed_app_playurl.assert_calls(1);
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn download_archive_does_not_refresh_generic_key_when_app_uses_intl_tv_key() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    save_lifecycle_cli_profiles_with_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BiliIntlOauth2)
+            .with_acquired_at_unix_millis(9_000_000_000_000)
+            .with_expires_at_unix_millis(9_000_000_060_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BiliIntlOauth2,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BiliIntlOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::Android),
+    )?;
+    let store = CredentialStore::new(credential_file.clone());
+    let mut profiles = store.load_profiles()?;
+    profiles.set_profile(
+        "intl",
+        Credentials::default()
+            .with_access_key("ACCESS_SECRET")
+            .with_tv_access_key("TV_SECRET"),
+    )?;
+    let mut metadata = profiles.profile_metadata("intl")?;
+    metadata.set_credential(
+        CredentialKind::TvAccessKey,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::TvQrLogin)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+    );
+    profiles.set_profile_metadata("intl", metadata)?;
+    store.save_profiles(&profiles)?;
+
+    mock_minimal_video_metadata(&server);
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/intl/passport-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET")
+            .form_urlencoded_tuple("refresh_token", "OLD_REFRESH_SECRET");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "refresh_token": "AUTO_REFRESH_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+    let app_playurl = server.mock(|when, then| {
+        when.method(POST)
+            .path("/bilibili.app.playurl.v1.PlayURL/PlayView")
+            .header("content-type", "application/grpc")
+            .header("authorization", "identify_v1 TV_SECRET")
+            .header_exists("x-bili-metadata-bin")
+            .header_missing("cookie");
+        then.status(200)
+            .header("grpc-status", "16")
+            .header("grpc-message", "access%20key%20expired");
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--app-grpc-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--playurl-mode")
+        .arg("app")
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("download")
+        .arg("av170001")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(stderr.contains("access key expired"));
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load_profile("intl")?
+            .access_key
+            .as_deref(),
+        Some("ACCESS_SECRET")
+    );
+    app_playurl.assert_calls(1);
+    refresh_mock.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn download_archive_does_not_refresh_generic_key_when_pgc_app_http_status_used_tv_key()
+-> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    save_lifecycle_cli_profiles_with_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BiliIntlOauth2)
+            .with_acquired_at_unix_millis(9_000_000_000_000)
+            .with_expires_at_unix_millis(9_000_000_060_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BiliIntlOauth2,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BiliIntlOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::Android),
+    )?;
+    let store = CredentialStore::new(credential_file.clone());
+    let mut profiles = store.load_profiles()?;
+    profiles.set_profile(
+        "intl",
+        Credentials::default()
+            .with_access_key("ACCESS_SECRET")
+            .with_tv_access_key("TV_SECRET"),
+    )?;
+    let mut metadata = profiles.profile_metadata("intl")?;
+    metadata.set_credential(
+        CredentialKind::TvAccessKey,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::TvQrLogin)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+    );
+    profiles.set_profile_metadata("intl", metadata)?;
+    store.save_profiles(&profiles)?;
+
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/view/web/season")
+            .query_param("ep_id", "1000");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "result": {
+                "season_id": 123,
+                "title": "Restricted Season",
+                "episodes": [
+                    {"aid": 10, "bvid": "BV1aa", "cid": 100, "id": 1000, "ep_id": 1000, "title": "1", "long_title": "Start"}
+                ]
+            }
+        }));
+    });
+    let app_playurl = server.mock(|when, then| {
+        when.method(POST)
+            .path("/bilibili.pgc.gateway.player.v2.PlayURL/PlayView")
+            .header("content-type", "application/grpc")
+            .header("authorization", "identify_v1 TV_SECRET")
+            .header_exists("x-bili-metadata-bin")
+            .header_missing("cookie");
+        then.status(401).body("tv key unauthorized");
+    });
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/intl/passport-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET")
+            .form_urlencoded_tuple("refresh_token", "OLD_REFRESH_SECRET");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "refresh_token": "AUTO_REFRESH_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--pgc-base")
+        .arg(server.base_url())
+        .arg("--app-pgc-grpc-base")
+        .arg(server.base_url())
+        .arg("--intl-passport-base")
+        .arg(server.base_url())
+        .arg("--playurl-mode")
+        .arg("app")
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("--restricted-area")
+        .arg("hk")
+        .arg("--restricted-area-proxy")
+        .arg(format!("hk={}/proxy-playurl", server.base_url()))
+        .arg("download")
+        .arg("ep1000")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(stderr.contains("401 Unauthorized"));
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load_profile("intl")?
+            .access_key
+            .as_deref(),
+        Some("ACCESS_SECRET")
+    );
+    app_playurl.assert_calls(1);
+    refresh_mock.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn download_archive_does_not_refresh_generic_key_when_pgc_app_grpc_status_used_tv_key()
+-> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    save_lifecycle_cli_profiles_with_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BiliIntlOauth2)
+            .with_acquired_at_unix_millis(9_000_000_000_000)
+            .with_expires_at_unix_millis(9_000_000_060_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BiliIntlOauth2,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BiliIntlOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::Android),
+    )?;
+    let store = CredentialStore::new(credential_file.clone());
+    let mut profiles = store.load_profiles()?;
+    profiles.set_profile(
+        "intl",
+        Credentials::default()
+            .with_access_key("ACCESS_SECRET")
+            .with_tv_access_key("TV_SECRET"),
+    )?;
+    let mut metadata = profiles.profile_metadata("intl")?;
+    metadata.set_credential(
+        CredentialKind::TvAccessKey,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::TvQrLogin)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+    );
+    profiles.set_profile_metadata("intl", metadata)?;
+    store.save_profiles(&profiles)?;
+
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/view/web/season")
+            .query_param("ep_id", "1000");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "result": {
+                "season_id": 123,
+                "title": "Restricted Season",
+                "episodes": [
+                    {"aid": 10, "bvid": "BV1aa", "cid": 100, "id": 1000, "ep_id": 1000, "title": "1", "long_title": "Start"}
+                ]
+            }
+        }));
+    });
+    let app_playurl = server.mock(|when, then| {
+        when.method(POST)
+            .path("/bilibili.pgc.gateway.player.v2.PlayURL/PlayView")
+            .header("content-type", "application/grpc")
+            .header("authorization", "identify_v1 TV_SECRET")
+            .header_exists("x-bili-metadata-bin")
+            .header_missing("cookie");
+        then.status(200).header("grpc-status", "16");
+    });
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/intl/passport-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET")
+            .form_urlencoded_tuple("refresh_token", "OLD_REFRESH_SECRET");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "refresh_token": "AUTO_REFRESH_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--pgc-base")
+        .arg(server.base_url())
+        .arg("--app-pgc-grpc-base")
+        .arg(server.base_url())
+        .arg("--intl-passport-base")
+        .arg(server.base_url())
+        .arg("--playurl-mode")
+        .arg("app")
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("--restricted-area")
+        .arg("hk")
+        .arg("--restricted-area-proxy")
+        .arg(format!("hk={}/proxy-playurl", server.base_url()))
+        .arg("download")
+        .arg("ep1000")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(stderr.contains("APP playurl gRPC request failed"));
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load_profile("intl")?
+            .access_key
+            .as_deref(),
+        Some("ACCESS_SECRET")
+    );
+    app_playurl.assert_calls(1);
+    refresh_mock.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn download_archive_does_not_refresh_generic_key_for_authenticated_feed_cookie_failure()
+-> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    save_lifecycle_cli_profile_with_cookie_and_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(9_000_000_000_000)
+            .with_expires_at_unix_millis(9_000_000_060_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    )?;
+    let history = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/history/cursor")
+            .query_param("max", "0")
+            .query_param("view_at", "0")
+            .query_param("business", "")
+            .query_param("type", "archive")
+            .query_param("ps", "20")
+            .header("cookie", "SESSDATA=COOKIE_SECRET");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -101,
+            "message": "not logged in"
+        }));
+    });
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET")
+            .form_urlencoded_tuple("refresh_token", "OLD_REFRESH_SECRET");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "refresh_token": "AUTO_REFRESH_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--playurl-mode")
+        .arg("app")
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("download")
+        .arg("history")
+        .arg("--select")
+        .arg("latest")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(stderr.contains("not logged in"));
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load_profile("intl")?
+            .access_key
+            .as_deref(),
+        Some("ACCESS_SECRET")
+    );
+    history.assert_calls(1);
+    refresh_mock.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn download_archive_does_not_refresh_generic_key_for_authenticated_feed_http_status()
+-> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    save_lifecycle_cli_profile_with_cookie_and_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(9_000_000_000_000)
+            .with_expires_at_unix_millis(9_000_000_060_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    )?;
+    let history = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/history/cursor")
+            .query_param("max", "0")
+            .query_param("view_at", "0")
+            .query_param("business", "")
+            .query_param("type", "archive")
+            .query_param("ps", "20")
+            .header("cookie", "SESSDATA=COOKIE_SECRET");
+        then.status(401).body("unauthorized");
+    });
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET")
+            .form_urlencoded_tuple("refresh_token", "OLD_REFRESH_SECRET");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "refresh_token": "AUTO_REFRESH_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--playurl-mode")
+        .arg("app")
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("download")
+        .arg("history")
+        .arg("--select")
+        .arg("latest")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(stderr.contains("401 Unauthorized"));
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load_profile("intl")?
+            .access_key
+            .as_deref(),
+        Some("ACCESS_SECRET")
+    );
+    history.assert_calls(1);
+    refresh_mock.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn download_archive_does_not_refresh_generic_key_for_wbi_nav_http_status() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    save_lifecycle_cli_profiles_with_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(9_000_000_000_000)
+            .with_expires_at_unix_millis(9_000_000_060_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    )?;
+    let nav = server.mock(|when, then| {
+        when.method(GET).path("/api/x/web-interface/nav");
+        then.status(401).body("unauthorized");
+    });
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET")
+            .form_urlencoded_tuple("refresh_token", "OLD_REFRESH_SECRET");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "refresh_token": "AUTO_REFRESH_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--api-base")
+        .arg(format!("{}/api", server.base_url()))
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--playurl-mode")
+        .arg("app")
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("download")
+        .arg("recommendations")
+        .arg("--select")
+        .arg("latest")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(stderr.contains("401 Unauthorized"));
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load_profile("intl")?
+            .access_key
+            .as_deref(),
+        Some("ACCESS_SECRET")
+    );
+    nav.assert_calls(1);
+    refresh_mock.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn download_archive_does_not_refresh_generic_key_for_video_metadata_http_status()
+-> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    save_lifecycle_cli_profiles_with_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(9_000_000_000_000)
+            .with_expires_at_unix_millis(9_000_000_060_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    )?;
+    let view = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/view")
+            .query_param("aid", "170001");
+        then.status(401).body("unauthorized");
+    });
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET")
+            .form_urlencoded_tuple("refresh_token", "OLD_REFRESH_SECRET");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "refresh_token": "AUTO_REFRESH_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--playurl-mode")
+        .arg("app")
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("download")
+        .arg("av170001")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(stderr.contains("401 Unauthorized"));
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load_profile("intl")?
+            .access_key
+            .as_deref(),
+        Some("ACCESS_SECRET")
+    );
+    view.assert_calls(1);
+    refresh_mock.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn download_archive_does_not_complete_deferred_refresh_for_authenticated_feed_cookie_failure()
+-> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    save_lifecycle_cli_profile_with_cookie_and_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(1_000)
+            .with_expires_at_unix_millis(2_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    )?;
+    let history = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/history/cursor")
+            .query_param("max", "0")
+            .query_param("view_at", "0")
+            .query_param("business", "")
+            .query_param("type", "archive")
+            .query_param("ps", "20")
+            .header("cookie", "SESSDATA=COOKIE_SECRET");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -101,
+            "message": "not logged in"
+        }));
+    });
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET")
+            .form_urlencoded_tuple("refresh_token", "OLD_REFRESH_SECRET");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "refresh_token": "AUTO_REFRESH_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--playurl-mode")
+        .arg("app")
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("download")
+        .arg("history")
+        .arg("--select")
+        .arg("latest")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(stderr.contains("not logged in"));
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load_profile("intl")?
+            .access_key
+            .as_deref(),
+        Some("ACCESS_SECRET")
+    );
+    history.assert_calls(1);
+    refresh_mock.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn download_archive_retries_app_access_key_when_required_cookie_is_stale_but_present()
+-> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    save_lifecycle_cli_profile_with_cookie_and_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(1),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(1_000)
+            .with_expires_at_unix_millis(2_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    )?;
+    let history_first_page = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/history/cursor")
+            .query_param("max", "0")
+            .query_param("view_at", "0")
+            .query_param("business", "")
+            .query_param("type", "archive")
+            .query_param("ps", "20")
+            .header("cookie", "SESSDATA=COOKIE_SECRET");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "cursor": {
+                    "max": 170_001,
+                    "view_at": 1_700_000_000_i64,
+                    "business": "archive"
+                },
+                "list": [{
+                    "aid": 170_001,
+                    "bvid": "BV1xx411c7mD",
+                    "title": "History video",
+                    "pic": "https://example.invalid/history.jpg",
+                    "duration": 3,
+                    "author_mid": 1,
+                    "author_name": "Tester",
+                    "history": {
+                        "oid": 170_001,
+                        "cid": 9988,
+                        "page": 1,
+                        "business": "archive"
+                    }
+                }]
+            }
+        }));
+    });
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET")
+            .form_urlencoded_tuple("refresh_token", "OLD_REFRESH_SECRET")
+            .form_urlencoded_tuple("appkey", "4409e2ce8ffd12b8")
+            .form_urlencoded_tuple_exists("sign");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "refresh_token": "AUTO_REFRESH_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+    let stale_app_playurl = server.mock(|when, then| {
+        when.method(POST)
+            .path("/bilibili.app.playurl.v1.PlayURL/PlayView")
+            .header("content-type", "application/grpc")
+            .header("authorization", "identify_v1 ACCESS_SECRET")
+            .header_exists("x-bili-metadata-bin")
+            .header_missing("cookie");
+        then.status(200)
+            .header("grpc-status", "16")
+            .header("grpc-message", "access%20key%20expired");
+    });
+    let app_response = app_play_view_response_frame(&format!("{}/video.m4s", server.base_url()))?;
+    let refreshed_app_playurl = server.mock(|when, then| {
+        when.method(POST)
+            .path("/bilibili.app.playurl.v1.PlayURL/PlayView")
+            .header("content-type", "application/grpc")
+            .header("authorization", "identify_v1 AUTO_ACCESS_SECRET")
+            .header_exists("x-bili-metadata-bin")
+            .header_missing("cookie");
+        then.status(200).body(app_response.clone());
+    });
+    server.mock(|when, then| {
+        when.method(GET).path("/video.m4s");
+        then.status(200).body("v".repeat(1000));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--app-grpc-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--playurl-mode")
+        .arg("app")
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("--credential-stale-after-seconds")
+        .arg("1")
+        .arg("download")
+        .arg("history")
+        .arg("--select")
+        .arg("latest")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let report: Value = serde_json::from_slice(&output.stdout)?;
+
+    assert_eq!(report["entries"][0]["files"][0]["kind"], "video");
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load_profile("intl")?
+            .access_key
+            .as_deref(),
+        Some("AUTO_ACCESS_SECRET")
+    );
+    history_first_page.assert_calls(2);
+    stale_app_playurl.assert_calls(1);
+    refresh_mock.assert_calls(1);
+    refreshed_app_playurl.assert_calls(1);
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn download_archive_retries_app_access_key_after_http_unauthorized_status() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    save_lifecycle_cli_profiles_with_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(9_000_000_000_000)
+            .with_expires_at_unix_millis(9_000_000_060_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    )?;
+    mock_minimal_video_metadata(&server);
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET")
+            .form_urlencoded_tuple("refresh_token", "OLD_REFRESH_SECRET")
+            .form_urlencoded_tuple("appkey", "4409e2ce8ffd12b8")
+            .form_urlencoded_tuple_exists("sign");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "refresh_token": "AUTO_REFRESH_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+    let stale_app_playurl = server.mock(|when, then| {
+        when.method(POST)
+            .path("/bilibili.app.playurl.v1.PlayURL/PlayView")
+            .header("content-type", "application/grpc")
+            .header("authorization", "identify_v1 ACCESS_SECRET")
+            .header_exists("x-bili-metadata-bin")
+            .header_missing("cookie");
+        then.status(401).body("unauthorized");
+    });
+    let app_response = app_play_view_response_frame(&format!("{}/video.m4s", server.base_url()))?;
+    let refreshed_app_playurl = server.mock(|when, then| {
+        when.method(POST)
+            .path("/bilibili.app.playurl.v1.PlayURL/PlayView")
+            .header("content-type", "application/grpc")
+            .header("authorization", "identify_v1 AUTO_ACCESS_SECRET")
+            .header_exists("x-bili-metadata-bin")
+            .header_missing("cookie");
+        then.status(200).body(app_response.clone());
+    });
+    server.mock(|when, then| {
+        when.method(GET).path("/video.m4s");
+        then.status(200).body("v".repeat(1000));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--app-grpc-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--playurl-mode")
+        .arg("app")
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("download")
+        .arg("av170001")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let report: Value = serde_json::from_slice(&output.stdout)?;
+
+    assert_eq!(report["entries"][0]["files"][0]["kind"], "video");
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load_profile("intl")?
+            .access_key
+            .as_deref(),
+        Some("AUTO_ACCESS_SECRET")
+    );
+    stale_app_playurl.assert_calls(1);
+    refresh_mock.assert_calls(1);
+    refreshed_app_playurl.assert_calls(1);
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn download_archive_does_not_refresh_for_optional_web_api_auth_like_failure() -> anyhow::Result<()>
+{
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    save_lifecycle_cli_profile_with_cookie_and_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(9_000_000_000_000)
+            .with_expires_at_unix_millis(9_000_000_060_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    )?;
+    let favorite = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/v3/fav/resource/list")
+            .query_param("media_id", "456")
+            .query_param("pn", "1")
+            .query_param("ps", "20")
+            .query_param("order", "mtime")
+            .query_param("type", "0")
+            .query_param("tid", "0")
+            .query_param("platform", "web")
+            .header("cookie", "SESSDATA=COOKIE_SECRET");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -403,
+            "message": "unauthorized"
+        }));
+    });
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET")
+            .form_urlencoded_tuple("refresh_token", "OLD_REFRESH_SECRET");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "refresh_token": "AUTO_REFRESH_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--playurl-mode")
+        .arg("app")
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("download")
+        .arg("fav456")
+        .arg("--select")
+        .arg("latest")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(stderr.contains("unauthorized"));
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load_profile("intl")?
+            .access_key
+            .as_deref(),
+        Some("ACCESS_SECRET")
+    );
+    favorite.assert_calls(1);
+    refresh_mock.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn download_archive_does_not_refresh_for_optional_web_api_not_logged_in() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    save_lifecycle_cli_profile_with_cookie_and_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(9_000_000_000_000)
+            .with_expires_at_unix_millis(9_000_000_060_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    )?;
+    let favorite = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/v3/fav/resource/list")
+            .query_param("media_id", "456")
+            .query_param("pn", "1")
+            .query_param("ps", "20")
+            .query_param("order", "mtime")
+            .query_param("type", "0")
+            .query_param("tid", "0")
+            .query_param("platform", "web")
+            .header("cookie", "SESSDATA=COOKIE_SECRET");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -101,
+            "message": "账号未登录"
+        }));
+    });
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET")
+            .form_urlencoded_tuple("refresh_token", "OLD_REFRESH_SECRET");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "refresh_token": "AUTO_REFRESH_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--playurl-mode")
+        .arg("app")
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("download")
+        .arg("fav456")
+        .arg("--select")
+        .arg("latest")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(stderr.contains("账号未登录"));
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load_profile("intl")?
+            .access_key
+            .as_deref(),
+        Some("ACCESS_SECRET")
+    );
+    favorite.assert_calls(1);
+    refresh_mock.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn download_archive_does_not_refresh_for_app_area_restricted_status() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    save_lifecycle_cli_profiles_with_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(1_000)
+            .with_expires_at_unix_millis(2_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    )?;
+    mock_minimal_video_metadata(&server);
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "refresh_token": "AUTO_REFRESH_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+    let app_playurl = server.mock(|when, then| {
+        when.method(POST)
+            .path("/bilibili.app.playurl.v1.PlayURL/PlayView")
+            .header("content-type", "application/grpc")
+            .header("authorization", "identify_v1 ACCESS_SECRET")
+            .header_exists("x-bili-metadata-bin")
+            .header_missing("cookie");
+        then.status(200)
+            .header("grpc-status", "7")
+            .header("grpc-message", "area%20restricted");
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--app-grpc-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--playurl-mode")
+        .arg("app")
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("download")
+        .arg("av170001")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(stderr.contains("area restricted"));
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load_profile("intl")?
+            .access_key
+            .as_deref(),
+        Some("ACCESS_SECRET")
+    );
+    app_playurl.assert_calls(1);
+    refresh_mock.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn download_archive_reruns_duplicate_preflight_after_deferred_refresh() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    save_intl_access_key_profile(&credential_file, "AUTO_ACCESS_SECRET")?;
+    let fresh_season =
+        mock_intl_episode_metadata(&server, "AUTO_ACCESS_SECRET", "Fresh Intl Season", 7, 70);
+    let fresh_playurl = mock_intl_episode_playurl(
+        &server,
+        "AUTO_ACCESS_SECRET",
+        70,
+        &format!("{}/fresh-video.m4s", server.base_url()),
+    );
+    let fresh_video = server.mock(|when, then| {
+        when.method(GET).path("/fresh-video.m4s");
+        then.status(200).body("fresh video");
+    });
+
+    bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--intl-base")
+        .arg(server.base_url())
+        .arg("download")
+        .arg("https://www.bilibili.tv/en/play/34613/341736")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--no-mux")
+        .arg("--no-subtitles")
+        .arg("--no-danmaku")
+        .arg("--no-cover")
+        .arg("--json")
+        .assert()
+        .success();
+
+    save_lifecycle_cli_profiles_with_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(1_000)
+            .with_expires_at_unix_millis(2_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    )?;
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET")
+            .form_urlencoded_tuple("refresh_token", "OLD_REFRESH_SECRET")
+            .form_urlencoded_tuple("appkey", "4409e2ce8ffd12b8")
+            .form_urlencoded_tuple_exists("sign");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "refresh_token": "AUTO_REFRESH_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+    let stale_season =
+        mock_intl_episode_metadata(&server, "ACCESS_SECRET", "Stale Intl Season", 8, 80);
+    let stale_playurl = mock_intl_episode_playurl(
+        &server,
+        "ACCESS_SECRET",
+        80,
+        &format!("{}/stale-video.m4s", server.base_url()),
+    );
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--intl-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("download")
+        .arg("https://www.bilibili.tv/en/play/34613/341736")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--no-mux")
+        .arg("--no-subtitles")
+        .arg("--no-danmaku")
+        .arg("--no-cover")
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(stderr.contains("--on-duplicate replace, keep-both, or cancel"));
+    assert!(output_dir.join("Fresh Intl Season").exists());
+    assert!(!output_dir.join("Stale Intl Season").exists());
+    fresh_video.assert_calls(1);
+    stale_season.assert_calls(1);
+    stale_playurl.assert_calls(1);
+    fresh_season.assert_calls(2);
+    fresh_playurl.assert_calls(2);
+    refresh_mock.assert_calls(1);
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn download_archive_cancel_reports_duplicate_after_deferred_refresh() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    save_intl_access_key_profile(&credential_file, "AUTO_ACCESS_SECRET")?;
+    let fresh_season =
+        mock_intl_episode_metadata(&server, "AUTO_ACCESS_SECRET", "Fresh Intl Season", 7, 70);
+    let fresh_playurl = mock_intl_episode_playurl(
+        &server,
+        "AUTO_ACCESS_SECRET",
+        70,
+        &format!("{}/fresh-video.m4s", server.base_url()),
+    );
+    let fresh_video = server.mock(|when, then| {
+        when.method(GET).path("/fresh-video.m4s");
+        then.status(200).body("fresh video");
+    });
+
+    bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--intl-base")
+        .arg(server.base_url())
+        .arg("download")
+        .arg("https://www.bilibili.tv/en/play/34613/341736")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--no-mux")
+        .arg("--no-subtitles")
+        .arg("--no-danmaku")
+        .arg("--no-cover")
+        .arg("--json")
+        .assert()
+        .success();
+
+    save_lifecycle_cli_profiles_with_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(1_000)
+            .with_expires_at_unix_millis(2_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    )?;
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET")
+            .form_urlencoded_tuple("refresh_token", "OLD_REFRESH_SECRET")
+            .form_urlencoded_tuple("appkey", "4409e2ce8ffd12b8")
+            .form_urlencoded_tuple_exists("sign");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "refresh_token": "AUTO_REFRESH_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+    let stale_season =
+        mock_intl_episode_metadata(&server, "ACCESS_SECRET", "Stale Intl Season", 8, 80);
+    let stale_playurl = mock_intl_episode_playurl(
+        &server,
+        "ACCESS_SECRET",
+        80,
+        &format!("{}/stale-video.m4s", server.base_url()),
+    );
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--intl-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("download")
+        .arg("https://www.bilibili.tv/en/play/34613/341736")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--no-mux")
+        .arg("--no-subtitles")
+        .arg("--no-danmaku")
+        .arg("--no-cover")
+        .arg("--on-duplicate")
+        .arg("cancel")
+        .arg("--json")
+        .arg("--progress-json")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let report: Value = serde_json::from_slice(&output.stdout)?;
+    let events = json_object_lines(&output.stderr)?;
+
+    assert_eq!(report["status"], "canceled");
+    assert!(
+        report["preflight"]["output_conflict"]["path"]
+            .as_str()
+            .is_some_and(|path| path.ends_with("Fresh Intl Season"))
+    );
+    assert!(events.iter().any(|event| {
+        event["type"] == "plan_cancelled"
+            && event["completed_entries"] == 0
+            && event["error"] == "archive or output conflict requires a decision"
+    }));
+    assert!(output_dir.join("Fresh Intl Season").exists());
+    assert!(!output_dir.join("Stale Intl Season").exists());
+    fresh_video.assert_calls(1);
+    stale_season.assert_calls(1);
+    stale_playurl.assert_calls(1);
+    fresh_season.assert_calls(2);
+    fresh_playurl.assert_calls(2);
+    refresh_mock.assert_calls(1);
+    Ok(())
+}
+
+#[test]
+fn download_archive_does_not_refresh_for_generic_api_bad_request() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    save_lifecycle_cli_profiles_with_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(1_000)
+            .with_expires_at_unix_millis(2_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    )?;
+    let season_mock = server.mock(|when, then| {
+        when.method(GET)
+            .path("/intl/gateway/v2/ogv/view/app/season")
+            .query_param("ep_id", "341736")
+            .query_param("access_key", "ACCESS_SECRET");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -400,
+            "message": "invalid parameter: ep_id"
+        }));
+    });
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "refresh_token": "AUTO_REFRESH_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--intl-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("download")
+        .arg("https://www.bilibili.tv/en/play/34613/341736")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(stderr.contains("invalid parameter: ep_id"));
+    season_mock.assert_calls(1);
+    refresh_mock.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn download_archive_does_not_refresh_for_pgc_web_failure_before_proxy() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    save_lifecycle_cli_profiles_with_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(1_000)
+            .with_expires_at_unix_millis(2_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    )?;
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/view/web/season")
+            .query_param("ep_id", "1000");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "result": {
+                "season_id": 123,
+                "title": "Restricted Season",
+                "episodes": [
+                    {"aid": 10, "bvid": "BV1aa", "cid": 100, "id": 1000, "ep_id": 1000, "title": "1", "long_title": "Start"}
+                ]
+            }
+        }));
+    });
+    let official_playurl = server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/player/web/v2/playurl")
+            .query_param("ep_id", "1000");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -101,
+            "message": "账号未登录"
+        }));
+    });
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET")
+            .form_urlencoded_tuple("refresh_token", "OLD_REFRESH_SECRET")
+            .form_urlencoded_tuple("appkey", "4409e2ce8ffd12b8")
+            .form_urlencoded_tuple_exists("sign");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "refresh_token": "AUTO_REFRESH_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--pgc-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("--restricted-area")
+        .arg("hk")
+        .arg("--restricted-area-proxy")
+        .arg(format!("hk={}/proxy-playurl", server.base_url()))
+        .arg("download")
+        .arg("ep1000")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(stderr.contains("账号未登录"));
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load_profile("intl")?
+            .access_key
+            .as_deref(),
+        Some("ACCESS_SECRET")
+    );
+    official_playurl.assert_calls(1);
+    refresh_mock.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn download_archive_does_not_refresh_for_restricted_proxy_http_auth_status_without_key_evidence()
+-> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    save_lifecycle_cli_profiles_with_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(9_000_000_000_000)
+            .with_expires_at_unix_millis(9_000_000_060_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    )?;
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/view/web/season")
+            .query_param("ep_id", "1000");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "result": {
+                "season_id": 123,
+                "title": "Restricted Season",
+                "episodes": [
+                    {"aid": 10, "bvid": "BV1aa", "cid": 100, "id": 1000, "ep_id": 1000, "title": "1", "long_title": "Start"}
+                ]
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/player/web/v2/playurl")
+            .query_param("ep_id", "1000");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -40301,
+            "message": "area restricted"
+        }));
+    });
+    let proxy_mock = server.mock(|when, then| {
+        when.method(GET)
+            .path("/proxy-playurl")
+            .query_param("ep_id", "1000")
+            .query_param("area", "hk")
+            .query_param("access_key", "ACCESS_SECRET")
+            .header_missing("cookie");
+        then.status(401).body("proxy token expired");
+    });
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET")
+            .form_urlencoded_tuple("refresh_token", "OLD_REFRESH_SECRET")
+            .form_urlencoded_tuple("appkey", "4409e2ce8ffd12b8")
+            .form_urlencoded_tuple_exists("sign");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "refresh_token": "AUTO_REFRESH_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--pgc-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("--restricted-area")
+        .arg("hk")
+        .arg("--restricted-area-proxy")
+        .arg(format!(
+            "hk={}/proxy-playurl?proxy_token=PROXY_SECRET",
+            server.base_url()
+        ))
+        .arg("download")
+        .arg("ep1000")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(stderr.contains("401 Unauthorized"));
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load_profile("intl")?
+            .access_key
+            .as_deref(),
+        Some("ACCESS_SECRET")
+    );
+    proxy_mock.assert_calls(1);
+    refresh_mock.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn download_archive_retries_restricted_proxy_after_deferred_credential_refresh()
+-> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    save_lifecycle_cli_profiles_with_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(1_000)
+            .with_expires_at_unix_millis(2_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    )?;
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET")
+            .form_urlencoded_tuple("refresh_token", "OLD_REFRESH_SECRET")
+            .form_urlencoded_tuple("appkey", "4409e2ce8ffd12b8")
+            .form_urlencoded_tuple_exists("sign");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "refresh_token": "AUTO_REFRESH_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/view/web/season")
+            .query_param("ep_id", "1000");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "result": {
+                "season_id": 123,
+                "title": "Restricted Season",
+                "episodes": [
+                    {"aid": 10, "bvid": "BV1aa", "cid": 100, "id": 1000, "ep_id": 1000, "title": "1", "long_title": "Start"}
+                ]
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/player/web/v2/playurl")
+            .query_param("ep_id", "1000");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -40301,
+            "message": "area restricted"
+        }));
+    });
+    let stale_proxy_mock = server.mock(|when, then| {
+        when.method(GET)
+            .path("/proxy-playurl")
+            .query_param("ep_id", "1000")
+            .query_param("area", "hk")
+            .query_param("access_key", "ACCESS_SECRET")
+            .header_missing("cookie");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -101,
+            "message": "账号未登录"
+        }));
+    });
+    let refreshed_proxy_mock = server.mock(|when, then| {
+        when.method(GET)
+            .path("/proxy-playurl")
+            .query_param("ep_id", "1000")
+            .query_param("area", "hk")
+            .query_param("access_key", "AUTO_ACCESS_SECRET")
+            .header_missing("cookie");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "timelength": 3000,
+            "accept_quality": [80],
+            "accept_description": ["1080P"],
+            "support_formats": [{"quality": 80, "new_description": "1080P"}],
+            "dash": {
+                "duration": 3,
+                "video": [{
+                    "id": 80,
+                    "baseUrl": format!("{}/video.m4s", server.base_url()),
+                    "base_url": format!("{}/video.m4s", server.base_url())
+                }],
+                "audio": []
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET).path("/video.m4s");
+        then.status(200).body("video");
+    });
+    mock_empty_player_v2(&server, "10", "100");
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--pgc-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("--restricted-area")
+        .arg("hk")
+        .arg("--restricted-area-proxy")
+        .arg(format!("hk={}/proxy-playurl", server.base_url()))
+        .arg("download")
+        .arg("ep1000")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--no-mux")
+        .arg("--no-subtitles")
+        .arg("--no-danmaku")
+        .arg("--no-cover")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let report: Value = serde_json::from_slice(&output)?;
+
+    assert_eq!(
+        report["entries"][0]["files"].as_array().map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load_profile("intl")?
+            .access_key
+            .as_deref(),
+        Some("AUTO_ACCESS_SECRET")
+    );
+    refresh_mock.assert_calls(1);
+    stale_proxy_mock.assert_calls(1);
+    refreshed_proxy_mock.assert_calls(1);
     Ok(())
 }
 
@@ -4057,6 +7654,32 @@ fn save_lifecycle_cli_profiles_with_optional_access_key_secret(
     Ok(())
 }
 
+fn save_lifecycle_cli_profile_with_cookie_and_access_key_secret(
+    credential_file: &Path,
+    cookie_metadata: CredentialLifecycleMetadata,
+    access_key_metadata: CredentialLifecycleMetadata,
+    access_key_provider: AccessKeyProvider,
+    access_key_secret: AccessKeyProviderSecret,
+) -> anyhow::Result<()> {
+    let store = CredentialStore::new(credential_file.to_path_buf());
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_profile(
+        "intl",
+        Credentials::default()
+            .with_cookie("SESSDATA=COOKIE_SECRET")
+            .with_access_key("ACCESS_SECRET"),
+    )?;
+    let mut metadata = CredentialProfileMetadata::default();
+    metadata.set_credential(CredentialKind::Cookie, cookie_metadata);
+    metadata.set_credential(CredentialKind::AccessKey, access_key_metadata);
+    profiles.set_profile_metadata("intl", metadata)?;
+    let mut secrets = CredentialProfileSecrets::default();
+    secrets.set_access_key_provider(access_key_provider, access_key_secret);
+    profiles.set_profile_secrets("intl", secrets)?;
+    store.save_profiles(&profiles)?;
+    Ok(())
+}
+
 fn mock_valid_cookie_health(server: &MockServer) -> httpmock::Mock<'_> {
     server.mock(|when, then| {
         when.method(GET)
@@ -4592,8 +8215,7 @@ fn auth_renew_access_key_auto_refresh_redacts_echoed_failure() -> anyhow::Result
 }
 
 #[test]
-fn auth_renew_access_key_auto_refresh_falls_back_when_stored_material_is_malformed()
--> anyhow::Result<()> {
+fn auth_renew_access_key_treats_blank_stored_access_key_as_missing() -> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;
     let credential_file = temp.path().join("credentials.json");
     save_lifecycle_cli_profiles_with_access_key_secret(
@@ -4657,15 +8279,13 @@ fn auth_renew_access_key_auto_refresh_falls_back_when_stored_material_is_malform
         .clone();
     let events = json_lines(&output)?;
 
-    assert_eq!(events.len(), 3);
+    assert_eq!(events.len(), 2);
     assert_eq!(events[0]["event"], "decision");
     assert_eq!(
         events[0]["decision"]["automatic_refresh_readiness"],
-        "ready"
+        "credential_missing"
     );
-    assert_eq!(events[1]["event"], "refresh_failed");
-    assert_eq!(events[1]["message"], "selected profile has no access_key");
-    assert_eq!(events[2]["event"], "ticket");
+    assert_eq!(events[1]["event"], "ticket");
     Ok(())
 }
 
@@ -4765,6 +8385,17 @@ fn assert_auto_refresh_events(events: &[Value]) {
     assert_eq!(events[1]["refresh_keypair"], "bili_tv");
     assert_eq!(events[2]["event"], "saved");
     assert_eq!(events[2]["saved"]["has_access_key"], true);
+}
+
+fn save_intl_access_key_profile(credential_file: &Path, access_key: &str) -> anyhow::Result<()> {
+    let store = CredentialStore::new(credential_file.to_path_buf());
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_profile(
+        "intl",
+        Credentials::default().with_access_key(access_key.to_owned()),
+    )?;
+    store.save_profiles(&profiles)?;
+    Ok(())
 }
 
 fn assert_auto_refresh_output_is_redacted(output_text: &str) {
@@ -5398,6 +9029,34 @@ fn archive_download_command(
     Ok(command)
 }
 
+fn archive_download_command_without_json(
+    credential_file: &Path,
+    server: &MockServer,
+    output_dir: &Path,
+    archive_file: &Path,
+    decision: Option<&str>,
+) -> anyhow::Result<Command> {
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("download")
+        .arg("av170001")
+        .arg("--output-dir")
+        .arg(output_dir)
+        .arg("--archive-file")
+        .arg(archive_file)
+        .arg("--no-mux")
+        .arg("--no-subtitles")
+        .arg("--no-danmaku");
+    if let Some(decision) = decision {
+        command.arg("--on-duplicate").arg(decision);
+    }
+    Ok(command)
+}
+
 fn downloaded_file_path<'a>(json: &'a Value, kind: &str) -> anyhow::Result<&'a str> {
     json["entries"][0]["files"]
         .as_array()
@@ -5409,6 +9068,74 @@ fn downloaded_file_path<'a>(json: &'a Value, kind: &str) -> anyhow::Result<&'a s
             })
         })
         .ok_or_else(|| anyhow::anyhow!("missing downloaded {kind} path"))
+}
+
+fn mock_intl_episode_metadata<'a>(
+    server: &'a MockServer,
+    access_key: &str,
+    title: &str,
+    aid: u64,
+    cid: u64,
+) -> httpmock::Mock<'a> {
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/intl/gateway/v2/ogv/view/app/season")
+            .query_param("ep_id", "341736")
+            .query_param("access_key", access_key);
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "result": {
+                "season_id": 34613,
+                "title": title,
+                "modules": [{
+                    "data": {
+                        "episodes": [
+                            {"aid": aid, "cid": cid, "id": 341_736, "title": "1", "long_title": "Start"}
+                        ]
+                    }
+                }]
+            }
+        }));
+    })
+}
+
+fn mock_intl_episode_playurl<'a>(
+    server: &'a MockServer,
+    access_key: &str,
+    cid: u64,
+    video_url: &str,
+) -> httpmock::Mock<'a> {
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/intl/gateway/v2/ogv/playurl")
+            .query_param("ep_id", "341736")
+            .query_param("cid", cid.to_string())
+            .query_param("platform", "android")
+            .query_param("mobi_app", "bstar_a")
+            .query_param("area", "th")
+            .query_param("s_locale", "zh_SG")
+            .query_param("access_key", access_key)
+            .query_param_exists("sign");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "video_info": {
+                    "timelength": 42_000,
+                    "stream_list": [{
+                        "stream_info": {"quality": 80},
+                        "dash_video": {
+                            "base_url": video_url,
+                            "width": 1280,
+                            "height": 720,
+                            "bandwidth": 900,
+                            "codecs": "avc1"
+                        }
+                    }],
+                    "dash_audio": []
+                }
+            }
+        }));
+    })
 }
 
 fn server_authority(server: &MockServer) -> anyhow::Result<String> {
