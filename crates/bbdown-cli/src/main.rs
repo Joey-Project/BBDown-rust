@@ -1640,7 +1640,9 @@ fn app_playurl_auth_failure_may_have_used_selected_tv_access_key(
 ) -> bool {
     match failure {
         bbdown_core::Error::Api { code, message } => {
-            matches!(*code, 7 | 16) && auth_like_failure_message(message)
+            matches!(*code, 7 | 16)
+                && (auth_like_failure_message(message)
+                    || message == "APP playurl gRPC request failed")
         }
         bbdown_core::Error::Http(error) => error.status().is_some_and(|status| {
             http_status_failure_may_be_credential_related(status.as_u16(), &error.to_string())
