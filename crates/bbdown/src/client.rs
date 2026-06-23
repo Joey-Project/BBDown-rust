@@ -4861,7 +4861,14 @@ fn resolver_attempt(
 fn resolver_error_message(error: &Error) -> String {
     match error {
         Error::Api { code, message } => {
-            format!("API code {code}: {}", sanitize_diagnostic_text(message))
+            let mut diagnostic = format!("API code {code}: {}", sanitize_diagnostic_text(message));
+            if diagnostic_mentions_access_key(message) {
+                let lower = diagnostic.to_ascii_lowercase();
+                if !lower.contains("access key") && !lower.contains("access token") {
+                    diagnostic.push_str(" (access key diagnostic)");
+                }
+            }
+            diagnostic
         }
         Error::AccessRestricted(message) => {
             format!("access restricted: {}", sanitize_diagnostic_text(message))
@@ -4951,6 +4958,11 @@ fn sanitize_diagnostic_text(raw: &str) -> String {
     } else {
         redacted
     }
+}
+
+fn diagnostic_mentions_access_key(raw: &str) -> bool {
+    let lower = raw.to_ascii_lowercase();
+    lower.contains("access_key") || lower.contains("access key") || lower.contains("access token")
 }
 
 fn credential_health_error(
@@ -11041,6 +11053,7 @@ mod tests {
         });
 
         assert!(message.starts_with("API code -40301:"));
+        assert!(message.contains("access key diagnostic"));
         for sensitive in [
             "ACCESS_SECRET",
             "PROXY_SECRET",
@@ -11061,6 +11074,19 @@ mod tests {
                 "message leaked {sensitive}: {message}"
             );
         }
+    }
+
+    #[test]
+    fn resolver_error_message_does_not_mark_proxy_credentials_as_access_key() {
+        let message = super::resolver_error_message(&Error::Api {
+            code: -101,
+            message: "proxy rejected invalid proxy credential".to_owned(),
+        });
+
+        assert_eq!(
+            message,
+            "API code -101: proxy rejected invalid proxy credential"
+        );
     }
 
     #[test]

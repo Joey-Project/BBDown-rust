@@ -359,6 +359,11 @@ superseded_by:
       access-key expiry surfaces that do not spell out `access_key`, including Bilibili Chinese
       `account not logged in` API messages and APP gRPC code 16 without a grpc-message, while
       preserving proxy-owned credential-error negatives.
+    - Current-head independent review follow-up removes the broad `PgcProxy` + `-101` archive retry
+      shortcut, so restricted-area proxy failures still need access-key-specific diagnostic evidence
+      before refreshing and rewriting the generic access key. The core resolver now preserves that
+      evidence as a non-secret `access key diagnostic` marker after redacting raw `access_key`
+      diagnostics, allowing true access-key failures to retry without exposing key names or values.
     - Local independent review follow-up removes bare `credential` wording from access-key-specific
       archive retry classification, preventing proxy-owned errors such as `invalid proxy credential`
       from refreshing and rewriting the generic Bilibili access key.

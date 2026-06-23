@@ -2400,8 +2400,7 @@ fn contains_auth_word(message: &str) -> bool {
 fn restricted_area_resolver_failure_may_be_credential_related(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
     lower.contains("restricted-area resolver failed")
-        && ((lower.contains("api code -101")
-            && (access_key_specific_failure_message(&lower) || lower.contains("pgcproxy")))
+        && ((lower.contains("api code -101") && access_key_specific_failure_message(&lower))
             || ((lower.contains("api code -403")
                 || lower.contains("api code -400")
                 || lower.contains("api code 7")
@@ -5035,9 +5034,15 @@ mod tests {
                     .to_owned(),
             )
         ));
-        assert!(plan_failure_may_be_credential_related(
+        assert!(!plan_failure_may_be_credential_related(
             &bbdown_core::Error::AccessRestricted(
                 "restricted-area resolver failed: PgcProxy area=hk Failed (API code -101: redacted diagnostic message)"
+                    .to_owned(),
+            )
+        ));
+        assert!(plan_failure_may_be_credential_related(
+            &bbdown_core::Error::AccessRestricted(
+                "restricted-area resolver failed: PgcProxy area=hk Failed (API code -101: redacted diagnostic message (access key diagnostic))"
                     .to_owned(),
             )
         ));
