@@ -4073,7 +4073,7 @@ fn download_archive_does_not_refresh_generic_key_for_wbi_nav_http_status() -> an
             .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
     )?;
     let nav = server.mock(|when, then| {
-        when.method(GET).path("/x/web-interface/nav");
+        when.method(GET).path("/api/x/web-interface/nav");
         then.status(401).body("unauthorized");
     });
     let refresh_mock = server.mock(|when, then| {
@@ -4099,7 +4099,7 @@ fn download_archive_does_not_refresh_generic_key_for_wbi_nav_http_status() -> an
         .arg("--credential-profile")
         .arg("intl")
         .arg("--api-base")
-        .arg(server.base_url())
+        .arg(format!("{}/api", server.base_url()))
         .arg("--passport-base")
         .arg(server.base_url())
         .arg("--playurl-mode")

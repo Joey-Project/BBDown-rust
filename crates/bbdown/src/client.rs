@@ -4743,33 +4743,39 @@ fn status_classification_url(mut url: Url) -> Url {
 }
 
 fn preserves_json_status_url_for_path(path: &str) -> bool {
-    matches!(
-        path,
-        "/x/web-interface/view"
-            | "/x/web-interface/nav"
-            | "/x/tag/archive/tags"
-            | "/pgc/view/web/season"
-            | "/pgc/review/user"
-            | "/pgc/player/web/v2/playurl"
-            | "/pugv/view/web/season"
-            | "/pugv/view/web/ep/list"
-            | "/pugv/player/web/playurl"
-            | "/x/v3/fav/folder/created/list-all"
-            | "/x/v3/fav/resource/list"
-            | "/x/v1/medialist/info"
-            | "/x/v2/medialist/resource/list"
-            | "/x/polymer/web-space/seasons_archives_list"
-            | "/x/series/archives"
-            | "/x/series/series"
-            | "/x/space/wbi/arc/search"
-            | "/x/web-interface/wbi/index/top/feed/rcmd"
-            | "/x/web-interface/history/cursor"
-            | "/x/v2/history/toview"
-            | "/x/polymer/web-dynamic/v1/feed/all"
-            | "/x/polymer/web-dynamic/v1/feed/space"
-            | "/x/player/playurl"
-            | "/x/player/v2"
-    )
+    const JSON_STATUS_URL_ENDPOINT_PATHS: &[&str] = &[
+        "/x/web-interface/view",
+        "/x/web-interface/nav",
+        "/x/tag/archive/tags",
+        "/pgc/view/web/season",
+        "/pgc/review/user",
+        "/pgc/player/web/v2/playurl",
+        "/pugv/view/web/season",
+        "/pugv/view/web/ep/list",
+        "/pugv/player/web/playurl",
+        "/x/v3/fav/folder/created/list-all",
+        "/x/v3/fav/resource/list",
+        "/x/v1/medialist/info",
+        "/x/v2/medialist/resource/list",
+        "/x/polymer/web-space/seasons_archives_list",
+        "/x/series/archives",
+        "/x/series/series",
+        "/x/space/wbi/arc/search",
+        "/x/web-interface/wbi/index/top/feed/rcmd",
+        "/x/web-interface/history/cursor",
+        "/x/v2/history/toview",
+        "/x/polymer/web-dynamic/v1/feed/all",
+        "/x/polymer/web-dynamic/v1/feed/space",
+        "/x/player/playurl",
+        "/x/player/v2",
+    ];
+    endpoint_path_matches_any(path, JSON_STATUS_URL_ENDPOINT_PATHS)
+}
+
+fn endpoint_path_matches_any(path: &str, endpoints: &[&str]) -> bool {
+    endpoints
+        .iter()
+        .any(|endpoint| path == *endpoint || path.ends_with(endpoint))
 }
 
 fn is_restricted_area_fallback_error(source: &StreamSource, error: &Error) -> bool {
@@ -11395,6 +11401,19 @@ mod tests {
             "http://proxy.example/bili/api/x/web-interface/view"
         );
         Ok(())
+    }
+
+    #[test]
+    fn json_status_path_matching_accepts_endpoint_prefixes() {
+        assert!(super::preserves_json_status_url_for_path(
+            "/bili/api/x/web-interface/nav"
+        ));
+        assert!(super::preserves_json_status_url_for_path(
+            "/bili/api/x/player/playurl"
+        ));
+        assert!(!super::preserves_json_status_url_for_path(
+            "/bili/api/x/passport-login/oauth2/info"
+        ));
     }
 
     fn test_client(server: &MockServer) -> BiliClient {
