@@ -2293,7 +2293,17 @@ fn api_failure_may_be_credential_related(code: i64, message: &str) -> bool {
 }
 
 fn http_status_failure_may_be_credential_related(status: u16, message: &str) -> bool {
-    status == 401 || (status == 403 && auth_like_failure_message(message))
+    matches!(status, 401 | 403) && access_key_refresh_failure_message(message)
+}
+
+fn access_key_refresh_failure_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("access_key")
+        || lower.contains("access key")
+        || lower.contains("access token")
+        || lower.contains("credential")
+        || lower.contains("not login")
+        || lower.contains("no login")
 }
 
 fn auth_like_failure_message(message: &str) -> bool {
@@ -2334,9 +2344,8 @@ fn restricted_area_resolver_failure_may_be_credential_related(message: &str) -> 
             || (lower.contains("api code -400") && auth_like_failure_message(&lower))
             || (lower.contains("api code 7") && auth_like_failure_message(&lower))
             || (lower.contains("api code 16") && auth_like_failure_message(&lower))
-            || lower.contains("401")
-            || (lower.contains("403") && auth_like_failure_message(&lower))
-            || lower.contains("unauthorized"))
+            || ((lower.contains("401") || lower.contains("403") || lower.contains("unauthorized"))
+                && access_key_refresh_failure_message(&lower)))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -4907,6 +4916,10 @@ mod tests {
                 message: "area restricted".to_owned(),
             }
         ));
+    }
+
+    #[test]
+    fn plan_failure_classifier_requires_access_key_evidence_for_http_statuses() {
         assert!(!plan_failure_may_be_credential_related(
             &bbdown_core::Error::AccessRestricted(
                 "restricted-area resolver failed for hk: API code 7: area restricted".to_owned(),
@@ -4924,6 +4937,12 @@ mod tests {
                     .to_owned(),
             )
         ));
+        assert!(!plan_failure_may_be_credential_related(
+            &bbdown_core::Error::AccessRestricted(
+                "restricted-area resolver failed for hk: HTTP error: HTTP status client error (401 Unauthorized)"
+                    .to_owned(),
+            )
+        ));
         assert!(plan_failure_may_be_credential_related(
             &bbdown_core::Error::AccessRestricted(
                 "restricted-area resolver failed for hk: API code 16: access key expired"
@@ -4936,9 +4955,19 @@ mod tests {
                     .to_owned(),
             )
         ));
-        assert!(http_status_failure_may_be_credential_related(
+        assert!(plan_failure_may_be_credential_related(
+            &bbdown_core::Error::AccessRestricted(
+                "restricted-area resolver failed for hk: HTTP error: HTTP status client error (401 Unauthorized): access_key expired"
+                    .to_owned(),
+            )
+        ));
+        assert!(!http_status_failure_may_be_credential_related(
             401,
             "HTTP status client error (401 Unauthorized)"
+        ));
+        assert!(http_status_failure_may_be_credential_related(
+            401,
+            "HTTP status client error (401 Unauthorized): expired access token"
         ));
         assert!(!http_status_failure_may_be_credential_related(
             403,

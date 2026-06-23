@@ -330,8 +330,9 @@ superseded_by:
       feed request is missing a usable WEB cookie.
     - Auth-like archive retry classification now matches auth/OAuth words instead of a raw `auth`
       substring, so non-auth errors such as `author id invalid` do not refresh access keys.
-    - Bare HTTP 403 and restricted-area proxy `403 Forbidden` summaries no longer trigger automatic
-      generic access-key refresh unless the error also carries auth/token/login evidence.
+    - Bare HTTP 401/403 and restricted-area proxy `401 Unauthorized` / `403 Forbidden` summaries no
+      longer trigger automatic generic access-key refresh unless the error also carries explicit
+      access-key/token/login evidence.
     - Crate-local README files now document the provider-aware APP credential order for embedders,
       matching the top-level and embedding docs.
   - Added mock e2e coverage for these review follow-ups:
@@ -344,7 +345,7 @@ superseded_by:
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_cancel_reports_duplicate_after_deferred_refresh --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_for_generic_api_bad_request --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_for_app_area_restricted_status --locked`.
-    - `cargo test -p bbdown-cli --bin bbdown plan_failure_classifier_only_treats_auth_like_bad_request_as_credentials --locked`.
+    - `cargo test -p bbdown-cli --bin bbdown plan_failure_classifier --locked`.
 
 ## Next Steps
 
