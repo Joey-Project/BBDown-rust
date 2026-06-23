@@ -2594,18 +2594,28 @@ mod tests {
             anyhow::bail!("coordination guard should be acquired");
         };
 
+        let (release_started_tx, release_started_rx) = std::sync::mpsc::channel();
+        let (release_done_tx, release_done_rx) = std::sync::mpsc::channel();
         let lock_path_for_thread = lock_path.clone();
         let release = std::thread::spawn(move || {
+            let _ = release_started_tx.send(());
             drop(guard);
-            lock_path_for_thread.exists()
+            let _ = release_done_tx.send(lock_path_for_thread.exists());
         });
-        std::thread::sleep(std::time::Duration::from_millis(
-            super::CREDENTIAL_LOCK_RELEASE_RETRY_MILLIS.saturating_mul(5),
+
+        release_started_rx.recv_timeout(std::time::Duration::from_secs(1))?;
+        assert!(matches!(
+            release_done_rx.recv_timeout(std::time::Duration::from_millis(
+                super::CREDENTIAL_LOCK_RELEASE_RETRY_MILLIS.saturating_mul(5),
+            )),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
         ));
         assert!(lock_path.exists());
 
         drop(coordination_guard);
-        let Ok(lock_exists_after_release) = release.join() else {
+        let lock_exists_after_release =
+            release_done_rx.recv_timeout(std::time::Duration::from_secs(1))?;
+        let Ok(()) = release.join() else {
             anyhow::bail!("release thread should not panic");
         };
         assert!(!lock_exists_after_release);
