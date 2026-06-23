@@ -1478,7 +1478,7 @@ fn media_preflight_report_can_refresh_generic_access_key_for_failure(
     if authenticated_web_api_failure_may_have_used_cookie(context, failure) {
         return false;
     }
-    if authenticated_web_api_cookie_unsatisfied(report) {
+    if authenticated_web_api_cookie_missing(report) {
         return false;
     }
     if app_playurl_selected_tv_access_key(report)
@@ -1503,10 +1503,10 @@ fn authenticated_web_api_failure_may_have_used_cookie(
         )
 }
 
-fn authenticated_web_api_cookie_unsatisfied(report: &CredentialPreflightReport) -> bool {
+fn authenticated_web_api_cookie_missing(report: &CredentialPreflightReport) -> bool {
     report.requirements.iter().any(|requirement| {
         requirement.request_path == CredentialPreflightRequestPath::AuthenticatedWebApi
-            && !requirement.satisfied
+            && requirement.selected_status == CredentialLifecycleStatus::Missing
     })
 }
 
@@ -2346,10 +2346,7 @@ fn access_key_refresh_failure_message(message: &str) -> bool {
 
 fn access_key_specific_failure_message(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
-    lower.contains("access_key")
-        || lower.contains("access key")
-        || lower.contains("access token")
-        || lower.contains("credential")
+    lower.contains("access_key") || lower.contains("access key") || lower.contains("access token")
 }
 
 fn auth_like_failure_message(message: &str) -> bool {
@@ -5000,6 +4997,12 @@ mod tests {
         assert!(!plan_failure_may_be_credential_related(
             &bbdown_core::Error::AccessRestricted(
                 "restricted-area resolver failed for hk: API code -403: unauthorized".to_owned(),
+            )
+        ));
+        assert!(!plan_failure_may_be_credential_related(
+            &bbdown_core::Error::AccessRestricted(
+                "restricted-area resolver failed for hk: API code -403: invalid proxy credential"
+                    .to_owned(),
             )
         ));
         assert!(plan_failure_may_be_credential_related(

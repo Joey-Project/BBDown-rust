@@ -230,16 +230,24 @@ impl CredentialPreflightReport {
             && self.access_key_renewal.requires_reauthorization()
             && self.access_key_renewal.automatic_refresh_readiness
                 == AccessKeyAutomaticRefreshReadiness::Ready
-            && self.requirements.iter().all(|requirement| {
-                !requirement.required
-                    || requirement.satisfied
-                    || access_key_renewal_can_address_requirement(requirement)
-            })
+            && self
+                .requirements
+                .iter()
+                .all(requirement_does_not_block_access_key_renewal)
             && self.issues.iter().any(|issue| {
                 issue.selected_kind == Some(CredentialKind::AccessKey)
                     || issue.credential_kinds == [CredentialKind::AccessKey]
             })
     }
+}
+
+fn requirement_does_not_block_access_key_renewal(
+    requirement: &CredentialPreflightRequirementStatus,
+) -> bool {
+    requirement.satisfied
+        || access_key_renewal_can_address_requirement(requirement)
+        || (requirement.required
+            && requirement.selected_status != CredentialLifecycleStatus::Missing)
 }
 
 fn access_key_renewal_can_address_requirement(
@@ -1145,6 +1153,70 @@ mod tests {
         }));
         assert!(!report.has_blocking_issues());
         assert!(!report.should_attempt_access_key_renewal());
+        Ok(())
+    }
+
+    #[test]
+    fn renew_mode_allows_access_key_refresh_when_required_cookie_is_stale_but_present()
+    -> crate::Result<()> {
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "default",
+            Credentials::default()
+                .with_cookie("SESSDATA=COOKIE")
+                .with_access_key("ACCESS"),
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::Cookie,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::WebQrLogin)
+                .with_checked_at_unix_millis(1),
+        );
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+                .with_acquired_at_unix_millis(1_000)
+                .with_refresh_token_present(true),
+        );
+        profiles.set_profile_metadata("default", metadata)?;
+        let mut secrets = CredentialProfileSecrets::default();
+        secrets.set_access_key_provider(
+            AccessKeyProvider::BalhBiliplus,
+            AccessKeyProviderSecret::default()
+                .with_refresh_token("REFRESH")
+                .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+                .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+        );
+        profiles.set_profile_secrets("default", secrets)?;
+        let status = profiles.profile_lifecycle_status(
+            "default",
+            &CredentialLifecyclePolicy::at_unix_millis(10_000).with_stale_after_millis(Some(1_000)),
+        )?;
+
+        let report = CredentialPreflightReport::evaluate(
+            CredentialPreflightMode::Renew,
+            &status,
+            [
+                CredentialPreflightRequirement::authenticated_web_api_cookie(),
+                CredentialPreflightRequirement::app_playurl_access_key(),
+            ],
+        );
+
+        assert_eq!(
+            report
+                .requirements
+                .iter()
+                .find(|requirement| {
+                    requirement.request_path == CredentialPreflightRequestPath::AuthenticatedWebApi
+                })
+                .map(|requirement| requirement.selected_status),
+            Some(CredentialLifecycleStatus::Stale)
+        );
+        assert!(!report.has_blocking_issues());
+        assert!(report.should_attempt_access_key_renewal());
         Ok(())
     }
 

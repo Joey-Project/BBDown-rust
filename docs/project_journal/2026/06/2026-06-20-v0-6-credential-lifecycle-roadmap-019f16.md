@@ -344,6 +344,16 @@ superseded_by:
     - Immediate credential preflight renewal now skips generic access-key refresh when the same
       report still has an unsatisfied required non-access-key requirement, such as missing WEB
       cookies for history/watch-later/following inputs.
+    - Local offline review follow-up narrows that guard to missing required non-access-key
+      credentials, so stale/expiring/expired/unknown but present WEB cookies no longer block a
+      refresh-ready generic access-key renewal; subsequent network requests still prove whether the
+      WEB cookie works.
+    - Local independent review follow-up treats whitespace-only stored cookie/access-key values as
+      missing for lifecycle status and redacted presence booleans, matching the request builders that
+      trim token values before sending them.
+    - Local independent review follow-up removes bare `credential` wording from access-key-specific
+      archive retry classification, preventing proxy-owned errors such as `invalid proxy credential`
+      from refreshing and rewriting the generic Bilibili access key.
     - Crate-local README files now document the provider-aware APP credential order for embedders,
       matching the top-level and embedding docs.
   - Added mock e2e coverage for these review follow-ups:
@@ -358,6 +368,13 @@ superseded_by:
     - `cargo test -p bbdown-cli --test cli_e2e plan_selection_required_input_fails_before_credential_preflight_renewal --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_cancel_reports_duplicate_after_deferred_refresh --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_for_generic_api_bad_request --locked`.
+    - `cargo test -p bbdown-core --lib credential --locked`.
+    - `cargo test -p bbdown-cli --bin bbdown plan_failure_classifier --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_retries_app_access_key_when_required_cookie_is_stale_but_present --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e auth_renew_access_key --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e credential_preflight --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh --locked`.
+    - `just ci`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_for_app_area_restricted_status --locked`.
     - `cargo test -p bbdown-cli --bin bbdown plan_failure_classifier --locked`.
 

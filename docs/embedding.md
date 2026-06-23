@@ -304,7 +304,11 @@ short links, normalize them with
 preflight may run.
 Embedding projects can treat blockers as fail-fast UI, warnings as non-blocking banners, or call
 `should_attempt_access_key_renewal()` before using `BiliClient::refresh_access_key(...)` and saving
-the refreshed credentials through their own storage layer.
+the refreshed credentials through their own storage layer. The renewal predicate requires missing
+non-access-key credentials to be fixed first, but present non-access-key credentials with stale,
+expiring, expired, or unknown lifecycle metadata do not block a ready generic access-key refresh.
+Whitespace-only stored credential strings are treated as missing when lifecycle status and redacted
+presence booleans are computed.
 
 ```rust,no_run
 use bbdown_core::{

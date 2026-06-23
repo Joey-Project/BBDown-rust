@@ -433,10 +433,13 @@ requirements.
 those modes do not resolve media streams. `warn` writes diagnostics to stderr and continues, `fail`
 aborts before network stream resolution when a required credential is missing or has non-fresh
 lifecycle metadata, and `renew` first tries provider-specific generic access-key refresh when the
-selected profile is refresh-ready. Preflight never writes to stdout, so `--json` output remains a single JSON
-plan, playback plan, or download report. `download --progress-json` suppresses plaintext preflight
+selected profile is refresh-ready. Preflight never writes to stdout, so `--json` output remains a
+single JSON plan, playback plan, or download report. `download --progress-json` suppresses plaintext preflight
 diagnostics, but the final CLI error line may still be written to stderr on failure; wrappers should
-parse only JSON object lines. For archive downloads, `renew` defers automatic access-key refresh
+parse only JSON object lines. In `renew` mode, missing required non-access-key credentials still stop
+generic access-key auto-refresh, but present credentials with stale, expiring, expired, or unknown
+lifecycle metadata do not prevent refreshing a ready generic access key; the subsequent request still
+proves whether those credentials work. For archive downloads, `renew` defers automatic access-key refresh
 until after duplicate handling when the initial plan succeeds, so `--on-duplicate cancel` stops
 without calling refresh endpoints or rewriting stored credentials. If initial archive planning fails
 with an auth-like credential error, the CLI refreshes a ready generic access key and retries planning
@@ -458,8 +461,9 @@ WEB and TV QR login record lifecycle source and acquisition time, but only recor
 upstream response provides a reliable expiry field.
 
 `auth status` keeps the legacy selected-profile JSON shape and only reports redacted credential
-booleans. Add `--profiles` to include the selected credential profile name, whether each reported
-profile is the default or selected profile, local lifecycle status, per-credential lifecycle
+booleans; whitespace-only stored credential values are reported as missing. Add `--profiles` to
+include the selected credential profile name, whether each reported profile is the default or
+selected profile, local lifecycle status, per-credential lifecycle
 metadata, and non-secret guidance. Add `--all-profiles` to report every saved profile; without it,
 the profile output is limited to the selected profile. `--stale-after-seconds` and
 `--expiring-within-seconds` tune the local lifecycle policy for status and human health guidance.

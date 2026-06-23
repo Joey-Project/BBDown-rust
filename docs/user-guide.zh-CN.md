@@ -386,7 +386,10 @@ credential lifecycle metadata 不是 fresh 时，在网络 stream resolution 前
 当前 profile refresh-ready 时先尝试 provider-specific generic access-key refresh。preflight
 不会写 stdout，因此 `--json` 仍保持单个 JSON plan、playback plan 或 download report。
 `download --progress-json` 会抑制 preflight 纯文本 diagnostic，但失败时最终 CLI error 行仍可能
-写到 stderr；wrapper 应只解析 JSON object line。对 archive 下载，如果初次 plan 成功，
+写到 stderr；wrapper 应只解析 JSON object line。在 `renew` 模式下，缺失 required 的非
+access-key credential 仍会阻止通用 access-key 自动刷新；但已存在且 lifecycle metadata 为
+stale、expiring、expired 或 unknown 的 credential 不会阻止 refresh-ready 的通用 access key
+刷新，后续实际请求仍会验证这些 credential 是否可用。对 archive 下载，如果初次 plan 成功，
 `renew` 会把自动 access-key refresh 延后到 duplicate handling 之后，因此 `--on-duplicate cancel`
 会停止且不会调用 refresh endpoint 或重写已保存 credential。如果初次 archive planning 因类似
 auth 的 credential 错误失败，即使本地 lifecycle metadata 仍认为该 key fresh，CLI 也会刷新
@@ -405,7 +408,8 @@ cookie。`auth login-tv` 使用 TV 二维码流程，保存 TV 专用 access key
 WEB 和 TV 二维码登录会记录 lifecycle source 和获取时间；只有上游响应提供可靠过期字段时
 才会记录 expiry。
 
-`auth status` 会保留旧的 selected-profile JSON 形态，只报告脱敏凭据布尔值。加
+`auth status` 会保留旧的 selected-profile JSON 形态，只报告脱敏凭据布尔值；只含空白字符的
+已保存 credential 会按 missing 报告。加
 `--profiles` 后，会输出所选 credential profile 名称、每个返回 profile 是否为默认或当前选
 中 profile、本地 lifecycle status、逐 credential lifecycle metadata，以及不含密钥的操作建
 议。再加 `--all-profiles` 会报告所有已保存 profile；不加时，profile 输出只包含当前选中
