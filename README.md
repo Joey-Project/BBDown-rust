@@ -191,11 +191,11 @@ includes normal-video `archive` history records. Watch-later input uses `watchla
 `watch-later`, `watch_later`, `later`, `toview`, `https://www.bilibili.com/watchlater`, or
 `https://www.bilibili.com/list/watchlater`, requires
 an authenticated web cookie, and includes normal videos from the authenticated account's
-watch-later list. Following
-input uses `following`, `https://t.bilibili.com/`, or
-`https://www.bilibili.com/account/dynamic`; space dynamic input uses
-`https://space.bilibili.com/<mid>/dynamic`. Dynamic feed inputs require an authenticated web cookie
-and currently include normal-video archive cards.
+watch-later list. Following input uses `following`, `https://t.bilibili.com/`, or
+`https://www.bilibili.com/account/dynamic`, requires an authenticated web cookie, and currently
+includes normal-video archive cards. Space dynamic input uses
+`https://space.bilibili.com/<mid>/dynamic`, can run anonymously, and currently includes public
+normal-video archive cards.
 
 Manage local credentials:
 

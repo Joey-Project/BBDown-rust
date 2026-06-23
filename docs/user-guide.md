@@ -108,9 +108,10 @@ Watch-later input accepts `watchlater`, `watch-later`, `watch_later`, `later`, `
 an authenticated web cookie and emits normal videos from the authenticated account's watch-later
 list.
 Following feed input accepts `following`, `https://t.bilibili.com/`, and
-`https://www.bilibili.com/account/dynamic`. Space dynamic feed input accepts
-`https://space.bilibili.com/<mid>/dynamic`. These dynamic feed inputs require an authenticated web
-cookie and currently emit normal-video archive cards; non-video dynamic cards are skipped.
+`https://www.bilibili.com/account/dynamic`. It requires an authenticated web cookie and currently
+emits normal-video archive cards from the authenticated account's following feed. Space dynamic feed
+input accepts `https://space.bilibili.com/<mid>/dynamic`, can run anonymously, and currently emits
+public normal-video archive cards; non-video dynamic cards are skipped.
 
 ## Download Plans
 

@@ -98,9 +98,10 @@ WEB cookie，目前只输出普通视频 `archive` 记录；PGC、直播或专�
 `https://www.bilibili.com/watchlater` 和 `https://www.bilibili.com/list/watchlater`。它需要
 已认证的 WEB cookie，并输出该账号稍后再看列表中的普通视频。
 关注 feed 输入支持 `following`、`https://t.bilibili.com/` 和
-`https://www.bilibili.com/account/dynamic`。空间动态 feed 输入支持
-`https://space.bilibili.com/<mid>/dynamic`。这些动态 feed 输入需要已认证的 WEB cookie，目
-前只输出普通视频 archive 卡片；非视频动态卡片会被跳过。
+`https://www.bilibili.com/account/dynamic`。它需要已认证的 WEB cookie，目前输出该账号关
+注 feed 中的普通视频 archive 卡片。空间动态 feed 输入支持
+`https://space.bilibili.com/<mid>/dynamic`，可以匿名访问，目前输出公开普通视频 archive 卡
+片；非视频动态卡片会被跳过。
 
 ## 下载计划
 

@@ -181,9 +181,9 @@ WEB cookie，目前只包含普通视频 `archive` 历史记录。稍后再看�
 `watch-later`、`watch_later`、`later`、`toview` 或
 `https://www.bilibili.com/watchlater` 或 `https://www.bilibili.com/list/watchlater`，需要已
 认证的 WEB cookie，并包含该账号稍后再看列表中的普通视频。关注输入可使用 `following`、
-`https://t.bilibili.com/` 或 `https://www.bilibili.com/account/dynamic`；空间动态输入使用
-`https://space.bilibili.com/<mid>/dynamic`。动态 feed 输入需要已认证的 WEB cookie，目前只
-包含普通视频 archive 卡片。
+`https://t.bilibili.com/` 或 `https://www.bilibili.com/account/dynamic`，需要已认证的 WEB
+cookie，目前包含普通视频 archive 卡片。空间动态输入使用
+`https://space.bilibili.com/<mid>/dynamic`，可以匿名访问，目前包含公开普通视频 archive 卡片。
 
 管理本地凭据：
 
