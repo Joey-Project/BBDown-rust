@@ -232,6 +232,9 @@ superseded_by:
   - Follow-up review found that lock release must wait when a coordination guard is briefly held;
     release now retries while the same token is still current and has a test-only retry observer to
     deterministically cover that contention path.
+  - A later Codex review found that dead-owner `.lock.reclaim` files should not make release wait
+    for the full stale-lock window; coordination acquisition now removes reclaim locks whose owner
+    pid is known dead before falling back to the normal stale-timeout policy.
   - Offline review follow-up keeps default-profile incremental writes on legacy flat JSON stores in
     the flat credential shape, while named profile writes and existing profile documents still use
     the versioned profile document.

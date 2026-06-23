@@ -1718,6 +1718,9 @@ fn acquire_lock_coordination_guard(lock_path: &Path) -> Result<Option<Credential
         if let Some(reclaim_guard) = try_create_coordination_lock_file(&reclaim_lock_path)? {
             return Ok(Some(reclaim_guard));
         }
+        if remove_dead_owner_lock_file(&reclaim_lock_path)? {
+            continue;
+        }
         if !remove_stale_lock_file(&reclaim_lock_path)? {
             return Ok(None);
         }
@@ -1750,6 +1753,19 @@ fn remove_stale_lock_file(lock_path: &Path) -> Result<bool> {
         return Ok(false);
     }
     if lock_owner_may_still_be_running(&raw) {
+        return Ok(false);
+    }
+    let expected = LockFileIdentity::from_raw(&raw);
+    remove_lock_file_if_matches(lock_path, &expected)
+}
+
+fn remove_dead_owner_lock_file(lock_path: &Path) -> Result<bool> {
+    let raw = match fs::read_to_string(lock_path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+        Err(error) => return Err(Error::Io(error)),
+    };
+    if !lock_owner_is_known_dead(&raw) {
         return Ok(false);
     }
     let expected = LockFileIdentity::from_raw(&raw);
@@ -1806,6 +1822,10 @@ fn parse_lock_token(raw: &str) -> Option<&str> {
 
 fn lock_owner_may_still_be_running(raw: &str) -> bool {
     parse_lock_owner_pid(raw).is_some_and(process_may_still_be_running)
+}
+
+fn lock_owner_is_known_dead(raw: &str) -> bool {
+    parse_lock_owner_pid(raw).is_some_and(|pid| !process_may_still_be_running(pid))
 }
 
 fn parse_lock_owner_pid(raw: &str) -> Option<u32> {
@@ -2690,6 +2710,29 @@ mod tests {
         };
         assert!(!lock_exists_after_release);
         assert!(!lock_path.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn lock_release_recovers_dead_owner_coordination_guard() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        let lock_path = private_lock_path(&path);
+        let reclaim_path = reclaim_lock_path(&lock_path);
+        let guard = store.acquire_update_lock()?;
+        std::fs::write(
+            &reclaim_path,
+            format!(
+                "token=dead-reclaim\npid=4294967295\ncreated_at_unix_millis={}\n",
+                current_unix_millis()
+            ),
+        )?;
+
+        drop(guard);
+
+        assert!(!lock_path.exists());
+        assert!(!reclaim_path.exists());
         Ok(())
     }
 
