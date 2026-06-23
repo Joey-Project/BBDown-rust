@@ -85,9 +85,9 @@ episode id。空批量集合在默认/all selection 下会解析为空 selected 
 卡片被跳过后为显式 index selection 在安全上限内继续请求后续 `fresh_idx` 刷新批次。观看历
 史输入使用 WEB history cursor 端点，需要已认证 cookie，且当前只保留可以通过普通视频
 pipeline 规划的普通视频 `archive` 记录。稍后再看输入使用 WEB toview 端点，需要已认证
-cookie，并输出该账号稍后再看列表中的普通视频。关注和空间动态输入使用 WEB dynamic feed 端点，也
-需要已认证 cookie，且当前只输出普通视频 archive 卡片。CLI 未来会增加交互式提示，但
-library 保持 season-like 契约显式，避免集成方意外下载整季。
+cookie，并输出该账号稍后再看列表中的普通视频。关注输入使用已认证 dynamic feed 端点，需要已认证
+cookie；空间动态输入使用公开 space dynamic feed 端点，可以匿名访问，且当前只输出普通视频
+archive 卡片。CLI 未来会增加交互式提示，但 library 保持 season-like 契约显式，避免集成方意外下载整季。
 
 Mode-aware planning 使用同一套 resolver 分发，但 sidecar-only mode 会跳过媒体 stream 解
 析。当调用方需要为 archive preflight 或 UI 决策生成非默认 `DownloadMode` 的 plan 时，使

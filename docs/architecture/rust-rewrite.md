@@ -98,8 +98,9 @@ History input uses the web history cursor endpoint, requires an authenticated co
 filters to normal-video `archive` records that can plan through the normal video pipeline.
 Watch-later input uses the web toview endpoint, requires an authenticated cookie, and emits normal
 videos from the authenticated account's watch-later list.
-Following and space dynamic inputs use the web dynamic feed endpoints, also require an
-authenticated cookie, and currently emit normal-video archive cards. The
+Following input uses the authenticated dynamic feed endpoint and requires an authenticated cookie.
+Space dynamic input uses the public space dynamic feed endpoint, can run anonymously, and currently
+emits normal-video archive cards. The
 CLI will later add interactive prompting, but the library keeps season-like contracts explicit so
 integrations cannot accidentally download a full season.
 

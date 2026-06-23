@@ -264,13 +264,16 @@ client 实际会发送的 credential：WEB playurl 的 cookie 是 optional；TV
 playurl 要求 `tv_access_key`；APP playurl 接受 `tv_access_key` 或通用 `access_key` 任一可用，
 并按 provider metadata 决定两者都存在时的顺序：main/BALH 或未分类 generic key 先于 TV key，
 `bili_intl_oauth2` key 会让位给 TV key。stale optional WEB playurl cookie 只会产生 warning，
-不会成为 blocker，因此公开视频可以继续以匿名路径运行。history、watch-later、following 和
-space dynamic 这类已认证 feed 输入会在选择 media stream 前访问账号级 WEB API，应额外加入
-`CredentialPreflightRequirement::authenticated_web_api_cookie()`。restricted-area proxy fallback
+不会成为 blocker，因此公开视频可以继续以匿名路径运行。history、watch-later 和 following
+这类账号级 feed 输入会在选择 media stream 前访问已认证 WEB API，应额外加入
+`CredentialPreflightRequirement::authenticated_web_api_cookie()`；公开的 space dynamic 页面可以匿名访问，
+不应加入这个 required-cookie preflight。restricted-area proxy fallback
 会把通用 `access_key` 视为 optional：已存在的 key 会被检查并可能由 resolver 转发，缺失 key 不会阻断
-自带认证或允许匿名 fallback 的 proxy URL。intl/Bstar episode 输入会要求官方 intl request path
-实际使用的通用 `access_key`。intl/Bstar 和 PUGV/cheese 这类固定来源输入不应继承调用方的全局
-TV/APP playurl credential requirement，sidecar-only mode 也应跳过 media-stream preflight。
+自带认证或允许匿名 fallback 的 proxy URL。intl/Bstar episode 的 media path 会要求官方 intl
+metadata、playurl 和 subtitle 请求实际使用的通用 `access_key`；cover-only 或 danmaku-only path
+这类不会调用受保护 intl request 的路径应跳过该 preflight。intl/Bstar 和 PUGV/cheese
+这类固定来源输入不应继承调用方的全局 TV/APP playurl credential requirement，sidecar-only mode
+也应跳过 media-stream preflight。
 这个 report 是纯值：它会列出 requirement status、warning/blocker，以及当前所选
 profile 的 `AccessKeyRenewalDecision`，但不会修改 credential storage。embedding app 如果接受短链，
 应该先用 `BiliClient::parse_input(...)` 规范化输入，再判断 PGC proxy fallback 或 intl access-key

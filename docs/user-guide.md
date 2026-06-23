@@ -411,17 +411,20 @@ Use the global `--credential-preflight warn|fail|renew` option with `plan`, `pla
 `download` when a media request should check the selected profile before resolving streams.
 Preflight derives the expected credential requirements from the selected request path: WEB playurl
 treats cookies as optional so anonymous public videos still work, and stale optional WEB playurl
-cookie metadata is warning-only. Authenticated feed inputs such as history, watch-later, following,
-and space dynamic require a WEB cookie before the resolver hits their account-scoped APIs. TV
+cookie metadata is warning-only. Account-scoped feed inputs such as history, watch-later, and
+following require a WEB cookie before the resolver hits their authenticated APIs. Public space
+dynamic pages can run anonymously and do not add the required-cookie preflight. TV
 playurl requires `tv_access_key`, APP playurl accepts either generic `access_key` or
 `tv_access_key`, and the selected profile's access-key provider decides the tie-breaker: main/BALH
 or unclassified generic keys are checked before TV keys, while `bili_intl_oauth2` keys yield to TV
 keys. Restricted-area proxy fallback checks generic `access_key` only when that key is configured for
 an input where proxy fallback may run. Missing generic keys do not block restricted-area proxy URLs
-that authenticate themselves or allow anonymous fallback. Intl/Bstar episode inputs require the
-generic `access_key` used by the official intl metadata, playurl, and subtitle requests. Short links
-are resolved to their final supported input kind before this decision. Fixed-source inputs such as
-intl/Bstar and PUGV/cheese do not inherit the global TV/APP playurl credential requirements.
+that authenticate themselves or allow anonymous fallback. Intl/Bstar episode media paths require the
+generic `access_key` used by the official intl metadata, playurl, and subtitle requests; modes that
+do not call those protected paths, such as cover-only or danmaku-only downloads, skip that preflight.
+Short links are resolved to their final supported input kind before this decision. Fixed-source
+inputs such as intl/Bstar and PUGV/cheese do not inherit the global TV/APP playurl credential
+requirements.
 `download --only subtitle|danmaku|cover` skips TV/APP/restricted-proxy stream preflight because
 those modes do not resolve media streams. `warn` writes diagnostics to stderr and continues, `fail`
 aborts before network stream resolution when a required credential is missing or has non-fresh

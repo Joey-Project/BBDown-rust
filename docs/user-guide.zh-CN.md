@@ -366,14 +366,16 @@ token。如果 refresh 失败，CLI 会输出 `refresh_failed`，然后回退到
 可以配合全局 `--credential-preflight warn|fail|renew`，在解析 media stream 前检查当前选择的
 profile。preflight 会按 request path 推导所需 credential：WEB playurl 把 cookie 视为
 optional，所以匿名公开视频仍可工作；stale optional WEB playurl cookie metadata 只会 warning，
-不会阻断。history、watch-later、following 和 space dynamic 这类已认证 feed 输入会在 resolver
-访问账号级 API 之前要求 WEB cookie。TV playurl 要求 `tv_access_key`；APP playurl 接受通用
+不会阻断。history、watch-later 和 following 这类账号级 feed 输入会在 resolver
+访问已认证 API 之前要求 WEB cookie；公开的 space dynamic 页面可以匿名访问，不会加入
+required-cookie preflight。TV playurl 要求 `tv_access_key`；APP playurl 接受通用
 `access_key` 或 `tv_access_key` 任一可用，并按当前 profile 的 access-key provider 决定两者
 都存在时的顺序：main/BALH 或未分类 generic key 先于 TV key 检查；`bili_intl_oauth2` key 会让位给 TV key。
 restricted-area proxy fallback 只会在当前输入可能触发 fallback 且已配置通用 `access_key` 时检查
 该 token；缺失通用 key 不会阻断自带认证或允许匿名 fallback 的 restricted-area proxy URL。
-intl/Bstar episode 输入会要求官方 intl metadata、playurl 和 subtitle 请求实际使用的通用
-`access_key`。短链会先解析为最终支持的 input kind，再做这个判断。intl/Bstar 和 PUGV/cheese
+intl/Bstar episode 的 media path 会要求官方 intl metadata、playurl 和 subtitle 请求实际使用的通用
+`access_key`；cover-only 或 danmaku-only download 这类不会调用受保护 intl path 的模式会跳过该
+preflight。短链会先解析为最终支持的 input kind，再做这个判断。intl/Bstar 和 PUGV/cheese
 这类固定来源输入不会继承全局 TV/APP playurl credential requirement。
 `download --only subtitle|danmaku|cover` 会跳过 TV/APP/restricted-proxy stream preflight，因为这些模式
 不会解析 media stream。`warn` 会把 diagnostic 写到 stderr 并继续；`fail` 会在缺少 required credential 或相关

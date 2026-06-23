@@ -478,6 +478,70 @@ fn plan_credential_preflight_fail_blocks_missing_cookie_for_history() -> anyhow:
 }
 
 #[test]
+fn plan_credential_preflight_fail_allows_public_space_dynamic_without_cookie() -> anyhow::Result<()>
+{
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    mock_space_dynamic_collection(&server);
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/playurl")
+            .query_param("avid", "170001")
+            .query_param("cid", "9988")
+            .query_param("try_look", "1");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "dash": {
+                    "duration": 3,
+                    "video": [{
+                        "id": 80,
+                        "baseUrl": "https://video.example/space-dynamic.m4s",
+                        "base_url": "https://video.example/space-dynamic.m4s"
+                    }],
+                    "audio": []
+                }
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/v2")
+            .query_param("aid", "170001")
+            .query_param("cid", "9988");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {"subtitle": {"subtitles": []}}
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--credential-preflight")
+        .arg("fail")
+        .arg("plan")
+        .arg("https://space.bilibili.com/123/dynamic")
+        .arg("--select")
+        .arg("latest")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let json: Value = serde_json::from_slice(&output.stdout)?;
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert_eq!(json["entries"][0]["title"], "Space dynamic video");
+    assert!(!stderr.contains("credential preflight failed"));
+    assert!(!stderr.contains("authenticated WEB API requires cookie"));
+    Ok(())
+}
+
+#[test]
 fn plan_credential_preflight_fail_blocks_stale_intl_access_key() -> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;
     let credential_file = temp.path().join("credentials.json");
@@ -1883,6 +1947,59 @@ fn mock_following_collection(server: &MockServer) {
                 "title": "Following video",
                 "desc": "Following description",
                 "owner": {"mid": 1, "name": "Tester"},
+                "pages": [{"page": 1, "cid": 9988, "part": "Main", "duration": 3}]
+            }
+        }));
+    });
+}
+
+fn mock_space_dynamic_collection(server: &MockServer) {
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/polymer/web-dynamic/v1/feed/space")
+            .query_param("host_mid", "123")
+            .query_param("platform", "web");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "has_more": false,
+                "offset": "offset-1",
+                "items": [{
+                    "type": "DYNAMIC_TYPE_AV",
+                    "visible": true,
+                    "modules": {
+                        "module_author": {
+                            "mid": 123,
+                            "name": "Uploader",
+                            "pub_ts": 1_700_000_001_i64
+                        },
+                        "module_dynamic": {
+                            "major": {
+                                "type": "MAJOR_TYPE_ARCHIVE",
+                                "archive": {
+                                    "aid": "170001",
+                                    "bvid": "BV1xx411c7mD",
+                                    "cover": "https://example.invalid/space-dynamic.jpg"
+                                }
+                            }
+                        }
+                    }
+                }]
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/view")
+            .query_param("aid", "170001");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "aid": 170_001,
+                "bvid": "BV1xx411c7mD",
+                "title": "Space dynamic video",
+                "desc": "Space dynamic description",
+                "owner": {"mid": 123, "name": "Uploader"},
                 "pages": [{"page": 1, "cid": 9988, "part": "Main", "duration": 3}]
             }
         }));

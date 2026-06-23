@@ -283,14 +283,17 @@ optional, TV playurl requires `tv_access_key`, APP playurl accepts either generi
 `tv_access_key` and uses provider metadata as the tie-breaker when both are stored: main/BALH or
 unclassified generic keys are checked before TV keys, while `bili_intl_oauth2` keys yield to TV
 keys. Stale optional WEB playurl cookies are warnings rather than blockers so public anonymous
-requests can still proceed. Authenticated feed inputs such as history, watch-later, following, and
-space dynamic should add `CredentialPreflightRequirement::authenticated_web_api_cookie()` because
-they hit account-scoped WEB APIs before selecting media streams. Restricted-area proxy fallback
+requests can still proceed. Account-scoped feed inputs such as history, watch-later, and following
+should add `CredentialPreflightRequirement::authenticated_web_api_cookie()` because they hit
+authenticated WEB APIs before selecting media streams. Public space dynamic pages can run
+anonymously and should not add that required-cookie preflight. Restricted-area proxy fallback
 treats the generic `access_key` as optional: present keys are checked and may be forwarded by the
 resolver, but missing keys do not block proxy URLs that authenticate themselves or allow anonymous fallback.
-Intl/Bstar episode inputs require the generic `access_key` used by the official intl request path.
-Fixed-source inputs such as intl/Bstar and PUGV/cheese should not inherit a caller's global TV/APP
-playurl credential requirements, and sidecar-only modes should skip media-stream preflight.
+Intl/Bstar episode media paths require the generic `access_key` used by official intl metadata,
+playurl, and subtitle requests; cover-only or danmaku-only paths that do not call protected intl
+requests should skip that preflight. Fixed-source inputs such as intl/Bstar and PUGV/cheese should
+not inherit a caller's global TV/APP playurl credential requirements, and sidecar-only modes should
+skip media-stream preflight.
 The report is a pure value: it lists requirement statuses, warnings/blockers, and the selected
 profile's `AccessKeyRenewalDecision`, but it never mutates credential storage. When embedders accept
 short links, normalize them with

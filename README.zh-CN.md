@@ -220,11 +220,12 @@ token”和“本地已经按 provider 保存 refresh secret”。refresh secret
 保存在同一个私有 credential file 中，并在 status、debug 和 JSON 输出中脱敏。所选 provider
 状态为 `ready` 时，`auth renew-access-key` 可以非交互刷新通用 access key。`plan`、
 `playback` 和 `download` 也支持 `--credential-preflight warn|fail|renew`，方便调用方在 media
-request 前检查当前 profile，也会覆盖使用通用 `access_key` 的 intl/Bstar 输入；同样可以用
+request 前检查当前 profile，也会覆盖使用通用 `access_key` 的 intl/Bstar media path；同样可以用
 `BBDOWN_CREDENTIAL_PREFLIGHT`、`BBDOWN_CREDENTIAL_STALE_AFTER_SECONDS` 和
 `BBDOWN_CREDENTIAL_EXPIRING_WITHIN_SECONDS` 配置。WEB playurl cookie 是 optional，stale
-cookie metadata 只会 warning，不会阻断匿名公开视频；history、watch-later、following 和
-space dynamic 这类已认证 feed 输入会要求 WEB cookie。preflight 对 restricted-area proxy 只有在
+cookie metadata 只会 warning，不会阻断匿名公开视频；history、watch-later 和 following
+这类账号级 feed 输入会要求 WEB cookie。公开的 space dynamic 页面可以匿名访问，不会加入
+required-cookie preflight。preflight 对 restricted-area proxy 只有在
 已配置通用 `access_key` 时才检查该 token；缺失 proxy access key 不会阻断自带认证或允许匿名
 fallback 的 proxy URL。diagnostic 会写到 stderr，JSON stdout 仍保持为单个 plan 或 report
 payload；`download --progress-json` 会抑制 preflight 纯文本 diagnostic，但失败时最终 CLI error

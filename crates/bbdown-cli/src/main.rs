@@ -1600,7 +1600,7 @@ fn input_may_use_intl_access_key(input: &Input) -> bool {
 fn input_requires_web_cookie(input: &Input) -> bool {
     matches!(
         input,
-        Input::FollowingFeed | Input::SpaceDynamic(_) | Input::History | Input::WatchLater
+        Input::FollowingFeed | Input::History | Input::WatchLater
     )
 }
 
@@ -4777,11 +4777,11 @@ mod tests {
     }
 
     #[test]
-    fn web_cookie_input_classifier_matches_authenticated_feed_inputs() {
+    fn web_cookie_input_classifier_matches_account_scoped_feed_inputs() {
         assert!(input_requires_web_cookie(&Input::History));
         assert!(input_requires_web_cookie(&Input::WatchLater));
         assert!(input_requires_web_cookie(&Input::FollowingFeed));
-        assert!(input_requires_web_cookie(&Input::SpaceDynamic(123)));
+        assert!(!input_requires_web_cookie(&Input::SpaceDynamic(123)));
         assert!(!input_requires_web_cookie(&Input::RecommendationFeed));
         assert!(!input_requires_web_cookie(&Input::FavoriteList {
             media_id: Some(456),
