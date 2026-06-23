@@ -336,6 +336,11 @@ superseded_by:
     - Authenticated WEB feed `-101 not logged in` failures are now attributed to the WEB cookie path
       for history/watch-later/following inputs, so archive deferred or forced access-key retry does
       not refresh and persist a generic `access_key` when the selected profile's cookie was rejected.
+    - Generic API `-101` failures now require explicit access-key, access-token, or credential
+      wording before archive retry refreshes a generic `access_key`, so private favorite or other
+      optional-cookie WEB API login failures do not mutate stored tokens; restricted-area PgcProxy
+      `-101` remains refreshable because that resolver path is access-key-bearing even after
+      diagnostics redact token wording.
     - Crate-local README files now document the provider-aware APP credential order for embedders,
       matching the top-level and embedding docs.
   - Added mock e2e coverage for these review follow-ups:
@@ -345,6 +350,7 @@ superseded_by:
     - `cargo test -p bbdown-cli --test cli_e2e download_only_cover_checks_intl_access_key_credential_preflight --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_generic_key_for_authenticated_feed_cookie_failure --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_complete_deferred_refresh_for_authenticated_feed_cookie_failure --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_for_optional_web_api_login_failure --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e plan_selection_required_input_fails_before_credential_preflight_renewal --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_cancel_reports_duplicate_after_deferred_refresh --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_for_generic_api_bad_request --locked`.
