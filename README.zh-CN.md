@@ -90,9 +90,10 @@ BBDown-compatible TV HTTP playurl 端点解析。TV mode 使用 `auth login-tv` 
 access key，并可用 `--tv-api-base` / `BBDOWN_TV_API_BASE` 覆盖端点。
 设置 `--playurl-mode app` 或 `BBDOWN_PLAYURL_MODE=app` 后，普通视频和 PGC 分集会通过
 BBDown-compatible APP gRPC playurl 端点解析。APP mode 优先使用
-main/BALH 通用 `Credentials::access_key`，再回退到 `Credentials::tv_access_key`；如果当前
-profile 把通用 key 标记为 `bili_intl_oauth2`，APP mode 会优先使用 TV key，只有没有 TV key
-时才回退到该通用 key。mock 或代理端点可用 `--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` 和
+Bilibili main/BALH 通用 `Credentials::access_key`，再回退到 `Credentials::tv_access_key`；如果当前
+profile 把通用 key 标记为 `bili_intl_oauth2`，或者这个 profile 来自旧版扁平 credential file
+而没有 provider metadata，APP mode 会优先使用 TV key，只有没有 TV key 时才回退到该通用
+key。mock 或代理端点可用 `--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` 和
 `--app-pgc-grpc-base` / `BBDOWN_APP_PGC_GRPC_BASE` 覆盖；普通视频和 PGC APP 默认都使用
 `https://grpc.biliapi.net`。PGC APP gRPC
 响应如果带有区域限制或 preview-only 信号，仍会回退到已配置的 restricted-area HTTP playurl

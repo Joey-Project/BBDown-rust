@@ -336,7 +336,7 @@ fn app_playurl_selected_credential(
             .find(|kind| credential_present(status, *kind))
             .map(|kind| (kind, credential_status(status, kind)));
     }
-    if access_key_provider(status) == Some(AccessKeyProvider::BiliIntlOauth2)
+    if app_playurl_prefers_tv_access_key(access_key_provider(status))
         && credential_present(status, CredentialKind::TvAccessKey)
         && requirement
             .credential_kinds
@@ -351,6 +351,13 @@ fn app_playurl_selected_credential(
         CredentialKind::AccessKey,
         credential_status(status, CredentialKind::AccessKey),
     ))
+}
+
+fn app_playurl_prefers_tv_access_key(provider: Option<AccessKeyProvider>) -> bool {
+    match provider {
+        Some(AccessKeyProvider::BalhBiliplus | AccessKeyProvider::BilibiliMainOauth2) => false,
+        Some(AccessKeyProvider::BiliIntlOauth2) | None => true,
+    }
 }
 
 fn fallback_credential(
@@ -843,7 +850,7 @@ mod tests {
     }
 
     #[test]
-    fn app_requirement_checks_present_generic_access_key_before_fresh_tv_access_key()
+    fn app_requirement_checks_main_provider_access_key_before_fresh_tv_access_key()
     -> crate::Result<()> {
         let mut profiles = CredentialProfiles::default();
         profiles.set_profile(
@@ -851,6 +858,54 @@ mod tests {
             Credentials::default()
                 .with_tv_access_key("TV_ACCESS")
                 .with_access_key("ACCESS"),
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::TvAccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::TvQrLogin)
+                .with_acquired_at_unix_millis(10_000),
+        );
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_access_key_provider(AccessKeyProvider::BilibiliMainOauth2)
+                .with_checked_at_unix_millis(1),
+        );
+        profiles.set_profile_metadata("default", metadata)?;
+        let status = profiles.profile_lifecycle_status(
+            "default",
+            &CredentialLifecyclePolicy::at_unix_millis(10_000).with_stale_after_millis(Some(1_000)),
+        )?;
+
+        let report = CredentialPreflightReport::evaluate(
+            CredentialPreflightMode::Fail,
+            &status,
+            [CredentialPreflightRequirement::app_playurl_access_key()],
+        );
+
+        assert!(report.has_blocking_issues());
+        assert_eq!(
+            report.requirements[0].selected_kind,
+            Some(CredentialKind::AccessKey)
+        );
+        assert_eq!(
+            report.requirements[0].selected_status,
+            CredentialLifecycleStatus::Stale
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn app_requirement_prefers_tv_access_key_when_generic_key_has_no_provider() -> crate::Result<()>
+    {
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "default",
+            Credentials::default()
+                .with_tv_access_key("TV_ACCESS")
+                .with_access_key("LEGACY_ACCESS"),
         )?;
         let mut metadata = CredentialProfileMetadata::default();
         metadata.set_credential(
@@ -877,14 +932,14 @@ mod tests {
             [CredentialPreflightRequirement::app_playurl_access_key()],
         );
 
-        assert!(report.has_blocking_issues());
+        assert!(!report.has_blocking_issues());
         assert_eq!(
             report.requirements[0].selected_kind,
-            Some(CredentialKind::AccessKey)
+            Some(CredentialKind::TvAccessKey)
         );
         assert_eq!(
             report.requirements[0].selected_status,
-            CredentialLifecycleStatus::Stale
+            CredentialLifecycleStatus::Fresh
         );
         Ok(())
     }

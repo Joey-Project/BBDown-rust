@@ -98,10 +98,11 @@ TV mode 当前适用于普通视频和 PGC 分集。
 `ClientConfig::with_playurl_mode(PlayurlMode::App)`。普通视频 mock 或代理使用
 `EndpointConfig::with_app_grpc_base`，PGC mock 或代理使用
 `EndpointConfig::with_app_pgc_grpc_base`；普通视频和 PGC 默认都使用
-`https://grpc.biliapi.net`。APP mode 会优先使用 main/BALH 通用
+`https://grpc.biliapi.net`。APP mode 会优先使用 Bilibili main/BALH 通用
 `Credentials::access_key`，再回退到 `Credentials::tv_access_key`；如果 generic key 来自 intl OAuth，请通过
 `ClientConfig::with_access_key_provider(Some(AccessKeyProvider::BiliIntlOauth2))` 告诉 core，
-这样 APP mode 会优先使用 TV key，只有没有 TV key 时才回退到该通用 key。它会输出
+这样 APP mode 会优先使用 TV key，只有没有 TV key 时才回退到该通用 key。没有 provider
+metadata 的旧版 credential 也会为了兼容保留 APP TV-key-first 行为。它会输出
 `StreamSource::NormalApp` 或 `StreamSource::PgcApp`，并把 protobuf DASH/FLV 媒体规范化到与
 HTTP modes 相同的 `StreamSet` 和 `PlaybackPlan` 表面。PGC APP gRPC 失败如果带有可识别的
 restricted 或 preview-only 信号，仍会进入已配置的 restricted-area HTTP playurl proxy
@@ -262,8 +263,8 @@ embedding app 对不会使用 PGC proxy fallback 的输入跳过 restricted-area
 `access_key`，请使用 `CredentialPreflightReport::from_media_paths_context(...)`。这些形式都会对齐
 client 实际会发送的 credential：WEB playurl 的 cookie 是 optional；TV
 playurl 要求 `tv_access_key`；APP playurl 接受 `tv_access_key` 或通用 `access_key` 任一可用，
-并按 provider metadata 决定两者都存在时的顺序：main/BALH 或未分类 generic key 先于 TV key，
-`bili_intl_oauth2` key 会让位给 TV key。stale optional WEB playurl cookie 只会产生 warning，
+并按 provider metadata 决定两者都存在时的顺序：Bilibili main/BALH generic key 先于 TV key；
+`bili_intl_oauth2` key 和没有 provider metadata 的旧版 profile 会让位给 TV key。stale optional WEB playurl cookie 只会产生 warning，
 不会成为 blocker，因此公开视频可以继续以匿名路径运行。history、watch-later 和 following
 这类账号级 feed 输入会在选择 media stream 前访问已认证 WEB API，应额外加入
 `CredentialPreflightRequirement::authenticated_web_api_cookie()`；公开的 space dynamic 页面可以匿名访问，

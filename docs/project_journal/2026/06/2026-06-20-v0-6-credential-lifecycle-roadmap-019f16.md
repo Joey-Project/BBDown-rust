@@ -313,8 +313,8 @@ superseded_by:
     region/permission failures such as `area restricted` do not trigger forced access-key refresh or
     rewrite local credentials.
   - User-facing and architecture docs now describe APP-mode credential order as provider-aware:
-    main/BALH generic `access_key` values are checked before `tv_access_key`, while
-    `bili_intl_oauth2` generic keys yield to TV keys.
+    Bilibili main/BALH generic `access_key` values are checked before `tv_access_key`, while
+    `bili_intl_oauth2` generic keys and legacy profiles without provider metadata yield to TV keys.
   - If deferred credential refresh changes archive preflight into a duplicate conflict, explicit
     `--on-duplicate cancel` now re-enters the CLI cancel-report path instead of letting the library
     executor convert it into an error.

@@ -184,9 +184,10 @@ PGC episodes, uses the TV-specific access key saved by `auth login-tv`, and can 
 or proxy with `--tv-api-base` / `BBDOWN_TV_API_BASE`.
 Use `--playurl-mode app` or `BBDOWN_PLAYURL_MODE=app` when a downstream integration needs media
 request specs from BBDown-compatible APP gRPC playurl endpoints. APP mode applies to normal videos
-and PGC episodes. It uses a main/BALH generic access key before the saved TV access key; when the
-selected profile marks the generic key as `bili_intl_oauth2`, APP mode prefers the TV key and only
-falls back to that generic key when no TV key is available. It can be pointed at mocks or proxies
+and PGC episodes. It uses a Bilibili main/BALH generic access key before the saved TV access key;
+when the selected profile marks the generic key as `bili_intl_oauth2`, or when the profile has no
+provider metadata because it came from a legacy flat credential file, APP mode prefers the TV key
+and only falls back to that generic key when no TV key is available. It can be pointed at mocks or proxies
 with `--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` and `--app-pgc-grpc-base` /
 `BBDOWN_APP_PGC_GRPC_BASE`; the normal-video APP default uses `https://grpc.biliapi.net`, and the
 PGC APP default uses the same gRPC host. PGC APP gRPC
@@ -415,9 +416,9 @@ cookie metadata is warning-only. Account-scoped feed inputs such as history, wat
 following require a WEB cookie before the resolver hits their authenticated APIs. Public space
 dynamic pages can run anonymously and do not add the required-cookie preflight. TV
 playurl requires `tv_access_key`, APP playurl accepts either generic `access_key` or
-`tv_access_key`, and the selected profile's access-key provider decides the tie-breaker: main/BALH
-or unclassified generic keys are checked before TV keys, while `bili_intl_oauth2` keys yield to TV
-keys. Restricted-area proxy fallback checks generic `access_key` only when that key is configured for
+`tv_access_key`, and the selected profile's access-key provider decides the tie-breaker: Bilibili main/BALH
+generic keys are checked before TV keys, while `bili_intl_oauth2` keys and legacy profiles with no
+provider metadata yield to TV keys. Restricted-area proxy fallback checks generic `access_key` only when that key is configured for
 an input where proxy fallback may run. Missing generic keys do not block restricted-area proxy URLs
 that authenticate themselves or allow anonymous fallback. Intl/Bstar episode media paths require the
 generic `access_key` used by the official intl metadata, playurl, and subtitle requests; modes that

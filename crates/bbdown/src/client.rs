@@ -3078,10 +3078,11 @@ impl BiliClient {
             .tv_access_key
             .as_deref()
             .filter(|value| !value.is_empty());
-        if self.config.access_key_provider == Some(AccessKeyProvider::BiliIntlOauth2) {
-            tv_access_key.or(generic_access_key)
-        } else {
-            generic_access_key.or(tv_access_key)
+        match self.config.access_key_provider {
+            Some(AccessKeyProvider::BalhBiliplus | AccessKeyProvider::BilibiliMainOauth2) => {
+                generic_access_key.or(tv_access_key)
+            }
+            Some(AccessKeyProvider::BiliIntlOauth2) | None => tv_access_key.or(generic_access_key),
         }
     }
 
@@ -6972,6 +6973,19 @@ mod tests {
     }
 
     #[test]
+    fn app_playurl_access_key_uses_legacy_tv_key_before_unclassified_access_key() {
+        let client = BiliClient::new(
+            ClientConfig::default().with_credentials(
+                Credentials::default()
+                    .with_access_key("LEGACY_ACCESS")
+                    .with_tv_access_key("TV_ACCESS"),
+            ),
+        );
+
+        assert_eq!(client.app_playurl_access_key(), Some("TV_ACCESS"));
+    }
+
+    #[test]
     fn app_playurl_access_key_keeps_generic_key_before_main_provider_tv_key() {
         let client = BiliClient::new(
             ClientConfig::default()
@@ -6984,6 +6998,21 @@ mod tests {
         );
 
         assert_eq!(client.app_playurl_access_key(), Some("ACCESS_SECRET"));
+    }
+
+    #[test]
+    fn app_playurl_access_key_keeps_generic_key_before_bilibili_main_tv_key() {
+        let client = BiliClient::new(
+            ClientConfig::default()
+                .with_credentials(
+                    Credentials::default()
+                        .with_access_key("MAIN_ACCESS")
+                        .with_tv_access_key("TV_ACCESS"),
+                )
+                .with_access_key_provider(Some(AccessKeyProvider::BilibiliMainOauth2)),
+        );
+
+        assert_eq!(client.app_playurl_access_key(), Some("MAIN_ACCESS"));
     }
 
     #[tokio::test]
@@ -10071,7 +10100,7 @@ mod tests {
             when.method(POST)
                 .path(app_playurl::PGC_PLAYURL_PATH)
                 .header("content-type", "application/grpc")
-                .header("authorization", "identify_v1 ACCESS_SECRET")
+                .header("authorization", "identify_v1 TV_ACCESS")
                 .header_missing("cookie");
             then.status(200)
                 .header("grpc-status", "7")
@@ -10159,7 +10188,7 @@ mod tests {
             when.method(POST)
                 .path(app_playurl::PGC_PLAYURL_PATH)
                 .header("content-type", "application/grpc")
-                .header("authorization", "identify_v1 ACCESS_SECRET")
+                .header("authorization", "identify_v1 TV_ACCESS")
                 .header_missing("cookie");
             then.status(200).header("grpc-status", "7");
         });
@@ -10196,7 +10225,7 @@ mod tests {
             when.method(POST)
                 .path(app_playurl::PGC_PLAYURL_PATH)
                 .header("content-type", "application/grpc")
-                .header("authorization", "identify_v1 ACCESS_SECRET")
+                .header("authorization", "identify_v1 TV_ACCESS")
                 .header_missing("cookie");
             then.status(200).body(app_response.clone());
         });
@@ -10283,7 +10312,7 @@ mod tests {
             when.method(POST)
                 .path(app_playurl::PGC_PLAYURL_PATH)
                 .header("content-type", "application/grpc")
-                .header("authorization", "identify_v1 ACCESS_SECRET")
+                .header("authorization", "identify_v1 TV_ACCESS")
                 .header_missing("cookie");
             then.status(200).body(app_response.clone());
         });

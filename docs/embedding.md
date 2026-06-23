@@ -103,11 +103,13 @@ For BBDown-compatible APP gRPC playurl resolution, set
 `ClientConfig::with_playurl_mode(PlayurlMode::App)`. Configure
 `EndpointConfig::with_app_grpc_base` for normal-video mocks or proxies and
 `EndpointConfig::with_app_pgc_grpc_base` for PGC mocks or proxies. The normal-video default uses
-`https://grpc.biliapi.net`; the PGC default uses the same gRPC host. APP mode uses main/BALH
+`https://grpc.biliapi.net`; the PGC default uses the same gRPC host. APP mode uses Bilibili main/BALH
 generic `Credentials::access_key` values before `Credentials::tv_access_key`; pass
 `ClientConfig::with_access_key_provider(Some(AccessKeyProvider::BiliIntlOauth2))` when the generic
 key came from intl OAuth so APP mode can prefer the TV key and only fall back to that generic key
-when no TV key is available. It emits `StreamSource::NormalApp` or `StreamSource::PgcApp`, and
+when no TV key is available. Legacy credentials without provider metadata also keep the
+TV-key-first APP behavior for compatibility. It emits `StreamSource::NormalApp` or
+`StreamSource::PgcApp`, and
 normalizes protobuf DASH/FLV media into
 the same `StreamSet` and `PlaybackPlan` surfaces as the HTTP modes. PGC APP gRPC restricted or
 preview-only signals still enter the configured restricted-area HTTP playurl proxy fallback when
@@ -280,9 +282,9 @@ Use `CredentialPreflightReport::from_media_paths_context(...)` when the resolved
 WEB/TV/APP playurl path, such as intl/Bstar inputs that should check only the intl generic
 `access_key`. These forms mirror the credential the client would send: WEB playurl cookies are
 optional, TV playurl requires `tv_access_key`, APP playurl accepts either generic `access_key` or
-`tv_access_key` and uses provider metadata as the tie-breaker when both are stored: main/BALH or
-unclassified generic keys are checked before TV keys, while `bili_intl_oauth2` keys yield to TV
-keys. Stale optional WEB playurl cookies are warnings rather than blockers so public anonymous
+`tv_access_key` and uses provider metadata as the tie-breaker when both are stored: Bilibili
+main/BALH generic keys are checked before TV keys, while `bili_intl_oauth2` keys and legacy profiles
+with no provider metadata yield to TV keys. Stale optional WEB playurl cookies are warnings rather than blockers so public anonymous
 requests can still proceed. Account-scoped feed inputs such as history, watch-later, and following
 should add `CredentialPreflightRequirement::authenticated_web_api_cookie()` because they hit
 authenticated WEB APIs before selecting media streams. Public space dynamic pages can run
