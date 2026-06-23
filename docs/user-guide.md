@@ -409,6 +409,17 @@ did not pass `--force`, `--stdin`, or `--file`, the CLI first tries provider-spe
 refresh. With `--json`, successful automatic refresh emits `decision`, `refreshed`, and `saved`
 events without printing raw tokens. If refresh fails, the CLI emits `refresh_failed` and falls back
 to the normal authorization ticket so callers can prompt the user without losing the old credential.
+If another cooperating process updates the selected profile before the older refresh response is
+saved, the CLI emits `refresh_skipped` with `reason=profile_changed` and leaves the current store
+untouched.
+All credential import, access-key login, and access-key renewal writes are selected-profile updates:
+the CLI reloads the latest profile document under a cooperative credential-store lock, merges only
+the chosen profile, then writes the private file back. Other profiles, unrelated credential kinds,
+and provider refresh secrets that were updated by another cooperating process are preserved. Stale
+lock files left by an interrupted credential write are automatically reclaimed after a short
+recovery window. Each write checks that its lock token is still current before replacing the
+credential file, and lock release checks the same token before deletion, so a resumed stale writer
+cannot overwrite a newer store or remove a newer writer's lock after recovery.
 Use the global `--credential-preflight warn|fail|renew` option with `plan`, `playback`, or
 `download` when a media request should check the selected profile before resolving streams.
 Preflight derives the expected credential requirements from the selected request path: WEB playurl

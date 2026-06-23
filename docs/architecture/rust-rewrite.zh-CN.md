@@ -350,6 +350,15 @@ debug 输出都不会暴露原始凭据值。
 `load`/`save` 行为，命名选择则通过 profile document API 路由，并在写入时保留其它 profile。
 CLI 通过全局 `--credential-profile` flag 和 `BBDOWN_CREDENTIAL_PROFILE` 暴露该能力；
 `auth logout` 在旧的默认选择下清空整个 store，在显式选择命名 profile 时只移除该 profile。
+增量 credential 写入使用 `CredentialStore::update_profile`、`update_selected_profile` 或
+`update_profiles`，而不是修改一个可能过期的内存 `CredentialProfiles` 快照。这些 update helper
+会在 credential file 旁创建私有协作锁，在持锁期间重新读取最新 profile document，应用
+selected-profile mutation，然后继续通过现有 private-file 路径写回。`save_profiles` 仍保留给
+明确想整体替换 store 的调用方。被中断的写入留下的 stale lock file 会在一个较短恢复窗口后
+通过配套 reclaim guard 自动接管；stale reclaim guard 也可恢复。每次替换 credential file 前会
+用当前 lock token 做 fencing，释放 lock 时也只有文件内 token 仍属于当前 guard 才会删除。自动
+access-key refresh 在保存前还会在持锁期间验证当前所选 profile 的 access key、refresh token、
+refresh provider 和 keypair 是否仍匹配产生该 response 的请求；不匹配时不会写入较旧的刷新结果。
 profile document 可以包含按 profile 和 credential kind 索引的可选 lifecycle metadata。metadata
 会记录来源、获取/检查/过期时间戳，以及 `refresh_token_present` 布尔提示，但不会在 metadata
 map 中复制原始 token 值。normalize 时会丢弃空 metadata；当 profile 没有 credentials 时，

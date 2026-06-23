@@ -406,6 +406,19 @@ selection preserves legacy `load`/`save` behavior, while named selections route 
 document APIs and preserve other profiles during writes. The CLI exposes this through the global
 `--credential-profile` flag and `BBDOWN_CREDENTIAL_PROFILE`; `auth logout` clears the whole store for
 legacy default selection and removes only the named profile when one is explicitly selected.
+Incremental credential writes use `CredentialStore::update_profile`,
+`update_selected_profile`, or `update_profiles` rather than editing a stale in-memory
+`CredentialProfiles` snapshot. The update helpers create a private cooperative lock beside the
+credential file, reload the latest profile document while holding it, apply the selected-profile
+mutation, and then write back through the existing private-file path. Full-document
+`save_profiles` remains available for callers that intentionally replace the whole store. Stale
+lock files left by interrupted writers are reclaimed after a short recovery window under a companion
+reclaim guard; stale reclaim guards are recoverable too. Before any credential-file replacement,
+the writer fences on the current lock token, and lock release only removes the file when the stored
+token still belongs to the current guard. Automatic
+access-key refresh additionally verifies, while holding the update lock, that the selected profile's
+current access key, refresh token, refresh provider, and keypair still match the request that
+produced the response before it saves the refreshed credential.
 Profile documents can include optional lifecycle metadata keyed by profile and credential kind. The
 metadata records provenance, acquisition/check/expiry timestamps, and a boolean
 `refresh_token_present` hint without duplicating raw token values in the metadata map. Empty metadata

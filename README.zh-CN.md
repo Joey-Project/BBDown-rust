@@ -219,7 +219,15 @@ unknown、stale、expiring、expired 或 forced credential 会返回 BiliPlus/BA
 命令会报告 `automatic_refresh_readiness`，方便嵌入方区分“metadata 显示曾出现 refresh
 token”和“本地已经按 provider 保存 refresh secret”。refresh secret 会以明文 provider section
 保存在同一个私有 credential file 中，并在 status、debug 和 JSON 输出中脱敏。所选 provider
-状态为 `ready` 时，`auth renew-access-key` 可以非交互刷新通用 access key。`plan`、
+状态为 `ready` 时，`auth renew-access-key` 可以非交互刷新通用 access key。credential import、
+access-key login 和 renewal 只会保存当前选择的 profile，并会在协作 store lock 内重新读取最新
+profile document 后再 merge 新的 credential、lifecycle 和 provider-secret 字段。这样不会覆盖
+其它 profile，也能避免另一个 `bbdown` 进程刚刷新的 provider secret 被旧快照写回；被中断的
+credential 写入留下的 stale lock file 会在一个较短恢复窗口后自动接管。每次替换 credential
+file 前会校验自己的 lock token 仍然有效，释放 lock 前也会校验同一个 token，因此恢复后的旧
+writer 不会覆盖较新的 store，也不会删掉新 writer 的 lock。如果较慢的自动刷新 response
+已经不再是当前状态，JSON 输出会发出 `refresh_skipped`，并带上
+`reason=profile_changed`，同时保持当前 credential store 不变。`plan`、
 `playback` 和 `download` 也支持 `--credential-preflight warn|fail|renew`，方便调用方在 media
 request 前检查当前 profile，也会覆盖使用通用 `access_key` 的 intl/Bstar media path；同样可以用
 `BBDOWN_CREDENTIAL_PREFLIGHT`、`BBDOWN_CREDENTIAL_STALE_AFTER_SECONDS` 和

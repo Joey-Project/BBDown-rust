@@ -8412,10 +8412,21 @@ fn assert_auto_refresh_output_is_redacted(output_text: &str) {
 fn assert_auto_refresh_store(credential_file: &Path) -> anyhow::Result<()> {
     let store = CredentialStore::new(credential_file.to_path_buf());
     assert_eq!(
+        store.load()?.cookie.as_deref(),
+        Some("SESSDATA=COOKIE_SECRET")
+    );
+    assert_eq!(
         store.load_profile("intl")?.access_key.as_deref(),
         Some("AUTO_ACCESS_SECRET")
     );
     let profiles = store.load_profiles()?;
+    let default_metadata = profiles.profile_metadata("default")?;
+    assert_eq!(
+        default_metadata
+            .credential(CredentialKind::Cookie)
+            .and_then(|metadata| metadata.checked_at_unix_millis),
+        Some(9_000_000_000_000)
+    );
     let metadata = profiles.profile_metadata("intl")?;
     let access_key_metadata = metadata
         .credential(CredentialKind::AccessKey)

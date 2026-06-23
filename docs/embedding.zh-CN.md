@@ -201,6 +201,15 @@ profile API 读取时会表现为 `default` profile；保存命名 profile 时�
 versioned profile document，同时保留默认凭据。
 `CredentialProfileSelection` 和 selected-profile store helper 提供与 CLI 相同的默认
 profile / 命名 profile 路由语义，因此嵌入方可以绑定用户选择的账号，而不必重复实现迁移行为。
+做增量更新时，优先使用 `CredentialStore::update_profile`、
+`CredentialStore::update_selected_profile` 或 `CredentialStore::update_profiles`，不要先
+`load_profiles` 再把整个旧快照 `save_profiles` 回去。这些 helper 会获取每个 store 的协作锁，
+重新读取磁盘上的最新 profile document，只应用指定 mutation，然后写回私有文件，因此不会用
+旧快照覆盖其它 profile 或另一个 `bbdown` 进程刚更新的 provider refresh secret。被中断的
+credential 写入留下的 stale lock file 会在一个较短恢复窗口后自动接管。替换 credential file
+前会校验自己的 lock token 仍然有效，释放 lock 前也会校验同一个 token。CLI 的自动 access-key
+refresh 保存路径还会先验证当前所选 profile 是否仍匹配本次请求使用的旧 access key 和 refresh
+token；如果不匹配，就保持当前 store 不变。
 profile document 也可以通过 `CredentialProfileMetadata` 和 `CredentialLifecycleMetadata`
 携带可选 lifecycle metadata。该 metadata 会记录来源、检查时间/过期时间戳，以及是否曾有
 refresh token，但不会在 metadata map 中保存原始 refresh token 值。旧 flat store 仍保持原形

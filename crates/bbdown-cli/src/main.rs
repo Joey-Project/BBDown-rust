@@ -1159,12 +1159,6 @@ impl CredentialRuntime {
             .context("failed to load credentials")
     }
 
-    fn save(&self, credentials: &Credentials) -> anyhow::Result<()> {
-        self.store
-            .save_selected_profile(&self.selection, credentials)
-            .context("failed to save credentials")
-    }
-
     fn logout(&self) -> anyhow::Result<()> {
         match self.selection.profile_name() {
             Some(profile) => {
@@ -1812,10 +1806,19 @@ async fn try_access_key_auto_refresh_for_preflight(
     let client = BiliClient::new(client_runtime.client_config(Credentials::default()));
     match client.refresh_access_key(&refresh.request).await {
         Ok(refreshed) => {
-            let _summary =
+            let outcome =
                 save_refreshed_access_key_silent(credential_runtime, &refresh, &refreshed)?;
             if emit_diagnostics {
-                eprintln!("credential preflight: access_key refreshed");
+                match outcome.status {
+                    RefreshedAccessKeySaveStatus::Saved => {
+                        eprintln!("credential preflight: access_key refreshed");
+                    }
+                    RefreshedAccessKeySaveStatus::SkippedStaleRequest => {
+                        eprintln!(
+                            "credential preflight: access_key refresh skipped because the selected profile changed"
+                        );
+                    }
+                }
             }
             Ok(true)
         }
@@ -3262,17 +3265,27 @@ async fn handle_auth(
             handle_auth_health(&args, credential_runtime, client_runtime).await?;
         }
         AuthCommand::ImportCookie(args) => {
-            let mut stored = credential_runtime.load()?;
             let cookie = read_secret(args, "BBDOWN_COOKIE", "cookie")?;
-            stored.cookie = Some(cookie);
-            credential_runtime.save(&stored)?;
+            save_credentials(
+                credential_runtime,
+                Credentials {
+                    cookie: Some(cookie),
+                    access_key: None,
+                    tv_access_key: None,
+                },
+            )?;
             println!("cookie imported");
         }
         AuthCommand::ImportAccessKey(args) => {
-            let mut stored = credential_runtime.load()?;
             let access_key = read_secret(args, "BBDOWN_ACCESS_KEY", "access key")?;
-            stored.access_key = Some(access_key);
-            credential_runtime.save(&stored)?;
+            save_credentials(
+                credential_runtime,
+                Credentials {
+                    cookie: None,
+                    access_key: Some(access_key),
+                    tv_access_key: None,
+                },
+            )?;
             println!("access key imported");
         }
         AuthCommand::LoginWeb(args) => {
@@ -3905,50 +3918,129 @@ fn save_refreshed_access_key(
     refreshed: &AccessKeyLoginCredentials,
     json: bool,
 ) -> anyhow::Result<()> {
-    let summary = save_refreshed_access_key_silent(credential_runtime, refresh, refreshed)?;
+    let outcome = save_refreshed_access_key_silent(credential_runtime, refresh, refreshed)?;
     if json {
-        print_json_line(&serde_json::json!({
-            "event": "refreshed",
-            "kind": "access_key",
-            "refresh_provider": refresh.request.refresh_provider,
-            "refresh_keypair": refresh.request.refresh_keypair,
-        }))?;
-        print_json_line(&serde_json::json!({
-            "event": "saved",
-            "kind": "access_key",
-            "saved": summary,
-        }))
+        match outcome.status {
+            RefreshedAccessKeySaveStatus::Saved => {
+                print_json_line(&serde_json::json!({
+                    "event": "refreshed",
+                    "kind": "access_key",
+                    "refresh_provider": refresh.request.refresh_provider,
+                    "refresh_keypair": refresh.request.refresh_keypair,
+                }))?;
+                print_json_line(&serde_json::json!({
+                    "event": "saved",
+                    "kind": "access_key",
+                    "saved": outcome.summary,
+                }))
+            }
+            RefreshedAccessKeySaveStatus::SkippedStaleRequest => {
+                print_json_line(&serde_json::json!({
+                    "event": "refresh_skipped",
+                    "kind": "access_key",
+                    "reason": "profile_changed",
+                    "saved": outcome.summary,
+                }))
+            }
+        }
     } else {
-        print_human_line("access key refreshed")?;
-        print_human_line("access key saved")
+        match outcome.status {
+            RefreshedAccessKeySaveStatus::Saved => {
+                print_human_line("access key refreshed")?;
+                print_human_line("access key saved")
+            }
+            RefreshedAccessKeySaveStatus::SkippedStaleRequest => {
+                print_human_line("access key refresh skipped: selected profile already changed")
+            }
+        }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RefreshedAccessKeySaveStatus {
+    Saved,
+    SkippedStaleRequest,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RefreshedAccessKeySaveOutcome {
+    status: RefreshedAccessKeySaveStatus,
+    summary: bbdown_core::CredentialSource,
 }
 
 fn save_refreshed_access_key_silent(
     credential_runtime: &CredentialRuntime,
     refresh: &StoredAccessKeyRefreshRequest,
     refreshed: &AccessKeyLoginCredentials,
-) -> anyhow::Result<bbdown_core::CredentialSource> {
+) -> anyhow::Result<RefreshedAccessKeySaveOutcome> {
     let acquired_at_unix_millis = current_unix_millis();
     let refreshed_secret = refreshed_access_key_provider_secret(
         refresh.access_key_provider,
         &refresh.request,
         refreshed,
     );
-    save_credentials_with_lifecycle_and_secrets(
-        credential_runtime,
-        refreshed.credentials(),
-        [(
-            CredentialKind::AccessKey,
-            access_key_lifecycle_metadata_with_provider(
-                refreshed,
-                acquired_at_unix_millis,
-                refresh.access_key_provider,
-                refreshed_secret.1.has_refresh_token(),
-            ),
-        )],
-        [refreshed_secret],
-    )
+    let refreshed_credentials = refreshed.credentials();
+    let lifecycle_metadata = [(
+        CredentialKind::AccessKey,
+        access_key_lifecycle_metadata_with_provider(
+            refreshed,
+            acquired_at_unix_millis,
+            refresh.access_key_provider,
+            refreshed_secret.1.has_refresh_token(),
+        ),
+    )];
+    credential_runtime
+        .store
+        .update_profiles(|profiles| {
+            if !refresh_request_matches_profile(profiles, refresh)? {
+                let summary = profiles.profile(&refresh.profile)?.redacted_summary();
+                return Ok(RefreshedAccessKeySaveOutcome {
+                    status: RefreshedAccessKeySaveStatus::SkippedStaleRequest,
+                    summary,
+                });
+            }
+            let summary = merge_credentials_with_lifecycle_and_secrets(
+                profiles,
+                &refresh.profile,
+                refreshed_credentials,
+                lifecycle_metadata,
+                [refreshed_secret],
+            )?;
+            Ok(RefreshedAccessKeySaveOutcome {
+                status: RefreshedAccessKeySaveStatus::Saved,
+                summary,
+            })
+        })
+        .context("failed to save credentials")
+}
+
+fn refresh_request_matches_profile(
+    profiles: &CredentialProfiles,
+    refresh: &StoredAccessKeyRefreshRequest,
+) -> bbdown_core::Result<bool> {
+    let credentials = profiles.profile(&refresh.profile)?;
+    if trimmed_non_empty(credentials.access_key.as_deref())
+        != Some(refresh.request.access_key.as_str())
+    {
+        return Ok(false);
+    }
+    let secrets = profiles.profile_secrets(&refresh.profile)?;
+    let Some(secret) = secrets.access_key_provider(refresh.access_key_provider) else {
+        return Ok(false);
+    };
+    if trimmed_non_empty(secret.refresh_token.as_deref())
+        != Some(refresh.request.refresh_token.as_str())
+    {
+        return Ok(false);
+    }
+    if secret.refresh_provider != Some(refresh.request.refresh_provider) {
+        return Ok(false);
+    }
+    Ok(secret.refresh_keypair == refresh.request.refresh_keypair)
+}
+
+fn trimmed_non_empty(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
 }
 
 fn print_access_key_auto_refresh_failure(
@@ -4076,14 +4168,17 @@ fn access_key_automatic_refresh_readiness_label(
     }
 }
 
-#[cfg(test)]
 fn save_credentials(
     credential_runtime: &CredentialRuntime,
     credentials: Credentials,
 ) -> anyhow::Result<bbdown_core::CredentialSource> {
-    let mut stored = credential_runtime.load()?;
-    merge_credentials(&mut stored, credentials);
-    credential_runtime.save(&stored)?;
+    let stored = credential_runtime
+        .store
+        .update_selected_profile(&credential_runtime.selection, |mut stored| {
+            merge_credentials(&mut stored, credentials);
+            Ok(stored)
+        })
+        .context("failed to save credentials")?;
     Ok(stored.redacted_summary())
 }
 
@@ -4106,45 +4201,48 @@ fn save_credentials_with_lifecycle_and_secrets(
     lifecycle_metadata: impl IntoIterator<Item = (CredentialKind, CredentialLifecycleMetadata)>,
     access_key_secrets: impl IntoIterator<Item = (AccessKeyProvider, AccessKeyProviderSecret)>,
 ) -> anyhow::Result<bbdown_core::CredentialSource> {
-    let mut profiles = credential_runtime
+    let lifecycle_metadata = lifecycle_metadata.into_iter().collect::<Vec<_>>();
+    let access_key_secrets = access_key_secrets.into_iter().collect::<Vec<_>>();
+    credential_runtime
         .store
-        .load_profiles()
-        .context("failed to load credential profiles")?;
-    let profile_name = credential_runtime
-        .selection
-        .profile_name()
-        .map_or_else(|| profiles.default_profile.clone(), str::to_owned);
-    let mut stored = profiles
-        .profile(&profile_name)
-        .context("failed to load credential profile")?;
-    merge_credentials(&mut stored, credentials);
-    profiles
-        .set_profile(&profile_name, stored.clone())
-        .context("failed to update credential profile")?;
+        .update_profiles(|profiles| {
+            let profile_name = credential_runtime
+                .selection
+                .profile_name()
+                .map_or_else(|| profiles.default_profile.clone(), str::to_owned);
+            merge_credentials_with_lifecycle_and_secrets(
+                profiles,
+                &profile_name,
+                credentials,
+                lifecycle_metadata,
+                access_key_secrets,
+            )
+        })
+        .context("failed to save credentials")
+}
 
-    let mut profile_metadata = profiles
-        .profile_metadata(&profile_name)
-        .context("failed to load credential profile metadata")?;
+fn merge_credentials_with_lifecycle_and_secrets(
+    profiles: &mut CredentialProfiles,
+    profile_name: &str,
+    credentials: Credentials,
+    lifecycle_metadata: impl IntoIterator<Item = (CredentialKind, CredentialLifecycleMetadata)>,
+    access_key_secrets: impl IntoIterator<Item = (AccessKeyProvider, AccessKeyProviderSecret)>,
+) -> bbdown_core::Result<bbdown_core::CredentialSource> {
+    let mut stored = profiles.profile(profile_name)?;
+    merge_credentials(&mut stored, credentials);
+    profiles.set_profile(profile_name, stored.clone())?;
+
+    let mut profile_metadata = profiles.profile_metadata(profile_name)?;
     for (kind, metadata) in lifecycle_metadata {
         profile_metadata.set_credential(kind, metadata);
     }
-    profiles
-        .set_profile_metadata(&profile_name, profile_metadata)
-        .context("failed to update credential lifecycle metadata")?;
+    profiles.set_profile_metadata(profile_name, profile_metadata)?;
 
-    let mut profile_secrets = profiles
-        .profile_secrets(&profile_name)
-        .context("failed to load credential profile secrets")?;
+    let mut profile_secrets = profiles.profile_secrets(profile_name)?;
     for (provider, secret) in access_key_secrets {
         profile_secrets.set_access_key_provider(provider, secret);
     }
-    profiles
-        .set_profile_secrets(&profile_name, profile_secrets)
-        .context("failed to update credential provider secrets")?;
-    credential_runtime
-        .store
-        .save_profiles(&profiles)
-        .context("failed to save credentials")?;
+    profiles.set_profile_secrets(profile_name, profile_secrets)?;
     Ok(stored.redacted_summary())
 }
 
@@ -4224,6 +4322,7 @@ fn access_key_lifecycle_metadata_with_provider(
 
 #[derive(Clone, Debug)]
 struct StoredAccessKeyRefreshRequest {
+    profile: String,
     access_key_provider: AccessKeyProvider,
     request: AccessKeyRefreshRequest,
 }
@@ -4289,6 +4388,7 @@ fn access_key_refresh_request_from_profiles(
         request = request.with_refresh_keypair(refresh_keypair);
     }
     Ok(StoredAccessKeyRefreshRequest {
+        profile: profile_name.to_owned(),
         access_key_provider,
         request,
     })
@@ -4954,8 +5054,8 @@ mod tests {
         plan_failure_may_be_credential_related, qr_login_lifecycle_metadata, remaining_until,
         restricted_area_from_cli_with_args, restricted_area_from_cli_with_env_values,
         save_credentials, save_credentials_with_lifecycle,
-        save_credentials_with_lifecycle_and_secrets, should_prompt_duplicate_decision,
-        validate_media_host_spec, validate_single_download_args,
+        save_credentials_with_lifecycle_and_secrets, save_refreshed_access_key_silent,
+        should_prompt_duplicate_decision, validate_media_host_spec, validate_single_download_args,
     };
     use bbdown_core::{
         AccessKeyLoginConfig, AccessKeyLoginCredentials, AccessKeyProvider,
@@ -5186,6 +5286,145 @@ mod tests {
 
         assert_eq!(refresh.request.access_key, "ACCESS_SECRET");
         assert_eq!(refresh.request.refresh_token, "OLD_REFRESH_SECRET");
+        Ok(())
+    }
+
+    #[test]
+    fn stale_auto_refresh_save_does_not_overwrite_newer_profile_secret() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let store = CredentialStore::new(temp.path().join("credentials.json"));
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "intl",
+            Credentials::default().with_access_key("ACCESS_SECRET"),
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+                .with_acquired_at_unix_millis(1_000)
+                .with_expires_at_unix_millis(2_000)
+                .with_refresh_token_present(true),
+        );
+        profiles.set_profile_metadata("intl", metadata)?;
+        let mut secrets = CredentialProfileSecrets::default();
+        secrets.set_access_key_provider(
+            AccessKeyProvider::BalhBiliplus,
+            AccessKeyProviderSecret::default()
+                .with_refresh_token("OLD_REFRESH_SECRET")
+                .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+                .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+        );
+        profiles.set_profile_secrets("intl", secrets)?;
+        store.save_profiles(&profiles)?;
+        let refresh = access_key_refresh_request_from_profiles(&profiles, "intl")?;
+
+        let mut newer_profiles = store.load_profiles()?;
+        newer_profiles.set_profile(
+            "intl",
+            Credentials::default().with_access_key("NEWER_ACCESS_SECRET"),
+        )?;
+        let mut newer_metadata = CredentialProfileMetadata::default();
+        newer_metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+                .with_acquired_at_unix_millis(2_000)
+                .with_expires_at_unix_millis(3_000)
+                .with_refresh_token_present(true),
+        );
+        newer_profiles.set_profile_metadata("intl", newer_metadata)?;
+        let mut newer_secrets = CredentialProfileSecrets::default();
+        newer_secrets.set_access_key_provider(
+            AccessKeyProvider::BalhBiliplus,
+            AccessKeyProviderSecret::default()
+                .with_refresh_token("NEWER_REFRESH_SECRET")
+                .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+                .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+        );
+        newer_profiles.set_profile_secrets("intl", newer_secrets)?;
+        store.save_profiles(&newer_profiles)?;
+
+        let runtime =
+            CredentialRuntime::new(store.clone(), CredentialProfileSelection::named("intl")?);
+        let refreshed = AccessKeyLoginCredentials::from_balh_payload(
+            "access_key=LATE_ACCESS_SECRET&refresh_token=LATE_REFRESH_SECRET&expires_in=60",
+        )?;
+
+        let outcome = save_refreshed_access_key_silent(&runtime, &refresh, &refreshed)?;
+
+        assert_eq!(
+            outcome.status,
+            super::RefreshedAccessKeySaveStatus::SkippedStaleRequest
+        );
+        assert!(outcome.summary.has_access_key);
+        let saved = store.load_profiles()?;
+        assert_eq!(
+            saved.profile("intl")?.access_key.as_deref(),
+            Some("NEWER_ACCESS_SECRET")
+        );
+        let secret = saved
+            .profile_secrets("intl")?
+            .access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .ok_or_else(|| anyhow::anyhow!("missing provider secret"))?
+            .clone();
+        assert_eq!(
+            secret.refresh_token.as_deref(),
+            Some("NEWER_REFRESH_SECRET")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn stale_auto_refresh_skip_does_not_recreate_logged_out_store() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let store = CredentialStore::new(temp.path().join("credentials.json"));
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "intl",
+            Credentials::default().with_access_key("ACCESS_SECRET"),
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+                .with_acquired_at_unix_millis(1_000)
+                .with_expires_at_unix_millis(2_000)
+                .with_refresh_token_present(true),
+        );
+        profiles.set_profile_metadata("intl", metadata)?;
+        let mut secrets = CredentialProfileSecrets::default();
+        secrets.set_access_key_provider(
+            AccessKeyProvider::BalhBiliplus,
+            AccessKeyProviderSecret::default()
+                .with_refresh_token("OLD_REFRESH_SECRET")
+                .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+                .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+        );
+        profiles.set_profile_secrets("intl", secrets)?;
+        store.save_profiles(&profiles)?;
+        let refresh = access_key_refresh_request_from_profiles(&profiles, "intl")?;
+        store.clear()?;
+
+        let runtime =
+            CredentialRuntime::new(store.clone(), CredentialProfileSelection::named("intl")?);
+        let refreshed = AccessKeyLoginCredentials::from_balh_payload(
+            "access_key=LATE_ACCESS_SECRET&refresh_token=LATE_REFRESH_SECRET&expires_in=60",
+        )?;
+
+        let outcome = save_refreshed_access_key_silent(&runtime, &refresh, &refreshed)?;
+
+        assert_eq!(
+            outcome.status,
+            super::RefreshedAccessKeySaveStatus::SkippedStaleRequest
+        );
+        assert!(!outcome.summary.has_access_key);
+        assert!(!store.path().exists());
         Ok(())
     }
 
@@ -6171,6 +6410,16 @@ mod tests {
         assert!(summary.has_cookie);
         assert!(summary.has_access_key);
         assert!(summary.has_tv_access_key);
+        let raw: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(store.path())?)?;
+        assert!(raw.get("profiles").is_none());
+        assert_eq!(
+            raw.get("cookie").and_then(serde_json::Value::as_str),
+            Some("SESSDATA=fresh")
+        );
+        assert_eq!(
+            raw.get("tv_access_key").and_then(serde_json::Value::as_str),
+            Some("TV")
+        );
         Ok(())
     }
 
