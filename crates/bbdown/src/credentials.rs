@@ -11,6 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub const DEFAULT_CREDENTIAL_PROFILE: &str = "default";
 const CREDENTIAL_PROFILES_VERSION: u32 = 1;
 const CREDENTIAL_LOCK_STALE_AFTER_MILLIS: u64 = 30 * 60 * 1_000;
+const CREDENTIAL_LOCK_RELEASE_RETRY_MILLIS: u64 = 10;
 static CREDENTIAL_LOCK_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[non_exhaustive]
@@ -1443,18 +1444,17 @@ struct CredentialStoreUpdateLock {
 }
 
 impl CredentialStoreUpdateLock {
-    fn ensure_current(&self) -> Result<()> {
+    fn is_current(&self) -> Result<bool> {
         let raw = match fs::read_to_string(&self.path) {
             Ok(raw) => raw,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Err(Error::InvalidInput(format!(
-                    "credential store lock was reclaimed before write: {}",
-                    self.path.display()
-                )));
-            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
             Err(error) => return Err(Error::Io(error)),
         };
-        if parse_lock_token(&raw) == Some(self.token.as_str()) {
+        Ok(parse_lock_token(&raw) == Some(self.token.as_str()))
+    }
+
+    fn ensure_current(&self) -> Result<()> {
+        if self.is_current()? {
             Ok(())
         } else {
             Err(Error::InvalidInput(format!(
@@ -1467,19 +1467,31 @@ impl CredentialStoreUpdateLock {
 
 impl Drop for CredentialStoreUpdateLock {
     fn drop(&mut self) {
-        let _coordination_guard = if self.coordinate_release {
-            match acquire_lock_coordination_guard(&self.path) {
-                Ok(Some(guard)) => Some(guard),
-                _ => return,
+        loop {
+            let _coordination_guard = if self.coordinate_release {
+                match acquire_lock_coordination_guard(&self.path) {
+                    Ok(Some(guard)) => Some(guard),
+                    Ok(None) => match self.is_current() {
+                        Ok(true) => {
+                            std::thread::sleep(std::time::Duration::from_millis(
+                                CREDENTIAL_LOCK_RELEASE_RETRY_MILLIS,
+                            ));
+                            continue;
+                        }
+                        Ok(false) | Err(_) => return,
+                    },
+                    Err(_) => return,
+                }
+            } else {
+                None
+            };
+            let Ok(raw) = fs::read_to_string(&self.path) else {
+                return;
+            };
+            if parse_lock_token(&raw) == Some(self.token.as_str()) {
+                let _ = fs::remove_file(&self.path);
             }
-        } else {
-            None
-        };
-        let Ok(raw) = fs::read_to_string(&self.path) else {
             return;
-        };
-        if parse_lock_token(&raw) == Some(self.token.as_str()) {
-            let _ = fs::remove_file(&self.path);
         }
     }
 }
@@ -2565,6 +2577,38 @@ mod tests {
         };
 
         assert!(error.to_string().contains("credential store is locked"));
+        assert!(!lock_path.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn lock_release_waits_for_lock_coordination_guard() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        let lock_path = private_lock_path(&path);
+        let guard = store.acquire_update_lock()?;
+        let Some(coordination_guard) =
+            try_create_coordination_lock_file(&reclaim_lock_path(&lock_path))?
+        else {
+            anyhow::bail!("coordination guard should be acquired");
+        };
+
+        let lock_path_for_thread = lock_path.clone();
+        let release = std::thread::spawn(move || {
+            drop(guard);
+            lock_path_for_thread.exists()
+        });
+        std::thread::sleep(std::time::Duration::from_millis(
+            super::CREDENTIAL_LOCK_RELEASE_RETRY_MILLIS.saturating_mul(5),
+        ));
+        assert!(lock_path.exists());
+
+        drop(coordination_guard);
+        let Ok(lock_exists_after_release) = release.join() else {
+            anyhow::bail!("release thread should not panic");
+        };
+        assert!(!lock_exists_after_release);
         assert!(!lock_path.exists());
         Ok(())
     }
