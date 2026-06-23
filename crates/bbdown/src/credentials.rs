@@ -1739,10 +1739,68 @@ fn process_may_still_be_running(pid: u32) -> bool {
     if Path::new("/proc").exists() {
         return fs::metadata(format!("/proc/{pid}")).is_ok();
     }
-    true
+    process_exists_by_kill_probe(pid).unwrap_or(true)
 }
 
-#[cfg(not(unix))]
+#[cfg(unix)]
+fn process_exists_by_kill_probe(pid: u32) -> Option<bool> {
+    let output = std::process::Command::new("/bin/kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .env("LC_ALL", "C")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .or_else(|_| {
+            std::process::Command::new("kill")
+                .arg("-0")
+                .arg(pid.to_string())
+                .env("LC_ALL", "C")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::piped())
+                .output()
+        })
+        .ok()?;
+    if output.status.success() {
+        return Some(true);
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).to_ascii_lowercase();
+    if stderr.contains("no such process")
+        || stderr.contains("invalid process")
+        || stderr.contains("illegal process")
+    {
+        Some(false)
+    } else {
+        Some(true)
+    }
+}
+
+#[cfg(windows)]
+fn process_may_still_be_running(pid: u32) -> bool {
+    if pid == std::process::id() {
+        return true;
+    }
+    process_exists_by_tasklist(pid).unwrap_or(true)
+}
+
+#[cfg(windows)]
+fn process_exists_by_tasklist(pid: u32) -> Option<bool> {
+    let filter = format!("PID eq {pid}");
+    let output = std::process::Command::new("tasklist")
+        .args(["/FI", &filter, "/FO", "CSV", "/NH"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let needle = format!("\",\"{pid}\",");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Some(stdout.lines().any(|line| line.contains(&needle)))
+}
+
+#[cfg(not(any(unix, windows)))]
 fn process_may_still_be_running(_pid: u32) -> bool {
     true
 }
@@ -2336,6 +2394,43 @@ mod tests {
         std::fs::write(
             &lock_path,
             format!("created_at_unix_millis={stale_created_at}\n"),
+        )?;
+
+        store.update_profile("intl", |mut credentials| {
+            credentials.access_key = Some("ACCESS".to_owned());
+            Ok(credentials)
+        })?;
+
+        assert_eq!(
+            store.load_profile("intl")?.access_key.as_deref(),
+            Some("ACCESS")
+        );
+        assert!(!lock_path.exists());
+        Ok(())
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn process_liveness_reports_current_process() {
+        assert!(super::process_may_still_be_running(std::process::id()));
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn update_profiles_reclaims_stale_lock_with_dead_owner() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        let lock_path = private_lock_path(&path);
+        let stale_created_at = current_unix_millis()
+            .saturating_sub(CREDENTIAL_LOCK_STALE_AFTER_MILLIS)
+            .saturating_sub(1);
+        std::fs::write(
+            &lock_path,
+            format!(
+                "token=dead-owner\npid={}\ncreated_at_unix_millis={stale_created_at}\n",
+                u32::MAX
+            ),
         )?;
 
         store.update_profile("intl", |mut credentials| {

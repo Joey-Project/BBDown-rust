@@ -223,6 +223,9 @@ superseded_by:
     still-running or unverifiable processes in place, using an unsafe-free liveness check, so a live
     writer cannot be reclaimed while it is paused between the final token check and destructive
     replace/remove.
+  - Follow-up review found that a purely conservative liveness check made normal crashed-writer
+    locks unrecoverable on macOS and Windows; stale reclaim now uses safe `/proc`, Unix `kill -0`,
+    or Windows `tasklist` probes where available, while still treating unprobeable owners as live.
   - Offline review follow-up keeps default-profile incremental writes on legacy flat JSON stores in
     the flat credential shape, while named profile writes and existing profile documents still use
     the versioned profile document.
@@ -515,6 +518,7 @@ superseded_by:
   - `cargo test -p bbdown-core stale_lock_owner_resume_after_reclaim_does_not_write_stale_snapshot --locked`.
   - `cargo test -p bbdown-core write_credentials_fences_after_temp_file_write_before_replace --locked`.
   - `cargo test -p bbdown-core update_profiles_keeps_stale_lock_with_live_owner --locked`.
+  - `cargo test -p bbdown-core update_profiles_reclaims_stale_lock_with_dead_owner --locked`.
   - `cargo test -p bbdown-core update_profiles_waits_for_lock_coordination_guard --locked`.
   - `cargo test -p bbdown-cli stale_auto_refresh_save_skips_when_provider_metadata_changed --bin bbdown --locked`.
   - `cargo test -p bbdown-cli stale_auto_refresh_save_skips_when_default_profile_changed --bin bbdown --locked`.
