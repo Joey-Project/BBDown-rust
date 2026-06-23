@@ -1662,6 +1662,9 @@ fn remove_stale_lock_file(lock_path: &Path) -> Result<bool> {
     if current_unix_millis().saturating_sub(created_at) < CREDENTIAL_LOCK_STALE_AFTER_MILLIS {
         return Ok(false);
     }
+    if lock_owner_may_still_be_running(&raw) {
+        return Ok(false);
+    }
     let expected = LockFileIdentity::from_raw(&raw);
     remove_lock_file_if_matches(lock_path, &expected)
 }
@@ -1712,6 +1715,36 @@ fn parse_lock_token(raw: &str) -> Option<&str> {
     raw.lines()
         .find_map(|line| line.strip_prefix("token=").map(str::trim))
         .filter(|token| !token.is_empty())
+}
+
+fn lock_owner_may_still_be_running(raw: &str) -> bool {
+    parse_lock_owner_pid(raw).is_some_and(process_may_still_be_running)
+}
+
+fn parse_lock_owner_pid(raw: &str) -> Option<u32> {
+    raw.lines().find_map(|line| {
+        line.strip_prefix("pid=")?
+            .trim()
+            .parse::<u32>()
+            .ok()
+            .filter(|pid| *pid > 0)
+    })
+}
+
+#[cfg(unix)]
+fn process_may_still_be_running(pid: u32) -> bool {
+    if pid == std::process::id() {
+        return true;
+    }
+    if Path::new("/proc").exists() {
+        return fs::metadata(format!("/proc/{pid}")).is_ok();
+    }
+    true
+}
+
+#[cfg(not(unix))]
+fn process_may_still_be_running(_pid: u32) -> bool {
+    true
 }
 
 fn parse_lock_created_at_unix_millis(raw: &str) -> Option<u64> {
@@ -2302,7 +2335,7 @@ mod tests {
             .saturating_sub(1);
         std::fs::write(
             &lock_path,
-            format!("pid=1\ncreated_at_unix_millis={stale_created_at}\n"),
+            format!("created_at_unix_millis={stale_created_at}\n"),
         )?;
 
         store.update_profile("intl", |mut credentials| {
@@ -2319,6 +2352,33 @@ mod tests {
     }
 
     #[test]
+    fn update_profiles_keeps_stale_lock_with_live_owner() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        let lock_path = private_lock_path(&path);
+        let stale_created_at = current_unix_millis()
+            .saturating_sub(CREDENTIAL_LOCK_STALE_AFTER_MILLIS)
+            .saturating_sub(1);
+        let live_lock = format!(
+            "token=live-owner\npid={}\ncreated_at_unix_millis={stale_created_at}\n",
+            std::process::id()
+        );
+        std::fs::write(&lock_path, &live_lock)?;
+
+        let Err(error) = store.update_profile("intl", |mut credentials| {
+            credentials.access_key = Some("ACCESS".to_owned());
+            Ok(credentials)
+        }) else {
+            anyhow::bail!("live stale lock owner must not be reclaimed");
+        };
+
+        assert!(error.to_string().contains("credential store is locked"));
+        assert_eq!(std::fs::read_to_string(lock_path)?, live_lock);
+        Ok(())
+    }
+
+    #[test]
     fn stale_lock_reclaim_contention_preserves_existing_lock() -> anyhow::Result<()> {
         let temp = tempfile::tempdir()?;
         let path = temp.path().join("credentials.json");
@@ -2327,8 +2387,7 @@ mod tests {
         let stale_created_at = current_unix_millis()
             .saturating_sub(CREDENTIAL_LOCK_STALE_AFTER_MILLIS)
             .saturating_sub(1);
-        let stale_lock =
-            format!("token=stale-owner\npid=1\ncreated_at_unix_millis={stale_created_at}\n");
+        let stale_lock = format!("token=stale-owner\ncreated_at_unix_millis={stale_created_at}\n");
         std::fs::write(&lock_path, &stale_lock)?;
         std::fs::write(reclaim_lock_path(&lock_path), "another reclaim")?;
 
@@ -2375,11 +2434,11 @@ mod tests {
             .saturating_sub(1);
         std::fs::write(
             &lock_path,
-            format!("token=stale-owner\npid=1\ncreated_at_unix_millis={stale_created_at}\n"),
+            format!("token=stale-owner\ncreated_at_unix_millis={stale_created_at}\n"),
         )?;
         std::fs::write(
             reclaim_lock_path(&lock_path),
-            format!("token=stale-reclaim\npid=1\ncreated_at_unix_millis={stale_created_at}\n"),
+            format!("token=stale-reclaim\ncreated_at_unix_millis={stale_created_at}\n"),
         )?;
 
         store.update_profile("intl", |mut credentials| {
@@ -2430,7 +2489,7 @@ mod tests {
         let stale_token = "stale-owner";
         std::fs::write(
             &lock_path,
-            format!("token={stale_token}\npid=1\ncreated_at_unix_millis={stale_created_at}\n"),
+            format!("token={stale_token}\ncreated_at_unix_millis={stale_created_at}\n"),
         )?;
         let stale_guard = CredentialStoreUpdateLock {
             path: lock_path.clone(),
@@ -2479,7 +2538,7 @@ mod tests {
                 .saturating_sub(1);
             std::fs::write(
                 &lock_path,
-                format!("token={token}\npid=1\ncreated_at_unix_millis={stale_created_at}\n"),
+                format!("token={token}\ncreated_at_unix_millis={stale_created_at}\n"),
             )?;
 
             competing_store.update_profile("intl", |mut credentials| {

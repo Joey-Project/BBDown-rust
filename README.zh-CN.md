@@ -222,11 +222,12 @@ token”和“本地已经按 provider 保存 refresh secret”。refresh secret
 状态为 `ready` 时，`auth renew-access-key` 可以非交互刷新通用 access key。credential import、
 access-key login 和 renewal 只会保存当前选择的 profile，并会在协作 store lock 内重新读取最新
 profile document 后再 merge 新的 credential、lifecycle 和 provider-secret 字段。这样不会覆盖
-其它 profile，也能避免另一个 `bbdown` 进程刚刷新的 provider secret 被旧快照写回；被中断的
-credential 写入留下的 stale lock file 会在一个较短恢复窗口后自动接管。每次写入都会在临时文件
-写入完成后、真正替换 credential file 前，校验自己的 lock token 仍然有效；lock 获取和 stale
-reclaim 会用同一个 companion guard 串行化，释放 lock 前也会校验同一个 token，因此恢复后的旧
-writer 不会覆盖较新的 store，也不会删掉新 writer 的 lock。如果较慢的自动刷新 response
+其它 profile，也能避免另一个 `bbdown` 进程刚刷新的 provider secret 被旧快照写回。可以确认
+owner 进程已退出的 stale lock file，以及旧式没有 owner-pid metadata 的 lock，会在一个较短
+恢复窗口后自动接管；仍在运行或无法确认是否退出的 owner 不会被接管。每次写入都会在临时文件写入完成后、真正替换 credential
+file 前，校验自己的 lock token 仍然有效；lock 获取和 stale reclaim 会用同一个 companion guard
+串行化，释放 lock 前也会校验同一个 token，因此仍在运行的 writer 不会在被接管后覆盖较新的
+store，也不会删掉新 writer 的 lock。如果较慢的自动刷新 response
 已经不再匹配当前选择的 profile name，或不再匹配该 profile 的 credential / refresh-secret
 状态，JSON 输出会发出 `refresh_skipped`，并带上 `reason=profile_changed`，同时保持当前
 credential store 不变。`plan`、

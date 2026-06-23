@@ -220,11 +220,12 @@ For incremental updates, prefer `CredentialStore::update_profile`,
 `load_profiles` then `save_profiles` round trip. These helpers take a cooperative per-store lock,
 reload the latest on-disk profile document, apply only the requested mutation, and then write the
 private file back, so unrelated profiles and provider refresh secrets are not overwritten by a stale
-snapshot from another `bbdown` process. Stale lock files left by interrupted credential writes are
-reclaimed after a short recovery window. Lock acquisition and stale reclaim are serialized by the
-same companion guard. Writes check that their lock token is still current after the temporary file
-is written and immediately before replacing the credential file, and lock release checks the same
-token before deletion. The CLI's automatic access-key refresh path also validates
+snapshot from another `bbdown` process. Stale lock files whose owner process can be confirmed gone,
+plus older lock files without owner-pid metadata, are reclaimed after a short recovery window;
+still-running or unverifiable owners are not reclaimed. Lock acquisition and stale reclaim are
+serialized by the same companion guard. Writes check that their lock token is still current after the temporary file is written and
+immediately before replacing the credential file, and lock release checks the same token before
+deletion. The CLI's automatic access-key refresh path also validates
 that the current selected profile name still matches the request profile, and that the profile still
 matches the request's old access key, access-key provider metadata, refresh token, refresh provider,
 and keypair before saving a refresh response; if not, it leaves the current store untouched.

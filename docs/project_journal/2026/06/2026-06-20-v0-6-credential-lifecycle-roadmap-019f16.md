@@ -219,6 +219,10 @@ superseded_by:
   - Offline review follow-up moves the `#[cfg(not(unix))]` credential writer away from direct
     truncate-in-place writes and onto a `tempfile::NamedTempFile` replace path with the same
     post-temp-write lock fencing as Unix.
+  - Independent PR review follow-up changes stale-lock reclaim to leave lock files owned by
+    still-running or unverifiable processes in place, using an unsafe-free liveness check, so a live
+    writer cannot be reclaimed while it is paused between the final token check and destructive
+    replace/remove.
   - Offline review follow-up keeps default-profile incremental writes on legacy flat JSON stores in
     the flat credential shape, while named profile writes and existing profile documents still use
     the versioned profile document.
@@ -510,6 +514,7 @@ superseded_by:
   - `cargo test -p bbdown-core try_create_lock_file_cleans_up_after_metadata_write_error --locked`.
   - `cargo test -p bbdown-core stale_lock_owner_resume_after_reclaim_does_not_write_stale_snapshot --locked`.
   - `cargo test -p bbdown-core write_credentials_fences_after_temp_file_write_before_replace --locked`.
+  - `cargo test -p bbdown-core update_profiles_keeps_stale_lock_with_live_owner --locked`.
   - `cargo test -p bbdown-core update_profiles_waits_for_lock_coordination_guard --locked`.
   - `cargo test -p bbdown-cli stale_auto_refresh_save_skips_when_provider_metadata_changed --bin bbdown --locked`.
   - `cargo test -p bbdown-cli stale_auto_refresh_save_skips_when_default_profile_changed --bin bbdown --locked`.

@@ -205,10 +205,11 @@ profile / 命名 profile 路由语义，因此嵌入方可以绑定用户选择�
 `CredentialStore::update_selected_profile` 或 `CredentialStore::update_profiles`，不要先
 `load_profiles` 再把整个旧快照 `save_profiles` 回去。这些 helper 会获取每个 store 的协作锁，
 重新读取磁盘上的最新 profile document，只应用指定 mutation，然后写回私有文件，因此不会用
-旧快照覆盖其它 profile 或另一个 `bbdown` 进程刚更新的 provider refresh secret。被中断的
-credential 写入留下的 stale lock file 会在一个较短恢复窗口后自动接管。每次写入都会在临时文件
-写入完成后、真正替换 credential file 前，校验自己的 lock token 仍然有效；lock 获取和 stale
-reclaim 会用同一个 companion guard 串行化，释放 lock 前也会校验同一个 token。CLI 的自动
+旧快照覆盖其它 profile 或另一个 `bbdown` 进程刚更新的 provider refresh secret。可以确认 owner
+进程已退出的 stale lock file，以及旧式没有 owner-pid metadata 的 lock，会在一个较短恢复窗口后
+自动接管；仍在运行或无法确认是否退出的 owner 不会被接管。每次写入都会在临时文件写入完成后、真正替换 credential
+file 前，校验自己的 lock token 仍然有效；lock 获取和 stale reclaim 会用同一个 companion guard
+串行化，释放 lock 前也会校验同一个 token。CLI 的自动
 access-key refresh 保存路径还会先验证当前选择的 profile name 是否仍匹配本次请求的 profile，
 且该 profile 是否仍匹配本次请求使用的旧 access key、access-key provider metadata、refresh
 token、refresh provider 和 keypair；如果不匹配，就保持当前 store 不变。

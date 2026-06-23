@@ -354,11 +354,12 @@ CLI 通过全局 `--credential-profile` flag 和 `BBDOWN_CREDENTIAL_PROFILE` 暴
 `update_profiles`，而不是修改一个可能过期的内存 `CredentialProfiles` 快照。这些 update helper
 会在 credential file 旁创建私有协作锁，在持锁期间重新读取最新 profile document，应用
 selected-profile mutation，然后继续通过现有 private-file 路径写回。`save_profiles` 仍保留给
-明确想整体替换 store 的调用方。被中断的写入留下的 stale lock file 会在一个较短恢复窗口后
-通过配套 reclaim guard 自动接管；stale reclaim guard 也可恢复，普通 lock 获取也会经过同一个
-guard 串行化，因此 reclaim 不会删除刚创建的新 writer lock。每次写入都会在私有临时文件写入并
-sync 后、真正替换 credential file 前，用当前 lock token 做 fencing；释放 lock 时也只有文件内
-token 仍属于当前 guard 才会删除。自动 access-key refresh 在保存前还会在持锁期间验证当前选择
+明确想整体替换 store 的调用方。可以确认 owner 进程已退出的 stale lock file，以及旧式没有
+owner-pid metadata 的 lock，会在一个较短恢复窗口后通过配套 reclaim guard 自动接管；stale
+reclaim guard 也可恢复，普通 lock 获取也会经过同一个 guard 串行化，因此 reclaim 不会删除刚
+创建的新 writer lock。仍在运行或无法确认是否退出的 owner 不会被接管。每次写入都会在私有临时文件写入并 sync 后、真正替换
+credential file 前，用当前 lock token 做 fencing；释放 lock 时也只有文件内 token 仍属于当前
+guard 才会删除。自动 access-key refresh 在保存前还会在持锁期间验证当前选择
 的 profile name 是否仍匹配本次请求的 profile，以及当前所选 profile 的 access key、access-key
 provider metadata、refresh token、refresh provider 和 keypair 是否仍匹配产生该 response 的请求；
 不匹配时不会写入较旧的刷新结果。

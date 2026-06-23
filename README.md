@@ -236,12 +236,14 @@ status, debug, and JSON output. When the selected provider is `ready`, `auth ren
 can refresh the generic access key non-interactively. Credential imports, access-key login, and
 renewal save only the selected profile, reloading the latest profile document under a cooperative
 store lock before merging new credential, lifecycle, and provider-secret fields. This avoids
-overwriting other profiles or concurrently refreshed provider secrets from another `bbdown` process;
-stale lock files left by interrupted credential writes are reclaimed after a short recovery window.
-Lock acquisition and stale reclaim are serialized by the same companion guard. Each write checks
-that its lock token is still current after the temporary file is written and immediately before
-replacing the credential file, and lock release checks the same token before deletion, so a resumed
-stale writer cannot overwrite a newer store or remove a newer writer's lock after recovery.
+overwriting other profiles or concurrently refreshed provider secrets from another `bbdown` process.
+Stale lock files whose owner process can be confirmed gone, plus older lock files without owner-pid
+metadata, are reclaimed after a short recovery window; still-running or unverifiable owners are not
+reclaimed. Lock acquisition
+and stale reclaim are serialized by the same companion guard. Each write checks that its lock token
+is still current after the temporary file is written and immediately before replacing the credential
+file, and lock release checks the same token before deletion, so a live writer cannot overwrite a
+newer store after being reclaimed or remove a newer writer's lock after recovery.
 If a slower automatic refresh response no longer matches the current selected profile name or that
 profile's credential/refresh-secret state, JSON output emits `refresh_skipped` with
 `reason=profile_changed` and leaves the current credential store untouched.
