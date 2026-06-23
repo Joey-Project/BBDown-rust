@@ -404,7 +404,7 @@ fn plan_credential_preflight_warn_keeps_json_stdout_clean() -> anyhow::Result<()
 }
 
 #[test]
-fn plan_credential_preflight_fail_blocks_stale_optional_web_cookie() -> anyhow::Result<()> {
+fn plan_credential_preflight_fail_warns_on_stale_optional_web_cookie() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;
     let credential_file = temp.path().join("credentials.json");
@@ -438,6 +438,34 @@ fn plan_credential_preflight_fail_blocks_stale_optional_web_cookie() -> anyhow::
         .arg("av170001")
         .arg("--json")
         .assert()
+        .success()
+        .get_output()
+        .clone();
+    let stdout_json: Value = serde_json::from_slice(&output.stdout)?;
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert_eq!(stdout_json["title"], "Mock video");
+    assert!(stderr.contains("credential preflight warning"));
+    assert!(stderr.contains("cookie for WEB playurl has stale lifecycle metadata"));
+    Ok(())
+}
+
+#[test]
+fn plan_credential_preflight_fail_blocks_missing_cookie_for_history() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-preflight")
+        .arg("fail")
+        .arg("plan")
+        .arg("history")
+        .arg("--select")
+        .arg("latest")
+        .arg("--json")
+        .assert()
         .failure()
         .get_output()
         .clone();
@@ -445,7 +473,7 @@ fn plan_credential_preflight_fail_blocks_stale_optional_web_cookie() -> anyhow::
 
     assert!(output.stdout.is_empty());
     assert!(stderr.contains("credential preflight failed"));
-    assert!(stderr.contains("cookie for WEB playurl has stale lifecycle metadata"));
+    assert!(stderr.contains("authenticated WEB API requires cookie"));
     Ok(())
 }
 

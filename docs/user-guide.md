@@ -410,22 +410,23 @@ to the normal authorization ticket so callers can prompt the user without losing
 Use the global `--credential-preflight warn|fail|renew` option with `plan`, `playback`, or
 `download` when a media request should check the selected profile before resolving streams.
 Preflight derives the expected credential requirements from the selected request path: WEB playurl
-treats cookies as optional so anonymous public videos still work, TV playurl requires
-`tv_access_key`, APP playurl accepts either generic `access_key` or `tv_access_key`, and the
-selected profile's access-key provider decides the tie-breaker: main/BALH or unclassified generic
-keys are checked before TV keys, while `bili_intl_oauth2` keys yield to TV keys. Restricted-area
-proxy fallback checks generic `access_key` only when that key is configured for an input where proxy
-fallback may run. Missing generic keys do not block restricted-area proxy URLs that authenticate
-themselves or allow anonymous
-fallback. Intl/Bstar episode inputs require the generic `access_key` used by the official intl
-metadata, playurl, and subtitle requests. Short links are resolved to their final supported input
-kind before this decision. Fixed-source inputs such as intl/Bstar and PUGV/cheese do not inherit the
-global TV/APP playurl credential requirements. `download --only subtitle|danmaku|cover` skips
-TV/APP/restricted-proxy stream preflight because those modes do not resolve media streams. `warn`
-writes diagnostics to stderr and continues, `fail` aborts before network stream
-resolution when a required credential is missing or a relevant credential has non-fresh lifecycle
-metadata, and `renew` first tries provider-specific generic access-key refresh when the selected
-profile is refresh-ready. Preflight never writes to stdout, so `--json` output remains a single JSON
+treats cookies as optional so anonymous public videos still work, and stale optional WEB playurl
+cookie metadata is warning-only. Authenticated feed inputs such as history, watch-later, following,
+and space dynamic require a WEB cookie before the resolver hits their account-scoped APIs. TV
+playurl requires `tv_access_key`, APP playurl accepts either generic `access_key` or
+`tv_access_key`, and the selected profile's access-key provider decides the tie-breaker: main/BALH
+or unclassified generic keys are checked before TV keys, while `bili_intl_oauth2` keys yield to TV
+keys. Restricted-area proxy fallback checks generic `access_key` only when that key is configured for
+an input where proxy fallback may run. Missing generic keys do not block restricted-area proxy URLs
+that authenticate themselves or allow anonymous fallback. Intl/Bstar episode inputs require the
+generic `access_key` used by the official intl metadata, playurl, and subtitle requests. Short links
+are resolved to their final supported input kind before this decision. Fixed-source inputs such as
+intl/Bstar and PUGV/cheese do not inherit the global TV/APP playurl credential requirements.
+`download --only subtitle|danmaku|cover` skips TV/APP/restricted-proxy stream preflight because
+those modes do not resolve media streams. `warn` writes diagnostics to stderr and continues, `fail`
+aborts before network stream resolution when a required credential is missing or has non-fresh
+lifecycle metadata, and `renew` first tries provider-specific generic access-key refresh when the
+selected profile is refresh-ready. Preflight never writes to stdout, so `--json` output remains a single JSON
 plan, playback plan, or download report. `download --progress-json` suppresses plaintext preflight
 diagnostics, but the final CLI error line may still be written to stderr on failure; wrappers should
 parse only JSON object lines. For archive downloads, `renew` defers automatic access-key refresh
@@ -434,7 +435,9 @@ without calling refresh endpoints or rewriting stored credentials. If initial ar
 with an auth-like credential error, the CLI refreshes a ready generic access key and retries planning
 once before reporting the failure, including cases where local lifecycle metadata had still
 considered the key fresh. Tune the local lifecycle policy with global `--credential-stale-after-seconds` and
-`--credential-expiring-within-seconds`.
+`--credential-expiring-within-seconds`, or the equivalent `BBDOWN_CREDENTIAL_PREFLIGHT`,
+`BBDOWN_CREDENTIAL_STALE_AFTER_SECONDS`, and `BBDOWN_CREDENTIAL_EXPIRING_WITHIN_SECONDS`
+environment variables.
 `auth login-web` prints a QR login URL, polls until scan confirmation, and saves the resulting
 cookie. `auth login-tv` uses the TV QR flow and saves a TV-specific access key for future TV/app
 flows without overwriting the generic intl/Bstar access key imported or acquired through the generic

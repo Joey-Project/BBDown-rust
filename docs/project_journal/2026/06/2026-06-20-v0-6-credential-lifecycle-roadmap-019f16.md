@@ -174,6 +174,10 @@ superseded_by:
     including when local lifecycle metadata had still considered the key fresh.
   - Sidecar-only cover/danmaku downloads skip playurl credential preflight so stale WEB cookie
     metadata does not block operations that do not fetch playurl streams.
+  - Authenticated feed inputs such as history, watch-later, following, and space dynamic now add a
+    required WEB cookie preflight requirement before hitting account-scoped WEB APIs.
+  - Stale optional WEB playurl cookie metadata is warning-only rather than blocking in `fail`, so
+    public anonymous WEB playurl requests can continue when a stored cookie is non-fresh.
   - `renew` attempts provider-specific generic access-key refresh for refresh-ready selected
     profiles, saves the refreshed credential non-interactively, reloads credentials, and then
     continues with media resolution.

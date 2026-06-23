@@ -365,10 +365,11 @@ token。如果 refresh 失败，CLI 会输出 `refresh_failed`，然后回退到
 这样调用方可以提示用户重新授权而不会丢掉旧 credential。`plan`、`playback` 或 `download`
 可以配合全局 `--credential-preflight warn|fail|renew`，在解析 media stream 前检查当前选择的
 profile。preflight 会按 request path 推导所需 credential：WEB playurl 把 cookie 视为
-optional，所以匿名公开视频仍可工作；TV playurl 要求 `tv_access_key`；APP playurl 接受
-通用 `access_key` 或 `tv_access_key` 任一可用，并按当前 profile 的 access-key provider
-决定两者都存在时的顺序：main/BALH 或未分类 generic key 先于 TV key 检查；`bili_intl_oauth2`
-key 会让位给 TV key。
+optional，所以匿名公开视频仍可工作；stale optional WEB playurl cookie metadata 只会 warning，
+不会阻断。history、watch-later、following 和 space dynamic 这类已认证 feed 输入会在 resolver
+访问账号级 API 之前要求 WEB cookie。TV playurl 要求 `tv_access_key`；APP playurl 接受通用
+`access_key` 或 `tv_access_key` 任一可用，并按当前 profile 的 access-key provider 决定两者
+都存在时的顺序：main/BALH 或未分类 generic key 先于 TV key 检查；`bili_intl_oauth2` key 会让位给 TV key。
 restricted-area proxy fallback 只会在当前输入可能触发 fallback 且已配置通用 `access_key` 时检查
 该 token；缺失通用 key 不会阻断自带认证或允许匿名 fallback 的 restricted-area proxy URL。
 intl/Bstar episode 输入会要求官方 intl metadata、playurl 和 subtitle 请求实际使用的通用
@@ -385,8 +386,9 @@ credential lifecycle metadata 不是 fresh 时，在网络 stream resolution 前
 会停止且不会调用 refresh endpoint 或重写已保存 credential。如果初次 archive planning 因类似
 auth 的 credential 错误失败，即使本地 lifecycle metadata 仍认为该 key fresh，CLI 也会刷新
 ready 的通用 access key 并重试一次 planning，然后才报告失败。可通过全局
-`--credential-stale-after-seconds` 和
-`--credential-expiring-within-seconds` 调整本地 lifecycle policy。
+`--credential-stale-after-seconds` 和 `--credential-expiring-within-seconds`，或等价的
+`BBDOWN_CREDENTIAL_PREFLIGHT`、`BBDOWN_CREDENTIAL_STALE_AFTER_SECONDS` 和
+`BBDOWN_CREDENTIAL_EXPIRING_WITHIN_SECONDS` 环境变量调整本地 lifecycle policy。
 `auth login-web` 打印二维码登录 URL，轮询到扫码确认，并保存得到的
 cookie。`auth login-tv` 使用 TV 二维码流程，保存 TV 专用 access key 供未来 TV/app 流程使
 用，不会覆盖由通用 access-key 命令导入或获取的 intl/Bstar access key。使用 `--json` 时，

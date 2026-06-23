@@ -263,8 +263,11 @@ embedding app 对不会使用 PGC proxy fallback 的输入跳过 restricted-area
 client 实际会发送的 credential：WEB playurl 的 cookie 是 optional；TV
 playurl 要求 `tv_access_key`；APP playurl 接受 `tv_access_key` 或通用 `access_key` 任一可用，
 并按 provider metadata 决定两者都存在时的顺序：main/BALH 或未分类 generic key 先于 TV key，
-`bili_intl_oauth2` key 会让位给 TV key。restricted-area proxy fallback 会把通用
-`access_key` 视为 optional：已存在的 key 会被检查并可能由 resolver 转发，缺失 key 不会阻断
+`bili_intl_oauth2` key 会让位给 TV key。stale optional WEB playurl cookie 只会产生 warning，
+不会成为 blocker，因此公开视频可以继续以匿名路径运行。history、watch-later、following 和
+space dynamic 这类已认证 feed 输入会在选择 media stream 前访问账号级 WEB API，应额外加入
+`CredentialPreflightRequirement::authenticated_web_api_cookie()`。restricted-area proxy fallback
+会把通用 `access_key` 视为 optional：已存在的 key 会被检查并可能由 resolver 转发，缺失 key 不会阻断
 自带认证或允许匿名 fallback 的 proxy URL。intl/Bstar episode 输入会要求官方 intl request path
 实际使用的通用 `access_key`。intl/Bstar 和 PUGV/cheese 这类固定来源输入不应继承调用方的全局
 TV/APP playurl credential requirement，sidecar-only mode 也应跳过 media-stream preflight。

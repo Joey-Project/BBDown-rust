@@ -22,6 +22,7 @@ pub enum CredentialPreflightMode {
 #[serde(rename_all = "snake_case")]
 pub enum CredentialPreflightRequestPath {
     WebPlayurl,
+    AuthenticatedWebApi,
     TvPlayurl,
     AppPlayurl,
     IntlWeb,
@@ -56,6 +57,15 @@ impl CredentialPreflightRequirement {
             CredentialPreflightRequestPath::WebPlayurl,
             [CredentialKind::Cookie],
             false,
+        )
+    }
+
+    #[must_use]
+    pub fn authenticated_web_api_cookie() -> Self {
+        Self::new(
+            CredentialPreflightRequestPath::AuthenticatedWebApi,
+            [CredentialKind::Cookie],
+            true,
         )
     }
 
@@ -287,7 +297,8 @@ fn evaluate_requirement(
         |(kind, status)| (Some(kind), status),
     );
     let satisfied = selected_status == CredentialLifecycleStatus::Fresh
-        || (!requirement.required && selected_status == CredentialLifecycleStatus::Missing);
+        || (!requirement.required && selected_status == CredentialLifecycleStatus::Missing)
+        || optional_web_playurl_cookie_status(requirement, selected_status);
     CredentialPreflightRequirementStatus {
         request_path: requirement.request_path,
         credential_kinds: requirement.credential_kinds.clone(),
@@ -398,7 +409,9 @@ fn preflight_issue(
     {
         return None;
     }
+    let optional_web_cookie = optional_web_playurl_cookie_requirement_status(status);
     let blocking = mode == CredentialPreflightMode::Fail
+        && !optional_web_cookie
         && (status.required || status.selected_status != CredentialLifecycleStatus::Missing);
     Some(CredentialPreflightIssue {
         request_path: status.request_path,
@@ -434,6 +447,25 @@ fn credential_preflight_issue_message(status: &CredentialPreflightRequirementSta
     }
 }
 
+fn optional_web_playurl_cookie_status(
+    requirement: &CredentialPreflightRequirement,
+    selected_status: CredentialLifecycleStatus,
+) -> bool {
+    !requirement.required
+        && requirement.request_path == CredentialPreflightRequestPath::WebPlayurl
+        && requirement.credential_kinds == [CredentialKind::Cookie]
+        && selected_status != CredentialLifecycleStatus::Missing
+}
+
+fn optional_web_playurl_cookie_requirement_status(
+    status: &CredentialPreflightRequirementStatus,
+) -> bool {
+    !status.required
+        && status.request_path == CredentialPreflightRequestPath::WebPlayurl
+        && status.credential_kinds == [CredentialKind::Cookie]
+        && status.selected_status != CredentialLifecycleStatus::Missing
+}
+
 fn credential_requirement_label(status: &CredentialPreflightRequirementStatus) -> String {
     if let Some(kind) = status.selected_kind {
         return credential_kind_label(kind).to_owned();
@@ -450,6 +482,7 @@ fn credential_requirement_label(status: &CredentialPreflightRequirementStatus) -
 fn credential_request_path_label(path: CredentialPreflightRequestPath) -> &'static str {
     match path {
         CredentialPreflightRequestPath::WebPlayurl => "WEB playurl",
+        CredentialPreflightRequestPath::AuthenticatedWebApi => "authenticated WEB API",
         CredentialPreflightRequestPath::TvPlayurl => "TV playurl",
         CredentialPreflightRequestPath::AppPlayurl => "APP playurl",
         CredentialPreflightRequestPath::IntlWeb => "intl playurl",
@@ -622,7 +655,7 @@ mod tests {
     }
 
     #[test]
-    fn fail_mode_blocks_non_fresh_optional_web_cookie() -> crate::Result<()> {
+    fn fail_mode_warns_about_non_fresh_optional_web_cookie_without_blocking() -> crate::Result<()> {
         let mut profiles = CredentialProfiles::default();
         profiles.set_profile(
             "default",
@@ -645,6 +678,71 @@ mod tests {
             CredentialPreflightMode::Fail,
             &status,
             [CredentialPreflightRequirement::web_playurl_cookie_optional()],
+        );
+
+        assert!(!report.has_blocking_issues());
+        assert!(report.requirements[0].satisfied);
+        assert_eq!(report.issues[0].status, CredentialLifecycleStatus::Stale);
+        assert!(!report.issues[0].blocking);
+        Ok(())
+    }
+
+    #[test]
+    fn fail_mode_blocks_missing_authenticated_web_api_cookie() -> crate::Result<()> {
+        let status = CredentialProfiles::default().profile_lifecycle_status(
+            "default",
+            &CredentialLifecyclePolicy::at_unix_millis(1_000),
+        )?;
+
+        let report = CredentialPreflightReport::evaluate(
+            CredentialPreflightMode::Fail,
+            &status,
+            [CredentialPreflightRequirement::authenticated_web_api_cookie()],
+        );
+
+        assert!(report.has_blocking_issues());
+        assert_eq!(
+            report.requirements[0].request_path,
+            CredentialPreflightRequestPath::AuthenticatedWebApi
+        );
+        assert_eq!(
+            report.requirements[0].selected_status,
+            CredentialLifecycleStatus::Missing
+        );
+        assert!(!report.requirements[0].satisfied);
+        assert_eq!(report.issues[0].selected_kind, None);
+        assert!(report.issues[0].blocking);
+        assert_eq!(
+            report.issues[0].message,
+            "authenticated WEB API requires cookie"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn fail_mode_blocks_non_fresh_authenticated_web_api_cookie() -> crate::Result<()> {
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "default",
+            Credentials::default().with_cookie("SESSDATA=COOKIE"),
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::Cookie,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::WebQrLogin)
+                .with_checked_at_unix_millis(1),
+        );
+        profiles.set_profile_metadata("default", metadata)?;
+        let status = profiles.profile_lifecycle_status(
+            "default",
+            &CredentialLifecyclePolicy::at_unix_millis(10_000).with_stale_after_millis(Some(1_000)),
+        )?;
+
+        let report = CredentialPreflightReport::evaluate(
+            CredentialPreflightMode::Fail,
+            &status,
+            [CredentialPreflightRequirement::authenticated_web_api_cookie()],
         );
 
         assert!(report.has_blocking_issues());

@@ -282,9 +282,12 @@ WEB/TV/APP playurl path, such as intl/Bstar inputs that should check only the in
 optional, TV playurl requires `tv_access_key`, APP playurl accepts either generic `access_key` or
 `tv_access_key` and uses provider metadata as the tie-breaker when both are stored: main/BALH or
 unclassified generic keys are checked before TV keys, while `bili_intl_oauth2` keys yield to TV
-keys. Restricted-area proxy fallback treats the generic `access_key` as optional: present keys are
-checked and may be forwarded by the resolver, but missing keys do not block proxy URLs that
-authenticate themselves or allow anonymous fallback.
+keys. Stale optional WEB playurl cookies are warnings rather than blockers so public anonymous
+requests can still proceed. Authenticated feed inputs such as history, watch-later, following, and
+space dynamic should add `CredentialPreflightRequirement::authenticated_web_api_cookie()` because
+they hit account-scoped WEB APIs before selecting media streams. Restricted-area proxy fallback
+treats the generic `access_key` as optional: present keys are checked and may be forwarded by the
+resolver, but missing keys do not block proxy URLs that authenticate themselves or allow anonymous fallback.
 Intl/Bstar episode inputs require the generic `access_key` used by the official intl request path.
 Fixed-source inputs such as intl/Bstar and PUGV/cheese should not inherit a caller's global TV/APP
 playurl credential requirements, and sidecar-only modes should skip media-stream preflight.

@@ -10,16 +10,17 @@ use bbdown_core::{
     ClientConfig, CredentialHealthReport, CredentialHealthScope, CredentialHealthStatus,
     CredentialHealthSummaryStatus, CredentialKind, CredentialLifecycleMetadata,
     CredentialLifecyclePolicy, CredentialLifecycleSource, CredentialLifecycleStatus,
-    CredentialPreflightMode, CredentialPreflightReport, CredentialProfileLifecycleStatus,
-    CredentialProfileSelection, CredentialProfiles, CredentialStore, Credentials, DanmakuFormat,
-    DanmakuUpdateOptions, DownloadArchive, DownloadCancellationToken, DownloadMode,
-    DownloadOptions, DownloadPathTemplates, DownloadPlan, DownloadPreflight, DownloadProgressEvent,
-    DownloadProgressSink, DownloadReport, DuplicateDecision, EndpointConfig, Input,
-    MediaHostOptions, MediaStream, MuxOptions, PlaybackPlan, PlayurlMode, QrLoginKind,
-    QrLoginState, QrLoginTicket, QrLoginTicketOutput, ResolvedContent, RestrictedArea,
-    RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection,
-    StreamQuality, StreamSelection, StreamSet, SubtitleAiPolicy,
-    archive_entry_allows_danmaku_update, credential_preflight_requirements_for_media_paths,
+    CredentialPreflightMode, CredentialPreflightReport, CredentialPreflightRequirement,
+    CredentialProfileLifecycleStatus, CredentialProfileSelection, CredentialProfiles,
+    CredentialStore, Credentials, DanmakuFormat, DanmakuUpdateOptions, DownloadArchive,
+    DownloadCancellationToken, DownloadMode, DownloadOptions, DownloadPathTemplates, DownloadPlan,
+    DownloadPreflight, DownloadProgressEvent, DownloadProgressSink, DownloadReport,
+    DuplicateDecision, EndpointConfig, Input, MediaHostOptions, MediaStream, MuxOptions,
+    PlaybackPlan, PlayurlMode, QrLoginKind, QrLoginState, QrLoginTicket, QrLoginTicketOutput,
+    ResolvedContent, RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy,
+    RestrictedAreaProxyKind, RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet,
+    SubtitleAiPolicy, archive_entry_allows_danmaku_update,
+    credential_preflight_requirements_for_media_paths,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::ffi::{OsStr, OsString};
@@ -1470,12 +1471,15 @@ fn credential_preflight_report(
     let status = statuses
         .pop()
         .context("failed to evaluate selected credential profile")?;
-    let requirements = credential_preflight_requirements_for_media_paths(
+    let mut requirements = credential_preflight_requirements_for_media_paths(
         media_preflight_context.playurl_mode,
         &client_runtime.restricted_area,
         media_preflight_context.restricted_area_proxy_may_run,
         media_preflight_context.intl_access_key_may_run,
     );
+    if media_preflight_context.web_cookie_required {
+        requirements.push(CredentialPreflightRequirement::authenticated_web_api_cookie());
+    }
     Ok(CredentialPreflightReport::evaluate(
         credential_preflight.mode,
         &status,
@@ -1489,6 +1493,7 @@ struct MediaCredentialPreflightContext {
     playurl_mode: Option<PlayurlMode>,
     restricted_area_proxy_may_run: bool,
     intl_access_key_may_run: bool,
+    web_cookie_required: bool,
 }
 
 async fn media_credential_preflight_context_for_input(
@@ -1513,6 +1518,7 @@ async fn media_credential_preflight_context_for_input(
             && !client_runtime.restricted_area.proxies.is_empty()
             && input_may_use_restricted_area_proxy(&input),
         intl_access_key_may_run: intl_access_key_may_run && input_may_use_intl_access_key(&input),
+        web_cookie_required: input_requires_web_cookie(&input),
     })
 }
 
@@ -1557,6 +1563,13 @@ fn input_may_use_restricted_area_proxy(input: &Input) -> bool {
 
 fn input_may_use_intl_access_key(input: &Input) -> bool {
     matches!(input, Input::IntlEpisode(_))
+}
+
+fn input_requires_web_cookie(input: &Input) -> bool {
+    matches!(
+        input,
+        Input::FollowingFeed | Input::SpaceDynamic(_) | Input::History | Input::WatchLater
+    )
 }
 
 fn download_mode_may_use_intl_access_key(mode: DownloadMode) -> bool {
@@ -4656,12 +4669,12 @@ mod tests {
         duplicate_decision_or_report, endpoints_from_cli, ensure_access_key_login_file_is_safe,
         ensure_access_key_login_stdin_is_safe, ensure_archive_file_is_not_output_root,
         input_may_use_intl_access_key, input_may_use_restricted_area_proxy,
-        input_media_preflight_playurl_mode, next_poll_sleep, parse_access_key_login_input,
-        plan_failure_may_be_credential_related, qr_login_lifecycle_metadata, remaining_until,
-        restricted_area_from_cli_with_args, restricted_area_from_cli_with_env_values,
-        save_credentials, save_credentials_with_lifecycle,
-        save_credentials_with_lifecycle_and_secrets, should_prompt_duplicate_decision,
-        validate_media_host_spec, validate_single_download_args,
+        input_media_preflight_playurl_mode, input_requires_web_cookie, next_poll_sleep,
+        parse_access_key_login_input, plan_failure_may_be_credential_related,
+        qr_login_lifecycle_metadata, remaining_until, restricted_area_from_cli_with_args,
+        restricted_area_from_cli_with_env_values, save_credentials,
+        save_credentials_with_lifecycle, save_credentials_with_lifecycle_and_secrets,
+        should_prompt_duplicate_decision, validate_media_host_spec, validate_single_download_args,
     };
     use bbdown_core::{
         AccessKeyLoginConfig, AccessKeyLoginCredentials, AccessKeyProvider,
@@ -4728,6 +4741,21 @@ mod tests {
         assert!(!input_may_use_restricted_area_proxy(&Input::CheeseEpisode(
             101
         )));
+    }
+
+    #[test]
+    fn web_cookie_input_classifier_matches_authenticated_feed_inputs() {
+        assert!(input_requires_web_cookie(&Input::History));
+        assert!(input_requires_web_cookie(&Input::WatchLater));
+        assert!(input_requires_web_cookie(&Input::FollowingFeed));
+        assert!(input_requires_web_cookie(&Input::SpaceDynamic(123)));
+        assert!(!input_requires_web_cookie(&Input::RecommendationFeed));
+        assert!(!input_requires_web_cookie(&Input::FavoriteList {
+            media_id: Some(456),
+            owner_mid: None,
+        }));
+        assert!(!input_requires_web_cookie(&Input::Aid(170_001)));
+        assert!(!input_requires_web_cookie(&Input::IntlEpisode(341_736)));
     }
 
     #[test]

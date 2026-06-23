@@ -234,7 +234,11 @@ are stored in the same private credential file as plaintext provider sections an
 status, debug, and JSON output. When the selected provider is `ready`, `auth renew-access-key`
 can refresh the generic access key non-interactively. `plan`, `playback`, and `download` also accept
 `--credential-preflight warn|fail|renew` so callers can check the selected profile before media
-requests, including intl/Bstar inputs that use the generic `access_key`. Restricted-area proxy
+requests, including intl/Bstar inputs that use the generic `access_key`. The same controls are
+available as `BBDOWN_CREDENTIAL_PREFLIGHT`, `BBDOWN_CREDENTIAL_STALE_AFTER_SECONDS`, and
+`BBDOWN_CREDENTIAL_EXPIRING_WITHIN_SECONDS`. WEB playurl cookies are optional and stale cookie
+metadata is warning-only so anonymous public videos can still proceed; authenticated feed inputs such
+as history, watch-later, following, and space dynamic require a WEB cookie. Restricted-area proxy
 preflight checks the generic `access_key` only when one is configured; missing proxy access keys do
 not block proxy URLs that authenticate themselves or allow anonymous fallback. Preflight diagnostics
 are written to stderr so JSON stdout remains a single plan or report, and `download --progress-json`
