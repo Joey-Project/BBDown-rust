@@ -2301,7 +2301,25 @@ fn auth_like_failure_message(message: &str) -> bool {
         || lower.contains("unauthorized")
         || lower.contains("not login")
         || lower.contains("no login")
-        || lower.contains("auth")
+        || contains_auth_word(&lower)
+}
+
+fn contains_auth_word(message: &str) -> bool {
+    message
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .any(|word| {
+            matches!(
+                word,
+                "auth"
+                    | "oauth"
+                    | "authenticate"
+                    | "authenticated"
+                    | "authentication"
+                    | "authorize"
+                    | "authorized"
+                    | "authorization"
+            )
+        })
 }
 
 fn restricted_area_resolver_failure_may_be_credential_related(message: &str) -> bool {
@@ -4855,10 +4873,22 @@ mod tests {
                 message: "unauthorized access token".to_owned(),
             }
         ));
+        assert!(plan_failure_may_be_credential_related(
+            &bbdown_core::Error::Api {
+                code: -400,
+                message: "auth failed".to_owned(),
+            }
+        ));
         assert!(!plan_failure_may_be_credential_related(
             &bbdown_core::Error::Api {
                 code: -400,
                 message: "invalid parameter: qn".to_owned(),
+            }
+        ));
+        assert!(!plan_failure_may_be_credential_related(
+            &bbdown_core::Error::Api {
+                code: -400,
+                message: "author id invalid".to_owned(),
             }
         ));
         assert!(!plan_failure_may_be_credential_related(
@@ -4876,6 +4906,12 @@ mod tests {
         assert!(!plan_failure_may_be_credential_related(
             &bbdown_core::Error::AccessRestricted(
                 "restricted-area resolver failed for hk: API code 7: area restricted".to_owned(),
+            )
+        ));
+        assert!(!plan_failure_may_be_credential_related(
+            &bbdown_core::Error::AccessRestricted(
+                "restricted-area resolver failed for hk: API code -400: author id invalid"
+                    .to_owned(),
             )
         ));
         assert!(plan_failure_may_be_credential_related(

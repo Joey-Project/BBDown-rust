@@ -328,6 +328,8 @@ superseded_by:
       generic keys do not preempt a usable TV token.
     - Archive forced-refresh retry no longer refreshes generic `access_key` when an authenticated
       feed request is missing a usable WEB cookie.
+    - Auth-like archive retry classification now matches auth/OAuth words instead of a raw `auth`
+      substring, so non-auth errors such as `author id invalid` do not refresh access keys.
   - Added mock e2e coverage for these review follow-ups:
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_progress_json_cancel_suppresses_plaintext_preflight --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_reruns_duplicate_preflight_after_deferred_refresh --locked`.
