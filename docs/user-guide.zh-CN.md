@@ -409,7 +409,8 @@ WEB 和 TV 二维码登录会记录 lifecycle source 和获取时间；只有上
 才会记录 expiry。
 
 `auth status` 会保留旧的 selected-profile JSON 形态，只报告脱敏凭据布尔值；只含空白字符的
-已保存 credential 会按 missing 报告。加
+已保存 credential 会按 missing 报告。发送请求前会 trim 已保存 credential；trim 后为空的
+值同样按 missing 处理。加
 `--profiles` 后，会输出所选 credential profile 名称、每个返回 profile 是否为默认或当前选
 中 profile、本地 lifecycle status、逐 credential lifecycle metadata，以及不含密钥的操作建
 议。再加 `--all-profiles` 会报告所有已保存 profile；不加时，profile 输出只包含当前选中

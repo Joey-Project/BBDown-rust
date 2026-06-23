@@ -439,7 +439,8 @@ diagnostics, but the final CLI error line may still be written to stderr on fail
 parse only JSON object lines. In `renew` mode, missing required non-access-key credentials still stop
 generic access-key auto-refresh, but present credentials with stale, expiring, expired, or unknown
 lifecycle metadata do not prevent refreshing a ready generic access key; the subsequent request still
-proves whether those credentials work. For archive downloads, `renew` defers automatic access-key refresh
+proves whether those credentials work. Stored credential values are trimmed before request use, and
+whitespace-only values are treated as missing. For archive downloads, `renew` defers automatic access-key refresh
 until after duplicate handling when the initial plan succeeds, so `--on-duplicate cancel` stops
 without calling refresh endpoints or rewriting stored credentials. If initial archive planning fails
 with an auth-like credential error, the CLI refreshes a ready generic access key and retries planning

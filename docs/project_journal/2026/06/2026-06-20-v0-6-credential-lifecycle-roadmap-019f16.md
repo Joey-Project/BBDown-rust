@@ -351,6 +351,14 @@ superseded_by:
     - Local independent review follow-up treats whitespace-only stored cookie/access-key values as
       missing for lifecycle status and redacted presence booleans, matching the request builders that
       trim token values before sending them.
+    - Current-head independent review follow-up aligns request-side credential normalization with
+      lifecycle/preflight semantics: request builders now trim stored cookie/access-key values before
+      sending them, omit values that become empty, and fall back across APP generic/TV keys instead
+      of letting whitespace-only keys shadow usable alternatives.
+    - Current-head offline review follow-up widens archive retry refresh classification for common
+      access-key expiry surfaces that do not spell out `access_key`, including Bilibili Chinese
+      `account not logged in` API messages and APP gRPC code 16 without a grpc-message, while
+      preserving proxy-owned credential-error negatives.
     - Local independent review follow-up removes bare `credential` wording from access-key-specific
       archive retry classification, preventing proxy-owned errors such as `invalid proxy credential`
       from refreshing and rewriting the generic Bilibili access key.

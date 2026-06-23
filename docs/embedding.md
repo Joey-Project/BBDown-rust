@@ -308,7 +308,8 @@ the refreshed credentials through their own storage layer. The renewal predicate
 non-access-key credentials to be fixed first, but present non-access-key credentials with stale,
 expiring, expired, or unknown lifecycle metadata do not block a ready generic access-key refresh.
 Whitespace-only stored credential strings are treated as missing when lifecycle status and redacted
-presence booleans are computed.
+presence booleans are computed. Request builders trim stored credential strings before use and
+omit them when the trimmed value is empty.
 
 ```rust,no_run
 use bbdown_core::{

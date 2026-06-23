@@ -285,6 +285,7 @@ preflight 是否可能运行。嵌入项目可以把 blocker 作为 fail-fast UI
 access-key credential；但已存在且 lifecycle metadata 为 stale、expiring、expired 或 unknown
 的非 access-key credential 不会阻止 refresh-ready 的通用 access key 刷新。计算 lifecycle
 status 和脱敏 presence 布尔值时，只含空白字符的已保存 credential 字符串会按 missing 处理。
+request builder 会在使用前 trim 已保存 credential；trim 后为空的值不会写入请求。
 
 ```rust,no_run
 use bbdown_core::{

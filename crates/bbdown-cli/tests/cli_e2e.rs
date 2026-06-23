@@ -3670,9 +3670,7 @@ fn download_archive_retries_plan_after_auth_failure_with_fresh_refreshable_acces
             .header("authorization", "identify_v1 ACCESS_SECRET")
             .header_exists("x-bili-metadata-bin")
             .header_missing("cookie");
-        then.status(200)
-            .header("grpc-status", "16")
-            .header("grpc-message", "access%20key%20expired");
+        then.status(200).header("grpc-status", "16");
     });
     let app_response = app_play_view_response_frame(&format!("{}/video.m4s", server.base_url()))?;
     let refreshed_app_playurl = server.mock(|when, then| {

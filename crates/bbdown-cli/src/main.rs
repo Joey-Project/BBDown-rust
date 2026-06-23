@@ -2330,7 +2330,18 @@ fn plan_failure_may_be_credential_related(error: &bbdown_core::Error) -> bool {
 }
 
 fn api_failure_may_be_credential_related(code: i64, message: &str) -> bool {
-    matches!(code, -101 | -400 | -403 | 7 | 16) && access_key_specific_failure_message(message)
+    match code {
+        -101 => {
+            access_key_specific_failure_message(message)
+                || bili_account_not_logged_in_message(message)
+        }
+        -400 | -403 | 7 => access_key_specific_failure_message(message),
+        16 => {
+            access_key_specific_failure_message(message)
+                || message == "APP playurl gRPC request failed"
+        }
+        _ => false,
+    }
 }
 
 fn http_status_failure_may_be_credential_related(status: u16, message: &str) -> bool {
@@ -2347,6 +2358,13 @@ fn access_key_refresh_failure_message(message: &str) -> bool {
 fn access_key_specific_failure_message(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
     lower.contains("access_key") || lower.contains("access key") || lower.contains("access token")
+}
+
+fn bili_account_not_logged_in_message(message: &str) -> bool {
+    message.contains("账号未登录")
+        || message.contains("账号未登陆")
+        || message.contains("帳號未登錄")
+        || message.contains("帳號未登入")
 }
 
 fn auth_like_failure_message(message: &str) -> bool {
@@ -4917,6 +4935,12 @@ mod tests {
         assert!(plan_failure_may_be_credential_related(
             &bbdown_core::Error::Api {
                 code: -101,
+                message: "账号未登录".to_owned(),
+            }
+        ));
+        assert!(plan_failure_may_be_credential_related(
+            &bbdown_core::Error::Api {
+                code: -101,
                 message: "expired access_key".to_owned(),
             }
         ));
@@ -4930,6 +4954,12 @@ mod tests {
             &bbdown_core::Error::Api {
                 code: 16,
                 message: "access key expired".to_owned(),
+            }
+        ));
+        assert!(plan_failure_may_be_credential_related(
+            &bbdown_core::Error::Api {
+                code: 16,
+                message: "APP playurl gRPC request failed".to_owned(),
             }
         ));
         assert!(plan_failure_may_be_credential_related(
