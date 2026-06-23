@@ -2360,11 +2360,7 @@ fn plan_failure_may_be_credential_related(error: &bbdown_core::Error) -> bool {
 
 fn api_failure_may_be_credential_related(code: i64, message: &str) -> bool {
     match code {
-        -101 => {
-            access_key_specific_failure_message(message)
-                || bili_account_not_logged_in_message(message)
-        }
-        -400 | -403 | 7 => access_key_specific_failure_message(message),
+        -101 | -400 | -403 | 7 => access_key_specific_failure_message(message),
         16 => {
             access_key_specific_failure_message(message)
                 || message == "APP playurl gRPC request failed"
@@ -2374,7 +2370,8 @@ fn api_failure_may_be_credential_related(code: i64, message: &str) -> bool {
 }
 
 fn http_status_failure_may_be_credential_related(status: u16, message: &str) -> bool {
-    matches!(status, 401 | 403) && access_key_refresh_failure_message(message)
+    (status == 401 && message.to_ascii_lowercase().contains("unauthorized"))
+        || (status == 403 && access_key_refresh_failure_message(message))
 }
 
 fn access_key_refresh_failure_message(message: &str) -> bool {
@@ -2437,8 +2434,10 @@ fn restricted_area_resolver_failure_may_be_credential_related(message: &str) -> 
                 || lower.contains("api code 7")
                 || lower.contains("api code 16"))
                 && access_key_specific_failure_message(&lower))
-            || ((lower.contains("401") || lower.contains("403") || lower.contains("unauthorized"))
-                && access_key_refresh_failure_message(&lower)))
+            || (lower.contains("http status")
+                && (lower.contains("401")
+                    || lower.contains("403")
+                    || lower.contains("unauthorized"))))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -5101,7 +5100,7 @@ mod tests {
                 message: "not logged in".to_owned(),
             }
         ));
-        assert!(plan_failure_may_be_credential_related(
+        assert!(!plan_failure_may_be_credential_related(
             &bbdown_core::Error::Api {
                 code: -101,
                 message: "账号未登录".to_owned(),
@@ -5222,13 +5221,13 @@ mod tests {
                     .to_owned(),
             )
         ));
-        assert!(!plan_failure_may_be_credential_related(
+        assert!(plan_failure_may_be_credential_related(
             &bbdown_core::Error::AccessRestricted(
                 "restricted-area resolver failed for hk: HTTP error: HTTP status client error (403 Forbidden)"
                     .to_owned(),
             )
         ));
-        assert!(!plan_failure_may_be_credential_related(
+        assert!(plan_failure_may_be_credential_related(
             &bbdown_core::Error::AccessRestricted(
                 "restricted-area resolver failed for hk: HTTP error: HTTP status client error (401 Unauthorized)"
                     .to_owned(),
@@ -5252,7 +5251,7 @@ mod tests {
                     .to_owned(),
             )
         ));
-        assert!(!http_status_failure_may_be_credential_related(
+        assert!(http_status_failure_may_be_credential_related(
             401,
             "HTTP status client error (401 Unauthorized)"
         ));

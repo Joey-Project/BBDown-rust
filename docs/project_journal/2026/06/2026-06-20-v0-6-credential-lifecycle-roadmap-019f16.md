@@ -378,6 +378,11 @@ superseded_by:
     - Local independent review follow-up removes bare `credential` wording from access-key-specific
       archive retry classification, preventing proxy-owned errors such as `invalid proxy credential`
       from refreshing and rewriting the generic Bilibili access key.
+    - Current-head review follow-up removes generic API `-101 账号未登录` from the access-key retry
+      classifier so optional cookie-carrying WEB API failures such as favorite-list login rejection
+      do not rotate generic access keys; restricted-area resolver summaries still treat proxy-owned
+      bare HTTP 401/403 and `账号未登录` as retryable because that path can send the generic
+      access key.
     - Crate-local README files now document the provider-aware APP credential order for embedders,
       matching the top-level and embedding docs.
   - Added mock e2e coverage for these review follow-ups:
@@ -406,6 +411,7 @@ superseded_by:
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_retries_restricted_proxy_after_deferred_credential_refresh --locked`.
     - `cargo test -p bbdown-cli --bin bbdown plan_failure_classifier --locked`.
     - `cargo test -p bbdown-cli --bin bbdown access_key_refresh_request_trims_stored_tokens --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_for_optional_web_api_not_logged_in --locked`.
 
 ## Next Steps
 
