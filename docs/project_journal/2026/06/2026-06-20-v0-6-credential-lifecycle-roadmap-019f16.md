@@ -364,6 +364,17 @@ superseded_by:
       before refreshing and rewriting the generic access key. The core resolver now preserves that
       evidence as a non-secret `access key diagnostic` marker after redacting raw `access_key`
       diagnostics, allowing true access-key failures to retry without exposing key names or values.
+    - GitHub Codex review follow-up gates archive retry refresh on the failed request path: generic
+      access-key refresh is allowed for APP/intl access-key request failures or restricted-area
+      proxy resolver failures, but not for official PGC WEB failures that happen before the proxy
+      request can send the generic access key.
+    - Independent review follow-up tightens the path gate further so account-scoped feed inputs can
+      still refresh APP access-key `-101` failures, while plain WEB cookie `-101` failures remain
+      non-refreshable. Restricted-area proxy `-101` summaries with Bilibili `账号未登录` wording now
+      also count as access-key refresh evidence.
+    - Offline review follow-up trims stored access-key and refresh-token values before constructing
+      automatic refresh requests, aligning `--credential-preflight renew` with request-side
+      credential normalization.
     - Local independent review follow-up removes bare `credential` wording from access-key-specific
       archive retry classification, preventing proxy-owned errors such as `invalid proxy credential`
       from refreshing and rewriting the generic Bilibili access key.
@@ -390,6 +401,11 @@ superseded_by:
     - `just ci`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_for_app_area_restricted_status --locked`.
     - `cargo test -p bbdown-cli --bin bbdown plan_failure_classifier --locked`.
+    - `cargo test -p bbdown-cli --bin bbdown generic_access_key_retry_requires_failure_path_that_uses_access_key --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_for_pgc_web_failure_before_proxy --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_retries_restricted_proxy_after_deferred_credential_refresh --locked`.
+    - `cargo test -p bbdown-cli --bin bbdown plan_failure_classifier --locked`.
+    - `cargo test -p bbdown-cli --bin bbdown access_key_refresh_request_trims_stored_tokens --locked`.
 
 ## Next Steps
 

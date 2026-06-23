@@ -1486,10 +1486,38 @@ fn media_preflight_report_can_refresh_generic_access_key_for_failure(
     {
         return false;
     }
+    if !failure_may_have_used_generic_access_key(context, failure) {
+        return false;
+    }
     report.requirements.iter().any(|requirement| {
         requirement.selected_kind == Some(CredentialKind::AccessKey)
             && requirement.selected_status != CredentialLifecycleStatus::Missing
     })
+}
+
+fn failure_may_have_used_generic_access_key(
+    context: &MediaCredentialPreflightContext,
+    failure: &bbdown_core::Error,
+) -> bool {
+    match failure {
+        bbdown_core::Error::AccessRestricted(message) => {
+            context.restricted_area_proxy_may_run
+                && restricted_area_resolver_failure_may_be_credential_related(message)
+        }
+        bbdown_core::Error::Api { .. } | bbdown_core::Error::Http(_) => {
+            (context.playurl_mode == Some(PlayurlMode::App) || context.intl_access_key_may_run)
+                && plan_failure_may_be_credential_related(failure)
+        }
+        bbdown_core::Error::Cancelled { .. }
+        | bbdown_core::Error::InvalidInput(_)
+        | bbdown_core::Error::SelectionRequired { .. }
+        | bbdown_core::Error::Unsupported(_)
+        | bbdown_core::Error::MissingField(_)
+        | bbdown_core::Error::Url(_)
+        | bbdown_core::Error::Json(_)
+        | bbdown_core::Error::Io(_)
+        | bbdown_core::Error::MuxFailed { .. } => false,
+    }
 }
 
 fn authenticated_web_api_failure_may_have_used_cookie(
@@ -1499,7 +1527,8 @@ fn authenticated_web_api_failure_may_have_used_cookie(
     context.web_cookie_required
         && matches!(
             failure,
-            bbdown_core::Error::Api { code, .. } if *code == -101
+            bbdown_core::Error::Api { code, message }
+                if *code == -101 && !access_key_specific_failure_message(message)
         )
 }
 
@@ -2400,7 +2429,9 @@ fn contains_auth_word(message: &str) -> bool {
 fn restricted_area_resolver_failure_may_be_credential_related(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
     lower.contains("restricted-area resolver failed")
-        && ((lower.contains("api code -101") && access_key_specific_failure_message(&lower))
+        && ((lower.contains("api code -101")
+            && (access_key_specific_failure_message(&lower)
+                || bili_account_not_logged_in_message(message)))
             || ((lower.contains("api code -403")
                 || lower.contains("api code -400")
                 || lower.contains("api code 7")
@@ -4107,7 +4138,10 @@ fn access_key_refresh_request_from_profiles(
         .context("failed to load credential profile")?;
     let access_key = credentials
         .access_key
-        .filter(|value| !value.trim().is_empty())
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
         .context("selected profile has no access_key")?;
     let metadata = profiles
         .profile_metadata(profile_name)
@@ -4126,14 +4160,15 @@ fn access_key_refresh_request_from_profiles(
         .context("selected profile has no access_key refresh secret for its provider")?;
     let refresh_token = secret
         .refresh_token
-        .as_ref()
-        .filter(|value| !value.trim().is_empty())
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
         .context("selected profile has no access_key refresh token secret")?;
     let refresh_provider = secret
         .refresh_provider
         .context("selected profile has no access_key refresh provider")?;
-    let mut request =
-        AccessKeyRefreshRequest::new(access_key, refresh_token.clone(), refresh_provider)?;
+    let mut request = AccessKeyRefreshRequest::new(access_key, refresh_token, refresh_provider)?;
     if refresh_provider == AccessKeyRefreshProvider::BilibiliMainOauth2 {
         request = request.with_refresh_keypair(
             secret
@@ -4795,14 +4830,16 @@ fn _assert_credentials_send_sync(_: Credentials) {}
 mod tests {
     use super::{
         Cli, CliProgressReporter, CredentialRuntime, DownloadCtrlCAction, DownloadOnlyArg,
-        DuplicateDecisionRequest, DuplicatePromptActiveGuard, SingleDownloadValidationArgs,
-        SubtitleAiPolicyArg, access_key_lifecycle_metadata, access_key_provider_secret,
-        archive_sidecar_path, credential_profile_selection, download_ctrl_c_action,
+        DuplicateDecisionRequest, DuplicatePromptActiveGuard, MediaCredentialPreflightContext,
+        SingleDownloadValidationArgs, SubtitleAiPolicyArg, access_key_lifecycle_metadata,
+        access_key_provider_secret, access_key_refresh_request_from_profiles, archive_sidecar_path,
+        credential_profile_selection, download_ctrl_c_action,
         download_mode_may_use_intl_access_key, duplicate_decision_or_report, endpoints_from_cli,
         ensure_access_key_login_file_is_safe, ensure_access_key_login_stdin_is_safe,
         ensure_archive_file_is_not_output_root, http_status_failure_may_be_credential_related,
         input_may_use_intl_access_key, input_may_use_restricted_area_proxy,
-        input_media_preflight_playurl_mode, input_requires_web_cookie, next_poll_sleep,
+        input_media_preflight_playurl_mode, input_requires_web_cookie,
+        media_preflight_report_can_refresh_generic_access_key_for_failure, next_poll_sleep,
         parse_access_key_login_input, plan_failure_may_be_credential_related,
         qr_login_lifecycle_metadata, remaining_until, restricted_area_from_cli_with_args,
         restricted_area_from_cli_with_env_values, save_credentials,
@@ -4811,9 +4848,11 @@ mod tests {
     };
     use bbdown_core::{
         AccessKeyLoginConfig, AccessKeyLoginCredentials, AccessKeyProvider,
-        AccessKeyRefreshKeypair, AccessKeyRefreshProvider, CredentialKind,
-        CredentialLifecycleMetadata, CredentialLifecycleSource, CredentialProfileSelection,
-        CredentialStore, Credentials, DownloadCancellationToken, DownloadMode,
+        AccessKeyProviderSecret, AccessKeyRefreshKeypair, AccessKeyRefreshProvider, CredentialKind,
+        CredentialLifecycleMetadata, CredentialLifecyclePolicy, CredentialLifecycleSource,
+        CredentialPreflightMode, CredentialPreflightReport, CredentialPreflightRequirement,
+        CredentialProfileMetadata, CredentialProfileSecrets, CredentialProfileSelection,
+        CredentialProfiles, CredentialStore, Credentials, DownloadCancellationToken, DownloadMode,
         DownloadOutputConflict, DownloadPreflight, DuplicateDecision, EndpointConfig, Input,
         PlayurlMode, QrLoginKind,
     };
@@ -4906,6 +4945,137 @@ mod tests {
             input_media_preflight_playurl_mode(&Input::Aid(170_001), PlayurlMode::App),
             Some(PlayurlMode::App)
         );
+    }
+
+    #[test]
+    fn generic_access_key_retry_requires_failure_path_that_uses_access_key() -> anyhow::Result<()> {
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "intl",
+            Credentials::default().with_access_key("ACCESS_SECRET"),
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+                .with_acquired_at_unix_millis(1_000)
+                .with_expires_at_unix_millis(2_000)
+                .with_refresh_token_present(true),
+        );
+        profiles.set_profile_metadata("intl", metadata)?;
+        let mut secrets = CredentialProfileSecrets::default();
+        secrets.set_access_key_provider(
+            AccessKeyProvider::BalhBiliplus,
+            AccessKeyProviderSecret::default()
+                .with_refresh_token("OLD_REFRESH_SECRET")
+                .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+                .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+        );
+        profiles.set_profile_secrets("intl", secrets)?;
+        let status = profiles
+            .profile_lifecycle_status("intl", &CredentialLifecyclePolicy::at_unix_millis(10_000))?;
+        let report = CredentialPreflightReport::evaluate(
+            CredentialPreflightMode::Warn,
+            &status,
+            [CredentialPreflightRequirement::restricted_area_access_key()],
+        );
+        let context = MediaCredentialPreflightContext {
+            input: Input::Episode(1000),
+            playurl_mode: Some(PlayurlMode::Web),
+            restricted_area_proxy_may_run: true,
+            intl_access_key_may_run: false,
+            web_cookie_required: false,
+        };
+
+        assert!(
+            !media_preflight_report_can_refresh_generic_access_key_for_failure(
+                &context,
+                &report,
+                &bbdown_core::Error::Api {
+                    code: -101,
+                    message: "账号未登录".to_owned(),
+                },
+            )
+        );
+        assert!(media_preflight_report_can_refresh_generic_access_key_for_failure(
+            &context,
+            &report,
+            &bbdown_core::Error::AccessRestricted(
+                "restricted-area resolver failed: PgcProxy area=hk Failed (API code -101: redacted diagnostic message (access key diagnostic))"
+                    .to_owned(),
+            ),
+        ));
+
+        let app_report = CredentialPreflightReport::evaluate(
+            CredentialPreflightMode::Warn,
+            &status,
+            [CredentialPreflightRequirement::app_playurl_access_key()],
+        );
+        let account_feed_app_context = MediaCredentialPreflightContext {
+            input: Input::History,
+            playurl_mode: Some(PlayurlMode::App),
+            restricted_area_proxy_may_run: false,
+            intl_access_key_may_run: false,
+            web_cookie_required: true,
+        };
+        assert!(
+            media_preflight_report_can_refresh_generic_access_key_for_failure(
+                &account_feed_app_context,
+                &app_report,
+                &bbdown_core::Error::Api {
+                    code: -101,
+                    message: "expired access_key".to_owned(),
+                },
+            )
+        );
+        assert!(
+            !media_preflight_report_can_refresh_generic_access_key_for_failure(
+                &account_feed_app_context,
+                &app_report,
+                &bbdown_core::Error::Api {
+                    code: -101,
+                    message: "not logged in".to_owned(),
+                },
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn access_key_refresh_request_trims_stored_tokens() -> anyhow::Result<()> {
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "intl",
+            Credentials::default().with_access_key(" ACCESS_SECRET "),
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+                .with_acquired_at_unix_millis(1_000)
+                .with_expires_at_unix_millis(2_000)
+                .with_refresh_token_present(true),
+        );
+        profiles.set_profile_metadata("intl", metadata)?;
+        let mut secrets = CredentialProfileSecrets::default();
+        secrets.set_access_key_provider(
+            AccessKeyProvider::BalhBiliplus,
+            AccessKeyProviderSecret::default()
+                .with_refresh_token(" OLD_REFRESH_SECRET ")
+                .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+                .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+        );
+        profiles.set_profile_secrets("intl", secrets)?;
+
+        let refresh = access_key_refresh_request_from_profiles(&profiles, "intl")?;
+
+        assert_eq!(refresh.request.access_key, "ACCESS_SECRET");
+        assert_eq!(refresh.request.refresh_token, "OLD_REFRESH_SECRET");
+        Ok(())
     }
 
     #[test]
@@ -5043,6 +5213,12 @@ mod tests {
         assert!(plan_failure_may_be_credential_related(
             &bbdown_core::Error::AccessRestricted(
                 "restricted-area resolver failed: PgcProxy area=hk Failed (API code -101: redacted diagnostic message (access key diagnostic))"
+                    .to_owned(),
+            )
+        ));
+        assert!(plan_failure_may_be_credential_related(
+            &bbdown_core::Error::AccessRestricted(
+                "restricted-area resolver failed: PgcProxy area=hk Failed (API code -101: 账号未登录)"
                     .to_owned(),
             )
         ));
