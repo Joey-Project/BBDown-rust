@@ -404,6 +404,9 @@ superseded_by:
     - Follow-up also makes those HTTP-status path gates endpoint-suffix aware, so supported
       path-prefixed endpoint bases such as `/bili/api/x/web-interface/nav` classify the same way as
       direct Bilibili endpoint paths.
+    - Independent review follow-up broadens access-token evidence matching to `access_token` and
+      `access-token` spellings while preserving conservative redaction for token-bearing
+      diagnostics.
     - Crate-local README files now document the provider-aware APP credential order for embedders,
       matching the top-level and embedding docs.
   - Added mock e2e coverage for these review follow-ups:
@@ -441,6 +444,8 @@ superseded_by:
     - `cargo test -p bbdown-core --lib intl_access_key_is_redacted_from_http_errors --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_generic_key_for_wbi_nav_http_status --locked`.
     - `cargo test -p bbdown-core --lib json_status_path_matching_accepts_endpoint_prefixes --locked`.
+    - `cargo test -p bbdown-cli --bin bbdown plan_failure_classifier --locked`.
+    - `cargo test -p bbdown-core --lib resolver_error_message --locked`.
 
 ## Next Steps
 

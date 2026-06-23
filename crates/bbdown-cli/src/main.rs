@@ -2472,7 +2472,11 @@ fn access_key_refresh_failure_message(message: &str) -> bool {
 
 fn access_key_specific_failure_message(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
-    lower.contains("access_key") || lower.contains("access key") || lower.contains("access token")
+    lower.contains("access_key")
+        || lower.contains("access key")
+        || lower.contains("access_token")
+        || lower.contains("access-token")
+        || lower.contains("access token")
 }
 
 fn bili_account_not_logged_in_message(message: &str) -> bool {
@@ -5266,6 +5270,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn plan_failure_classifier_requires_access_key_evidence_for_http_statuses() {
         assert!(!plan_failure_may_be_credential_related(
             &bbdown_core::Error::AccessRestricted(
@@ -5338,6 +5343,18 @@ mod tests {
         ));
         assert!(plan_failure_may_be_credential_related(
             &bbdown_core::Error::AccessRestricted(
+                "restricted-area resolver failed for hk: HTTP error: HTTP status client error (403 Forbidden): access_token expired"
+                    .to_owned(),
+            )
+        ));
+        assert!(plan_failure_may_be_credential_related(
+            &bbdown_core::Error::AccessRestricted(
+                "restricted-area resolver failed for hk: HTTP error: HTTP status client error (403 Forbidden): access-token expired"
+                    .to_owned(),
+            )
+        ));
+        assert!(plan_failure_may_be_credential_related(
+            &bbdown_core::Error::AccessRestricted(
                 "restricted-area resolver failed for hk: HTTP error: HTTP status client error (401 Unauthorized): access_key expired"
                     .to_owned(),
             )
@@ -5349,6 +5366,14 @@ mod tests {
         assert!(http_status_failure_may_be_credential_related(
             401,
             "HTTP status client error (401 Unauthorized): expired access token"
+        ));
+        assert!(http_status_failure_may_be_credential_related(
+            403,
+            "HTTP status client error (403 Forbidden): expired access_token"
+        ));
+        assert!(http_status_failure_may_be_credential_related(
+            403,
+            "HTTP status client error (403 Forbidden): expired access-token"
         ));
         assert!(!http_status_failure_may_be_credential_related(
             403,

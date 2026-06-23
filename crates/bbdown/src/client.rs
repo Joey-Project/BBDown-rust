@@ -5020,7 +5020,11 @@ fn sanitize_diagnostic_text(raw: &str) -> String {
 
 fn diagnostic_mentions_access_key(raw: &str) -> bool {
     let lower = raw.to_ascii_lowercase();
-    lower.contains("access_key") || lower.contains("access key") || lower.contains("access token")
+    lower.contains("access_key")
+        || lower.contains("access key")
+        || lower.contains("access_token")
+        || lower.contains("access-token")
+        || lower.contains("access token")
 }
 
 fn credential_health_error(
@@ -11107,13 +11111,14 @@ mod tests {
     fn resolver_error_message_redacts_sensitive_values() {
         let message = super::resolver_error_message(&Error::Api {
             code: -40301,
-            message: "proxy rejected https://user:pass@proxy.example/api?proxy_token=PROXY_SECRET&access_key=ACCESS_SECRET cookie=SESSDATA=COOKIE_SECRET token=TOKEN_SECRET jwt=JWT_SECRET x-api-key: API_KEY_SECRET authorization: Bearer AUTH_SECRET".to_owned(),
+            message: "proxy rejected https://user:pass@proxy.example/api?proxy_token=PROXY_SECRET&access_key=ACCESS_SECRET&access_token=ACCESS_TOKEN_SECRET cookie=SESSDATA=COOKIE_SECRET token=TOKEN_SECRET jwt=JWT_SECRET x-api-key: API_KEY_SECRET authorization: Bearer AUTH_SECRET".to_owned(),
         });
 
         assert!(message.starts_with("API code -40301:"));
         assert!(message.contains("access key diagnostic"));
         for sensitive in [
             "ACCESS_SECRET",
+            "ACCESS_TOKEN_SECRET",
             "PROXY_SECRET",
             "COOKIE_SECRET",
             "TOKEN_SECRET",
@@ -11122,6 +11127,7 @@ mod tests {
             "AUTH_SECRET",
             "proxy_token",
             "access_key",
+            "access_token",
             "x-api-key",
             "authorization",
             "cookie",
@@ -11144,6 +11150,19 @@ mod tests {
         assert_eq!(
             message,
             "API code -101: proxy rejected invalid proxy credential"
+        );
+    }
+
+    #[test]
+    fn resolver_error_message_marks_access_token_spelling_as_access_key_diagnostic() {
+        let message = super::resolver_error_message(&Error::Api {
+            code: -101,
+            message: "proxy rejected access-token expired".to_owned(),
+        });
+
+        assert_eq!(
+            message,
+            "API code -101: redacted diagnostic message (access key diagnostic)"
         );
     }
 
