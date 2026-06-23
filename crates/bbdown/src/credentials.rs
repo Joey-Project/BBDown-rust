@@ -1262,6 +1262,20 @@ impl CredentialStore {
         Ok(output)
     }
 
+    pub fn set_default_profile(&self, profile: &str) -> Result<String> {
+        let profile = normalize_profile_name(profile)?;
+        self.update_profiles(|profiles| {
+            if !profiles.profiles.contains_key(&profile) {
+                return Err(Error::InvalidInput(format!(
+                    "credential profile {profile:?} does not exist"
+                )));
+            }
+            let previous = profiles.default_profile.clone();
+            profiles.set_default_profile(&profile)?;
+            Ok(previous)
+        })
+    }
+
     pub fn update_profile(
         &self,
         profile: &str,
@@ -2299,6 +2313,69 @@ mod tests {
         assert_eq!(
             profiles.profile("intl")?.cookie.as_deref(),
             Some("SESSDATA=updated-intl")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn set_default_profile_persists_existing_profile() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let store = CredentialStore::new(temp.path().join("credentials.json"));
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            DEFAULT_CREDENTIAL_PROFILE,
+            Credentials {
+                cookie: Some("SESSDATA=default".to_owned()),
+                access_key: None,
+                tv_access_key: None,
+            },
+        )?;
+        profiles.set_profile(
+            "intl",
+            Credentials {
+                cookie: None,
+                access_key: Some("access-token".to_owned()),
+                tv_access_key: None,
+            },
+        )?;
+        store.save_profiles(&profiles)?;
+
+        let previous = store.set_default_profile("intl")?;
+
+        assert_eq!(previous, DEFAULT_CREDENTIAL_PROFILE);
+        let loaded = store.load_profiles()?;
+        assert_eq!(loaded.default_profile, "intl");
+        assert_eq!(store.load()?.access_key.as_deref(), Some("access-token"));
+        Ok(())
+    }
+
+    #[test]
+    fn set_default_profile_rejects_missing_profile() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let store = CredentialStore::new(temp.path().join("credentials.json"));
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            DEFAULT_CREDENTIAL_PROFILE,
+            Credentials {
+                cookie: Some("SESSDATA=default".to_owned()),
+                access_key: None,
+                tv_access_key: None,
+            },
+        )?;
+        store.save_profiles(&profiles)?;
+
+        let Err(error) = store.set_default_profile("missing") else {
+            anyhow::bail!("missing profile should be rejected");
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("credential profile \"missing\" does not exist")
+        );
+        assert_eq!(
+            store.load_profiles()?.default_profile,
+            DEFAULT_CREDENTIAL_PROFILE
         );
         Ok(())
     }

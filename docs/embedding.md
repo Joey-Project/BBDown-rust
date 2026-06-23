@@ -215,6 +215,8 @@ migrates the store to the versioned profile document without dropping the defaul
 `CredentialProfileSelection` and the selected-profile store helpers provide the same default-profile
 versus named-profile routing used by the CLI, so embedders can bind user-selected accounts without
 duplicating the migration behavior.
+Use `CredentialStore::set_default_profile(profile)` when an application wants a persistent account
+switch; keep using `CredentialProfileSelection::named(profile)` for a one-request override.
 For incremental updates, prefer `CredentialStore::update_profile`,
 `CredentialStore::update_selected_profile`, or `CredentialStore::update_profiles` over a separate
 `load_profiles` then `save_profiles` round trip. These helpers take a cooperative per-store lock,

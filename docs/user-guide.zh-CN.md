@@ -328,6 +328,7 @@ bbdown auth login-tv
 bbdown auth status
 bbdown auth status --profiles
 bbdown auth status --profiles --all-profiles
+bbdown auth switch intl
 bbdown auth health --json
 bbdown auth health --all-profiles
 bbdown auth health --json --all-profiles
@@ -343,7 +344,10 @@ scrollback 中；`--stdin` 必须来自 pipe 或 redirect，并会拒绝 termina
 拒绝 terminal-backed path。命令不会隐式消费 stdin；pipe 或 redirect 必须显式传
 `--stdin`。如果输入来自浏览器 `postMessage`，请使用 `--message-origin`，这样 CLI 会把
 sender origin 与本次 login ticket 校验；可信的手工 callback URL/query 输入不需要该标志。
-兼容 mock 或部署可以使用 `--auth-base` 和 `--callback-origin`。当 access-key callback 带有
+兼容 mock 或部署可以使用 `--auth-base` 和 `--callback-origin`。
+单次命令需要选择非默认账号时，使用 `--credential-profile <name>`；需要把某个已存在 profile
+持久设为后续命令的默认账号时，使用 `auth switch <name>`。这个命令不会创建空 profile。
+当 access-key callback 带有
 `oauth_expires_at`、`expires_at` 或 `expires_in` 时，CLI 会把派生出的 lifecycle expiry
 metadata 记录到当前选择的 credential profile 中；它也会记录是否出现过 refresh token，但不
 会把 refresh token 值保存进 lifecycle metadata。当 callback 带有 refresh token 时，CLI 会在
@@ -428,6 +432,8 @@ WEB 和 TV 二维码登录会记录 lifecycle source 和获取时间；只有上
 议。再加 `--all-profiles` 会报告所有已保存 profile；不加时，profile 输出只包含当前选中
 profile。`--stale-after-seconds` 和 `--expiring-within-seconds` 可调整 status 与人类可读
 health guidance 使用的本地 lifecycle policy。
+`auth switch <name>` 会改变后续命令使用的默认账号；`--credential-profile <name>` 仍然只覆盖
+当前进程选择的 profile。
 
 使用 `auth health` 可以在不暴露密钥值的情况下诊断已配置凭据。该命令会用 web nav 端点检
 查 WEB cookie，并通过 OAuth info 端点把通用 `access_key` 与 TV `tv_access_key` 作为

@@ -370,6 +370,7 @@ bbdown auth login-tv
 bbdown auth status
 bbdown auth status --profiles
 bbdown auth status --profiles --all-profiles
+bbdown auth switch intl
 bbdown auth health --json
 bbdown auth health --all-profiles
 bbdown auth health --json --all-profiles
@@ -387,6 +388,9 @@ paths. The command never consumes implicit stdin; pass `--stdin` for pipes or re
 `--message-origin` when ingesting browser `postMessage` data so the sender origin is checked against
 the login ticket; trusted manual callback URL/query input does not need that flag. Use `--auth-base`
 and `--callback-origin` for compatible mocks or deployments.
+Use `--credential-profile <name>` when one command should target a non-default account. Use
+`auth switch <name>` to persistently set an existing profile as the default account for later
+commands; it does not create empty profiles.
 When the access-key callback includes `oauth_expires_at`, `expires_at`, or `expires_in`, the CLI
 records the derived lifecycle expiry metadata in the selected credential profile. It also records
 whether a refresh token was present without storing that token value in lifecycle metadata. When the
@@ -482,6 +486,8 @@ selected profile, local lifecycle status, per-credential lifecycle
 metadata, and non-secret guidance. Add `--all-profiles` to report every saved profile; without it,
 the profile output is limited to the selected profile. `--stale-after-seconds` and
 `--expiring-within-seconds` tune the local lifecycle policy for status and human health guidance.
+`auth switch <name>` changes which profile counts as the default account in future commands, while
+`--credential-profile <name>` still overrides the selected profile for only that process.
 
 Use `auth health` to diagnose configured credentials without exposing secret values. The command
 checks the WEB cookie against the web nav endpoint and checks both the generic `access_key` and TV

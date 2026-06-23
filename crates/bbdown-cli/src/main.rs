@@ -292,7 +292,16 @@ enum AuthCommand {
     LoginAccessKey(AccessKeyLoginArgs),
     #[command(about = "Plan or complete generic access-key reauthorization")]
     RenewAccessKey(AccessKeyRenewalArgs),
+    #[command(about = "Persistently switch the default credential profile")]
+    Switch(AuthSwitchArgs),
     Logout,
+}
+
+#[derive(Debug, Args)]
+struct AuthSwitchArgs {
+    profile: String,
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -3300,10 +3309,44 @@ async fn handle_auth(
         AuthCommand::RenewAccessKey(args) => {
             handle_access_key_renewal(&args, credential_runtime, client_runtime).await?;
         }
+        AuthCommand::Switch(args) => {
+            handle_auth_switch(&args, credential_runtime)?;
+        }
         AuthCommand::Logout => {
             credential_runtime.logout()?;
             println!("credentials cleared");
         }
+    }
+    Ok(())
+}
+
+fn handle_auth_switch(
+    args: &AuthSwitchArgs,
+    credential_runtime: &CredentialRuntime,
+) -> anyhow::Result<()> {
+    let previous_default_profile = credential_runtime
+        .store
+        .set_default_profile(&args.profile)
+        .context("failed to switch default credential profile")?;
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "previous_default_profile": previous_default_profile,
+                "selected_profile": args.profile.trim(),
+            }))?
+        );
+    } else if previous_default_profile == args.profile.trim() {
+        println!(
+            "default credential profile remains {}",
+            display_profile_name(args.profile.trim())
+        );
+    } else {
+        println!(
+            "default credential profile switched from {} to {}",
+            display_profile_name(&previous_default_profile),
+            display_profile_name(args.profile.trim())
+        );
     }
     Ok(())
 }

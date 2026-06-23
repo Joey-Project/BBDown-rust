@@ -87,8 +87,12 @@
   GitHub Release and crates.io `bbdown-core` package.
 - [completed] Plan `v0.6.0` as the credential lifecycle line: renewal/reauthorization
   orchestration, health policy/reporting, profile-level status, and multi-account lifecycle UX.
-- [pending] Implement the `v0.6.0` credential lifecycle sequence from
+- [completed] Implement the original `v0.6.0` credential lifecycle sequence from
   `docs/project_journal/2026/06/2026-06-20-v0-6-credential-lifecycle-roadmap-019f16.md`.
+- [completed] Add persistent account switching through `auth switch <profile>` and
+  `CredentialStore::set_default_profile`.
+- [pending] Add automatic refresh support for WEB cookie and TV `tv_access_key` credentials before
+  the final `v0.6.0` release-prep PR.
 - [pending] Prioritize an overseas playback/CDN routing workstream after the current credential
   lifecycle line, using CCB as a research reference for Bilibili CDN regions and overseas host
   candidates while keeping `bbdown-core` configurable and not dependent on a third-party live data
