@@ -230,8 +230,8 @@ superseded_by:
     lock-release operations, and keeps non-Unix bare-path temporary credential files beside the
     target path instead of the OS temp directory.
   - Follow-up review found that lock release must wait when a coordination guard is briefly held;
-    release now retries while the same token is still current and has a deterministic channel-based
-    regression test for that contention path.
+    release now retries while the same token is still current and has a test-only retry observer to
+    deterministically cover that contention path.
   - Offline review follow-up keeps default-profile incremental writes on legacy flat JSON stores in
     the flat credential shape, while named profile writes and existing profile documents still use
     the versioned profile document.

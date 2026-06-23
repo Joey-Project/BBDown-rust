@@ -13,6 +13,17 @@ const CREDENTIAL_PROFILES_VERSION: u32 = 1;
 const CREDENTIAL_LOCK_STALE_AFTER_MILLIS: u64 = 30 * 60 * 1_000;
 const CREDENTIAL_LOCK_RELEASE_RETRY_MILLIS: u64 = 10;
 static CREDENTIAL_LOCK_COUNTER: AtomicU64 = AtomicU64::new(1);
+#[cfg(test)]
+static CREDENTIAL_LOCK_RELEASE_RETRY_OBSERVER: std::sync::Mutex<
+    Option<std::sync::mpsc::Sender<CredentialLockReleaseRetryEvent>>,
+> = std::sync::Mutex::new(None);
+
+#[cfg(test)]
+#[derive(Clone, Debug)]
+struct CredentialLockReleaseRetryEvent {
+    path: PathBuf,
+    token: String,
+}
 
 #[non_exhaustive]
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -1465,6 +1476,19 @@ impl CredentialStoreUpdateLock {
     }
 }
 
+#[cfg(test)]
+fn observe_lock_release_retry(path: &Path, token: &str) {
+    let Ok(observer) = CREDENTIAL_LOCK_RELEASE_RETRY_OBSERVER.lock() else {
+        return;
+    };
+    if let Some(sender) = observer.as_ref() {
+        let _ = sender.send(CredentialLockReleaseRetryEvent {
+            path: path.to_path_buf(),
+            token: token.to_owned(),
+        });
+    }
+}
+
 impl Drop for CredentialStoreUpdateLock {
     fn drop(&mut self) {
         loop {
@@ -1473,6 +1497,8 @@ impl Drop for CredentialStoreUpdateLock {
                     Ok(Some(guard)) => Some(guard),
                     Ok(None) => match self.is_current() {
                         Ok(true) => {
+                            #[cfg(test)]
+                            observe_lock_release_retry(&self.path, &self.token);
                             std::thread::sleep(std::time::Duration::from_millis(
                                 CREDENTIAL_LOCK_RELEASE_RETRY_MILLIS,
                             ));
@@ -1901,10 +1927,11 @@ mod tests {
     use super::private_temp_path;
     use super::{
         AccessKeyProvider, AccessKeyProviderSecret, AccessKeyRefreshKeypair,
-        AccessKeyRefreshProvider, CREDENTIAL_LOCK_STALE_AFTER_MILLIS, CredentialHealthProbe,
-        CredentialHealthReport, CredentialHealthScope, CredentialHealthStatus,
-        CredentialHealthSummaryStatus, CredentialKind, CredentialLifecycleMetadata,
-        CredentialLifecyclePolicy, CredentialLifecycleSource, CredentialLifecycleStatus,
+        AccessKeyRefreshProvider, CREDENTIAL_LOCK_RELEASE_RETRY_OBSERVER,
+        CREDENTIAL_LOCK_STALE_AFTER_MILLIS, CredentialHealthProbe, CredentialHealthReport,
+        CredentialHealthScope, CredentialHealthStatus, CredentialHealthSummaryStatus,
+        CredentialKind, CredentialLifecycleMetadata, CredentialLifecyclePolicy,
+        CredentialLifecycleSource, CredentialLifecycleStatus, CredentialLockReleaseRetryEvent,
         CredentialProfileMetadata, CredentialProfileSecrets, CredentialProfileSelection,
         CredentialProfiles, CredentialStore, CredentialStoreUpdateLock, Credentials,
         DEFAULT_CREDENTIAL_PROFILE, current_unix_millis, parse_lock_token, private_lock_path,
@@ -1912,6 +1939,26 @@ mod tests {
         try_create_lock_file_with_metadata_writer,
     };
     use std::io::Write;
+
+    struct CredentialLockReleaseRetryObserverGuard;
+
+    impl Drop for CredentialLockReleaseRetryObserverGuard {
+        fn drop(&mut self) {
+            if let Ok(mut observer) = CREDENTIAL_LOCK_RELEASE_RETRY_OBSERVER.lock() {
+                *observer = None;
+            }
+        }
+    }
+
+    fn install_lock_release_retry_observer(
+        sender: std::sync::mpsc::Sender<CredentialLockReleaseRetryEvent>,
+    ) -> anyhow::Result<CredentialLockReleaseRetryObserverGuard> {
+        let mut observer = CREDENTIAL_LOCK_RELEASE_RETRY_OBSERVER.lock().map_err(|_| {
+            anyhow::anyhow!("credential lock release observer should not be poisoned")
+        })?;
+        *observer = Some(sender);
+        Ok(CredentialLockReleaseRetryObserverGuard)
+    }
 
     #[test]
     fn stores_credentials_without_leaking_values_in_summary() -> anyhow::Result<()> {
@@ -2594,16 +2641,39 @@ mod tests {
             anyhow::bail!("coordination guard should be acquired");
         };
 
-        let (release_started_tx, release_started_rx) = std::sync::mpsc::channel();
+        let guard_token = guard.token.clone();
+        let (retry_tx, retry_rx) = std::sync::mpsc::channel();
+        let _retry_observer = install_lock_release_retry_observer(retry_tx)?;
         let (release_done_tx, release_done_rx) = std::sync::mpsc::channel();
         let lock_path_for_thread = lock_path.clone();
         let release = std::thread::spawn(move || {
-            let _ = release_started_tx.send(());
             drop(guard);
             let _ = release_done_tx.send(lock_path_for_thread.exists());
         });
 
-        release_started_rx.recv_timeout(std::time::Duration::from_secs(1))?;
+        let retry_event = {
+            let started_at = std::time::Instant::now();
+            loop {
+                match retry_rx.try_recv() {
+                    Ok(event) => break event,
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        anyhow::bail!("release retry observer disconnected");
+                    }
+                }
+                if let Ok(lock_exists) = release_done_rx.try_recv() {
+                    anyhow::bail!(
+                        "release completed before retry was observed; lock exists: {lock_exists}"
+                    );
+                }
+                if started_at.elapsed() > std::time::Duration::from_secs(5) {
+                    anyhow::bail!("release retry was not observed");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        };
+        assert_eq!(retry_event.path, lock_path);
+        assert_eq!(retry_event.token, guard_token);
         assert!(matches!(
             release_done_rx.recv_timeout(std::time::Duration::from_millis(
                 super::CREDENTIAL_LOCK_RELEASE_RETRY_MILLIS.saturating_mul(5),
