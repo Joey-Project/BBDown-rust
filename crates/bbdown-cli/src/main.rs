@@ -4024,6 +4024,13 @@ fn refresh_request_matches_profile(
     {
         return Ok(false);
     }
+    let metadata = profiles.profile_metadata(&refresh.profile)?;
+    let Some(access_key_metadata) = metadata.credential(CredentialKind::AccessKey) else {
+        return Ok(false);
+    };
+    if access_key_metadata.access_key_provider != Some(refresh.access_key_provider) {
+        return Ok(false);
+    }
     let secrets = profiles.profile_secrets(&refresh.profile)?;
     let Some(secret) = secrets.access_key_provider(refresh.access_key_provider) else {
         return Ok(false);
@@ -5374,6 +5381,80 @@ mod tests {
         assert_eq!(
             secret.refresh_token.as_deref(),
             Some("NEWER_REFRESH_SECRET")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn stale_auto_refresh_save_skips_when_provider_metadata_changed() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let store = CredentialStore::new(temp.path().join("credentials.json"));
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "intl",
+            Credentials::default().with_access_key("ACCESS_SECRET"),
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+                .with_acquired_at_unix_millis(1_000)
+                .with_expires_at_unix_millis(2_000)
+                .with_refresh_token_present(true),
+        );
+        profiles.set_profile_metadata("intl", metadata)?;
+        let mut secrets = CredentialProfileSecrets::default();
+        secrets.set_access_key_provider(
+            AccessKeyProvider::BalhBiliplus,
+            AccessKeyProviderSecret::default()
+                .with_refresh_token("OLD_REFRESH_SECRET")
+                .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+                .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+        );
+        profiles.set_profile_secrets("intl", secrets)?;
+        store.save_profiles(&profiles)?;
+        let refresh = access_key_refresh_request_from_profiles(&profiles, "intl")?;
+
+        let mut newer_profiles = store.load_profiles()?;
+        let mut newer_metadata = CredentialProfileMetadata::default();
+        newer_metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_access_key_provider(AccessKeyProvider::BilibiliMainOauth2)
+                .with_acquired_at_unix_millis(2_000)
+                .with_expires_at_unix_millis(3_000)
+                .with_refresh_token_present(true),
+        );
+        newer_profiles.set_profile_metadata("intl", newer_metadata)?;
+        store.save_profiles(&newer_profiles)?;
+
+        let runtime =
+            CredentialRuntime::new(store.clone(), CredentialProfileSelection::named("intl")?);
+        let refreshed = AccessKeyLoginCredentials::from_balh_payload(
+            "access_key=LATE_ACCESS_SECRET&refresh_token=LATE_REFRESH_SECRET&expires_in=60",
+        )?;
+
+        let outcome = save_refreshed_access_key_silent(&runtime, &refresh, &refreshed)?;
+
+        assert_eq!(
+            outcome.status,
+            super::RefreshedAccessKeySaveStatus::SkippedStaleRequest
+        );
+        let saved = store.load_profiles()?;
+        assert_eq!(
+            saved.profile("intl")?.access_key.as_deref(),
+            Some("ACCESS_SECRET")
+        );
+        let saved_metadata = saved.profile_metadata("intl")?;
+        let access_key_metadata = saved_metadata
+            .credential(CredentialKind::AccessKey)
+            .ok_or_else(|| anyhow::anyhow!("missing access-key lifecycle metadata"))?;
+        assert_eq!(
+            access_key_metadata.access_key_provider,
+            Some(AccessKeyProvider::BilibiliMainOauth2)
         );
         Ok(())
     }

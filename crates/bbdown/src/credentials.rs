@@ -1397,10 +1397,16 @@ impl CredentialStore {
         }
         let lock_path = private_lock_path(&self.path);
         loop {
+            let Some(_coordination_guard) = acquire_lock_coordination_guard(&lock_path)? else {
+                return Err(Error::InvalidInput(format!(
+                    "credential store is locked by another update: {}",
+                    lock_path.display()
+                )));
+            };
             if let Some(lock) = try_create_lock_file(&lock_path)? {
                 return Ok(lock);
             }
-            if reclaim_stale_lock(&lock_path)? {
+            if remove_stale_lock_file(&lock_path)? {
                 continue;
             }
             return Err(Error::InvalidInput(format!(
@@ -1623,17 +1629,16 @@ impl Drop for PendingCredentialStoreUpdateLock {
     }
 }
 
-fn reclaim_stale_lock(lock_path: &Path) -> Result<bool> {
+fn acquire_lock_coordination_guard(lock_path: &Path) -> Result<Option<CredentialStoreUpdateLock>> {
     let reclaim_lock_path = reclaim_lock_path(lock_path);
-    let _reclaim_guard = loop {
+    loop {
         if let Some(reclaim_guard) = try_create_lock_file(&reclaim_lock_path)? {
-            break reclaim_guard;
+            return Ok(Some(reclaim_guard));
         }
         if !remove_stale_lock_file(&reclaim_lock_path)? {
-            return Ok(false);
+            return Ok(None);
         }
-    };
-    remove_stale_lock_file(lock_path)
+    }
 }
 
 fn remove_stale_lock_file(lock_path: &Path) -> Result<bool> {
@@ -2313,6 +2318,29 @@ mod tests {
 
         assert!(error.to_string().contains("credential store is locked"));
         assert_eq!(std::fs::read_to_string(lock_path)?, stale_lock);
+        Ok(())
+    }
+
+    #[test]
+    fn update_profiles_waits_for_lock_coordination_guard() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        let lock_path = private_lock_path(&path);
+        let Some(_coordination_guard) = try_create_lock_file(&reclaim_lock_path(&lock_path))?
+        else {
+            anyhow::bail!("coordination guard should be acquired");
+        };
+
+        let Err(error) = store.update_profile("intl", |mut credentials| {
+            credentials.access_key = Some("ACCESS".to_owned());
+            Ok(credentials)
+        }) else {
+            anyhow::bail!("coordination contention must fail");
+        };
+
+        assert!(error.to_string().contains("credential store is locked"));
+        assert!(!lock_path.exists());
         Ok(())
     }
 

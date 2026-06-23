@@ -207,9 +207,10 @@ profile / 命名 profile 路由语义，因此嵌入方可以绑定用户选择�
 重新读取磁盘上的最新 profile document，只应用指定 mutation，然后写回私有文件，因此不会用
 旧快照覆盖其它 profile 或另一个 `bbdown` 进程刚更新的 provider refresh secret。被中断的
 credential 写入留下的 stale lock file 会在一个较短恢复窗口后自动接管。替换 credential file
-前会校验自己的 lock token 仍然有效，释放 lock 前也会校验同一个 token。CLI 的自动 access-key
-refresh 保存路径还会先验证当前所选 profile 是否仍匹配本次请求使用的旧 access key 和 refresh
-token；如果不匹配，就保持当前 store 不变。
+前，lock 获取和 stale reclaim 会用同一个 companion guard 串行化，并校验自己的 lock token
+仍然有效；释放 lock 前也会校验同一个 token。CLI 的自动 access-key refresh 保存路径还会先验证
+当前所选 profile 是否仍匹配本次请求使用的旧 access key、access-key provider metadata、
+refresh token、refresh provider 和 keypair；如果不匹配，就保持当前 store 不变。
 profile document 也可以通过 `CredentialProfileMetadata` 和 `CredentialLifecycleMetadata`
 携带可选 lifecycle metadata。该 metadata 会记录来源、检查时间/过期时间戳，以及是否曾有
 refresh token，但不会在 metadata map 中保存原始 refresh token 值。旧 flat store 仍保持原形

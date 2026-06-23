@@ -417,9 +417,10 @@ the CLI reloads the latest profile document under a cooperative credential-store
 the chosen profile, then writes the private file back. Other profiles, unrelated credential kinds,
 and provider refresh secrets that were updated by another cooperating process are preserved. Stale
 lock files left by an interrupted credential write are automatically reclaimed after a short
-recovery window. Each write checks that its lock token is still current before replacing the
-credential file, and lock release checks the same token before deletion, so a resumed stale writer
-cannot overwrite a newer store or remove a newer writer's lock after recovery.
+recovery window. Lock acquisition and stale reclaim are serialized by the same companion guard. Each
+write checks that its lock token is still current before replacing the credential file, and lock
+release checks the same token before deletion, so a resumed stale writer cannot overwrite a newer
+store or remove a newer writer's lock after recovery.
 Use the global `--credential-preflight warn|fail|renew` option with `plan`, `playback`, or
 `download` when a media request should check the selected profile before resolving streams.
 Preflight derives the expected credential requirements from the selected request path: WEB playurl

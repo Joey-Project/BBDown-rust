@@ -224,8 +224,8 @@ access-key login 和 renewal 只会保存当前选择的 profile，并会在协�
 profile document 后再 merge 新的 credential、lifecycle 和 provider-secret 字段。这样不会覆盖
 其它 profile，也能避免另一个 `bbdown` 进程刚刷新的 provider secret 被旧快照写回；被中断的
 credential 写入留下的 stale lock file 会在一个较短恢复窗口后自动接管。每次替换 credential
-file 前会校验自己的 lock token 仍然有效，释放 lock 前也会校验同一个 token，因此恢复后的旧
-writer 不会覆盖较新的 store，也不会删掉新 writer 的 lock。如果较慢的自动刷新 response
+file 前，lock 获取和 stale reclaim 会用同一个 companion guard 串行化，并校验自己的 lock token
+仍然有效；释放 lock 前也会校验同一个 token，因此恢复后的旧 writer 不会覆盖较新的 store，也不会删掉新 writer 的 lock。如果较慢的自动刷新 response
 已经不再是当前状态，JSON 输出会发出 `refresh_skipped`，并带上
 `reason=profile_changed`，同时保持当前 credential store 不变。`plan`、
 `playback` 和 `download` 也支持 `--credential-preflight warn|fail|renew`，方便调用方在 media

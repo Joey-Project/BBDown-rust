@@ -370,8 +370,8 @@ response 保存前已经更新当前选择的 profile，CLI 会输出 `refresh_s
 重新读取最新 profile document，只 merge 当前选择的 profile，然后写回私有文件。其它 profile、
 无关 credential kind，以及另一个协作进程刚更新的 provider refresh secret 都会保留。被中断的
 credential 写入留下的 stale lock file 会在一个较短恢复窗口后自动接管。每次替换 credential
-file 前会校验自己的 lock token 仍然有效，释放 lock 前也会校验同一个 token，因此恢复后的旧
-writer 不会覆盖较新的 store，也不会删掉新 writer 的 lock。
+file 前，lock 获取和 stale reclaim 会用同一个 companion guard 串行化，并校验自己的 lock token
+仍然有效；释放 lock 前也会校验同一个 token，因此恢复后的旧 writer 不会覆盖较新的 store，也不会删掉新 writer 的 lock。
 `plan`、`playback` 或 `download`
 可以配合全局 `--credential-preflight warn|fail|renew`，在解析 media stream 前检查当前选择的
 profile。preflight 会按 request path 推导所需 credential：WEB playurl 把 cookie 视为

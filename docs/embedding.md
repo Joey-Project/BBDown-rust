@@ -221,11 +221,13 @@ For incremental updates, prefer `CredentialStore::update_profile`,
 reload the latest on-disk profile document, apply only the requested mutation, and then write the
 private file back, so unrelated profiles and provider refresh secrets are not overwritten by a stale
 snapshot from another `bbdown` process. Stale lock files left by interrupted credential writes are
-reclaimed after a short recovery window. Writes check that their lock token is still current before
-replacing the credential file, and lock release checks the same token before deletion. The CLI's
-automatic access-key refresh path also validates
-that the current selected profile still matches the request's old access key and refresh token
-before saving a refresh response; if not, it leaves the current store untouched.
+reclaimed after a short recovery window. Lock acquisition and stale reclaim are serialized by the
+same companion guard. Writes check that their lock token is still current before replacing the
+credential file, and lock release checks the same token before deletion. The CLI's automatic
+access-key refresh path also validates
+that the current selected profile still matches the request's old access key, access-key provider
+metadata, refresh token, refresh provider, and keypair before saving a refresh response; if not, it
+leaves the current store untouched.
 Profile documents can also carry optional lifecycle metadata through `CredentialProfileMetadata` and
 `CredentialLifecycleMetadata`. This metadata records provenance, checked-at/expiry timestamps, and
 whether a refresh token was present without storing raw refresh-token values in the metadata map.
