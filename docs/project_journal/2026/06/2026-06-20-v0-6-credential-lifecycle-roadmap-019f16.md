@@ -412,6 +412,9 @@ superseded_by:
       access keys merely because restricted-area proxy preflight also selected a generic key.
     - The same TV-key exclusion now covers APP gRPC code 16 responses without `grpc-message`, whose
       generic core error text is otherwise treated as access-key-refreshable for APP playurl.
+    - Independent review follow-up lets bare `403 Forbidden` HTTP status failures reach the
+      existing context/path refresh gate, so generic APP/intl access-key requests can refresh while
+      WEB/cookie/restricted proxy failures remain blocked by their stricter gates.
     - Crate-local README files now document the provider-aware APP credential order for embedders,
       matching the top-level and embedding docs.
   - Added mock e2e coverage for these review follow-ups:
@@ -454,6 +457,7 @@ superseded_by:
     - `cargo test -p bbdown-cli --bin bbdown generic_access_key_retry_requires_failure_path_that_uses_access_key --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_generic_key_when_pgc_app_http_status_used_tv_key --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_generic_key_when_pgc_app_grpc_status_used_tv_key --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_retries_plan_after_app_http_forbidden_with_fresh_refreshable_access_key --locked`.
 
 ## Next Steps
 

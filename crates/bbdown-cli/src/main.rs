@@ -2474,8 +2474,10 @@ fn api_failure_may_be_credential_related(code: i64, message: &str) -> bool {
 }
 
 fn http_status_failure_may_be_credential_related(status: u16, message: &str) -> bool {
-    (status == 401 && message.to_ascii_lowercase().contains("unauthorized"))
-        || (status == 403 && access_key_refresh_failure_message(message))
+    let lower = message.to_ascii_lowercase();
+    (status == 401 && lower.contains("unauthorized"))
+        || (status == 403
+            && (lower.contains("forbidden") || access_key_refresh_failure_message(&lower)))
 }
 
 fn access_key_refresh_failure_message(message: &str) -> bool {
@@ -5390,9 +5392,13 @@ mod tests {
             403,
             "HTTP status client error (403 Forbidden): expired access-token"
         ));
-        assert!(!http_status_failure_may_be_credential_related(
+        assert!(http_status_failure_may_be_credential_related(
             403,
             "HTTP status client error (403 Forbidden)"
+        ));
+        assert!(!http_status_failure_may_be_credential_related(
+            403,
+            "HTTP status client error (403 blocked)"
         ));
         assert!(http_status_failure_may_be_credential_related(
             403,
