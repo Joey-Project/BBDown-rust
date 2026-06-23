@@ -4746,6 +4746,7 @@ fn preserves_json_status_url_for_path(path: &str) -> bool {
     matches!(
         path,
         "/x/web-interface/view"
+            | "/x/web-interface/nav"
             | "/x/tag/archive/tags"
             | "/pgc/view/web/season"
             | "/pgc/review/user"

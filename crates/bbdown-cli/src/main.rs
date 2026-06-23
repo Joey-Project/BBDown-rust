@@ -1582,6 +1582,7 @@ fn non_generic_access_key_json_path(path: &str) -> bool {
     matches!(
         path,
         "/x/web-interface/view"
+            | "/x/web-interface/nav"
             | "/x/tag/archive/tags"
             | "/pgc/view/web/season"
             | "/pgc/review/user"

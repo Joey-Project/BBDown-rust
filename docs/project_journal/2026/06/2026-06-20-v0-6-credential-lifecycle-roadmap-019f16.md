@@ -397,6 +397,10 @@ superseded_by:
       unless the diagnostic includes explicit access-key or access-token evidence. APP and intl
       access-key request failures that surface as URL-redacted bare HTTP 401/403 remain refreshable
       when the selected request path can actually send the generic key.
+    - Current-head independent review follow-up includes WBI `/x/web-interface/nav` HTTP status
+      failures in the same non-generic-access-key path gate, preventing recommendation/space WBI key
+      prefetch failures from rotating generic access keys merely because the eventual media stream
+      mode is APP.
     - Crate-local README files now document the provider-aware APP credential order for embedders,
       matching the top-level and embedding docs.
   - Added mock e2e coverage for these review follow-ups:
@@ -432,6 +436,7 @@ superseded_by:
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_retries_app_access_key_after_http_unauthorized_status --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_for_restricted_proxy_http_auth_status_without_key_evidence --locked`.
     - `cargo test -p bbdown-core --lib intl_access_key_is_redacted_from_http_errors --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_generic_key_for_wbi_nav_http_status --locked`.
 
 ## Next Steps
 
