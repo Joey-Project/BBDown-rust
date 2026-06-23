@@ -209,9 +209,9 @@ profile / 命名 profile 路由语义，因此嵌入方可以绑定用户选择�
 credential 写入留下的 stale lock file 会在一个较短恢复窗口后自动接管。每次写入都会在临时文件
 写入完成后、真正替换 credential file 前，校验自己的 lock token 仍然有效；lock 获取和 stale
 reclaim 会用同一个 companion guard 串行化，释放 lock 前也会校验同一个 token。CLI 的自动
-access-key refresh 保存路径还会先验证
-当前所选 profile 是否仍匹配本次请求使用的旧 access key、access-key provider metadata、
-refresh token、refresh provider 和 keypair；如果不匹配，就保持当前 store 不变。
+access-key refresh 保存路径还会先验证当前选择的 profile name 是否仍匹配本次请求的 profile，
+且该 profile 是否仍匹配本次请求使用的旧 access key、access-key provider metadata、refresh
+token、refresh provider 和 keypair；如果不匹配，就保持当前 store 不变。
 profile document 也可以通过 `CredentialProfileMetadata` 和 `CredentialLifecycleMetadata`
 携带可选 lifecycle metadata。该 metadata 会记录来源、检查时间/过期时间戳，以及是否曾有
 refresh token，但不会在 metadata map 中保存原始 refresh token 值。旧 flat store 仍保持原形

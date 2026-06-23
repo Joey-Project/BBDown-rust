@@ -364,8 +364,9 @@ access key 如果已经 expired、expiring、stale 或 unknown，且状态为 `r
 `--json` 时，自动刷新成功会输出 `decision`、`refreshed` 和 `saved` 事件，仍不会打印原始
 token。如果 refresh 失败，CLI 会输出 `refresh_failed`，然后回退到普通 authorization ticket，
 这样调用方可以提示用户重新授权而不会丢掉旧 credential。如果另一个协作进程在较旧 refresh
-response 保存前已经更新当前选择的 profile，CLI 会输出 `refresh_skipped`，并带上
-`reason=profile_changed`，同时保持当前 store 不变。所有 credential import、access-key login
+response 保存前改变了当前选择的 profile name，或改变了该 profile 的 credential / refresh-secret
+状态，CLI 会输出 `refresh_skipped`，并带上 `reason=profile_changed`，同时保持当前 store 不变。
+所有 credential import、access-key login
 和 access-key renewal 写入都是 selected-profile update：CLI 会在协作 credential-store lock 内
 重新读取最新 profile document，只 merge 当前选择的 profile，然后写回私有文件。其它 profile、
 无关 credential kind，以及另一个协作进程刚更新的 provider refresh secret 都会保留。被中断的

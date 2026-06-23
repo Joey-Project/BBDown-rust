@@ -225,9 +225,9 @@ reclaimed after a short recovery window. Lock acquisition and stale reclaim are 
 same companion guard. Writes check that their lock token is still current after the temporary file
 is written and immediately before replacing the credential file, and lock release checks the same
 token before deletion. The CLI's automatic access-key refresh path also validates
-that the current selected profile still matches the request's old access key, access-key provider
-metadata, refresh token, refresh provider, and keypair before saving a refresh response; if not, it
-leaves the current store untouched.
+that the current selected profile name still matches the request profile, and that the profile still
+matches the request's old access key, access-key provider metadata, refresh token, refresh provider,
+and keypair before saving a refresh response; if not, it leaves the current store untouched.
 Profile documents can also carry optional lifecycle metadata through `CredentialProfileMetadata` and
 `CredentialLifecycleMetadata`. This metadata records provenance, checked-at/expiry timestamps, and
 whether a refresh token was present without storing raw refresh-token values in the metadata map.

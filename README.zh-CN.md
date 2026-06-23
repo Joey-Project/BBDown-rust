@@ -227,8 +227,9 @@ credential 写入留下的 stale lock file 会在一个较短恢复窗口后自�
 写入完成后、真正替换 credential file 前，校验自己的 lock token 仍然有效；lock 获取和 stale
 reclaim 会用同一个 companion guard 串行化，释放 lock 前也会校验同一个 token，因此恢复后的旧
 writer 不会覆盖较新的 store，也不会删掉新 writer 的 lock。如果较慢的自动刷新 response
-已经不再是当前状态，JSON 输出会发出 `refresh_skipped`，并带上
-`reason=profile_changed`，同时保持当前 credential store 不变。`plan`、
+已经不再匹配当前选择的 profile name，或不再匹配该 profile 的 credential / refresh-secret
+状态，JSON 输出会发出 `refresh_skipped`，并带上 `reason=profile_changed`，同时保持当前
+credential store 不变。`plan`、
 `playback` 和 `download` 也支持 `--credential-preflight warn|fail|renew`，方便调用方在 media
 request 前检查当前 profile，也会覆盖使用通用 `access_key` 的 intl/Bstar media path；同样可以用
 `BBDOWN_CREDENTIAL_PREFLIGHT`、`BBDOWN_CREDENTIAL_STALE_AFTER_SECONDS` 和

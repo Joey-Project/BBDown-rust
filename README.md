@@ -242,8 +242,9 @@ Lock acquisition and stale reclaim are serialized by the same companion guard. E
 that its lock token is still current after the temporary file is written and immediately before
 replacing the credential file, and lock release checks the same token before deletion, so a resumed
 stale writer cannot overwrite a newer store or remove a newer writer's lock after recovery.
-If a slower automatic refresh response is no longer current, JSON output emits `refresh_skipped`
-with `reason=profile_changed` and leaves the current credential store untouched.
+If a slower automatic refresh response no longer matches the current selected profile name or that
+profile's credential/refresh-secret state, JSON output emits `refresh_skipped` with
+`reason=profile_changed` and leaves the current credential store untouched.
 `plan`, `playback`, and `download` also accept `--credential-preflight warn|fail|renew` so callers
 can check the selected profile before media requests, including intl/Bstar media paths that use the
 generic `access_key`. The same controls are available as `BBDOWN_CREDENTIAL_PREFLIGHT`,

@@ -3992,7 +3992,7 @@ fn save_refreshed_access_key_silent(
     credential_runtime
         .store
         .update_profiles(|profiles| {
-            if !refresh_request_matches_profile(profiles, refresh)? {
+            if !refresh_request_matches_selected_profile(credential_runtime, profiles, refresh)? {
                 let summary = profiles.profile(&refresh.profile)?.redacted_summary();
                 return Ok(RefreshedAccessKeySaveOutcome {
                     status: RefreshedAccessKeySaveStatus::SkippedStaleRequest,
@@ -4012,6 +4012,17 @@ fn save_refreshed_access_key_silent(
             })
         })
         .context("failed to save credentials")
+}
+
+fn refresh_request_matches_selected_profile(
+    credential_runtime: &CredentialRuntime,
+    profiles: &CredentialProfiles,
+    refresh: &StoredAccessKeyRefreshRequest,
+) -> bbdown_core::Result<bool> {
+    if credential_runtime.selected_profile_name(profiles) != refresh.profile {
+        return Ok(false);
+    }
+    refresh_request_matches_profile(profiles, refresh)
 }
 
 fn refresh_request_matches_profile(
@@ -5455,6 +5466,72 @@ mod tests {
         assert_eq!(
             access_key_metadata.access_key_provider,
             Some(AccessKeyProvider::BilibiliMainOauth2)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn stale_auto_refresh_save_skips_when_default_profile_changed() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let store = CredentialStore::new(temp.path().join("credentials.json"));
+        let mut profiles = CredentialProfiles::default();
+        profiles.default_profile = "intl".to_owned();
+        profiles.set_profile(
+            "intl",
+            Credentials::default().with_access_key("ACCESS_SECRET"),
+        )?;
+        profiles.set_profile(
+            "main",
+            Credentials::default().with_access_key("MAIN_ACCESS_SECRET"),
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+                .with_acquired_at_unix_millis(1_000)
+                .with_expires_at_unix_millis(2_000)
+                .with_refresh_token_present(true),
+        );
+        profiles.set_profile_metadata("intl", metadata)?;
+        let mut secrets = CredentialProfileSecrets::default();
+        secrets.set_access_key_provider(
+            AccessKeyProvider::BalhBiliplus,
+            AccessKeyProviderSecret::default()
+                .with_refresh_token("OLD_REFRESH_SECRET")
+                .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+                .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+        );
+        profiles.set_profile_secrets("intl", secrets)?;
+        store.save_profiles(&profiles)?;
+        let refresh = access_key_refresh_request_from_profiles(&profiles, "intl")?;
+
+        let mut newer_profiles = store.load_profiles()?;
+        newer_profiles.default_profile = "main".to_owned();
+        store.save_profiles(&newer_profiles)?;
+
+        let runtime =
+            CredentialRuntime::new(store.clone(), CredentialProfileSelection::default_profile());
+        let refreshed = AccessKeyLoginCredentials::from_balh_payload(
+            "access_key=LATE_ACCESS_SECRET&refresh_token=LATE_REFRESH_SECRET&expires_in=60",
+        )?;
+
+        let outcome = save_refreshed_access_key_silent(&runtime, &refresh, &refreshed)?;
+
+        assert_eq!(
+            outcome.status,
+            super::RefreshedAccessKeySaveStatus::SkippedStaleRequest
+        );
+        let saved = store.load_profiles()?;
+        assert_eq!(saved.default_profile, "main");
+        assert_eq!(
+            saved.profile("intl")?.access_key.as_deref(),
+            Some("ACCESS_SECRET")
+        );
+        assert_eq!(
+            saved.profile("main")?.access_key.as_deref(),
+            Some("MAIN_ACCESS_SECRET")
         );
         Ok(())
     }

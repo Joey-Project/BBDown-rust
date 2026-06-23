@@ -409,9 +409,9 @@ did not pass `--force`, `--stdin`, or `--file`, the CLI first tries provider-spe
 refresh. With `--json`, successful automatic refresh emits `decision`, `refreshed`, and `saved`
 events without printing raw tokens. If refresh fails, the CLI emits `refresh_failed` and falls back
 to the normal authorization ticket so callers can prompt the user without losing the old credential.
-If another cooperating process updates the selected profile before the older refresh response is
-saved, the CLI emits `refresh_skipped` with `reason=profile_changed` and leaves the current store
-untouched.
+If another cooperating process changes the current selected profile name, or changes that profile's
+credential or refresh-secret state before the older refresh response is saved, the CLI emits
+`refresh_skipped` with `reason=profile_changed` and leaves the current store untouched.
 All credential import, access-key login, and access-key renewal writes are selected-profile updates:
 the CLI reloads the latest profile document under a cooperative credential-store lock, merges only
 the chosen profile, then writes the private file back. Other profiles, unrelated credential kinds,
