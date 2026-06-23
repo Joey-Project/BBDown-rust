@@ -2270,9 +2270,9 @@ fn plan_failure_may_be_credential_related(error: &bbdown_core::Error) -> bool {
         bbdown_core::Error::Api { code, message } => {
             api_failure_may_be_credential_related(*code, message)
         }
-        bbdown_core::Error::Http(error) => error
-            .status()
-            .is_some_and(|status| status == 401 || status == 403),
+        bbdown_core::Error::Http(error) => error.status().is_some_and(|status| {
+            http_status_failure_may_be_credential_related(status.as_u16(), &error.to_string())
+        }),
         bbdown_core::Error::AccessRestricted(message) => {
             restricted_area_resolver_failure_may_be_credential_related(message)
         }
@@ -2290,6 +2290,10 @@ fn plan_failure_may_be_credential_related(error: &bbdown_core::Error) -> bool {
 
 fn api_failure_may_be_credential_related(code: i64, message: &str) -> bool {
     code == -101 || (matches!(code, -400 | -403 | 7 | 16) && auth_like_failure_message(message))
+}
+
+fn http_status_failure_may_be_credential_related(status: u16, message: &str) -> bool {
+    status == 401 || (status == 403 && auth_like_failure_message(message))
 }
 
 fn auth_like_failure_message(message: &str) -> bool {
@@ -2331,7 +2335,7 @@ fn restricted_area_resolver_failure_may_be_credential_related(message: &str) -> 
             || (lower.contains("api code 7") && auth_like_failure_message(&lower))
             || (lower.contains("api code 16") && auth_like_failure_message(&lower))
             || lower.contains("401")
-            || lower.contains("403 forbidden")
+            || (lower.contains("403") && auth_like_failure_message(&lower))
             || lower.contains("unauthorized"))
 }
 
@@ -4725,14 +4729,14 @@ mod tests {
         archive_sidecar_path, credential_profile_selection, download_ctrl_c_action,
         download_mode_may_use_intl_access_key, duplicate_decision_or_report, endpoints_from_cli,
         ensure_access_key_login_file_is_safe, ensure_access_key_login_stdin_is_safe,
-        ensure_archive_file_is_not_output_root, input_may_use_intl_access_key,
-        input_may_use_restricted_area_proxy, input_media_preflight_playurl_mode,
-        input_requires_web_cookie, next_poll_sleep, parse_access_key_login_input,
-        plan_failure_may_be_credential_related, qr_login_lifecycle_metadata, remaining_until,
-        restricted_area_from_cli_with_args, restricted_area_from_cli_with_env_values,
-        save_credentials, save_credentials_with_lifecycle,
-        save_credentials_with_lifecycle_and_secrets, should_prompt_duplicate_decision,
-        validate_media_host_spec, validate_single_download_args,
+        ensure_archive_file_is_not_output_root, http_status_failure_may_be_credential_related,
+        input_may_use_intl_access_key, input_may_use_restricted_area_proxy,
+        input_media_preflight_playurl_mode, input_requires_web_cookie, next_poll_sleep,
+        parse_access_key_login_input, plan_failure_may_be_credential_related,
+        qr_login_lifecycle_metadata, remaining_until, restricted_area_from_cli_with_args,
+        restricted_area_from_cli_with_env_values, save_credentials,
+        save_credentials_with_lifecycle, save_credentials_with_lifecycle_and_secrets,
+        should_prompt_duplicate_decision, validate_media_host_spec, validate_single_download_args,
     };
     use bbdown_core::{
         AccessKeyLoginConfig, AccessKeyLoginCredentials, AccessKeyProvider,
@@ -4914,11 +4918,35 @@ mod tests {
                     .to_owned(),
             )
         ));
+        assert!(!plan_failure_may_be_credential_related(
+            &bbdown_core::Error::AccessRestricted(
+                "restricted-area resolver failed for hk: HTTP error: HTTP status client error (403 Forbidden)"
+                    .to_owned(),
+            )
+        ));
         assert!(plan_failure_may_be_credential_related(
             &bbdown_core::Error::AccessRestricted(
                 "restricted-area resolver failed for hk: API code 16: access key expired"
                     .to_owned(),
             )
+        ));
+        assert!(plan_failure_may_be_credential_related(
+            &bbdown_core::Error::AccessRestricted(
+                "restricted-area resolver failed for hk: HTTP error: HTTP status client error (403 Forbidden): access token expired"
+                    .to_owned(),
+            )
+        ));
+        assert!(http_status_failure_may_be_credential_related(
+            401,
+            "HTTP status client error (401 Unauthorized)"
+        ));
+        assert!(!http_status_failure_may_be_credential_related(
+            403,
+            "HTTP status client error (403 Forbidden)"
+        ));
+        assert!(http_status_failure_may_be_credential_related(
+            403,
+            "HTTP status client error (403 Forbidden): expired access_key"
         ));
     }
 

@@ -87,8 +87,10 @@ TV mode 使用 `Credentials::tv_access_key`，不会复用通用 intl access key
 当嵌入应用需要 BBDown-compatible APP gRPC playurl 解析时，可设置
 `ClientConfig::with_playurl_mode(PlayurlMode::App)`、
 `EndpointConfig::with_app_grpc_base` 和 `EndpointConfig::with_app_pgc_grpc_base`。APP mode
-适用于普通视频和 PGC 分集，优先使用 `Credentials::access_key`，再回退到
-`Credentials::tv_access_key`，并输出规范化后的 `StreamSet` / `PlaybackPlan` 媒体规格；PGC
+适用于普通视频和 PGC 分集。它会优先使用 Bilibili main/BALH 通用
+`Credentials::access_key`，再回退到 `Credentials::tv_access_key`；intl OAuth key 和缺少
+provider metadata 的 legacy profile 会保持 TV-key-first 行为。APP mode 会输出规范化后的
+`StreamSet` / `PlaybackPlan` 媒体规格；PGC
 出现 restricted 或 preview-only 信号时，仍可回退到已配置的 restricted-area HTTP playurl
 proxy，且 proxy URL 只使用通用 access key。这些信号可以来自区域限制消息、APP
 permission-denied gRPC status 或 PGC response-body metadata。APP gRPC 非零 status 会读取 initial headers 和
