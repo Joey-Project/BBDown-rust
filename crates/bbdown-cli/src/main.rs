@@ -1524,12 +1524,50 @@ fn authenticated_web_api_failure_may_have_used_cookie(
     context: &MediaCredentialPreflightContext,
     failure: &bbdown_core::Error,
 ) -> bool {
-    context.web_cookie_required
-        && matches!(
-            failure,
-            bbdown_core::Error::Api { code, message }
-                if *code == -101 && !access_key_specific_failure_message(message)
-        )
+    if !context.web_cookie_required {
+        return false;
+    }
+    match failure {
+        bbdown_core::Error::Api { code, message } => {
+            *code == -101 && !access_key_specific_failure_message(message)
+        }
+        bbdown_core::Error::Http(_) => cookie_authenticated_api_http_failure(failure),
+        bbdown_core::Error::AccessRestricted(_)
+        | bbdown_core::Error::Cancelled { .. }
+        | bbdown_core::Error::InvalidInput(_)
+        | bbdown_core::Error::SelectionRequired { .. }
+        | bbdown_core::Error::Unsupported(_)
+        | bbdown_core::Error::MissingField(_)
+        | bbdown_core::Error::Url(_)
+        | bbdown_core::Error::Json(_)
+        | bbdown_core::Error::Io(_)
+        | bbdown_core::Error::MuxFailed { .. } => false,
+    }
+}
+
+fn cookie_authenticated_api_http_failure(failure: &bbdown_core::Error) -> bool {
+    let bbdown_core::Error::Http(error) = failure else {
+        return false;
+    };
+    let Some(status) = error.status() else {
+        return false;
+    };
+    if !matches!(status.as_u16(), 401 | 403) {
+        return false;
+    }
+    error
+        .url()
+        .is_some_and(|url| cookie_authenticated_api_path(url.path()))
+}
+
+fn cookie_authenticated_api_path(path: &str) -> bool {
+    matches!(
+        path,
+        "/x/web-interface/history/cursor"
+            | "/x/v2/history/toview"
+            | "/x/polymer/web-dynamic/v1/feed/all"
+            | "/x/polymer/web-dynamic/v1/feed/space"
+    )
 }
 
 fn authenticated_web_api_cookie_missing(report: &CredentialPreflightReport) -> bool {

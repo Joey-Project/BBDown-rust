@@ -383,6 +383,11 @@ superseded_by:
       do not rotate generic access keys; restricted-area resolver summaries still treat proxy-owned
       bare HTTP 401/403 and `账号未登录` as retryable because that path can send the generic
       access key.
+    - Current-head independent review follow-up preserves URL context only for known
+      cookie-authenticated feed JSON HTTP status failures, then suppresses generic access-key
+      archive retry for those authenticated feed endpoints when they return bare HTTP 401/403. APP
+      playurl and intl HTTP status failures still redact URLs and remain eligible for access-key
+      refresh when the configured request path can actually send the generic access key.
     - Crate-local README files now document the provider-aware APP credential order for embedders,
       matching the top-level and embedding docs.
   - Added mock e2e coverage for these review follow-ups:
@@ -412,6 +417,7 @@ superseded_by:
     - `cargo test -p bbdown-cli --bin bbdown plan_failure_classifier --locked`.
     - `cargo test -p bbdown-cli --bin bbdown access_key_refresh_request_trims_stored_tokens --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_for_optional_web_api_not_logged_in --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_generic_key_for_authenticated_feed_http_status --locked`.
 
 ## Next Steps
 

@@ -3094,6 +3094,8 @@ impl BiliClient {
     where
         T: for<'de> Deserialize<'de>,
     {
+        let preserve_status_url =
+            include_cookie && preserves_cookie_json_status_url_for_path(url.path());
         let response = self
             .http
             .get(url)
@@ -3104,7 +3106,7 @@ impl BiliClient {
             .map_err(Self::http_error_without_url)?;
         let response = response
             .error_for_status()
-            .map_err(Self::http_error_without_url)?;
+            .map_err(|error| Self::http_json_status_error(error, preserve_status_url))?;
         response
             .json::<T>()
             .await
@@ -3143,6 +3145,13 @@ impl BiliClient {
 
     pub(crate) fn http_error_without_url(error: reqwest::Error) -> Error {
         Error::Http(error.without_url())
+    }
+
+    fn http_json_status_error(error: reqwest::Error, preserve_status_url: bool) -> Error {
+        if preserve_status_url && error.status().is_some() {
+            return Error::Http(error);
+        }
+        Self::http_error_without_url(error)
     }
 
     pub(crate) fn endpoint_url(base: &str, path: &str) -> Result<Url> {
@@ -4718,6 +4727,16 @@ fn append_pgc_playurl_params(
     if let Some(access_key) = request_credential_value(access_key) {
         query.append_pair("access_key", access_key);
     }
+}
+
+fn preserves_cookie_json_status_url_for_path(path: &str) -> bool {
+    matches!(
+        path,
+        "/x/web-interface/history/cursor"
+            | "/x/v2/history/toview"
+            | "/x/polymer/web-dynamic/v1/feed/all"
+            | "/x/polymer/web-dynamic/v1/feed/space"
+    )
 }
 
 fn is_restricted_area_fallback_error(source: &StreamSource, error: &Error) -> bool {
