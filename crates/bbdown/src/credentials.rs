@@ -1729,13 +1729,17 @@ fn write_private_file(
     bytes: &[u8],
     before_replace: impl FnOnce() -> Result<()>,
 ) -> Result<()> {
-    before_replace()?;
-    let mut file = OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(path)?;
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty());
+    let mut file = match parent {
+        Some(parent) => tempfile::NamedTempFile::new_in(parent)?,
+        None => tempfile::NamedTempFile::new()?,
+    };
     file.write_all(bytes)?;
+    file.as_file().sync_all()?;
+    before_replace()?;
+    file.persist(path).map_err(std::io::Error::from)?;
     Ok(())
 }
 

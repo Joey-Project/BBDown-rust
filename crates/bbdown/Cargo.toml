@@ -23,6 +23,7 @@ prost.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 url.workspace = true
@@ -31,7 +32,6 @@ url.workspace = true
 anyhow.workspace = true
 bytes.workspace = true
 httpmock.workspace = true
-tempfile.workspace = true
 tokio.workspace = true
 
 [lints]

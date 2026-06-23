@@ -216,6 +216,9 @@ superseded_by:
   - GitHub Codex review follow-up adds the current selected profile name to the automatic refresh
     stale-response guard, so an implicit-default refresh response is skipped if another process
     changes `default_profile` while the network request is in flight.
+  - Offline review follow-up moves the `#[cfg(not(unix))]` credential writer away from direct
+    truncate-in-place writes and onto a `tempfile::NamedTempFile` replace path with the same
+    post-temp-write lock fencing as Unix.
   - Offline review follow-up keeps default-profile incremental writes on legacy flat JSON stores in
     the flat credential shape, while named profile writes and existing profile documents still use
     the versioned profile document.
@@ -510,6 +513,9 @@ superseded_by:
   - `cargo test -p bbdown-core update_profiles_waits_for_lock_coordination_guard --locked`.
   - `cargo test -p bbdown-cli stale_auto_refresh_save_skips_when_provider_metadata_changed --bin bbdown --locked`.
   - `cargo test -p bbdown-cli stale_auto_refresh_save_skips_when_default_profile_changed --bin bbdown --locked`.
+  - `cargo check -p bbdown-core --target x86_64-pc-windows-gnu --locked` was attempted for the
+    non-Unix writer path, but the local toolchain is missing `x86_64-w64-mingw32-gcc` required by
+    `ring`.
   - `cargo test -p bbdown-core update_selected_profile_preserves_flat_default_store_format --locked`.
   - `cargo test -p bbdown-core update_profiles_noop --locked`.
   - `cargo test -p bbdown-cli save_credentials_ --bin bbdown -- --nocapture`.
