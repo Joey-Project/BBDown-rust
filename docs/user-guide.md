@@ -184,10 +184,12 @@ PGC episodes, uses the TV-specific access key saved by `auth login-tv`, and can 
 or proxy with `--tv-api-base` / `BBDOWN_TV_API_BASE`.
 Use `--playurl-mode app` or `BBDOWN_PLAYURL_MODE=app` when a downstream integration needs media
 request specs from BBDown-compatible APP gRPC playurl endpoints. APP mode applies to normal videos
-and PGC episodes, uses the generic imported access key first and then the saved TV access key, and
-can be pointed at mocks or proxies with `--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` and
-`--app-pgc-grpc-base` / `BBDOWN_APP_PGC_GRPC_BASE`; the normal-video APP default uses
-`https://grpc.biliapi.net`, and the PGC APP default uses the same gRPC host. PGC APP gRPC
+and PGC episodes. It uses a main/BALH generic access key before the saved TV access key; when the
+selected profile marks the generic key as `bili_intl_oauth2`, APP mode prefers the TV key and only
+falls back to that generic key when no TV key is available. It can be pointed at mocks or proxies
+with `--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` and `--app-pgc-grpc-base` /
+`BBDOWN_APP_PGC_GRPC_BASE`; the normal-video APP default uses `https://grpc.biliapi.net`, and the
+PGC APP default uses the same gRPC host. PGC APP gRPC
 restricted or preview-only signals still fall back to
 configured restricted-area HTTP playurl proxies when reported by region-limit messages, APP
 permission-denied gRPC status, or PGC response-body metadata. Proxy fallback URLs use only the
@@ -409,10 +411,12 @@ Use the global `--credential-preflight warn|fail|renew` option with `plan`, `pla
 `download` when a media request should check the selected profile before resolving streams.
 Preflight derives the expected credential requirements from the selected request path: WEB playurl
 treats cookies as optional so anonymous public videos still work, TV playurl requires
-`tv_access_key`, APP playurl accepts either generic `access_key` or `tv_access_key` and checks
-the generic `access_key` first when both are stored, and restricted-area proxy fallback checks generic
-`access_key` only when that key is configured for an input where proxy fallback may run. Missing
-generic keys do not block restricted-area proxy URLs that authenticate themselves or allow anonymous
+`tv_access_key`, APP playurl accepts either generic `access_key` or `tv_access_key`, and the
+selected profile's access-key provider decides the tie-breaker: main/BALH or unclassified generic
+keys are checked before TV keys, while `bili_intl_oauth2` keys yield to TV keys. Restricted-area
+proxy fallback checks generic `access_key` only when that key is configured for an input where proxy
+fallback may run. Missing generic keys do not block restricted-area proxy URLs that authenticate
+themselves or allow anonymous
 fallback. Intl/Bstar episode inputs require the generic `access_key` used by the official intl
 metadata, playurl, and subtitle requests. Short links are resolved to their final supported input
 kind before this decision. Fixed-source inputs such as intl/Bstar and PUGV/cheese do not inherit the

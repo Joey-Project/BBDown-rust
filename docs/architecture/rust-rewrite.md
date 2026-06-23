@@ -173,9 +173,11 @@ codec strings.
 The same planning path honors `PlayurlMode::Tv` and `PlayurlMode::App`, so `DownloadPlan` and
 `PlaybackPlan` can expose `NormalTv`, `PgcTv`, `NormalApp`, or `PgcApp` sources without changing the
 downstream request-spec shape. TV mode uses `Credentials::tv_access_key`. APP/gRPC mode uses
-`Credentials::access_key` first, falls back to `Credentials::tv_access_key`, sends BBDown-compatible
-protobuf gRPC frames, reads gRPC status from both initial headers and trailing metadata, and
-normalizes APP DASH/FLV replies into `StreamSet`. APP DASH width, height, and frame-rate metadata
+main/BALH generic `Credentials::access_key` values before `Credentials::tv_access_key`; callers can
+set `ClientConfig::with_access_key_provider(Some(AccessKeyProvider::BiliIntlOauth2))` so intl-only
+generic keys yield to TV keys. APP/gRPC sends BBDown-compatible protobuf gRPC frames, reads gRPC
+status from both initial headers and trailing metadata, and normalizes APP DASH/FLV replies into
+`StreamSet`. APP DASH width, height, and frame-rate metadata
 is preserved on the same `MediaStream` fields used by HTTP playurl modes. APP legacy FLV replies
 can contain segment sets for multiple qualities; because `StreamSet::flv_segments` is a single
 ordered list, the normalizer keeps one highest-quality FLV candidate instead of concatenating
@@ -466,7 +468,7 @@ Media credential preflight is modeled as an explicit policy layer rather than hi
 `BiliClient::plan_download`. `CredentialPreflightReport` evaluates the selected profile lifecycle
 status against request-path requirements and returns serializable requirement statuses, issues, and
 the associated access-key renewal decision. Request-path evaluation mirrors the credential actually
-used by the client, including APP playurl's generic-`access_key`-before-`tv_access_key` preference
+used by the client, including APP playurl's provider-aware `access_key` / `tv_access_key` tie-breaker
 and optional restricted-area proxy access-key checks only when proxy candidates are configured and
 the current media input may use PGC proxy fallback. Intl/Bstar media inputs add the generic
 `access_key` requirement because the official intl metadata, playurl, and subtitle request path

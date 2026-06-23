@@ -308,14 +308,25 @@ superseded_by:
   - Archive credential retry now also message-filters API `-403`, gRPC `7`, and gRPC `16`, so
     region/permission failures such as `area restricted` do not trigger forced access-key refresh or
     rewrite local credentials.
-  - User Guide APP-mode prose now matches the implemented credential order: generic
-    `access_key` first, then `tv_access_key` fallback.
+  - User-facing and architecture docs now describe APP-mode credential order as provider-aware:
+    main/BALH generic `access_key` values are checked before `tv_access_key`, while
+    `bili_intl_oauth2` generic keys yield to TV keys.
   - If deferred credential refresh changes archive preflight into a duplicate conflict, explicit
     `--on-duplicate cancel` now re-enters the CLI cancel-report path instead of letting the library
     executor convert it into an error.
+  - Current-head review fixes after GitHub Codex review:
+    - Metadata-only intl/Bstar downloads such as `download --only cover` no longer trigger required
+      intl generic access-key preflight.
+    - Selection-required inputs (`ss`, `md`, and cheese season links without `--select`) now fail
+      before credential preflight can refresh or rewrite stored credentials.
+    - APP playurl access-key selection now accepts access-key provider metadata, so intl OAuth
+      generic keys do not preempt a usable TV token.
   - Added mock e2e coverage for these review follow-ups:
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_progress_json_cancel_suppresses_plaintext_preflight --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_reruns_duplicate_preflight_after_deferred_refresh --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e playback_app_uses_tv_access_key_when_generic_key_is_intl_provider --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_only_cover_skips_intl_access_key_credential_preflight --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e plan_selection_required_input_fails_before_credential_preflight_renewal --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_cancel_reports_duplicate_after_deferred_refresh --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_for_generic_api_bad_request --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_for_app_area_restricted_status --locked`.

@@ -167,9 +167,10 @@ TV mode 适用于普通视频和 PGC 分集，使用 `auth login-tv` 保存的 T
 `--tv-api-base` / `BBDOWN_TV_API_BASE` 指向 mock 或代理。
 当下游集成需要来自 BBDown-compatible APP gRPC playurl 端点的媒体请求规格时，可以使用
 `--playurl-mode app` 或 `BBDOWN_PLAYURL_MODE=app`。APP mode 适用于普通视频和 PGC 分集，
-会优先使用通用导入 access key，再回退到已保存的 TV access key；mock 或代理可通过
-`--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` 和 `--app-pgc-grpc-base` /
-`BBDOWN_APP_PGC_GRPC_BASE` 配置；普通视频和 PGC APP 默认都使用
+会优先使用 main/BALH 通用 access key，再回退到已保存的 TV access key；如果当前 profile
+把通用 key 标记为 `bili_intl_oauth2`，APP mode 会优先使用 TV key，只有没有 TV key 时才回退到
+该通用 key。mock 或代理可通过 `--app-grpc-base` / `BBDOWN_APP_GRPC_BASE` 和
+`--app-pgc-grpc-base` / `BBDOWN_APP_PGC_GRPC_BASE` 配置；普通视频和 PGC APP 默认都使用
 `https://grpc.biliapi.net`。PGC APP gRPC restricted 或 preview-only
 信号仍会回退到已配置的 restricted-area HTTP playurl proxy；
 信号可以来自区域限制消息、APP permission-denied gRPC status 或 PGC response-body metadata。
@@ -365,7 +366,9 @@ token。如果 refresh 失败，CLI 会输出 `refresh_failed`，然后回退到
 可以配合全局 `--credential-preflight warn|fail|renew`，在解析 media stream 前检查当前选择的
 profile。preflight 会按 request path 推导所需 credential：WEB playurl 把 cookie 视为
 optional，所以匿名公开视频仍可工作；TV playurl 要求 `tv_access_key`；APP playurl 接受
-通用 `access_key` 或 `tv_access_key` 任一可用，并在两者都存在时先检查通用 `access_key`；
+通用 `access_key` 或 `tv_access_key` 任一可用，并按当前 profile 的 access-key provider
+决定两者都存在时的顺序：main/BALH 或未分类 generic key 先于 TV key 检查；`bili_intl_oauth2`
+key 会让位给 TV key。
 restricted-area proxy fallback 只会在当前输入可能触发 fallback 且已配置通用 `access_key` 时检查
 该 token；缺失通用 key 不会阻断自带认证或允许匿名 fallback 的 restricted-area proxy URL。
 intl/Bstar episode 输入会要求官方 intl metadata、playurl 和 subtitle 请求实际使用的通用

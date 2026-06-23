@@ -1095,7 +1095,16 @@ impl ClientRuntimeConfig {
     }
 
     fn client_config(&self, credentials: Credentials) -> ClientConfig {
+        self.client_config_with_access_key_provider(credentials, None)
+    }
+
+    fn client_config_with_access_key_provider(
+        &self,
+        credentials: Credentials,
+        access_key_provider: Option<AccessKeyProvider>,
+    ) -> ClientConfig {
         ClientConfig::new(self.endpoints.clone(), credentials)
+            .with_access_key_provider(access_key_provider)
             .with_restricted_area(self.restricted_area.clone())
             .with_playurl_mode(self.playurl_mode)
             .with_user_agent("bbdown-rs/0.1")
@@ -1174,6 +1183,20 @@ impl CredentialRuntime {
             .profile_name()
             .map_or_else(|| profiles.default_profile.clone(), str::to_owned)
     }
+
+    fn selected_access_key_provider(&self) -> anyhow::Result<Option<AccessKeyProvider>> {
+        let profiles = self
+            .store
+            .load_profiles()
+            .context("failed to load credential profiles")?;
+        let selected_profile = self.selected_profile_name(&profiles);
+        let metadata = profiles
+            .profile_metadata(&selected_profile)
+            .context("failed to load selected credential profile metadata")?;
+        Ok(metadata
+            .credential(CredentialKind::AccessKey)
+            .and_then(|metadata| metadata.access_key_provider))
+    }
 }
 
 fn credential_profile_selection(
@@ -1208,14 +1231,12 @@ async fn prepare_credentials_for_media_request(
     credential_runtime: &CredentialRuntime,
     client_runtime: &ClientRuntimeConfig,
     credential_preflight: &CredentialPreflightRuntimeConfig,
-    raw_input: &str,
-    requires_media_streams: bool,
-    renewal_timing: CredentialPreflightRenewalTiming,
-    emit_diagnostics: bool,
+    request: MediaCredentialPreflightRequest<'_>,
 ) -> anyhow::Result<PreparedMediaRequest> {
     if credential_preflight.mode == CredentialPreflightMode::Off {
         return Ok(PreparedMediaRequest {
             credentials: credential_runtime.load()?,
+            access_key_provider: credential_runtime.selected_access_key_provider()?,
             parsed_input: None,
             media_preflight_context: None,
             deferred_preflight: None,
@@ -1224,8 +1245,10 @@ async fn prepare_credentials_for_media_request(
 
     let media_preflight_context = media_credential_preflight_context_for_input(
         client_runtime,
-        raw_input,
-        requires_media_streams,
+        request.raw_input,
+        request.selection,
+        request.requires_media_streams,
+        request.intl_access_key_may_run,
     )
     .await?;
     let mut report = credential_preflight_report(
@@ -1234,7 +1257,7 @@ async fn prepare_credentials_for_media_request(
         credential_preflight,
         &media_preflight_context,
     )?;
-    let defer_renewal = renewal_timing == CredentialPreflightRenewalTiming::Deferred
+    let defer_renewal = request.renewal_timing == CredentialPreflightRenewalTiming::Deferred
         && report.should_attempt_access_key_renewal();
     if report.should_attempt_access_key_renewal() && !defer_renewal {
         let profiles = credential_runtime
@@ -1246,7 +1269,7 @@ async fn prepare_credentials_for_media_request(
             client_runtime,
             &profiles,
             &report.access_key_renewal,
-            emit_diagnostics,
+            request.emit_diagnostics,
         )
         .await?
         {
@@ -1259,7 +1282,7 @@ async fn prepare_credentials_for_media_request(
         }
     }
 
-    if !defer_renewal && emit_diagnostics {
+    if !defer_renewal && request.emit_diagnostics {
         emit_credential_preflight_warnings(&report);
     }
     if !defer_renewal && report.has_blocking_issues() {
@@ -1278,17 +1301,38 @@ async fn prepare_credentials_for_media_request(
     });
     Ok(PreparedMediaRequest {
         credentials: credential_runtime.load()?,
+        access_key_provider: credential_runtime.selected_access_key_provider()?,
         parsed_input: Some(media_preflight_context.input.clone()),
         media_preflight_context: Some(media_preflight_context),
         deferred_preflight,
     })
 }
 
+#[derive(Clone, Copy, Debug)]
+struct MediaCredentialPreflightRequest<'a> {
+    raw_input: &'a str,
+    selection: Option<&'a Selection>,
+    requires_media_streams: bool,
+    intl_access_key_may_run: bool,
+    renewal_timing: CredentialPreflightRenewalTiming,
+    emit_diagnostics: bool,
+}
+
 struct PreparedMediaRequest {
     credentials: Credentials,
+    access_key_provider: Option<AccessKeyProvider>,
     parsed_input: Option<Input>,
     media_preflight_context: Option<MediaCredentialPreflightContext>,
     deferred_preflight: Option<DeferredMediaCredentialPreflight>,
+}
+
+impl PreparedMediaRequest {
+    fn client_config(&self, client_runtime: &ClientRuntimeConfig) -> ClientConfig {
+        client_runtime.client_config_with_access_key_provider(
+            self.credentials.clone(),
+            self.access_key_provider,
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1335,6 +1379,7 @@ async fn complete_deferred_media_preflight_renewal(
                 &deferred.context,
             )?;
             prepared.credentials = credential_runtime.load()?;
+            prepared.access_key_provider = credential_runtime.selected_access_key_provider()?;
         }
     }
 
@@ -1390,6 +1435,7 @@ async fn try_forced_access_key_refresh_for_archive_retry(
     .await?;
     if refreshed {
         prepared.credentials = credential_runtime.load()?;
+        prepared.access_key_provider = credential_runtime.selected_access_key_provider()?;
     }
     Ok(refreshed)
 }
@@ -1448,10 +1494,13 @@ struct MediaCredentialPreflightContext {
 async fn media_credential_preflight_context_for_input(
     client_runtime: &ClientRuntimeConfig,
     raw_input: &str,
+    selection: Option<&Selection>,
     requires_media_streams: bool,
+    intl_access_key_may_run: bool,
 ) -> anyhow::Result<MediaCredentialPreflightContext> {
     let client = BiliClient::new(client_runtime.client_config(Credentials::default()));
     let input = client.parse_input(raw_input).await?;
+    ensure_input_selection_for_media_preflight(&input, selection)?;
     let playurl_mode = if requires_media_streams {
         input_media_preflight_playurl_mode(&input, client_runtime.playurl_mode)
     } else {
@@ -1463,8 +1512,29 @@ async fn media_credential_preflight_context_for_input(
         restricted_area_proxy_may_run: requires_media_streams
             && !client_runtime.restricted_area.proxies.is_empty()
             && input_may_use_restricted_area_proxy(&input),
-        intl_access_key_may_run: input_may_use_intl_access_key(&input),
+        intl_access_key_may_run: intl_access_key_may_run && input_may_use_intl_access_key(&input),
     })
+}
+
+fn ensure_input_selection_for_media_preflight(
+    input: &Input,
+    selection: Option<&Selection>,
+) -> anyhow::Result<()> {
+    if selection.is_none()
+        && let Some(input_kind) = selection_required_input_kind(input)
+    {
+        return Err(bbdown_core::Error::SelectionRequired { input_kind }.into());
+    }
+    Ok(())
+}
+
+fn selection_required_input_kind(input: &Input) -> Option<&'static str> {
+    match input {
+        Input::Season(_) => Some("season"),
+        Input::Media(_) => Some("media"),
+        Input::CheeseSeason(_) => Some("cheese season"),
+        _ => None,
+    }
 }
 
 fn input_media_preflight_playurl_mode(
@@ -1487,6 +1557,16 @@ fn input_may_use_restricted_area_proxy(input: &Input) -> bool {
 
 fn input_may_use_intl_access_key(input: &Input) -> bool {
     matches!(input, Input::IntlEpisode(_))
+}
+
+fn download_mode_may_use_intl_access_key(mode: DownloadMode) -> bool {
+    matches!(
+        mode,
+        DownloadMode::All
+            | DownloadMode::VideoOnly
+            | DownloadMode::AudioOnly
+            | DownloadMode::SubtitleOnly
+    )
 }
 
 async fn try_access_key_auto_refresh_for_preflight(
@@ -1549,13 +1629,17 @@ async fn handle_plan(
         credentials,
         client_runtime,
         credential_preflight,
-        &url,
-        true,
-        CredentialPreflightRenewalTiming::Immediate,
-        true,
+        MediaCredentialPreflightRequest {
+            raw_input: &url,
+            selection: select.as_ref(),
+            requires_media_streams: true,
+            intl_access_key_may_run: true,
+            renewal_timing: CredentialPreflightRenewalTiming::Immediate,
+            emit_diagnostics: true,
+        },
     )
     .await?;
-    let client = BiliClient::new(client_runtime.client_config(prepared.credentials));
+    let client = BiliClient::new(prepared.client_config(client_runtime));
     let plan = match prepared.parsed_input {
         Some(input) => client.plan(input, select).await?,
         None => client.plan_download(&url, select).await?,
@@ -1580,13 +1664,17 @@ async fn handle_playback(
         credentials,
         client_runtime,
         credential_preflight,
-        &url,
-        true,
-        CredentialPreflightRenewalTiming::Immediate,
-        true,
+        MediaCredentialPreflightRequest {
+            raw_input: &url,
+            selection: select.as_ref(),
+            requires_media_streams: true,
+            intl_access_key_may_run: true,
+            renewal_timing: CredentialPreflightRenewalTiming::Immediate,
+            emit_diagnostics: true,
+        },
     )
     .await?;
-    let client = BiliClient::new(client_runtime.client_config(prepared.credentials));
+    let client = BiliClient::new(prepared.client_config(client_runtime));
     let plan = match prepared.parsed_input {
         Some(input) => client.plan_playback_input(input, select).await?,
         None => client.plan_playback(&url, select).await?,
@@ -1757,10 +1845,14 @@ async fn handle_download(
         credentials,
         client_runtime,
         credential_preflight,
-        &args.url,
-        args.options.mode.requires_media_streams(),
-        renewal_timing,
-        !args.progress_json,
+        MediaCredentialPreflightRequest {
+            raw_input: &args.url,
+            selection: args.select.as_ref(),
+            requires_media_streams: args.options.mode.requires_media_streams(),
+            intl_access_key_may_run: download_mode_may_use_intl_access_key(args.options.mode),
+            renewal_timing,
+            emit_diagnostics: !args.progress_json,
+        },
     )
     .await
     {
@@ -1803,7 +1895,7 @@ async fn handle_download(
         };
         report
     } else {
-        let client = BiliClient::new(client_runtime.client_config(prepared.credentials));
+        let client = BiliClient::new(prepared.client_config(client_runtime));
         let input_title = args.url.clone();
         let output_dir = args.options.output_dir.clone();
         let plan = plan_download_or_report(
@@ -1855,11 +1947,7 @@ async fn handle_archive_download(
     let progress = runtime.progress;
     let cancellation = runtime.cancellation;
     let duplicate_prompt_active = runtime.duplicate_prompt_active;
-    let mut client = BiliClient::new(
-        runtime
-            .client_runtime
-            .client_config(prepared.credentials.clone()),
-    );
+    let mut client = BiliClient::new(prepared.client_config(runtime.client_runtime));
     let input_title = args.url.clone();
     let output_dir = args.options.output_dir.clone();
     let mut plan = plan_archive_download_with_deferred_retry_or_report(
@@ -1957,11 +2045,7 @@ async fn replan_archive_download_after_refresh_or_report(
     input_title: &str,
     output_dir: &Path,
 ) -> anyhow::Result<(BiliClient, DownloadPlan)> {
-    let client = BiliClient::new(
-        runtime
-            .client_runtime
-            .client_config(prepared.credentials.clone()),
-    );
+    let client = BiliClient::new(prepared.client_config(runtime.client_runtime));
     let plan = plan_archive_download_or_report(
         &client,
         args,
@@ -2109,11 +2193,7 @@ async fn plan_archive_download_with_deferred_retry_or_report(
                 }
             };
             if refreshed {
-                *client = BiliClient::new(
-                    runtime
-                        .client_runtime
-                        .client_config(prepared.credentials.clone()),
-                );
+                *client = BiliClient::new(prepared.client_config(runtime.client_runtime));
                 match plan_download(client, &request).await {
                     Ok(plan) => Ok(plan),
                     Err(error) => {

@@ -103,9 +103,12 @@ For BBDown-compatible APP gRPC playurl resolution, set
 `ClientConfig::with_playurl_mode(PlayurlMode::App)`. Configure
 `EndpointConfig::with_app_grpc_base` for normal-video mocks or proxies and
 `EndpointConfig::with_app_pgc_grpc_base` for PGC mocks or proxies. The normal-video default uses
-`https://grpc.biliapi.net`; the PGC default uses the same gRPC host. APP mode uses
-`Credentials::access_key` first and falls back to `Credentials::tv_access_key`, emits
-`StreamSource::NormalApp` or `StreamSource::PgcApp`, and normalizes protobuf DASH/FLV media into
+`https://grpc.biliapi.net`; the PGC default uses the same gRPC host. APP mode uses main/BALH
+generic `Credentials::access_key` values before `Credentials::tv_access_key`; pass
+`ClientConfig::with_access_key_provider(Some(AccessKeyProvider::BiliIntlOauth2))` when the generic
+key came from intl OAuth so APP mode can prefer the TV key and only fall back to that generic key
+when no TV key is available. It emits `StreamSource::NormalApp` or `StreamSource::PgcApp`, and
+normalizes protobuf DASH/FLV media into
 the same `StreamSet` and `PlaybackPlan` surfaces as the HTTP modes. PGC APP gRPC restricted or
 preview-only signals still enter the configured restricted-area HTTP playurl proxy fallback when
 they are carried by region-limit messages, APP permission-denied gRPC status, or PGC response-body
@@ -275,11 +278,13 @@ conservative client-config form, while `CredentialPreflightReport::from_media_re
 lets embedders skip restricted-area proxy requirements for inputs that cannot use PGC proxy fallback.
 Use `CredentialPreflightReport::from_media_paths_context(...)` when the resolved source has no
 WEB/TV/APP playurl path, such as intl/Bstar inputs that should check only the intl generic
-`access_key`. These forms mirror the credential the client would send: WEB playurl cookies are optional, TV playurl
-requires `tv_access_key`, APP playurl accepts either generic `access_key` or `tv_access_key` and
-checks the generic `access_key` first when both are stored, and restricted-area proxy fallback treats the
-generic `access_key` as optional: present keys are checked and may be forwarded by the resolver, but
-missing keys do not block proxy URLs that authenticate themselves or allow anonymous fallback.
+`access_key`. These forms mirror the credential the client would send: WEB playurl cookies are
+optional, TV playurl requires `tv_access_key`, APP playurl accepts either generic `access_key` or
+`tv_access_key` and uses provider metadata as the tie-breaker when both are stored: main/BALH or
+unclassified generic keys are checked before TV keys, while `bili_intl_oauth2` keys yield to TV
+keys. Restricted-area proxy fallback treats the generic `access_key` as optional: present keys are
+checked and may be forwarded by the resolver, but missing keys do not block proxy URLs that
+authenticate themselves or allow anonymous fallback.
 Intl/Bstar episode inputs require the generic `access_key` used by the official intl request path.
 Fixed-source inputs such as intl/Bstar and PUGV/cheese should not inherit a caller's global TV/APP
 playurl credential requirements, and sidecar-only modes should skip media-stream preflight.

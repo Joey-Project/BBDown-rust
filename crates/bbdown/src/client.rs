@@ -1,4 +1,5 @@
 use crate::app_playurl;
+use crate::credentials::AccessKeyProvider;
 use crate::download::DownloadMode;
 use crate::feed_list::{
     FeedListFetchMode, feed_list_fetch_mode, feed_list_info_fetch_mode, push_unique_feed_list_item,
@@ -153,6 +154,7 @@ pub enum PlayurlMode {
 pub struct ClientConfig {
     pub endpoints: EndpointConfig,
     pub credentials: Credentials,
+    pub access_key_provider: Option<AccessKeyProvider>,
     pub restricted_area: RestrictedAreaConfig,
     pub playurl_mode: PlayurlMode,
     pub user_agent: String,
@@ -164,6 +166,7 @@ impl Default for ClientConfig {
         Self {
             endpoints: EndpointConfig::default(),
             credentials: Credentials::default(),
+            access_key_provider: None,
             restricted_area: RestrictedAreaConfig::default(),
             playurl_mode: PlayurlMode::default(),
             user_agent: "bbdown-rs/0.1".to_owned(),
@@ -191,6 +194,12 @@ impl ClientConfig {
     #[must_use]
     pub fn with_credentials(mut self, credentials: Credentials) -> Self {
         self.credentials = credentials;
+        self
+    }
+
+    #[must_use]
+    pub fn with_access_key_provider(mut self, provider: Option<AccessKeyProvider>) -> Self {
+        self.access_key_provider = provider;
         self
     }
 
@@ -3057,18 +3066,23 @@ impl BiliClient {
     }
 
     fn app_playurl_access_key(&self) -> Option<&str> {
-        self.config
+        let generic_access_key = self
+            .config
             .credentials
             .access_key
             .as_deref()
-            .filter(|value| !value.is_empty())
-            .or_else(|| {
-                self.config
-                    .credentials
-                    .tv_access_key
-                    .as_deref()
-                    .filter(|value| !value.is_empty())
-            })
+            .filter(|value| !value.is_empty());
+        let tv_access_key = self
+            .config
+            .credentials
+            .tv_access_key
+            .as_deref()
+            .filter(|value| !value.is_empty());
+        if self.config.access_key_provider == Some(AccessKeyProvider::BiliIntlOauth2) {
+            tv_access_key.or(generic_access_key)
+        } else {
+            generic_access_key.or(tv_access_key)
+        }
     }
 
     async fn get_json<T>(&self, url: Url) -> Result<T>
@@ -5865,9 +5879,9 @@ mod tests {
         intl_ogv_playurl_params, oauth2_info_params, sign_ordered_params,
     };
     use crate::{
-        CodecFamily, CredentialHealthScope, CredentialHealthStatus, CredentialKind, Credentials,
-        EpisodeMetadata, Error, IndexSelection, IndexSelector, Input, PageMetadata,
-        ResolvedContent, SeasonMetadata, Selection, StreamSource, SubtitleFormat,
+        AccessKeyProvider, CodecFamily, CredentialHealthScope, CredentialHealthStatus,
+        CredentialKind, Credentials, EpisodeMetadata, Error, IndexSelection, IndexSelector, Input,
+        PageMetadata, ResolvedContent, SeasonMetadata, Selection, StreamSource, SubtitleFormat,
         VideoCollectionItem, VideoCollectionKind, VideoCollectionMetadata, VideoMetadata,
         app_playurl,
     };
@@ -6940,6 +6954,36 @@ mod tests {
         assert_eq!(entry.streams.audios[0].codecs.as_deref(), Some("mp4a.40.2"));
         assert_eq!(entry.streams.flv_segments[0].order, 1);
         Ok(())
+    }
+
+    #[test]
+    fn app_playurl_access_key_uses_tv_key_before_intl_provider_access_key() {
+        let client = BiliClient::new(
+            ClientConfig::default()
+                .with_credentials(
+                    Credentials::default()
+                        .with_access_key("INTL_ACCESS")
+                        .with_tv_access_key("TV_ACCESS"),
+                )
+                .with_access_key_provider(Some(AccessKeyProvider::BiliIntlOauth2)),
+        );
+
+        assert_eq!(client.app_playurl_access_key(), Some("TV_ACCESS"));
+    }
+
+    #[test]
+    fn app_playurl_access_key_keeps_generic_key_before_main_provider_tv_key() {
+        let client = BiliClient::new(
+            ClientConfig::default()
+                .with_credentials(
+                    Credentials::default()
+                        .with_access_key("ACCESS_SECRET")
+                        .with_tv_access_key("TV_ACCESS"),
+                )
+                .with_access_key_provider(Some(AccessKeyProvider::BalhBiliplus)),
+        );
+
+        assert_eq!(client.app_playurl_access_key(), Some("ACCESS_SECRET"));
     }
 
     #[tokio::test]
@@ -9500,6 +9544,7 @@ mod tests {
                 tv_passport_base: server.base_url(),
                 tv_passport_poll_base: server.base_url(),
             },
+            access_key_provider: None,
             credentials: Credentials {
                 cookie: None,
                 access_key: Some("TOKEN_SHOULD_REDACT_12345".to_owned()),
@@ -9709,6 +9754,7 @@ mod tests {
                 tv_passport_base: server.base_url(),
                 tv_passport_poll_base: server.base_url(),
             },
+            access_key_provider: None,
             credentials: Credentials {
                 cookie: None,
                 access_key: Some("intl-token".to_owned()),
@@ -10420,21 +10466,13 @@ mod tests {
             endpoints: EndpointConfig {
                 api_base: server.base_url(),
                 pgc_base: server.base_url(),
-                intl_base: server.base_url(),
-                intl_passport_base: server.base_url(),
                 comment_base: server.base_url(),
-                passport_base: server.base_url(),
-                tv_api_base: server.base_url(),
-                app_grpc_base: server.base_url(),
-                app_pgc_grpc_base: server.base_url(),
-                tv_passport_base: server.base_url(),
-                tv_passport_poll_base: server.base_url(),
+                ..EndpointConfig::default()
             },
-            credentials: Credentials {
-                cookie: Some("SESSDATA=COOKIE_SECRET".to_owned()),
-                access_key: Some("ACCESS_SECRET".to_owned()),
-                tv_access_key: None,
-            },
+            access_key_provider: None,
+            credentials: Credentials::default()
+                .with_cookie("SESSDATA=COOKIE_SECRET")
+                .with_access_key("ACCESS_SECRET"),
             restricted_area: RestrictedAreaConfig {
                 area_hint: Some(RestrictedArea::Hk),
                 proxies: vec![RestrictedAreaProxy::playurl(
@@ -10532,6 +10570,7 @@ mod tests {
                 tv_passport_base: server.base_url(),
                 tv_passport_poll_base: server.base_url(),
             },
+            access_key_provider: None,
             credentials: Credentials::default(),
             restricted_area: RestrictedAreaConfig {
                 area_hint: Some(RestrictedArea::Hk),
@@ -10625,6 +10664,7 @@ mod tests {
                     tv_passport_base: server.base_url(),
                     tv_passport_poll_base: server.base_url(),
                 },
+                access_key_provider: None,
                 credentials: Credentials {
                     cookie: None,
                     access_key: Some("ACCESS_SECRET".to_owned()),
@@ -10703,6 +10743,7 @@ mod tests {
                 tv_passport_base: server.base_url(),
                 tv_passport_poll_base: server.base_url(),
             },
+            access_key_provider: None,
             credentials: Credentials {
                 cookie: Some("SESSDATA=COOKIE_SECRET".to_owned()),
                 access_key: Some("ACCESS_SECRET".to_owned()),
@@ -10952,6 +10993,7 @@ mod tests {
                 tv_passport_base: "http://127.0.0.1:1".to_owned(),
                 tv_passport_poll_base: "http://127.0.0.1:1".to_owned(),
             },
+            access_key_provider: None,
             credentials: Credentials::default(),
             restricted_area: RestrictedAreaConfig::default(),
             playurl_mode: PlayurlMode::Web,
@@ -11180,6 +11222,7 @@ mod tests {
                 tv_passport_base: server.base_url(),
                 tv_passport_poll_base: server.base_url(),
             },
+            access_key_provider: None,
             credentials: Credentials::default(),
             restricted_area: RestrictedAreaConfig::default(),
             playurl_mode: PlayurlMode::Web,

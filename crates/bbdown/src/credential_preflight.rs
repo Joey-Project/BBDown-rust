@@ -1,3 +1,4 @@
+use crate::credentials::AccessKeyProvider;
 use crate::{
     AccessKeyAutomaticRefreshReadiness, AccessKeyRenewalDecision, CredentialKind,
     CredentialLifecycleCredentialStatus, CredentialLifecycleStatus,
@@ -302,15 +303,43 @@ fn selected_credential(
     requirement: &CredentialPreflightRequirement,
 ) -> Option<(CredentialKind, CredentialLifecycleStatus)> {
     if requirement.request_path == CredentialPreflightRequestPath::AppPlayurl {
+        return app_playurl_selected_credential(status, requirement)
+            .or_else(|| fallback_credential(status, requirement));
+    }
+    fallback_credential(status, requirement)
+}
+
+fn app_playurl_selected_credential(
+    status: &CredentialProfileLifecycleStatus,
+    requirement: &CredentialPreflightRequirement,
+) -> Option<(CredentialKind, CredentialLifecycleStatus)> {
+    if !credential_present(status, CredentialKind::AccessKey)
+        || !requirement
+            .credential_kinds
+            .contains(&CredentialKind::AccessKey)
+    {
         return requirement
             .credential_kinds
             .iter()
             .copied()
             .find(|kind| credential_present(status, *kind))
-            .map(|kind| (kind, credential_status(status, kind)))
-            .or_else(|| fallback_credential(status, requirement));
+            .map(|kind| (kind, credential_status(status, kind)));
     }
-    fallback_credential(status, requirement)
+    if access_key_provider(status) == Some(AccessKeyProvider::BiliIntlOauth2)
+        && credential_present(status, CredentialKind::TvAccessKey)
+        && requirement
+            .credential_kinds
+            .contains(&CredentialKind::TvAccessKey)
+    {
+        return Some((
+            CredentialKind::TvAccessKey,
+            credential_status(status, CredentialKind::TvAccessKey),
+        ));
+    }
+    Some((
+        CredentialKind::AccessKey,
+        credential_status(status, CredentialKind::AccessKey),
+    ))
 }
 
 fn fallback_credential(
@@ -332,6 +361,14 @@ fn credential_present(status: &CredentialProfileLifecycleStatus, kind: Credentia
         .iter()
         .find(|credential| credential.kind == kind)
         .is_some_and(|credential| credential.present)
+}
+
+fn access_key_provider(status: &CredentialProfileLifecycleStatus) -> Option<AccessKeyProvider> {
+    status
+        .credential_statuses
+        .iter()
+        .find(|credential| credential.kind == CredentialKind::AccessKey)
+        .and_then(|credential| credential.access_key_provider)
 }
 
 fn credential_status(
@@ -750,6 +787,56 @@ mod tests {
         assert_eq!(
             report.requirements[0].selected_status,
             CredentialLifecycleStatus::Stale
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn app_requirement_prefers_tv_access_key_when_generic_key_is_intl_provider() -> crate::Result<()>
+    {
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "default",
+            Credentials::default()
+                .with_tv_access_key("TV_ACCESS")
+                .with_access_key("INTL_ACCESS"),
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::TvAccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::TvQrLogin)
+                .with_acquired_at_unix_millis(10_000),
+        );
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_access_key_provider(AccessKeyProvider::BiliIntlOauth2)
+                .with_checked_at_unix_millis(1)
+                .with_refresh_token_present(true),
+        );
+        profiles.set_profile_metadata("default", metadata)?;
+        let status = profiles.profile_lifecycle_status(
+            "default",
+            &CredentialLifecyclePolicy::at_unix_millis(10_000).with_stale_after_millis(Some(1_000)),
+        )?;
+
+        let report = CredentialPreflightReport::evaluate(
+            CredentialPreflightMode::Renew,
+            &status,
+            [CredentialPreflightRequirement::app_playurl_access_key()],
+        );
+
+        assert!(!report.has_blocking_issues());
+        assert!(!report.should_attempt_access_key_renewal());
+        assert_eq!(
+            report.requirements[0].selected_kind,
+            Some(CredentialKind::TvAccessKey)
+        );
+        assert_eq!(
+            report.requirements[0].selected_status,
+            CredentialLifecycleStatus::Fresh
         );
         Ok(())
     }
