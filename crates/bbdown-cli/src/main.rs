@@ -1478,6 +1478,9 @@ fn media_preflight_report_can_refresh_generic_access_key_for_failure(
     if authenticated_web_api_failure_may_have_used_cookie(context, failure) {
         return false;
     }
+    if non_generic_access_key_json_http_failure(failure) {
+        return false;
+    }
     if authenticated_web_api_cookie_missing(report) {
         return false;
     }
@@ -1558,6 +1561,46 @@ fn cookie_authenticated_api_http_failure(failure: &bbdown_core::Error) -> bool {
     error
         .url()
         .is_some_and(|url| cookie_authenticated_api_path(url.path()))
+}
+
+fn non_generic_access_key_json_http_failure(failure: &bbdown_core::Error) -> bool {
+    let bbdown_core::Error::Http(error) = failure else {
+        return false;
+    };
+    let Some(status) = error.status() else {
+        return false;
+    };
+    if !matches!(status.as_u16(), 401 | 403) {
+        return false;
+    }
+    error
+        .url()
+        .is_some_and(|url| non_generic_access_key_json_path(url.path()))
+}
+
+fn non_generic_access_key_json_path(path: &str) -> bool {
+    matches!(
+        path,
+        "/x/web-interface/view"
+            | "/x/tag/archive/tags"
+            | "/pgc/view/web/season"
+            | "/pgc/review/user"
+            | "/pgc/player/web/v2/playurl"
+            | "/pugv/view/web/season"
+            | "/pugv/view/web/ep/list"
+            | "/pugv/player/web/playurl"
+            | "/x/v3/fav/folder/created/list-all"
+            | "/x/v3/fav/resource/list"
+            | "/x/v1/medialist/info"
+            | "/x/v2/medialist/resource/list"
+            | "/x/polymer/web-space/seasons_archives_list"
+            | "/x/series/archives"
+            | "/x/series/series"
+            | "/x/space/wbi/arc/search"
+            | "/x/web-interface/wbi/index/top/feed/rcmd"
+            | "/x/player/playurl"
+            | "/x/player/v2"
+    ) || cookie_authenticated_api_path(path)
 }
 
 fn cookie_authenticated_api_path(path: &str) -> bool {
@@ -2475,7 +2518,8 @@ fn restricted_area_resolver_failure_may_be_credential_related(message: &str) -> 
             || (lower.contains("http status")
                 && (lower.contains("401")
                     || lower.contains("403")
-                    || lower.contains("unauthorized"))))
+                    || lower.contains("unauthorized"))
+                && access_key_specific_failure_message(&lower)))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -4877,11 +4921,12 @@ mod tests {
         input_may_use_intl_access_key, input_may_use_restricted_area_proxy,
         input_media_preflight_playurl_mode, input_requires_web_cookie,
         media_preflight_report_can_refresh_generic_access_key_for_failure, next_poll_sleep,
-        parse_access_key_login_input, plan_failure_may_be_credential_related,
-        qr_login_lifecycle_metadata, remaining_until, restricted_area_from_cli_with_args,
-        restricted_area_from_cli_with_env_values, save_credentials,
-        save_credentials_with_lifecycle, save_credentials_with_lifecycle_and_secrets,
-        should_prompt_duplicate_decision, validate_media_host_spec, validate_single_download_args,
+        non_generic_access_key_json_path, parse_access_key_login_input,
+        plan_failure_may_be_credential_related, qr_login_lifecycle_metadata, remaining_until,
+        restricted_area_from_cli_with_args, restricted_area_from_cli_with_env_values,
+        save_credentials, save_credentials_with_lifecycle,
+        save_credentials_with_lifecycle_and_secrets, should_prompt_duplicate_decision,
+        validate_media_host_spec, validate_single_download_args,
     };
     use bbdown_core::{
         AccessKeyLoginConfig, AccessKeyLoginCredentials, AccessKeyProvider,
@@ -5259,13 +5304,13 @@ mod tests {
                     .to_owned(),
             )
         ));
-        assert!(plan_failure_may_be_credential_related(
+        assert!(!plan_failure_may_be_credential_related(
             &bbdown_core::Error::AccessRestricted(
                 "restricted-area resolver failed for hk: HTTP error: HTTP status client error (403 Forbidden)"
                     .to_owned(),
             )
         ));
-        assert!(plan_failure_may_be_credential_related(
+        assert!(!plan_failure_may_be_credential_related(
             &bbdown_core::Error::AccessRestricted(
                 "restricted-area resolver failed for hk: HTTP error: HTTP status client error (401 Unauthorized)"
                     .to_owned(),
@@ -5304,6 +5349,13 @@ mod tests {
         assert!(http_status_failure_may_be_credential_related(
             403,
             "HTTP status client error (403 Forbidden): expired access_key"
+        ));
+        assert!(non_generic_access_key_json_path("/x/web-interface/view"));
+        assert!(non_generic_access_key_json_path(
+            "/pgc/player/web/v2/playurl"
+        ));
+        assert!(!non_generic_access_key_json_path(
+            "/intl/gateway/v2/ogv/playurl"
         ));
     }
 

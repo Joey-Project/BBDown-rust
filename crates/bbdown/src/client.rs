@@ -3094,8 +3094,7 @@ impl BiliClient {
     where
         T: for<'de> Deserialize<'de>,
     {
-        let preserve_status_url =
-            include_cookie && preserves_cookie_json_status_url_for_path(url.path());
+        let preserve_status_url = preserves_json_status_url_for_path(url.path());
         let response = self
             .http
             .get(url)
@@ -3149,6 +3148,12 @@ impl BiliClient {
 
     fn http_json_status_error(error: reqwest::Error, preserve_status_url: bool) -> Error {
         if preserve_status_url && error.status().is_some() {
+            let classification_url = error.url().cloned().map(status_classification_url);
+            let error = if let Some(url) = classification_url {
+                error.with_url(url)
+            } else {
+                error
+            };
             return Error::Http(error);
         }
         Self::http_error_without_url(error)
@@ -4729,13 +4734,40 @@ fn append_pgc_playurl_params(
     }
 }
 
-fn preserves_cookie_json_status_url_for_path(path: &str) -> bool {
+fn status_classification_url(mut url: Url) -> Url {
+    let _ = url.set_username("");
+    let _ = url.set_password(None);
+    url.set_query(None);
+    url.set_fragment(None);
+    url
+}
+
+fn preserves_json_status_url_for_path(path: &str) -> bool {
     matches!(
         path,
-        "/x/web-interface/history/cursor"
+        "/x/web-interface/view"
+            | "/x/tag/archive/tags"
+            | "/pgc/view/web/season"
+            | "/pgc/review/user"
+            | "/pgc/player/web/v2/playurl"
+            | "/pugv/view/web/season"
+            | "/pugv/view/web/ep/list"
+            | "/pugv/player/web/playurl"
+            | "/x/v3/fav/folder/created/list-all"
+            | "/x/v3/fav/resource/list"
+            | "/x/v1/medialist/info"
+            | "/x/v2/medialist/resource/list"
+            | "/x/polymer/web-space/seasons_archives_list"
+            | "/x/series/archives"
+            | "/x/series/series"
+            | "/x/space/wbi/arc/search"
+            | "/x/web-interface/wbi/index/top/feed/rcmd"
+            | "/x/web-interface/history/cursor"
             | "/x/v2/history/toview"
             | "/x/polymer/web-dynamic/v1/feed/all"
             | "/x/polymer/web-dynamic/v1/feed/space"
+            | "/x/player/playurl"
+            | "/x/player/v2"
     )
 }
 

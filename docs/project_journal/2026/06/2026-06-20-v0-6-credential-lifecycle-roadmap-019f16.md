@@ -388,6 +388,15 @@ superseded_by:
       archive retry for those authenticated feed endpoints when they return bare HTTP 401/403. APP
       playurl and intl HTTP status failures still redact URLs and remain eligible for access-key
       refresh when the configured request path can actually send the generic access key.
+    - Current-head Codex and independent review follow-up expands safe JSON HTTP-status URL
+      preservation to known non-generic-access-key WEB/PGC/PUGV/list/playurl metadata paths while
+      stripping query, fragment, and userinfo before storing the URL on the error. Archive retry now
+      uses those paths to suppress generic access-key refresh for metadata, account-feed, and
+      official WEB playurl HTTP 401/403 failures that did not send the generic key.
+    - Restricted-area proxy bare HTTP 401/403 summaries no longer trigger generic access-key refresh
+      unless the diagnostic includes explicit access-key or access-token evidence. APP and intl
+      access-key request failures that surface as URL-redacted bare HTTP 401/403 remain refreshable
+      when the selected request path can actually send the generic key.
     - Crate-local README files now document the provider-aware APP credential order for embedders,
       matching the top-level and embedding docs.
   - Added mock e2e coverage for these review follow-ups:
@@ -418,6 +427,11 @@ superseded_by:
     - `cargo test -p bbdown-cli --bin bbdown access_key_refresh_request_trims_stored_tokens --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_for_optional_web_api_not_logged_in --locked`.
     - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_generic_key_for_authenticated_feed_http_status --locked`.
+    - `cargo test -p bbdown-core --lib renew_mode_skips_access_key_refresh_when_required_cookie_is_missing --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_generic_key_for_video_metadata_http_status --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_retries_app_access_key_after_http_unauthorized_status --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e download_archive_does_not_refresh_for_restricted_proxy_http_auth_status_without_key_evidence --locked`.
+    - `cargo test -p bbdown-core --lib intl_access_key_is_redacted_from_http_errors --locked`.
 
 ## Next Steps
 
