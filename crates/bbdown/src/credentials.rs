@@ -1373,7 +1373,9 @@ impl CredentialStore {
         {
             fs::create_dir_all(parent)?;
         }
-        write_private_file(&self.path, bytes, || guard.ensure_current())
+        write_private_file(&self.path, bytes, || {
+            acquire_replace_coordination_guard(guard)
+        })
     }
 
     fn file_uses_profiles(&self) -> Result<bool> {
@@ -1419,7 +1421,7 @@ impl CredentialStore {
 
     pub fn clear(&self) -> Result<()> {
         let guard = self.acquire_update_lock()?;
-        guard.ensure_current()?;
+        let _replace_guard = acquire_replace_coordination_guard(&guard)?;
         match fs::remove_file(&self.path) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -1437,6 +1439,7 @@ impl CredentialStore {
 struct CredentialStoreUpdateLock {
     path: PathBuf,
     token: String,
+    coordinate_release: bool,
 }
 
 impl CredentialStoreUpdateLock {
@@ -1464,6 +1467,14 @@ impl CredentialStoreUpdateLock {
 
 impl Drop for CredentialStoreUpdateLock {
     fn drop(&mut self) {
+        let _coordination_guard = if self.coordinate_release {
+            match acquire_lock_coordination_guard(&self.path) {
+                Ok(Some(guard)) => Some(guard),
+                _ => return,
+            }
+        } else {
+            None
+        };
         let Ok(raw) = fs::read_to_string(&self.path) else {
             return;
         };
@@ -1511,7 +1522,7 @@ fn normalize_profile_name(name: &str) -> Result<String> {
 fn write_private_file(
     path: &Path,
     bytes: &[u8],
-    before_replace: impl FnOnce() -> Result<()>,
+    acquire_replace_guard: impl FnOnce() -> Result<CredentialStoreUpdateLock>,
 ) -> Result<()> {
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     let tmp_path = private_temp_path(path);
@@ -1528,10 +1539,13 @@ fn write_private_file(
     file.write_all(bytes)?;
     file.sync_all()?;
     drop(file);
-    if let Err(error) = before_replace() {
-        let _ = fs::remove_file(&tmp_path);
-        return Err(error);
-    }
+    let _replace_guard = match acquire_replace_guard() {
+        Ok(guard) => guard,
+        Err(error) => {
+            let _ = fs::remove_file(&tmp_path);
+            return Err(error);
+        }
+    };
     fs::rename(&tmp_path, path).map_err(|error| {
         let _ = fs::remove_file(&tmp_path);
         Error::Io(error)
@@ -1581,7 +1595,7 @@ fn next_credential_lock_token(created_at_unix_millis: u64) -> String {
 }
 
 fn try_create_lock_file(lock_path: &Path) -> Result<Option<CredentialStoreUpdateLock>> {
-    try_create_lock_file_with_metadata_writer(lock_path, |file, token, created_at| {
+    try_create_lock_file_with_release_mode(lock_path, true, |file, token, created_at| {
         writeln!(file, "token={token}")?;
         writeln!(file, "pid={}", std::process::id())?;
         writeln!(file, "created_at_unix_millis={created_at}")?;
@@ -1590,8 +1604,29 @@ fn try_create_lock_file(lock_path: &Path) -> Result<Option<CredentialStoreUpdate
     })
 }
 
+fn try_create_coordination_lock_file(
+    lock_path: &Path,
+) -> Result<Option<CredentialStoreUpdateLock>> {
+    try_create_lock_file_with_release_mode(lock_path, false, |file, token, created_at| {
+        writeln!(file, "token={token}")?;
+        writeln!(file, "pid={}", std::process::id())?;
+        writeln!(file, "created_at_unix_millis={created_at}")?;
+        file.sync_all()?;
+        Ok(())
+    })
+}
+
+#[cfg(test)]
 fn try_create_lock_file_with_metadata_writer(
     lock_path: &Path,
+    write_metadata: impl FnOnce(&mut fs::File, &str, u64) -> Result<()>,
+) -> Result<Option<CredentialStoreUpdateLock>> {
+    try_create_lock_file_with_release_mode(lock_path, true, write_metadata)
+}
+
+fn try_create_lock_file_with_release_mode(
+    lock_path: &Path,
+    coordinate_release: bool,
     write_metadata: impl FnOnce(&mut fs::File, &str, u64) -> Result<()>,
 ) -> Result<Option<CredentialStoreUpdateLock>> {
     let mut options = OpenOptions::new();
@@ -1618,6 +1653,7 @@ fn try_create_lock_file_with_metadata_writer(
             Ok(Some(CredentialStoreUpdateLock {
                 path: lock_path.to_owned(),
                 token,
+                coordinate_release,
             }))
         }
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(None),
@@ -1641,13 +1677,26 @@ impl Drop for PendingCredentialStoreUpdateLock {
 fn acquire_lock_coordination_guard(lock_path: &Path) -> Result<Option<CredentialStoreUpdateLock>> {
     let reclaim_lock_path = reclaim_lock_path(lock_path);
     loop {
-        if let Some(reclaim_guard) = try_create_lock_file(&reclaim_lock_path)? {
+        if let Some(reclaim_guard) = try_create_coordination_lock_file(&reclaim_lock_path)? {
             return Ok(Some(reclaim_guard));
         }
         if !remove_stale_lock_file(&reclaim_lock_path)? {
             return Ok(None);
         }
     }
+}
+
+fn acquire_replace_coordination_guard(
+    guard: &CredentialStoreUpdateLock,
+) -> Result<CredentialStoreUpdateLock> {
+    let Some(coordination_guard) = acquire_lock_coordination_guard(&guard.path)? else {
+        return Err(Error::InvalidInput(format!(
+            "credential store lock was reclaimed before write: {}",
+            guard.path.display()
+        )));
+    };
+    guard.ensure_current()?;
+    Ok(coordination_guard)
 }
 
 fn remove_stale_lock_file(lock_path: &Path) -> Result<bool> {
@@ -1818,18 +1867,18 @@ fn parse_lock_created_at_unix_millis(raw: &str) -> Option<u64> {
 fn write_private_file(
     path: &Path,
     bytes: &[u8],
-    before_replace: impl FnOnce() -> Result<()>,
+    acquire_replace_guard: impl FnOnce() -> Result<CredentialStoreUpdateLock>,
 ) -> Result<()> {
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty());
     let mut file = match parent {
         Some(parent) => tempfile::NamedTempFile::new_in(parent)?,
-        None => tempfile::NamedTempFile::new()?,
+        None => tempfile::NamedTempFile::new_in(".")?,
     };
     file.write_all(bytes)?;
     file.as_file().sync_all()?;
-    before_replace()?;
+    let _replace_guard = acquire_replace_guard()?;
     file.persist(path).map_err(std::io::Error::from)?;
     Ok(())
 }
@@ -1847,7 +1896,8 @@ mod tests {
         CredentialProfileMetadata, CredentialProfileSecrets, CredentialProfileSelection,
         CredentialProfiles, CredentialStore, CredentialStoreUpdateLock, Credentials,
         DEFAULT_CREDENTIAL_PROFILE, current_unix_millis, parse_lock_token, private_lock_path,
-        reclaim_lock_path, try_create_lock_file, try_create_lock_file_with_metadata_writer,
+        reclaim_lock_path, try_create_coordination_lock_file, try_create_lock_file,
+        try_create_lock_file_with_metadata_writer,
     };
     use std::io::Write;
 
@@ -2501,7 +2551,8 @@ mod tests {
         let path = temp.path().join("credentials.json");
         let store = CredentialStore::new(path.clone());
         let lock_path = private_lock_path(&path);
-        let Some(_coordination_guard) = try_create_lock_file(&reclaim_lock_path(&lock_path))?
+        let Some(_coordination_guard) =
+            try_create_coordination_lock_file(&reclaim_lock_path(&lock_path))?
         else {
             anyhow::bail!("coordination guard should be acquired");
         };
@@ -2589,6 +2640,7 @@ mod tests {
         let stale_guard = CredentialStoreUpdateLock {
             path: lock_path.clone(),
             token: stale_token.to_owned(),
+            coordinate_release: true,
         };
 
         let active_guard = store.acquire_update_lock()?;

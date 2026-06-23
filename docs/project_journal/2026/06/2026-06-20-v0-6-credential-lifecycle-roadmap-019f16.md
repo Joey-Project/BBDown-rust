@@ -226,6 +226,9 @@ superseded_by:
   - Follow-up review found that a purely conservative liveness check made normal crashed-writer
     locks unrecoverable on macOS and Windows; stale reclaim now uses safe `/proc`, Unix `kill -0`,
     or Windows `tasklist` probes where available, while still treating unprobeable owners as live.
+  - GitHub Codex review follow-up extends the reclaim guard across destructive replace, clear, and
+    lock-release operations, and keeps non-Unix bare-path temporary credential files beside the
+    target path instead of the OS temp directory.
   - Offline review follow-up keeps default-profile incremental writes on legacy flat JSON stores in
     the flat credential shape, while named profile writes and existing profile documents still use
     the versioned profile document.
