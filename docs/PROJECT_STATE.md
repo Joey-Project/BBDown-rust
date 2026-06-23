@@ -43,9 +43,10 @@
   callbacks, terminal progress events/report summaries, cancellation-aware download execution,
   chapter metadata muxing, audio language selection, AI subtitle filtering, and release-note
   archive packaging are now published.
-- The active `0.6.0` planning line is credential lifecycle work: renewal/reauthorization
-  orchestration, provider-aware access-key refresh secrets, health policy/reporting, profile-level
-  lifecycle status, and multi-account lifecycle UX.
+- The `0.6.0` credential lifecycle line is ready for protected release candidate validation:
+  renewal/reauthorization orchestration, provider-aware access-key refresh secrets,
+  health policy/reporting, profile-level lifecycle status, credential preflight, and multi-account
+  lifecycle UX have landed, and release-prep docs now describe the public surface.
 - The release-prep deterministic gate passed. The latest local live e2e rerun is still blocked by
   upstream restricted PGC proxy `502 Bad Gateway` responses in the ignored manifest.
 - Repo-local skill `$bbdown-live-e2e-fixtures` and `live-e2e.samples.example.json` record the current
@@ -61,7 +62,7 @@
   `docs/project_journal/2026/06/2026-06-18-v0-4-release-prep-019f0a.md`.
 - Completed v0.5.0 roadmap:
   `docs/project_journal/2026/06/2026-06-18-v0-5-downloader-embedding-roadmap-019f0b.md`.
-- Active v0.6.0 roadmap:
+- v0.6.0 release-prep roadmap:
   `docs/project_journal/2026/06/2026-06-20-v0-6-credential-lifecycle-roadmap-019f16.md`.
 - High-priority overseas playback/CDN routing backlog:
   `docs/project_journal/2026/06/2026-06-21-overseas-cdn-routing-roadmap-019f17.md`.

@@ -26,10 +26,11 @@ The crates.io publish target is the reusable `bbdown-core` library package. Use
 `just publish-dry-run` for a local locked dry run that tolerates an uncommitted worktree, and use
 `just publish-dry-run-strict` or `cargo publish --dry-run -p bbdown-core --locked` to reproduce the
 clean CI gate. The `bbdown-cli` package is marked `publish = false`; install or distribute the CLI
-through GitHub release archives instead. The current development line is `0.5.0` after the published
-`0.4.0` release and is focused on downloader and embedding polish: progress callbacks,
-cancellation-aware execution, chapter metadata muxing, audio language selection, and AI subtitle
-filtering. Embedding callers should still prefer
+through GitHub release archives instead. The current development line is `0.6.0` after the published
+`0.5.0` release and is focused on credential lifecycle behavior: profile status, health policy,
+explicit access-key renewal, provider-aware refresh secrets, automatic refresh where provider
+metadata is available, credential preflight, and safer selected-profile updates. Embedding callers
+should still prefer
 constructors such as `DownloadOptions::new`, `StreamSelection::new`, and
 `Default` over public struct literals, and treat public plan output containers as consumed data
 surfaces that may gain fields while the crate matures.

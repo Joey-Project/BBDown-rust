@@ -24,8 +24,10 @@ crates.io 发布目标是可复用的 `bbdown-core` library package。使用 `ju
 可以在本地执行锁定版本的 dry run，并允许工作树存在未提交修改；使用
 `just publish-dry-run-strict` 或 `cargo publish --dry-run -p bbdown-core --locked` 可以复现
 干净 CI 门禁。`bbdown-cli` 包标记为 `publish = false`；CLI 应通过 GitHub release 归档安
-装或分发。当前开发线是已发布 `0.4.0` 之后的 `0.5.0`，重点是 downloader 和 embedding polish：
-progress callback、可取消的执行、章节 metadata mux、音频语言选择，以及 AI 字幕筛选。嵌入调用方仍应优先使用
+装或分发。当前开发线是已发布 `0.5.0` 之后的 `0.6.0`，重点是 credential lifecycle：
+profile status、health policy、显式 access-key renewal、provider-aware refresh secrets、
+有 provider metadata 时的 automatic refresh、credential preflight，以及更安全的 selected-profile
+更新。嵌入调用方仍应优先使用
 `DownloadOptions::new`、`StreamSelection::new`、`Default` 等构造器，而不是 public struct 字面量，并把公开的 plan
 输出容器视为会随 crate 成熟继续新增字段的被消费数据表面。
 

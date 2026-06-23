@@ -328,10 +328,12 @@ just ci
 ## 文档
 
 - Crate API 说明：可发布 package 是 `bbdown-core`，导入时使用 `bbdown_core`。此重写处于
-  已发布 `0.4.0` 之后的 `0.5.0` 开发线。该版本线重点是 downloader 和 embedding polish：
-  progress callback、可取消的执行、章节 metadata mux、音频语言选择，以及 AI 字幕筛选。当前
-  download API 已包含 `DownloadProgressEvent` callback、基于 `DownloadCancellationToken`
-  的 graceful cancellation，以及当 plan 条目暴露章节时的 ffmpeg 章节 metadata mux；嵌入项目应优先使用
+  已发布 `0.5.0` 之后的 `0.6.0` credential lifecycle 开发线。该版本线重点是 credential
+  lifecycle metadata、profile health policy、显式 access-key renewal、provider-aware 明文
+  refresh-secret 存储、provider-specific access-key refresh clients、可选 credential
+  preflight，以及更安全的多账号 profile 更新。`0.5.0` 的 download API 仍包含
+  `DownloadProgressEvent` callback、基于 `DownloadCancellationToken` 的 graceful
+  cancellation，以及当 plan 条目暴露章节时的 ffmpeg 章节 metadata mux；嵌入项目应优先使用
   `Default`、`new` 和
   `with_*` 构造器，例如 `ClientConfig::default().with_*`、`EndpointConfig::default().with_*`、
   `RestrictedAreaConfig::default().with_*`、`DownloadOptions::new(...).with_*` 和
