@@ -415,8 +415,9 @@ mutation, and then write back through the existing private-file path. Full-docum
 lock files left by interrupted writers are reclaimed after a short recovery window under a companion
 reclaim guard; stale reclaim guards are recoverable too, and normal lock acquisition is serialized
 through the same guard so reclaim cannot delete a newly-created writer lock. Before any
-credential-file replacement, the writer fences on the current lock token, and lock release only
-removes the file when the stored token still belongs to the current guard. Automatic
+credential-file replacement, after the private temporary file is written and synced, the writer
+fences on the current lock token, and lock release only removes the file when the stored token still
+belongs to the current guard. Automatic
 access-key refresh additionally verifies, while holding the update lock, that the selected profile's
 current access key, access-key provider metadata, refresh token, refresh provider, and keypair still
 match the request that produced the response before it saves the refreshed credential.

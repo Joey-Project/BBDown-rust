@@ -205,9 +205,10 @@ superseded_by:
     store untouched.
   - Final offline review follow-up also makes failed lock metadata initialization clean up the
     just-created pending lock before returning the write error.
-  - Final offline review follow-up fences credential-file replacement on the active guard token, so
-    a stale writer that resumes after its lock was reclaimed cannot write an old snapshot over a
-    newer store.
+  - Final offline review follow-up fences credential-file replacement on the active guard token.
+    Independent PR review follow-up tightens that fence to run after the private temporary file is
+    written and immediately before the final replace, so a stale writer that resumes after its lock
+    was reclaimed cannot write an old snapshot over a newer store.
   - Independent PR review follow-up also serializes normal lock acquisition through the companion
     reclaim guard, so a stale reclaimer cannot remove a newly-created writer lock.
   - Independent PR review follow-up adds access-key provider metadata to the automatic refresh
@@ -502,6 +503,7 @@ superseded_by:
   - `cargo test -p bbdown-core update_profiles_reclaims_stale_reclaim_lock --locked`.
   - `cargo test -p bbdown-core try_create_lock_file_cleans_up_after_metadata_write_error --locked`.
   - `cargo test -p bbdown-core stale_lock_owner_resume_after_reclaim_does_not_write_stale_snapshot --locked`.
+  - `cargo test -p bbdown-core write_credentials_fences_after_temp_file_write_before_replace --locked`.
   - `cargo test -p bbdown-core update_profiles_waits_for_lock_coordination_guard --locked`.
   - `cargo test -p bbdown-cli stale_auto_refresh_save_skips_when_provider_metadata_changed --bin bbdown --locked`.
   - `cargo test -p bbdown-core update_selected_profile_preserves_flat_default_store_format --locked`.

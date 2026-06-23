@@ -222,9 +222,9 @@ reload the latest on-disk profile document, apply only the requested mutation, a
 private file back, so unrelated profiles and provider refresh secrets are not overwritten by a stale
 snapshot from another `bbdown` process. Stale lock files left by interrupted credential writes are
 reclaimed after a short recovery window. Lock acquisition and stale reclaim are serialized by the
-same companion guard. Writes check that their lock token is still current before replacing the
-credential file, and lock release checks the same token before deletion. The CLI's automatic
-access-key refresh path also validates
+same companion guard. Writes check that their lock token is still current after the temporary file
+is written and immediately before replacing the credential file, and lock release checks the same
+token before deletion. The CLI's automatic access-key refresh path also validates
 that the current selected profile still matches the request's old access key, access-key provider
 metadata, refresh token, refresh provider, and keypair before saving a refresh response; if not, it
 leaves the current store untouched.

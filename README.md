@@ -239,9 +239,9 @@ store lock before merging new credential, lifecycle, and provider-secret fields.
 overwriting other profiles or concurrently refreshed provider secrets from another `bbdown` process;
 stale lock files left by interrupted credential writes are reclaimed after a short recovery window.
 Lock acquisition and stale reclaim are serialized by the same companion guard. Each write checks
-that its lock token is still current before replacing the credential file, and lock release checks
-the same token before deletion, so a resumed stale writer cannot overwrite a newer store or remove a
-newer writer's lock after recovery.
+that its lock token is still current after the temporary file is written and immediately before
+replacing the credential file, and lock release checks the same token before deletion, so a resumed
+stale writer cannot overwrite a newer store or remove a newer writer's lock after recovery.
 If a slower automatic refresh response is no longer current, JSON output emits `refresh_skipped`
 with `reason=profile_changed` and leaves the current credential store untouched.
 `plan`, `playback`, and `download` also accept `--credential-preflight warn|fail|renew` so callers

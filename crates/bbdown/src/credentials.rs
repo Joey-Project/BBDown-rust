@@ -1217,11 +1217,9 @@ impl CredentialStore {
             let mut profiles = self.load_profiles()?;
             let default_profile = profiles.default_profile.clone();
             profiles.set_profile(&default_profile, credentials.clone())?;
-            guard.ensure_current()?;
-            self.save_profiles_unlocked(&profiles)
+            self.save_profiles_locked(&profiles, &guard)
         } else {
-            guard.ensure_current()?;
-            self.write_credentials(credentials)
+            self.write_credentials_locked(credentials, &guard)
         }
     }
 
@@ -1235,8 +1233,7 @@ impl CredentialStore {
 
     pub fn save_profiles(&self, profiles: &CredentialProfiles) -> Result<()> {
         let guard = self.acquire_update_lock()?;
-        guard.ensure_current()?;
-        self.save_profiles_unlocked(profiles)
+        self.save_profiles_locked(profiles, &guard)
     }
 
     pub fn update_profiles<T>(
@@ -1248,8 +1245,7 @@ impl CredentialStore {
         let before = profiles.clone();
         let output = update(&mut profiles)?;
         if profiles != before {
-            guard.ensure_current()?;
-            self.save_profiles_unlocked(&profiles)?;
+            self.save_profiles_locked(&profiles, &guard)?;
         }
         Ok(output)
     }
@@ -1279,9 +1275,13 @@ impl CredentialStore {
         }
     }
 
-    fn save_profiles_unlocked(&self, profiles: &CredentialProfiles) -> Result<()> {
+    fn save_profiles_locked(
+        &self,
+        profiles: &CredentialProfiles,
+        guard: &CredentialStoreUpdateLock,
+    ) -> Result<()> {
         let profiles = profiles.clone().normalize()?;
-        self.write_bytes(&serde_json::to_vec_pretty(&profiles)?)
+        self.write_bytes_locked(&serde_json::to_vec_pretty(&profiles)?, guard)
     }
 
     fn update_default_profile(
@@ -1295,14 +1295,12 @@ impl CredentialStore {
             let credentials = profiles.profile(&profile)?;
             let updated = update(credentials)?;
             profiles.set_profile(&profile, updated.clone())?;
-            guard.ensure_current()?;
-            self.save_profiles_unlocked(&profiles)?;
+            self.save_profiles_locked(&profiles, &guard)?;
             Ok(updated)
         } else {
             let credentials = self.load_credentials_unlocked()?;
             let updated = update(credentials)?;
-            guard.ensure_current()?;
-            self.write_credentials(&updated)?;
+            self.write_credentials_locked(&updated, &guard)?;
             Ok(updated)
         }
     }
@@ -1343,14 +1341,17 @@ impl CredentialStore {
         let mut profiles = self.load_profiles()?;
         let removed = profiles.remove_profile(profile)?;
         if removed.is_some() || file_uses_profiles {
-            guard.ensure_current()?;
-            self.save_profiles_unlocked(&profiles)?;
+            self.save_profiles_locked(&profiles, &guard)?;
         }
         Ok(removed)
     }
 
-    fn write_credentials(&self, credentials: &Credentials) -> Result<()> {
-        self.write_bytes(&serde_json::to_vec_pretty(credentials)?)
+    fn write_credentials_locked(
+        &self,
+        credentials: &Credentials,
+        guard: &CredentialStoreUpdateLock,
+    ) -> Result<()> {
+        self.write_bytes_locked(&serde_json::to_vec_pretty(credentials)?, guard)
     }
 
     fn load_credentials_unlocked(&self) -> Result<Credentials> {
@@ -1364,7 +1365,7 @@ impl CredentialStore {
         Ok(parse_credential_profiles(&raw)?.default_credentials())
     }
 
-    fn write_bytes(&self, bytes: &[u8]) -> Result<()> {
+    fn write_bytes_locked(&self, bytes: &[u8], guard: &CredentialStoreUpdateLock) -> Result<()> {
         if let Some(parent) = self
             .path
             .parent()
@@ -1372,7 +1373,7 @@ impl CredentialStore {
         {
             fs::create_dir_all(parent)?;
         }
-        write_private_file(&self.path, bytes)
+        write_private_file(&self.path, bytes, || guard.ensure_current())
     }
 
     fn file_uses_profiles(&self) -> Result<bool> {
@@ -1507,7 +1508,11 @@ fn normalize_profile_name(name: &str) -> Result<String> {
 }
 
 #[cfg(unix)]
-fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
+fn write_private_file(
+    path: &Path,
+    bytes: &[u8],
+    before_replace: impl FnOnce() -> Result<()>,
+) -> Result<()> {
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     let tmp_path = private_temp_path(path);
     match fs::remove_file(&tmp_path) {
@@ -1523,6 +1528,10 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
     file.write_all(bytes)?;
     file.sync_all()?;
     drop(file);
+    if let Err(error) = before_replace() {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(error);
+    }
     fs::rename(&tmp_path, path).map_err(|error| {
         let _ = fs::remove_file(&tmp_path);
         Error::Io(error)
@@ -1715,7 +1724,12 @@ fn parse_lock_created_at_unix_millis(raw: &str) -> Option<u64> {
 }
 
 #[cfg(not(unix))]
-fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
+fn write_private_file(
+    path: &Path,
+    bytes: &[u8],
+    before_replace: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    before_replace()?;
     let mut file = OpenOptions::new()
         .create(true)
         .truncate(true)
@@ -1727,6 +1741,8 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use super::private_temp_path;
     use super::{
         AccessKeyProvider, AccessKeyProviderSecret, AccessKeyRefreshKeypair,
         AccessKeyRefreshProvider, CREDENTIAL_LOCK_STALE_AFTER_MILLIS, CredentialHealthProbe,
@@ -2481,6 +2497,46 @@ mod tests {
             Some("NEWER")
         );
         assert!(!lock_path.exists());
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn write_credentials_fences_after_temp_file_write_before_replace() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+        store.save(&Credentials {
+            cookie: None,
+            access_key: Some("INITIAL".to_owned()),
+            tv_access_key: None,
+        })?;
+
+        let lock_path = private_lock_path(&path);
+        let guard = store.acquire_update_lock()?;
+        std::fs::write(
+            &lock_path,
+            "token=newer-writer\npid=1\ncreated_at_unix_millis=1\n",
+        )?;
+
+        let Err(error) = store.write_credentials_locked(
+            &Credentials {
+                cookie: None,
+                access_key: Some("STALE".to_owned()),
+                tv_access_key: None,
+            },
+            &guard,
+        ) else {
+            anyhow::bail!("reclaimed writer must fail before replacing the credential file");
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("credential store lock was reclaimed before write")
+        );
+        assert_eq!(store.load()?.access_key.as_deref(), Some("INITIAL"));
+        assert!(!private_temp_path(&path).exists());
         Ok(())
     }
 
