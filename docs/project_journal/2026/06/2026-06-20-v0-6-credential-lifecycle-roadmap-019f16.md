@@ -4,7 +4,7 @@ title: v0.6.0 Credential Lifecycle Roadmap
 status: active
 created: 2026-06-20
 updated: 2026-06-23
-branch: feature/v0.6-multi-account-lifecycle-polish
+branch: release-prep/v0.6.0
 pr:
 supersedes: []
 superseded_by:
@@ -240,6 +240,25 @@ superseded_by:
     the versioned profile document.
   - Bilingual README, user guide, embedding guide, and architecture docs now describe selected
     profile writes and the store-lock behavior.
+- PR 10 prepares `v0.6.0` for the protected release flow:
+  - Workspace crate manifests now carry version `0.6.0`, and the CLI depends on the matching
+    `bbdown-core` path package version.
+  - Human-facing README, user guide, embedding guide, architecture guide, crate-local README, and
+    release-note indexes now describe the `0.6.0` credential lifecycle line instead of the completed
+    `0.5.0` downloader/embedding line.
+  - New bilingual `v0.6.0` release notes summarize profile lifecycle metadata, status and health
+    policy APIs, CLI lifecycle UX, access-key renewal, provider-aware refresh-secret storage,
+    provider-specific refresh clients, credential preflight, and safer multi-account updates.
+  - Release-prep validation passed `cargo test -p bbdown-core --test public_api --locked`,
+    `cargo doc --no-deps -p bbdown-core --locked`, project journal validation, `git diff --check`,
+    and `just ci`, covering formatter, clippy, Rust 1.95 check, workspace tests, mock CLI e2e, and
+    `bbdown-core` `0.6.0` publish dry-run.
+  - A local Unix release archive smoke packaged `target/debug/bbdown` and verified the tar members
+    include the release-note indexes plus both `v0.6.0` release-note files.
+  - Opt-in `just live-e2e` was attempted with the ignored local manifest. It failed on restricted
+    `pgc-hk-mo-tw` because all configured restricted-area proxy candidates returned `502 Bad
+    Gateway` while the manifest expected an API-code proxy diagnostic. This remains an upstream
+    proxy/fixture caveat rather than a deterministic release gate failure.
 
 ## Out Of Scope For This Line
 
@@ -553,6 +572,5 @@ superseded_by:
 
 ## Next Steps
 
-- Finish PR 9 full validation, review gates, CI, and merge.
-- Continue PR 10 release prep for `v0.6.0` after multi-account lifecycle polish is stable on
-  `master`.
+- Run the protected release candidate workflow for `v0.6.0` after PR 10 lands.
+- Promote the approved release candidate to GitHub Release and crates.io `bbdown-core`.

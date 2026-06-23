@@ -14,8 +14,10 @@ cancellation token。原始输入解析覆盖普
 
 使用 `cargo add bbdown-core` 安装，然后用 `bbdown_core` 导入。
 
-当前 crate 版本是 `0.5.0`，属于已发布 `0.4.0` 之后的开发线，重点是 downloader 和
-embedding polish：progress callback、可取消的执行、章节 metadata mux、音频语言选择，以及 AI 字幕筛选。嵌入项目
+当前 crate 版本是 `0.6.0`，属于已发布 `0.5.0` 之后的开发线，重点是 credential lifecycle
+integration：profile status、health policy、access-key renewal、provider-aware refresh
+secrets、provider-specific refresh clients、credential preflight，以及更安全的 multi-account
+updates。嵌入项目
 应优先使用 constructor 和 builder 风格 API，例如 `ClientConfig::default().with_*()`、
 `EndpointConfig::default().with_*()`、`RestrictedAreaConfig::default().with_*()`、
 `DownloadOptions::new(...).with_*()`、`RetryPolicy::new(...)` 和

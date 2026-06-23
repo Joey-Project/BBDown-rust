@@ -350,11 +350,13 @@ running, so sample behavior is driven by the manifest rather than shell state.
 ## Documentation
 
 - Crate API note: the publishable package is `bbdown-core`, imported as `bbdown_core`. This rewrite
-  is now on the `0.5.0` development line after the published `0.4.0` release. The line is focused on
-  downloader and embedding polish: progress callbacks, cancellation-aware execution, chapter metadata
-  muxing, audio language selection, and AI subtitle filtering. The current download APIs include
-  `DownloadProgressEvent` callbacks, `DownloadCancellationToken`-based graceful cancellation, and
-  ffmpeg chapter metadata muxing when plan entries expose chapters.
+  is now on the `0.6.0` credential lifecycle line after the published `0.5.0` release. The line is
+  focused on credential lifecycle metadata, profile health policy, explicit access-key renewal,
+  provider-aware plaintext refresh-secret storage, provider-specific access-key refresh clients,
+  optional credential preflight, and safer multi-account profile updates. The download APIs from
+  `0.5.0` still include `DownloadProgressEvent` callbacks,
+  `DownloadCancellationToken`-based graceful cancellation, and ffmpeg chapter metadata muxing when
+  plan entries expose chapters.
   Embedding projects should prefer
   `Default`, `new`, and `with_*` constructors such as `ClientConfig::default().with_*`,
   `EndpointConfig::default().with_*`, `RestrictedAreaConfig::default().with_*`,
