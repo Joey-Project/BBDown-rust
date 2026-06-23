@@ -1352,6 +1352,7 @@ async fn complete_deferred_media_preflight_renewal(
     client_runtime: &ClientRuntimeConfig,
     credential_preflight: &CredentialPreflightRuntimeConfig,
     prepared: &mut PreparedMediaRequest,
+    failure: Option<&bbdown_core::Error>,
     emit_diagnostics: bool,
 ) -> anyhow::Result<bool> {
     let Some(deferred) = prepared.deferred_preflight.take() else {
@@ -1359,7 +1360,15 @@ async fn complete_deferred_media_preflight_renewal(
     };
     let mut refreshed = false;
     let mut report = deferred.report;
-    if report.should_attempt_access_key_renewal() {
+    if report.should_attempt_access_key_renewal()
+        && failure.is_none_or(|failure| {
+            media_preflight_report_can_refresh_generic_access_key_for_failure(
+                &deferred.context,
+                &report,
+                failure,
+            )
+        })
+    {
         let profiles = credential_runtime
             .store
             .load_profiles()
@@ -1458,10 +1467,21 @@ fn media_preflight_context_can_refresh_generic_access_key(
         status,
         credential_preflight_requirements_for_context(context, client_runtime),
     );
-    if authenticated_web_api_cookie_unsatisfied(&report) {
+    media_preflight_report_can_refresh_generic_access_key_for_failure(context, &report, failure)
+}
+
+fn media_preflight_report_can_refresh_generic_access_key_for_failure(
+    context: &MediaCredentialPreflightContext,
+    report: &CredentialPreflightReport,
+    failure: &bbdown_core::Error,
+) -> bool {
+    if authenticated_web_api_failure_may_have_used_cookie(context, failure) {
         return false;
     }
-    if app_playurl_selected_tv_access_key(&report)
+    if authenticated_web_api_cookie_unsatisfied(report) {
+        return false;
+    }
+    if app_playurl_selected_tv_access_key(report)
         && app_playurl_auth_failure_may_have_used_selected_tv_access_key(failure)
     {
         return false;
@@ -1470,6 +1490,17 @@ fn media_preflight_context_can_refresh_generic_access_key(
         requirement.selected_kind == Some(CredentialKind::AccessKey)
             && requirement.selected_status != CredentialLifecycleStatus::Missing
     })
+}
+
+fn authenticated_web_api_failure_may_have_used_cookie(
+    context: &MediaCredentialPreflightContext,
+    failure: &bbdown_core::Error,
+) -> bool {
+    context.web_cookie_required
+        && matches!(
+            failure,
+            bbdown_core::Error::Api { code, .. } if *code == -101
+        )
 }
 
 fn authenticated_web_api_cookie_unsatisfied(report: &CredentialPreflightReport) -> bool {
@@ -2122,6 +2153,7 @@ async fn complete_deferred_archive_preflight_renewal_or_report(
         args,
         &plan.title,
         &args.options.output_dir,
+        None,
     )
     .await
 }
@@ -2172,12 +2204,14 @@ async fn complete_deferred_archive_preflight_renewal_for_target(
     args: &DownloadCommandArgs,
     title: &str,
     output_dir: &Path,
+    failure: Option<&bbdown_core::Error>,
 ) -> anyhow::Result<bool> {
     match complete_deferred_media_preflight_renewal(
         runtime.credential_runtime,
         runtime.client_runtime,
         runtime.credential_preflight,
         prepared,
+        failure,
         !args.progress_json,
     )
     .await
@@ -2218,6 +2252,7 @@ async fn plan_archive_download_with_deferred_retry_or_report(
                     args,
                     input_title,
                     output_dir,
+                    Some(&error),
                 )
                 .await?
             } else {

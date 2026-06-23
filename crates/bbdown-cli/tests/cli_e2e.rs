@@ -3740,7 +3740,7 @@ fn download_archive_does_not_refresh_generic_key_for_authenticated_feed_cookie_f
     let credential_file = temp.path().join("credentials.json");
     let output_dir = temp.path().join("downloads");
     let archive_file = temp.path().join("archive.json");
-    save_lifecycle_cli_profiles_with_access_key_secret(
+    save_lifecycle_cli_profile_with_cookie_and_access_key_secret(
         &credential_file,
         CredentialLifecycleMetadata::default()
             .with_source(CredentialLifecycleSource::ManualImport)
@@ -3764,7 +3764,108 @@ fn download_archive_does_not_refresh_generic_key_for_authenticated_feed_cookie_f
             .query_param("view_at", "0")
             .query_param("business", "")
             .query_param("type", "archive")
-            .query_param("ps", "20");
+            .query_param("ps", "20")
+            .header("cookie", "SESSDATA=COOKIE_SECRET");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -101,
+            "message": "not logged in"
+        }));
+    });
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "ACCESS_SECRET")
+            .form_urlencoded_tuple("refresh_token", "OLD_REFRESH_SECRET");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "AUTO_ACCESS_SECRET",
+                    "refresh_token": "AUTO_REFRESH_SECRET",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--playurl-mode")
+        .arg("app")
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("download")
+        .arg("history")
+        .arg("--select")
+        .arg("latest")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(stderr.contains("not logged in"));
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load_profile("intl")?
+            .access_key
+            .as_deref(),
+        Some("ACCESS_SECRET")
+    );
+    history.assert_calls(1);
+    refresh_mock.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn download_archive_does_not_complete_deferred_refresh_for_authenticated_feed_cookie_failure()
+-> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    save_lifecycle_cli_profile_with_cookie_and_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(1_000)
+            .with_expires_at_unix_millis(2_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    )?;
+    let history = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/history/cursor")
+            .query_param("max", "0")
+            .query_param("view_at", "0")
+            .query_param("business", "")
+            .query_param("type", "archive")
+            .query_param("ps", "20")
+            .header("cookie", "SESSDATA=COOKIE_SECRET");
         then.status(200).json_body_obj(&serde_json::json!({
             "code": -101,
             "message": "not logged in"
@@ -6069,6 +6170,32 @@ fn save_lifecycle_cli_profiles_with_optional_access_key_secret(
         intl_secrets.set_access_key_provider(provider, secret);
         profiles.set_profile_secrets("intl", intl_secrets)?;
     }
+    store.save_profiles(&profiles)?;
+    Ok(())
+}
+
+fn save_lifecycle_cli_profile_with_cookie_and_access_key_secret(
+    credential_file: &Path,
+    cookie_metadata: CredentialLifecycleMetadata,
+    access_key_metadata: CredentialLifecycleMetadata,
+    access_key_provider: AccessKeyProvider,
+    access_key_secret: AccessKeyProviderSecret,
+) -> anyhow::Result<()> {
+    let store = CredentialStore::new(credential_file.to_path_buf());
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_profile(
+        "intl",
+        Credentials::default()
+            .with_cookie("SESSDATA=COOKIE_SECRET")
+            .with_access_key("ACCESS_SECRET"),
+    )?;
+    let mut metadata = CredentialProfileMetadata::default();
+    metadata.set_credential(CredentialKind::Cookie, cookie_metadata);
+    metadata.set_credential(CredentialKind::AccessKey, access_key_metadata);
+    profiles.set_profile_metadata("intl", metadata)?;
+    let mut secrets = CredentialProfileSecrets::default();
+    secrets.set_access_key_provider(access_key_provider, access_key_secret);
+    profiles.set_profile_secrets("intl", secrets)?;
     store.save_profiles(&profiles)?;
     Ok(())
 }
