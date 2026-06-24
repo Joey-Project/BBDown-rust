@@ -1886,9 +1886,17 @@ fn app_playurl_auth_failure_may_have_used_selected_tv_access_key(
                 && (auth_like_failure_message(message)
                     || message == "APP playurl gRPC request failed")
         }
-        bbdown_core::Error::Http(error) => error.status().is_some_and(|status| {
-            http_status_failure_may_be_credential_related(status.as_u16(), &error.to_string())
-        }),
+        bbdown_core::Error::Http(error) => {
+            if error
+                .url()
+                .is_some_and(|url| !tv_access_key_playurl_json_path(url.path()))
+            {
+                return false;
+            }
+            error.status().is_some_and(|status| {
+                http_status_failure_may_be_credential_related(status.as_u16(), &error.to_string())
+            })
+        }
         bbdown_core::Error::AccessRestricted(_)
         | bbdown_core::Error::Cancelled { .. }
         | bbdown_core::Error::InvalidInput(_)
@@ -1900,6 +1908,12 @@ fn app_playurl_auth_failure_may_have_used_selected_tv_access_key(
         | bbdown_core::Error::Io(_)
         | bbdown_core::Error::MuxFailed { .. } => false,
     }
+}
+
+fn tv_access_key_playurl_json_path(path: &str) -> bool {
+    const TV_ACCESS_KEY_PLAYURL_ENDPOINT_PATHS: &[&str] =
+        &["/x/tv/playurl", "/pgc/player/api/playurltv"];
+    endpoint_path_matches_any(path, TV_ACCESS_KEY_PLAYURL_ENDPOINT_PATHS)
 }
 
 fn credential_preflight_report(

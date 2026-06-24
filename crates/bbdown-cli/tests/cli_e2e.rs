@@ -1615,6 +1615,78 @@ fn auth_preflight_renews_tv_access_key_for_app_playback() -> anyhow::Result<()> 
     Ok(())
 }
 
+#[test]
+fn download_archive_does_not_refresh_tv_key_for_metadata_http_status() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    save_fresh_refreshable_tv_access_key_profile(&credential_file)?;
+    let metadata = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/view")
+            .query_param("aid", "170001");
+        then.status(403).body("forbidden metadata");
+    });
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "OLD_TV_ACCESS")
+            .form_urlencoded_tuple("refresh_token", "OLD_TV_REFRESH");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "NEW_TV_ACCESS",
+                    "refresh_token": "NEW_TV_REFRESH",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--app-grpc-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--playurl-mode")
+        .arg("app")
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("download")
+        .arg("av170001")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(stderr.contains("403 Forbidden"));
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load()?
+            .tv_access_key
+            .as_deref(),
+        Some("OLD_TV_ACCESS")
+    );
+    metadata.assert_calls(1);
+    refresh_mock.assert_calls(0);
+    Ok(())
+}
+
 fn assert_playback_abr_metadata(json: &Value) -> anyhow::Result<()> {
     assert_eq!(
         json["entries"][0]["cache_key"]["content_id"],
@@ -8385,6 +8457,31 @@ fn save_refreshable_tv_access_key_profile(credential_file: &Path) -> anyhow::Res
             .with_source(CredentialLifecycleSource::TvQrLogin)
             .with_acquired_at_unix_millis(1_000)
             .with_expires_at_unix_millis(2_000)
+            .with_refresh_token_present(true),
+    );
+    profiles.set_profile_metadata("default", metadata)?;
+    let mut secrets = CredentialProfileSecrets::default();
+    secrets
+        .set_tv_access_key(CredentialRefreshSecret::default().with_refresh_token("OLD_TV_REFRESH"));
+    profiles.set_profile_secrets("default", secrets)?;
+    store.save_profiles(&profiles)?;
+    Ok(())
+}
+
+fn save_fresh_refreshable_tv_access_key_profile(credential_file: &Path) -> anyhow::Result<()> {
+    let store = CredentialStore::new(credential_file.to_path_buf());
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_profile(
+        "default",
+        Credentials::default().with_tv_access_key("OLD_TV_ACCESS"),
+    )?;
+    let mut metadata = CredentialProfileMetadata::default();
+    metadata.set_credential(
+        CredentialKind::TvAccessKey,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::TvQrLogin)
+            .with_acquired_at_unix_millis(9_000_000_000_000)
+            .with_expires_at_unix_millis(9_000_000_060_000)
             .with_refresh_token_present(true),
     );
     profiles.set_profile_metadata("default", metadata)?;

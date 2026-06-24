@@ -60,6 +60,7 @@ superseded_by:
   - `cargo test -p bbdown-cli auth_renew_web_fails_when_cookie_refresh_request_fails --locked`
   - `cargo test -p bbdown-cli auth_renew_tv_uses_tv_passport_base_for_refresh --locked`
   - `cargo test -p bbdown-cli auth_renew_tv_fails_when_profile_changes_before_save --locked`
+  - `cargo test -p bbdown-cli download_archive_does_not_refresh_tv_key_for_metadata_http_status --test cli_e2e --locked`
   - `cargo check -p bbdown-cli --locked`
   - `cargo fmt --all -- --check`
   - `git diff --check`
@@ -163,3 +164,7 @@ superseded_by:
     refresh token with a cookie that lacked `bili_jct`/csrf, making later auto-refresh impossible.
     The fix only trusts refreshable header cookies and requires the selected WEB QR cookie to contain
     non-empty `SESSDATA` plus csrf, with core and CLI fixture coverage.
+  - The next independent Codex rerun found that TV forced retry could rotate a stored TV key after
+    unrelated JSON metadata HTTP 401/403 failures, because the TV HTTP branch ignored the preserved
+    classification URL. The fix now rejects preserved non-TV-playurl JSON HTTP failures before TV
+    refresh and adds archive CLI e2e coverage with a fresh TV refresh secret and metadata `403`.
