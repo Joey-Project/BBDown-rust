@@ -5348,12 +5348,34 @@ fn redact_credential_refresh_error(
     refresh: &StoredCredentialRefreshRequest,
 ) -> String {
     let mut message = error.to_string();
-    let mut secrets = [refresh.credential.as_str(), refresh.refresh_token.as_str()];
+    let mut secrets = credential_refresh_redaction_candidates(refresh);
     secrets.sort_by_key(|secret| std::cmp::Reverse(secret.trim().len()));
+    secrets.dedup();
     for secret in secrets {
-        message = redact_exact_secret(&message, secret);
+        message = redact_exact_secret(&message, &secret);
     }
     message
+}
+
+fn credential_refresh_redaction_candidates(
+    refresh: &StoredCredentialRefreshRequest,
+) -> Vec<String> {
+    let mut secrets = vec![refresh.credential.clone(), refresh.refresh_token.clone()];
+    if refresh.kind == CredentialKind::Cookie {
+        for pair in refresh.credential.split(';').map(str::trim) {
+            if pair.is_empty() {
+                continue;
+            }
+            secrets.push(pair.to_owned());
+            if let Some((_name, value)) = pair.split_once('=') {
+                let value = value.trim();
+                if !value.is_empty() {
+                    secrets.push(value.to_owned());
+                }
+            }
+        }
+    }
+    secrets
 }
 
 fn print_credential_renewal_decision_json(

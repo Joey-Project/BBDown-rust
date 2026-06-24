@@ -46,6 +46,9 @@ superseded_by:
   - `cargo test -p bbdown-cli auth_renew --locked`
   - `cargo test -p bbdown-cli auth_renew_web_fails_when_refresh_secret_is_missing --locked`
   - `cargo test -p bbdown-cli auth_renew_tv_fails_when_refresh_secret_is_missing --locked`
+  - `cargo test -p bbdown-core tv_keypair_access_key_refresh_uses_tv_passport_poll_base --locked`
+  - `cargo test -p bbdown-cli auth_renew_web_fails_when_cookie_refresh_request_fails --locked`
+  - `cargo test -p bbdown-cli auth_renew_tv_uses_tv_passport_base_for_refresh --locked`
   - `cargo check -p bbdown-cli --locked`
   - `cargo fmt --all -- --check`
   - `git diff --check`
@@ -98,3 +101,8 @@ superseded_by:
     `auth renew-tv` setup failures, such as metadata-only refresh tokens without stored refresh
     secrets, emitted `refresh_failed` but still exited successfully. The fix makes these direct
     renewal commands exit non-zero and adds WEB/TV CLI e2e coverage for missing refresh secrets.
+  - The current-head independent Codex rerun on `4015759` found that WEB cookie refresh error
+    redaction could leak cookie pair/value fragments and that BiliTV access-key refresh ignored a
+    configured TV passport poll endpoint. The fix now redacts cookie pairs and values in refresh
+    errors, sends BiliTV keypair refresh requests to `tv_passport_poll_base` when overridden while
+    preserving legacy `passport_base` compatibility, and documents the endpoint behavior.

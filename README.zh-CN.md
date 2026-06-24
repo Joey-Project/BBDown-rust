@@ -280,19 +280,20 @@ TV 专用 access key，不会覆盖由通用 access-key 命令导入或获取的
 `auth health` 会在不打印密钥值的情况下检查已配置凭据：WEB cookie 通过 web nav 端点检查；
 通用 `access_key` 和 TV `tv_access_key` 会通过 OAuth info 端点以 signed `access_key` app
 query 值检查。通用 token probe 当前覆盖 intl/Bstar scope，并使用 `--passport-base`；它不会
-证明同一 token 对所有 APP gRPC 或 proxy 消费者都可用。TV token probe 使用
-`--tv-passport-poll-base`；如果只提供 `--tv-passport-base`，poll base 会跟随该 TV 覆盖。
-JSON 输出会用 `kind` 表示凭据槽位、用 `scope` 表示实际检查的消费场景，并报告
-`missing`、`valid`、`rejected` 或 `request_failed` 状态，便于嵌入调用方和自动化使用。
+证明同一 token 对所有 APP gRPC 或 proxy 消费者都可用。有 TV passport 覆盖时，TV token
+refresh 会跟随 `--tv-passport-poll-base`；否则保留 `--passport-base` 兼容行为。TV token probe
+使用 `--tv-passport-poll-base`；如果只提供 `--tv-passport-base`，poll base 会跟随该 TV 覆盖。
+JSON 输出会用 `kind` 表示凭据槽位、用 `scope` 表示实际检查的消费场景，并报告 `missing`、
+`valid`、`rejected` 或 `request_failed` 状态，便于嵌入调用方和自动化使用。
 
 使用 `--request-timeout-seconds` 或 `BBDOWN_REQUEST_TIMEOUT_SECONDS` 调整 API 请求时限。
 媒体正文读取使用 `--download-idle-timeout-seconds`；传入 `0` 可禁用 idle timeout。使用
 `--comment-base` 或 `BBDOWN_COMMENT_BASE` 可以把弹幕 XML 下载指向 mock 或代理端点。
 使用 `--passport-base` 可配置 WEB 二维码登录和通用 token health mock 或代理；使用
-`--tv-passport-base` / `--tv-passport-poll-base` 可配置 TV 二维码登录和 TV token health
-mock 或代理。只有在提供 TV 专用覆盖时，TV 二维码轮询和 TV token health probe 才会跟随
-`--tv-passport-base`；否则除非显式设置 `--tv-passport-poll-base`，它会使用上游 TV 轮询
-默认值。
+`--tv-passport-base` / `--tv-passport-poll-base` 可配置 TV 二维码登录、TV token refresh 和
+TV token health mock 或代理。提供 TV 专用覆盖时，TV 二维码轮询、TV token refresh 和 TV token
+health probe 会跟随 `--tv-passport-base`；否则 TV token refresh 保留 `--passport-base` 兼容行为，
+TV 轮询/probe 除非显式设置 `--tv-passport-poll-base`，会使用上游 TV 轮询默认值。
 当 `plan`、`playback` 或 `download` 需要使用 TV playurl host 而不是默认 web playurl host
 时，可同时使用 `--playurl-mode tv` 和 `--tv-api-base`。
 当 `plan`、`playback` 或 `download` 需要使用 APP gRPC playurl host 时，可同时使用

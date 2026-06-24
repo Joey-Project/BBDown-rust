@@ -1,7 +1,8 @@
 use crate::{
     AccessKeyProvider, AccessKeyRefreshKeypair, AccessKeyRefreshProvider, BiliClient,
     CredentialKind, CredentialLifecycleCredentialStatus, CredentialLifecycleSource,
-    CredentialLifecycleStatus, CredentialProfileLifecycleStatus, Credentials, Error, Result,
+    CredentialLifecycleStatus, CredentialProfileLifecycleStatus, Credentials, EndpointConfig,
+    Error, Result,
 };
 use md5::Digest;
 use rand::rngs::OsRng;
@@ -725,6 +726,7 @@ impl BiliClient {
             current_timestamp_seconds(),
             &self.config.endpoints.passport_base,
             &self.config.endpoints.intl_passport_base,
+            &self.config.endpoints.tv_passport_poll_base,
         )?;
         let url = Self::endpoint_url(endpoint.base, endpoint.path)?;
         let response = self
@@ -1258,10 +1260,11 @@ fn access_key_refresh_endpoint_and_params<'a>(
     timestamp: u64,
     passport_base: &'a str,
     intl_passport_base: &'a str,
+    tv_passport_poll_base: &'a str,
 ) -> Result<AccessKeyRefreshEndpoint<'a>> {
     match request.refresh_provider {
         AccessKeyRefreshProvider::BilibiliMainOauth2 => Ok(AccessKeyRefreshEndpoint {
-            base: passport_base,
+            base: main_access_key_refresh_base(request, passport_base, tv_passport_poll_base)?,
             path: main_access_key_refresh_path(request)?,
             params: main_access_key_refresh_params(request, timestamp)?,
         }),
@@ -1270,6 +1273,26 @@ fn access_key_refresh_endpoint_and_params<'a>(
             path: "/x/intl/passport-login/oauth2/refresh_token",
             params: intl_access_key_refresh_params(request),
         }),
+    }
+}
+
+fn main_access_key_refresh_base<'a>(
+    request: &AccessKeyRefreshRequest,
+    passport_base: &'a str,
+    tv_passport_poll_base: &'a str,
+) -> Result<&'a str> {
+    match request
+        .refresh_keypair
+        .ok_or(Error::MissingField("refresh_keypair"))?
+    {
+        AccessKeyRefreshKeypair::BiliTv => {
+            if tv_passport_poll_base == EndpointConfig::default().tv_passport_poll_base {
+                Ok(passport_base)
+            } else {
+                Ok(tv_passport_poll_base)
+            }
+        }
+        AccessKeyRefreshKeypair::Android | AccessKeyRefreshKeypair::AndroidB => Ok(passport_base),
     }
 }
 
@@ -2656,6 +2679,50 @@ mod tests {
         assert_eq!(credentials.refresh_token.as_deref(), Some("NEW_REFRESH"));
         assert_eq!(credentials.expires_in, Some(2_592_000));
         refresh_mock.assert_calls(1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn tv_keypair_access_key_refresh_uses_tv_passport_poll_base() -> anyhow::Result<()> {
+        let passport_server = MockServer::start();
+        let tv_passport_server = MockServer::start();
+        let wrong_base_mock = passport_server.mock(|when, then| {
+            when.method(POST)
+                .path("/x/passport-tv-login/oauth2/refresh_token");
+            then.status(500);
+        });
+        let refresh_mock = tv_passport_server.mock(|when, then| {
+            when.method(POST)
+                .path("/x/passport-tv-login/oauth2/refresh_token")
+                .form_urlencoded_tuple("access_key", "OLD_ACCESS")
+                .form_urlencoded_tuple("refresh_token", "OLD_REFRESH")
+                .form_urlencoded_tuple("appkey", "4409e2ce8ffd12b8")
+                .form_urlencoded_tuple_exists("sign");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "token_info": {
+                        "access_token": "NEW_ACCESS",
+                        "refresh_token": "NEW_REFRESH",
+                        "expires_in": 60
+                    }
+                }
+            }));
+        });
+        let mut client = test_client(&passport_server);
+        client.config.endpoints.tv_passport_poll_base = tv_passport_server.base_url();
+        let request = AccessKeyRefreshRequest::new(
+            "OLD_ACCESS",
+            "OLD_REFRESH",
+            AccessKeyRefreshProvider::BilibiliMainOauth2,
+        )?
+        .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv);
+
+        let credentials = client.refresh_access_key(&request).await?;
+
+        assert_eq!(credentials.access_key, "NEW_ACCESS");
+        refresh_mock.assert_calls(1);
+        wrong_base_mock.assert_calls(0);
         Ok(())
     }
 

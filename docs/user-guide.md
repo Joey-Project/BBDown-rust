@@ -517,8 +517,9 @@ is a typed report with `kind` for the credential slot, `scope` for the checked c
 per-probe `missing`, `valid`, `rejected`, or `request_failed` statuses plus sanitized API
 codes/messages. Generic token probes currently cover the intl/Bstar scope and use
 `--passport-base`; they do not prove the same token is usable for every APP gRPC or proxy consumer.
-TV token probes use `--tv-passport-poll-base`, which follows `--tv-passport-base` when only that TV
-override is supplied.
+TV token refresh follows `--tv-passport-poll-base` when a TV passport override is supplied, while
+keeping `--passport-base` compatibility otherwise. TV token probes use `--tv-passport-poll-base`,
+which follows `--tv-passport-base` when only that TV override is supplied.
 For human-readable output, `auth health` also prints lifecycle and health guidance when a configured
 credential is stale, expired, rejected, or could not be checked. Use `auth health --all-profiles` to
 run the same network probes for every saved profile. With `--json --all-profiles`, the output wraps
@@ -547,12 +548,14 @@ playurl endpoint with the configured access key when present. Danmaku XML downlo
 configurable comment endpoint. WEB QR login, generic token-health probes, and Bilibili main OAuth2
 access-key refresh use `--passport-base`. BiliIntl OAuth2 access-key refresh uses
 `--intl-passport-base`. Main-provider `bili_tv` refresh secrets use the TV OAuth refresh path under
-the configured `--passport-base`.
-TV QR generation uses `--tv-passport-base`; TV QR polling and TV token-health probes use
-`--tv-passport-poll-base`. The CLI makes the TV poll base follow `--tv-passport-base` when only that
-TV override is supplied; set `--tv-passport-poll-base` explicitly for split-host mocks or proxies.
+the configured `--tv-passport-poll-base` when a TV passport override is supplied, and otherwise keep
+`--passport-base` compatibility.
+TV QR generation uses `--tv-passport-base`; TV QR polling, TV token refresh, and TV token-health
+probes use `--tv-passport-poll-base`. The CLI makes the TV poll base follow `--tv-passport-base`
+when only that TV override is supplied; TV token refresh keeps `--passport-base` compatibility when
+no TV override is supplied. Set `--tv-passport-poll-base` explicitly for split-host mocks or proxies.
 TV playurl mode uses `--tv-api-base`; it is separate from the TV passport hosts used for TV QR login
-and TV token health.
+and TV token refresh/health.
 APP gRPC playurl mode uses `--app-grpc-base` for normal videos and `--app-pgc-grpc-base` for PGC
 episodes; both APP gRPC defaults use `https://grpc.biliapi.net`, and both are separate from WEB,
 TV, and intl HTTP endpoint overrides.

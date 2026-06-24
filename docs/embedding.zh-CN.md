@@ -276,7 +276,9 @@ refresh，返回的 `WebCookieRefreshCredentials::refreshed` 会是 `false`；�
 no-op，而不是重写 credential 或 acquisition metadata，但记录新的 checked timestamp 有助于后续
 preflight 决策。用已保存 TV token 和 refresh token 构造
 `TvAccessKeyRefreshRequest` 后调用 `BiliClient::refresh_tv_access_key(...)`；它会走 TV OAuth
-refresh endpoint，并返回带运行时 `tv_access_key`、可选 refresh token 和过期 metadata 的
+refresh endpoint；配置了 TV passport 覆盖时会使用 `EndpointConfig::tv_passport_poll_base`，
+否则保留 main `EndpointConfig::passport_base` 以兼容现有 main OAuth refresh 部署。它会返回
+带运行时 `tv_access_key`、可选 refresh token 和过期 metadata 的
 `TvAccessKeyLoginCredentials`。这些 refresh 调用不会修改存储；嵌入方应在确认请求仍匹配当前
 选择账号后，再保存返回的 credential、lifecycle metadata 和 `CredentialRefreshSecret`。
 当嵌入项目需要在决定提示登录、导入 token 或继续匿名请求前做脱敏诊断时，可以调用

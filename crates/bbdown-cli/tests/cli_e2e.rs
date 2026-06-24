@@ -8497,7 +8497,7 @@ fn auth_renew_web_fails_when_cookie_refresh_request_fails() -> anyhow::Result<()
             .form_urlencoded_tuple("refresh_token", "OLD_COOKIE_REFRESH");
         then.status(200).json_body_obj(&serde_json::json!({
             "code": -400,
-            "message": "bad OLD_COOKIE_REFRESH",
+            "message": "bad OLD_CSRF SESSDATA=old OLD_COOKIE_REFRESH",
             "data": null
         }));
     });
@@ -8524,7 +8524,7 @@ fn auth_renew_web_fails_when_cookie_refresh_request_fails() -> anyhow::Result<()
     assert_eq!(events[1]["kind"], "cookie");
     assert_eq!(
         events[1]["message"],
-        "API returned code -400: bad <redacted>"
+        "API returned code -400: bad <redacted> <redacted> <redacted>"
     );
     let output_text = String::from_utf8(output)?;
     for secret in ["OLD_COOKIE_REFRESH", "SESSDATA=old", "OLD_CSRF"] {
@@ -8613,6 +8613,62 @@ fn auth_renew_tv_refreshes_tv_access_key_secret() -> anyhow::Result<()> {
         Some("NEW_TV_REFRESH")
     );
     refresh_mock.assert_calls(1);
+    Ok(())
+}
+
+#[test]
+fn auth_renew_tv_uses_tv_passport_base_for_refresh() -> anyhow::Result<()> {
+    let passport_server = MockServer::start();
+    let tv_passport_server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    save_refreshable_tv_access_key_profile(&credential_file)?;
+    let wrong_base_mock = passport_server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token");
+        then.status(500);
+    });
+    let refresh_mock = tv_passport_server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "OLD_TV_ACCESS")
+            .form_urlencoded_tuple("access_token", "OLD_TV_ACCESS")
+            .form_urlencoded_tuple("refresh_token", "OLD_TV_REFRESH")
+            .form_urlencoded_tuple("appkey", "4409e2ce8ffd12b8")
+            .form_urlencoded_tuple_exists("sign");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "NEW_TV_ACCESS",
+                    "refresh_token": "NEW_TV_REFRESH",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--passport-base")
+        .arg(passport_server.base_url())
+        .arg("--tv-passport-base")
+        .arg(tv_passport_server.base_url())
+        .args(["auth", "renew-tv", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let events = json_lines(&output)?;
+
+    assert_eq!(events.len(), 3);
+    assert_eq!(events[0]["event"], "decision");
+    assert_eq!(events[1]["event"], "refreshed");
+    assert_eq!(events[2]["event"], "saved");
+    refresh_mock.assert_calls(1);
+    wrong_base_mock.assert_calls(0);
     Ok(())
 }
 

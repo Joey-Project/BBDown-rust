@@ -383,8 +383,9 @@ credential health diagnostics 是同一 credential model 上的只读层。crate
 WEB cookie probe 使用 `/x/web-interface/nav`；token probe 使用
 `/x/passport-login/oauth2/info`，把凭据作为 signed `access_key` app query 值发送，且不会发送
 cookie。通用 token probe 当前通过配置的 `passport_base` 检查 intl/Bstar scope；这不代表同一
-个已存储 `access_key` 对 APP gRPC 或 restricted-area proxy 也一定有效。TV token probe 使用
-配置的 `tv_passport_poll_base`。probe failure 会按凭据独立记录为 `missing`、`valid`、
+个已存储 `access_key` 对 APP gRPC 或 restricted-area proxy 也一定有效。提供 TV passport 覆盖时，
+TV token refresh 使用配置的 `tv_passport_poll_base`，否则保留 `passport_base` 兼容行为；TV token
+probe 使用配置的 `tv_passport_poll_base`。probe failure 会按凭据独立记录为 `missing`、`valid`、
 `rejected` 或 `request_failed`，不会让整份报告失败。
 `CredentialHealthReport::summary()` 会给下游 UI 一个紧凑的 aggregate status，同时保留每个
 kind 的 probe，供精确 policy decision 使用。

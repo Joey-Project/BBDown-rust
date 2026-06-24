@@ -459,7 +459,8 @@ signed `access_key` app query 值检查。JSON 输出是 typed report，会用 `
 位、用 `scope` 表示实际检查的消费场景，并按 probe 报告 `missing`、`valid`、`rejected` 或
 `request_failed` 状态，只包含脱敏后的 API code/message。通用 token probe 当前覆盖
 intl/Bstar scope，并使用 `--passport-base`；它不会证明同一 token 对所有 APP gRPC 或 proxy
-消费者都可用。TV token probe 使用 `--tv-passport-poll-base`；如果只提供
+消费者都可用。有 TV passport 覆盖时，TV token refresh 会跟随 `--tv-passport-poll-base`；
+否则保留 `--passport-base` 兼容行为。TV token probe 使用 `--tv-passport-poll-base`；如果只提供
 `--tv-passport-base`，poll base 会跟随该 TV 覆盖。
 在人类可读输出中，如果已配置凭据已经 stale、expired、被上游 rejected，或健康检查请求失
 败，`auth health` 也会打印 lifecycle/health guidance。使用 `auth health --all-profiles`
@@ -488,13 +489,14 @@ bbdown auth login-access-key --auth-base http://127.0.0.1:8080 --callback-origin
 OGV playurl 端点。弹幕 XML 下载使用可配置的 comment 端点。WEB 二维码登录和通用 token
 health probe 使用 `--passport-base`；Bilibili main OAuth2 access-key refresh 也使用
 `--passport-base`。BiliIntl OAuth2 access-key refresh 使用 `--intl-passport-base`。main-provider
-`bili_tv` refresh secret 会使用配置的 `--passport-base` 下的 TV OAuth refresh path。
+`bili_tv` refresh secret 会在提供 TV passport 覆盖时使用配置的 `--tv-passport-poll-base` 下的
+TV OAuth refresh path，否则保留 `--passport-base` 兼容行为。
 TV 二维码生成使用 `--tv-passport-base`；TV 二维码轮询
-和 TV token health probe 使用 `--tv-passport-poll-base`。如果只提供 `--tv-passport-base`，
-CLI 会让 TV poll base 跟随该覆盖；对 split-host mock 或代理，请显式设置
-`--tv-passport-poll-base`。
-TV playurl mode 使用 `--tv-api-base`，它独立于服务 TV 二维码登录和 TV token health 的 TV
-passport host。
+、TV token refresh 和 TV token health probe 使用 `--tv-passport-poll-base`。如果只提供
+`--tv-passport-base`，CLI 会让 TV poll base 跟随该覆盖；没有 TV 覆盖时，TV token refresh 保留
+`--passport-base` 兼容行为。对 split-host mock 或代理，请显式设置 `--tv-passport-poll-base`。
+TV playurl mode 使用 `--tv-api-base`，它独立于服务 TV 二维码登录和 TV token refresh/health
+的 TV passport host。
 APP gRPC playurl mode 使用 `--app-grpc-base` 处理普通视频，使用 `--app-pgc-grpc-base` 处理
 PGC 分集；两个 APP gRPC 默认值都使用 `https://grpc.biliapi.net`，并且独立于 WEB、TV 和
 intl HTTP endpoint 覆盖。

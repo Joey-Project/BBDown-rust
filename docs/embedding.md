@@ -297,10 +297,13 @@ not need refresh; embedders should treat that as a no-op rather than rewriting c
 acquisition metadata, though recording a fresh checked timestamp is useful for later preflight
 decisions. Build `TvAccessKeyRefreshRequest` from
 the saved TV token plus its refresh token, then call `BiliClient::refresh_tv_access_key(...)`; this
-routes through the TV OAuth refresh endpoint and returns `TvAccessKeyLoginCredentials` with a
-runtime `tv_access_key`, optional refresh token, and expiry metadata. These refresh calls do not
-mutate storage; embedders should save the returned credential, lifecycle metadata, and
-`CredentialRefreshSecret` only after confirming the request still matches the selected account.
+routes through the TV OAuth refresh endpoint using `EndpointConfig::tv_passport_poll_base` and
+returns `TvAccessKeyLoginCredentials` with a runtime `tv_access_key`, optional refresh token, and
+expiry metadata when a TV passport override is configured; otherwise it keeps the main
+`EndpointConfig::passport_base` for compatibility with existing main OAuth refresh deployments.
+These refresh calls do not mutate storage; embedders should save the returned credential, lifecycle
+metadata, and `CredentialRefreshSecret` only after confirming the request still matches the selected
+account.
 Call `BiliClient::check_credential_health()` when an embedding project needs a redacted diagnostic
 report before deciding whether to prompt for login, import a token, or continue with anonymous
 requests. The report includes one probe each for the WEB cookie, generic `access_key`, and TV

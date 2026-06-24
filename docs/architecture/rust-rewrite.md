@@ -446,9 +446,10 @@ consumer. The WEB cookie probe uses `/x/web-interface/nav`; the token probes use
 `/x/passport-login/oauth2/info` with the credential sent as a signed `access_key` app query value and
 without sending cookies. Generic token probes currently check the intl/Bstar scope through the
 configured `passport_base`; this does not claim APP gRPC or restricted-area proxy validity for the
-same stored `access_key`. TV token probes use the configured `tv_passport_poll_base`. Probe failures
-are contained per credential as `missing`, `valid`, `rejected`, or `request_failed` rather than
-failing the whole report.
+same stored `access_key`. TV token refresh uses the configured `tv_passport_poll_base` when a TV
+passport override is supplied and keeps `passport_base` compatibility otherwise; TV token probes use
+the configured `tv_passport_poll_base`. Probe failures are contained per credential as `missing`,
+`valid`, `rejected`, or `request_failed` rather than failing the whole report.
 `CredentialHealthReport::summary()` gives downstream UI a compact aggregate status while preserving
 the per-kind probes for exact policy decisions.
 The CLI keeps single-profile `auth health --json` compatible with the raw report schema. Human
