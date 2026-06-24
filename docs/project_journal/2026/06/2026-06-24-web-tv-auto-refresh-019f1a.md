@@ -88,3 +88,7 @@ superseded_by:
     RSA-OAEP/SHA-256 for the encrypted challenge. The fix restored RSA-OAEP/SHA-256 and added CLI
     e2e coverage so stored WEB/TV refresh server failures emit `refresh_failed` and return a
     non-zero exit status.
+  - The next offline frozen diff review on `57bd18d..0925559` found that the direct `auth renew-web`
+    `refresh=false` path treated a stale checked-save guard as a failed command. The fix now treats
+    `SkippedStaleRequest` as handled for that no-op path and adds unit coverage that the stale guard
+    does not overwrite a concurrently updated WEB cookie profile or refresh secret.

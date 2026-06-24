@@ -2023,7 +2023,11 @@ async fn try_stored_credential_auto_refresh(
                         let outcome =
                             save_web_cookie_refresh_checked_silent(credential_runtime, &refresh)?;
                         print_refreshed_credential_save_outcome(args.json, kind, &outcome)?;
-                        Ok(outcome.status == RefreshedCredentialSaveStatus::Noop)
+                        Ok(matches!(
+                            outcome.status,
+                            RefreshedCredentialSaveStatus::Noop
+                                | RefreshedCredentialSaveStatus::SkippedStaleRequest
+                        ))
                     }
                 }
                 Err(error) => {
@@ -6192,7 +6196,8 @@ mod tests {
         plan_failure_may_be_credential_related, qr_login_lifecycle_metadata, remaining_until,
         restricted_area_from_cli_with_args, restricted_area_from_cli_with_env_values,
         save_credentials, save_credentials_with_lifecycle_and_secrets,
-        save_refreshed_access_key_silent, should_prompt_duplicate_decision,
+        save_refreshed_access_key_silent, save_web_cookie_refresh_checked_silent,
+        should_prompt_duplicate_decision, stored_credential_refresh_request_from_profiles,
         validate_media_host_spec, validate_single_download_args,
     };
     use bbdown_core::{
@@ -6201,9 +6206,9 @@ mod tests {
         CredentialLifecycleMetadata, CredentialLifecyclePolicy, CredentialLifecycleSource,
         CredentialPreflightMode, CredentialPreflightReport, CredentialPreflightRequirement,
         CredentialProfileMetadata, CredentialProfileSecrets, CredentialProfileSelection,
-        CredentialProfiles, CredentialStore, Credentials, DownloadCancellationToken, DownloadMode,
-        DownloadOutputConflict, DownloadPreflight, DuplicateDecision, EndpointConfig, Input,
-        PlayurlMode, QrLoginCredentials, QrLoginKind,
+        CredentialProfiles, CredentialRefreshSecret, CredentialStore, Credentials,
+        DownloadCancellationToken, DownloadMode, DownloadOutputConflict, DownloadPreflight,
+        DuplicateDecision, EndpointConfig, Input, PlayurlMode, QrLoginCredentials, QrLoginKind,
     };
     use clap::Parser as _;
     use std::fs;
@@ -6530,6 +6535,86 @@ mod tests {
         assert_eq!(
             secret.refresh_token.as_deref(),
             Some("NEWER_REFRESH_SECRET")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn stale_web_cookie_checked_save_skips_when_profile_changed() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let store = CredentialStore::new(temp.path().join("credentials.json"));
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "default",
+            Credentials::default().with_cookie("SESSDATA=old;bili_jct=OLD_CSRF"),
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::Cookie,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::WebQrLogin)
+                .with_acquired_at_unix_millis(1_000)
+                .with_refresh_token_present(true),
+        );
+        profiles.set_profile_metadata("default", metadata)?;
+        let mut secrets = CredentialProfileSecrets::default();
+        secrets.set_cookie(
+            CredentialRefreshSecret::default().with_refresh_token("OLD_COOKIE_REFRESH"),
+        );
+        profiles.set_profile_secrets("default", secrets)?;
+        store.save_profiles(&profiles)?;
+        let refresh = stored_credential_refresh_request_from_profiles(
+            &profiles,
+            "default",
+            CredentialKind::Cookie,
+        )?;
+
+        let mut newer_profiles = store.load_profiles()?;
+        newer_profiles.set_profile(
+            "default",
+            Credentials::default().with_cookie("SESSDATA=new;bili_jct=NEW_CSRF"),
+        )?;
+        let mut newer_metadata = CredentialProfileMetadata::default();
+        newer_metadata.set_credential(
+            CredentialKind::Cookie,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::WebQrLogin)
+                .with_acquired_at_unix_millis(2_000)
+                .with_refresh_token_present(true),
+        );
+        newer_profiles.set_profile_metadata("default", newer_metadata)?;
+        let mut newer_secrets = CredentialProfileSecrets::default();
+        newer_secrets.set_cookie(
+            CredentialRefreshSecret::default().with_refresh_token("NEW_COOKIE_REFRESH"),
+        );
+        newer_profiles.set_profile_secrets("default", newer_secrets)?;
+        store.save_profiles(&newer_profiles)?;
+
+        let runtime =
+            CredentialRuntime::new(store.clone(), CredentialProfileSelection::default_profile());
+        let outcome = save_web_cookie_refresh_checked_silent(&runtime, &refresh)?;
+
+        assert_eq!(
+            outcome.status,
+            super::RefreshedCredentialSaveStatus::SkippedStaleRequest
+        );
+        let saved = store.load_profiles()?;
+        assert_eq!(
+            saved.profile("default")?.cookie.as_deref(),
+            Some("SESSDATA=new;bili_jct=NEW_CSRF")
+        );
+        let saved_metadata = saved.profile_metadata("default")?;
+        let cookie_metadata = saved_metadata
+            .credential(CredentialKind::Cookie)
+            .ok_or_else(|| anyhow::anyhow!("missing cookie lifecycle metadata"))?;
+        assert_eq!(cookie_metadata.acquired_at_unix_millis, Some(2_000));
+        assert_eq!(cookie_metadata.checked_at_unix_millis, None);
+        let saved_secrets = saved.profile_secrets("default")?;
+        assert_eq!(
+            saved_secrets
+                .cookie()
+                .and_then(|secret| secret.refresh_token.as_deref()),
+            Some("NEW_COOKIE_REFRESH")
         );
         Ok(())
     }
