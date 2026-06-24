@@ -6081,7 +6081,7 @@ fn endpoints_from_cli(cli: &Cli) -> EndpointConfig {
         if cli.tv_passport_base.is_some() {
             tv_passport_base.clone()
         } else {
-            default_endpoints.tv_passport_poll_base.clone()
+            cli.passport_base.clone()
         }
     });
     EndpointConfig::default()
@@ -7894,7 +7894,7 @@ mod tests {
     }
 
     #[test]
-    fn passport_base_does_not_override_default_tv_poll_base() {
+    fn passport_base_controls_tv_poll_when_tv_base_is_implicit() {
         let cli = Cli::parse_from([
             "bbdown",
             "--passport-base",
@@ -7907,10 +7907,7 @@ mod tests {
 
         assert_eq!(endpoints.passport_base, "http://127.0.0.1:8080");
         assert_eq!(endpoints.tv_passport_base, defaults.tv_passport_base);
-        assert_eq!(
-            endpoints.tv_passport_poll_base,
-            defaults.tv_passport_poll_base
-        );
+        assert_eq!(endpoints.tv_passport_poll_base, "http://127.0.0.1:8080");
     }
 
     #[test]

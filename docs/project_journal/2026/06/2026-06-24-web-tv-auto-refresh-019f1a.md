@@ -50,6 +50,8 @@ superseded_by:
   - `cargo test -p bbdown-cli deferred_preflight_preserves_stored_refresh_when_access_key_refresh_fails --locked`
   - `cargo test -p bbdown-cli download_archive_retries_fresh_web_cookie_after_authenticated_feed_failure --test cli_e2e --locked`
   - `cargo test -p bbdown-cli download_archive_retries_plan_after_auth_failure_with_fresh_refreshable_access_key --test cli_e2e --locked`
+  - `cargo test -p bbdown-cli passport_base_controls_tv_poll_when_tv_base_is_implicit --locked`
+  - `cargo test -p bbdown-cli auth_renew_tv_uses_passport_base_when_tv_base_is_implicit --test cli_e2e --locked`
   - `cargo test -p bbdown-cli auth_renew_web_fails_when_refresh_secret_is_missing --locked`
   - `cargo test -p bbdown-cli auth_renew_tv_fails_when_refresh_secret_is_missing --locked`
   - `cargo test -p bbdown-core tv_keypair_access_key_refresh_uses_tv_passport_poll_base --locked`
@@ -149,3 +151,8 @@ superseded_by:
     global stored-refresh gate, so an unrelated WEB cookie no-op could prevent forced TV key refresh
     for the actual playurl failure. The fix tracks stored-refresh handling per credential kind and
     adds regression coverage for the unrelated no-op plus forced TV refresh path.
+  - A follow-up independent Codex rerun on `7a473ab` found that BiliTV keypair refresh no longer
+    honored a CLI `--passport-base` override when no TV-specific passport override was supplied,
+    despite the documented compatibility behavior. The fix makes the implicit TV poll base follow
+    `--passport-base` unless `--tv-passport-base` or `--tv-passport-poll-base` is provided, with
+    unit and CLI e2e coverage.
