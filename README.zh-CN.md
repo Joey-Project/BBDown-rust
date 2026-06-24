@@ -263,11 +263,12 @@ fallback 的 proxy URL。diagnostic 会写到 stderr，JSON stdout 仍保持为�
 payload；`download --progress-json` 会抑制 preflight 纯文本 diagnostic，但失败时最终 CLI error
 行仍可能写到 stderr，因此 wrapper 应只解析 JSON object line。在 `renew` 模式下，如果缺失的
 required credential 不是当前 refresh 能修复的对象，就会阻止无关 refresh 抢跑。对 archive
-下载，如果初次 plan 成功，`--credential-preflight renew` 会把自动
-credential refresh 延后到 duplicate handling 之后，因此 `--on-duplicate cancel` 会停止且不会
-调用 refresh endpoint 或重写已保存 credential。如果初次 archive planning 因类似 auth 的
-credential 错误失败，即使本地 lifecycle metadata 仍认为该 key fresh，CLI 也会刷新 ready
-的通用 access key 并重试一次 planning，然后才报告失败。
+下载，如果初次 plan 成功，`--credential-preflight renew` 会先完成已保存 credential 的 refresh
+和 replanning，再进入 duplicate handling，让重复决策基于刷新后的 plan。`--on-duplicate cancel`
+仍会在媒体下载和 archive 写入前停止，但当 WEB/TV credential 可刷新时，可能调用 refresh endpoint
+并更新已保存 credential。如果初次 archive planning 因类似 auth 的 credential 错误失败，即使
+本地 lifecycle metadata 仍认为该 key fresh，CLI 也会刷新 ready 的通用 access key 并重试一次
+planning，然后才报告失败。
 当当前选择的 WEB cookie 或 TV `tv_access_key` 已存在、lifecycle metadata 不是 fresh，且本地
 保存了 refresh secret 时，`--credential-preflight renew` 会在解析 media request 前先尝试刷新
 该 credential。这覆盖需要 WEB cookie 的账号级 feed 输入，以及选择 TV token 的 APP/TV playurl

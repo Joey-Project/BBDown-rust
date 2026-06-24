@@ -426,10 +426,11 @@ access-key credential 仍会阻止通用 access-key 自动刷新；任何缺失�
 为 stale、expiring、expired 或 unknown 的 credential 如果有匹配 refresh secret，会先在请求前刷新；
 否则不会阻止 refresh-ready 的通用 access key 刷新，后续实际请求仍会验证这些 credential 是否可用。
 对 archive 下载，如果初次 plan 成功，
-`renew` 会把自动 credential refresh 延后到 duplicate handling 之后，因此 `--on-duplicate cancel`
-会停止且不会调用 refresh endpoint 或重写已保存 credential。如果初次 archive planning 因类似
-auth 的 credential 错误失败，即使本地 lifecycle metadata 仍认为该 key fresh，CLI 也会刷新
-ready 的通用 access key 并重试一次 planning，然后才报告失败。可通过全局
+`renew` 会先完成已保存 credential 的 refresh 和 replanning，再进入 duplicate handling，让重复
+决策基于刷新后的 plan。`--on-duplicate cancel` 仍会在媒体下载和 archive 写入前停止，但当
+WEB/TV credential 可刷新时，可能调用 refresh endpoint 并更新已保存 credential。如果初次
+archive planning 因类似 auth 的 credential 错误失败，即使本地 lifecycle metadata 仍认为该
+key fresh，CLI 也会刷新 ready 的通用 access key 并重试一次 planning，然后才报告失败。可通过全局
 `--credential-stale-after-seconds` 和 `--credential-expiring-within-seconds`，或等价的
 `BBDOWN_CREDENTIAL_PREFLIGHT`、`BBDOWN_CREDENTIAL_STALE_AFTER_SECONDS` 和
 `BBDOWN_CREDENTIAL_EXPIRING_WITHIN_SECONDS` 环境变量调整本地 lifecycle policy。

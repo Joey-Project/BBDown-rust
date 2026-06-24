@@ -282,12 +282,13 @@ are written to stderr so JSON stdout remains a single plan or report, and `downl
 suppresses plaintext preflight diagnostics; wrappers should still parse only JSON object lines
 because the final CLI error line may also be written to stderr on failure. In `renew` mode, a
 missing required credential that the current refresh cannot repair stops unrelated refresh attempts.
-For archive downloads, `--credential-preflight renew` defers automatic credential refresh until
-after duplicate handling when the initial plan succeeds, so `--on-duplicate cancel` stops without
-calling refresh endpoints or rewriting stored credentials. If initial archive planning fails with an
-auth-like credential error, the CLI refreshes a ready generic access key and retries planning once
-before reporting the failure, including cases where local lifecycle metadata had still considered
-the key fresh.
+For archive downloads, when the initial plan succeeds, `--credential-preflight renew` completes
+stored credential refresh and replanning before duplicate handling so duplicate decisions use the
+fresh plan. `--on-duplicate cancel` still stops before media download and archive writes, but it can
+call refresh endpoints and update saved WEB/TV credentials when they are refreshable. If initial
+archive planning fails with an auth-like credential error, the CLI refreshes a ready generic access
+key and retries planning once before reporting the failure, including cases where local lifecycle
+metadata had still considered the key fresh.
 When a selected WEB cookie or TV `tv_access_key` already exists, has non-fresh lifecycle metadata,
 and has a saved refresh secret, `--credential-preflight renew` attempts that credential's automatic
 refresh before resolving media requests. This covers authenticated feed inputs that require a WEB

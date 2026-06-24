@@ -481,12 +481,14 @@ repair stops unrelated refresh attempts. Present credentials with stale, expirin
 unknown lifecycle metadata can be refreshed before the request when a matching refresh secret is
 available; otherwise they do not prevent refreshing a ready generic access key, and the subsequent
 request still proves whether those credentials work. Stored credential values are trimmed before
-request use, and whitespace-only values are treated as missing. For archive downloads, `renew`
-defers automatic credential refresh until after duplicate handling when the initial plan succeeds,
-so `--on-duplicate cancel` stops without calling refresh endpoints or rewriting stored credentials.
-If initial archive planning fails with an auth-like credential error, the CLI refreshes a ready
-generic access key and retries planning once before reporting the failure, including cases where
-local lifecycle metadata had still considered the key fresh. Tune the local lifecycle policy with global `--credential-stale-after-seconds` and
+request use, and whitespace-only values are treated as missing. For archive downloads, when the
+initial plan succeeds, `renew` completes stored credential refresh and replanning before duplicate
+handling so duplicate decisions use the fresh plan. `--on-duplicate cancel` still stops before
+media download and archive writes, but it can call refresh endpoints and update saved WEB/TV
+credentials when they are refreshable. If initial archive planning fails with an auth-like
+credential error, the CLI refreshes a ready generic access key and retries planning once before
+reporting the failure, including cases where local lifecycle metadata had still considered the key
+fresh. Tune the local lifecycle policy with global `--credential-stale-after-seconds` and
 `--credential-expiring-within-seconds`, or the equivalent `BBDOWN_CREDENTIAL_PREFLIGHT`,
 `BBDOWN_CREDENTIAL_STALE_AFTER_SECONDS`, and `BBDOWN_CREDENTIAL_EXPIRING_WITHIN_SECONDS`
 environment variables.

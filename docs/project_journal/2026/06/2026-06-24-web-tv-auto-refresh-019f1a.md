@@ -210,3 +210,8 @@ superseded_by:
     - `cargo test -p bbdown-cli download_archive_cancel_defers_stored_tv_preflight_renewal --test cli_e2e --locked`
     - `cargo test -p bbdown-core refreshes_web_cookie_with_correspond_challenge --lib --locked`
     - `just ci`
+  - The current-head independent Codex rerun on `f33132f` found one P2 documentation inconsistency:
+    user-facing docs still said archive `--on-duplicate cancel` would not call refresh endpoints or
+    rewrite credentials. The fix updates English and Chinese README/user-guide text to match the
+    implemented ordering: archive renew refreshes and replans before duplicate decisions, so cancel
+    still skips media download/archive writes but can refresh and save WEB/TV credentials.
