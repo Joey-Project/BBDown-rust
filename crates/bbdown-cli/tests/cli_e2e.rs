@@ -8390,6 +8390,74 @@ fn auth_renew_web_marks_checked_when_cookie_refresh_is_not_needed() -> anyhow::R
 }
 
 #[test]
+fn auth_renew_web_fails_when_cookie_refresh_request_fails() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    save_refreshable_cookie_profile(&credential_file)?;
+    let info_mock = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/passport-login/web/cookie/info")
+            .query_param("csrf", "OLD_CSRF")
+            .header("cookie", "SESSDATA=old;bili_jct=OLD_CSRF");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {"refresh": true, "timestamp": 1_710_000_000_000_u64}
+        }));
+    });
+    let correspond_mock = server.mock(|when, then| {
+        when.method(GET)
+            .path_matches(r"^/correspond/1/[0-9a-f]{256}$")
+            .header("cookie", "SESSDATA=old;bili_jct=OLD_CSRF");
+        then.status(200)
+            .body(r#"<html><div id="1-name">REFRESH_CSRF</div></html>"#);
+    });
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-login/web/cookie/refresh")
+            .form_urlencoded_tuple("refresh_token", "OLD_COOKIE_REFRESH");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -400,
+            "message": "bad OLD_COOKIE_REFRESH",
+            "data": null
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--web-base")
+        .arg(server.base_url())
+        .args(["auth", "renew-web", "--json"])
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    let events = json_lines(&output)?;
+
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["event"], "decision");
+    assert_eq!(events[0]["decision"]["action"], "refresh");
+    assert_eq!(events[1]["event"], "refresh_failed");
+    assert_eq!(events[1]["kind"], "cookie");
+    assert_eq!(
+        events[1]["message"],
+        "API returned code -400: bad <redacted>"
+    );
+    let output_text = String::from_utf8(output)?;
+    for secret in ["OLD_COOKIE_REFRESH", "SESSDATA=old", "OLD_CSRF"] {
+        assert!(!output_text.contains(secret));
+    }
+    info_mock.assert_calls(1);
+    correspond_mock.assert_calls(1);
+    refresh_mock.assert_calls(1);
+    Ok(())
+}
+
+#[test]
 fn auth_renew_tv_refreshes_tv_access_key_secret() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;
@@ -8465,6 +8533,57 @@ fn auth_renew_tv_refreshes_tv_access_key_secret() -> anyhow::Result<()> {
             .and_then(|secret| secret.refresh_token.as_deref()),
         Some("NEW_TV_REFRESH")
     );
+    refresh_mock.assert_calls(1);
+    Ok(())
+}
+
+#[test]
+fn auth_renew_tv_fails_when_refresh_request_fails() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    save_refreshable_tv_access_key_profile(&credential_file)?;
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "OLD_TV_ACCESS")
+            .form_urlencoded_tuple("access_token", "OLD_TV_ACCESS")
+            .form_urlencoded_tuple("refresh_token", "OLD_TV_REFRESH")
+            .form_urlencoded_tuple("appkey", "4409e2ce8ffd12b8")
+            .form_urlencoded_tuple_exists("sign");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -400,
+            "message": "bad OLD_TV_ACCESS OLD_TV_REFRESH",
+            "data": null
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .args(["auth", "renew-tv", "--json"])
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    let events = json_lines(&output)?;
+
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["event"], "decision");
+    assert_eq!(events[0]["decision"]["action"], "refresh");
+    assert_eq!(events[1]["event"], "refresh_failed");
+    assert_eq!(events[1]["kind"], "tv_access_key");
+    assert_eq!(
+        events[1]["message"],
+        "API returned code -400: bad <redacted> <redacted>"
+    );
+    let output_text = String::from_utf8(output)?;
+    for secret in ["OLD_TV_ACCESS", "OLD_TV_REFRESH"] {
+        assert!(!output_text.contains(secret));
+    }
     refresh_mock.assert_calls(1);
     Ok(())
 }

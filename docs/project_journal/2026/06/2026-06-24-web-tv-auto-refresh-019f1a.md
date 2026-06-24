@@ -79,11 +79,12 @@ superseded_by:
     optional lifecycle `refresh_token_present` metadata flag. This was fixed so stored provider
     secrets make legacy/manual profiles refresh-ready even when old metadata omitted the presence
     flag, with core regression coverage.
-  - The helper-backed offline frozen diff review on `57bd18d..9382f6b` found that WEB
-    `correspond/1` challenge generation used RSA-OAEP instead of the JSEncrypt-compatible
-    RSAES-PKCS1-v1_5 flow expected by Bilibili, and that `QrLoginState::Succeeded` changed its
-    public payload type before the release bump. The follow-up fix switched the challenge padding,
-    restored the legacy `QrLoginState` payload, and added detail polling methods for QR refresh
+  - The helper-backed offline frozen diff review on `57bd18d..9382f6b` found that
+    `QrLoginState::Succeeded` changed its public payload type before the release bump. The follow-up
+    fix restored the legacy `QrLoginState` payload and added detail polling methods for QR refresh
     metadata.
-  - Current-head GitHub Codex review for `9382f6b` returned no major issues; final PR readiness
-    evidence is tracked on PR #72.
+  - Current-head GitHub Codex review for `29c68be` then corrected an earlier local review
+    assumption about WEB `correspond/1`: the public Bilibili refresh documentation uses
+    RSA-OAEP/SHA-256 for the encrypted challenge. The fix restored RSA-OAEP/SHA-256 and added CLI
+    e2e coverage so stored WEB/TV refresh server failures emit `refresh_failed` and return a
+    non-zero exit status.

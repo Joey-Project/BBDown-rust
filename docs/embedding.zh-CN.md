@@ -268,7 +268,7 @@ keypair 会路由到 TV OAuth refresh path。成功后会返回新的 `AccessKey
 WEB cookie 和 TV token refresh 是独立 primitive，因为它们不是 provider-scoped generic access
 key。嵌入方可以用已保存 cookie 和对应 refresh token 构造 `WebCookieRefreshRequest`，再调用
 `BiliClient::refresh_web_cookie(...)`；client 会检查
-`/x/passport-login/web/cookie/info`，派生与 JSEncrypt 兼容的 RSAES-PKCS1-v1_5
+`/x/passport-login/web/cookie/info`，派生 RSA-OAEP/SHA-256
 `correspond/1/{path}` challenge，从
 `EndpointConfig::web_base` 提取 `refresh_csrf`，调用 cookie refresh endpoint，合并
 `Set-Cookie` header，并确认旧 refresh token。如果 Bilibili 表示现有 cookie 暂时不需要

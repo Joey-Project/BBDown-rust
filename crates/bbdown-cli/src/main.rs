@@ -1974,7 +1974,7 @@ async fn handle_stored_credential_renewal(
         )?;
         return Ok(());
     }
-    try_stored_credential_auto_refresh(
+    let refreshed = try_stored_credential_auto_refresh(
         kind,
         args,
         credential_runtime,
@@ -1983,6 +1983,9 @@ async fn handle_stored_credential_renewal(
         &decision,
     )
     .await?;
+    if !refreshed {
+        bail!("automatic {} refresh failed", credential_kind_label(kind));
+    }
     Ok(())
 }
 

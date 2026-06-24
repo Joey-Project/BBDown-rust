@@ -6,8 +6,9 @@ use crate::{
 use md5::Digest;
 use rand::rngs::OsRng;
 use reqwest::header::{ACCEPT, COOKIE, HeaderMap, HeaderValue, ORIGIN, REFERER, SET_COOKIE};
-use rsa::{Pkcs1v15Encrypt, RsaPublicKey, pkcs8::DecodePublicKey};
+use rsa::{Oaep, RsaPublicKey, pkcs8::DecodePublicKey};
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use std::{
     fmt,
     time::{SystemTime, UNIX_EPOCH},
@@ -1748,7 +1749,7 @@ fn web_cookie_refresh_correspond_path(timestamp_unix_millis: u64) -> Result<Stri
     let encrypted = public_key
         .encrypt(
             &mut OsRng,
-            Pkcs1v15Encrypt,
+            Oaep::new::<Sha256>(),
             format!("refresh_{timestamp_unix_millis}").as_bytes(),
         )
         .map_err(|error| {

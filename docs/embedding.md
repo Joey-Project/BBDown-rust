@@ -288,7 +288,7 @@ reauthorization UI when policy requires user action.
 WEB cookie and TV-token refresh are exposed as separate primitives because they are not
 provider-scoped generic access keys. Build `WebCookieRefreshRequest` from the saved cookie plus its
 saved refresh token, then call `BiliClient::refresh_web_cookie(...)`; the client checks
-`/x/passport-login/web/cookie/info`, derives the JSEncrypt-compatible RSAES-PKCS1-v1_5
+`/x/passport-login/web/cookie/info`, derives the RSA-OAEP/SHA-256
 `correspond/1/{path}` challenge, extracts
 `refresh_csrf` from `EndpointConfig::web_base`, calls the cookie refresh endpoint, merges
 `Set-Cookie` headers, and confirms the old refresh token. The returned
