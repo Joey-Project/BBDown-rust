@@ -34,7 +34,9 @@ superseded_by:
 - Validation:
   - `cargo test -p bbdown-core login --locked`
   - `cargo test -p bbdown-cli --test cli_e2e auth --locked`
+  - `cargo test -p bbdown-core refresh_secret --locked`
   - `cargo test -p bbdown-core web_cookie_refresh --locked`
+  - `cargo test -p bbdown-core refreshed_cookie_merge_deduplicates_replaced_cookie_pairs --locked`
   - `cargo test -p bbdown-core refreshes_web_cookie --locked`
   - `cargo test -p bbdown-cli stored_credential_refresh_request_debug_redacts_secrets --locked`
   - `cargo test -p bbdown-cli --test cli_e2e web_cookie --locked`
@@ -66,5 +68,12 @@ superseded_by:
     `Set-Cookie` could still overwrite an earlier non-empty one after merge, and that internal
     token-bearing refresh DTOs/endpoints still derived `Debug`. These were fixed by validating the
     merged cookie header before confirmation and removing sensitive `Debug` derives.
+  - The next current-head independent Codex rerun found that duplicate original `SESSDATA` cookie
+    pairs could leave an older non-empty value behind after an empty replacement. This was fixed by
+    deduplicating replaced cookie names during merge and adding duplicate-cookie regression coverage.
+  - The paired offline frozen diff review found that provider refresh secrets were hidden behind the
+    optional lifecycle `refresh_token_present` metadata flag. This was fixed so stored provider
+    secrets make legacy/manual profiles refresh-ready even when old metadata omitted the presence
+    flag, with core regression coverage.
   - The helper-backed offline frozen diff review on `57bd18d..32faac5` returned `LGTM`; final PR
     readiness evidence is tracked on PR #72.

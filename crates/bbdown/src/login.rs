@@ -1645,11 +1645,22 @@ fn merge_cookie_with_set_cookie_headers(cookie: &str, headers: &HeaderMap) -> St
         let Some(name) = cookie_pair_name(&pair) else {
             continue;
         };
-        if let Some(existing) = pairs
-            .iter_mut()
-            .find(|existing| cookie_pair_name(existing).as_deref() == Some(name.as_str()))
+        if let Some(index) = pairs
+            .iter()
+            .position(|existing| cookie_pair_name(existing).as_deref() == Some(name.as_str()))
         {
-            *existing = pair;
+            pairs[index] = pair;
+            let mut kept_replacement = false;
+            pairs.retain(|existing| {
+                if cookie_pair_name(existing).as_deref() != Some(name.as_str()) {
+                    return true;
+                }
+                if kept_replacement {
+                    return false;
+                }
+                kept_replacement = true;
+                true
+            });
         } else {
             pairs.push(pair);
         }
@@ -1868,6 +1879,29 @@ mod tests {
         assert_eq!(csrf_from_cookie(&merged).as_deref(), Some("csrf"));
         assert_eq!(merged, "SESSDATA=new;bili_jct=csrf;DedeUserID=1");
         assert!(cookie_header_contains_non_empty_cookie(&merged, "SESSDATA"));
+    }
+
+    #[test]
+    fn refreshed_cookie_merge_deduplicates_replaced_cookie_pairs() {
+        let mut headers = HeaderMap::new();
+        headers.append(
+            SET_COOKIE,
+            HeaderValue::from_static("SESSDATA=new; Path=/; Domain=.bilibili.com"),
+        );
+        headers.append(
+            SET_COOKIE,
+            HeaderValue::from_static("SESSDATA=; Path=/; Domain=.bilibili.com"),
+        );
+
+        let merged = merge_cookie_with_set_cookie_headers(
+            "SESSDATA=old;bili_jct=csrf;SESSDATA=older",
+            &headers,
+        );
+
+        assert_eq!(merged, "SESSDATA=;bili_jct=csrf");
+        assert!(!cookie_header_contains_non_empty_cookie(
+            &merged, "SESSDATA"
+        ));
     }
 
     #[test]
@@ -2846,12 +2880,13 @@ mod tests {
 
     #[tokio::test]
     async fn web_cookie_refresh_rejects_merged_empty_auth_cookie() -> anyhow::Result<()> {
+        let original_cookie = "SESSDATA=old;bili_jct=OLD_CSRF;SESSDATA=older";
         let server = MockServer::start();
         server.mock(|when, then| {
             when.method(GET)
                 .path("/x/passport-login/web/cookie/info")
                 .query_param("csrf", "OLD_CSRF")
-                .header("cookie", "SESSDATA=old;bili_jct=OLD_CSRF");
+                .header("cookie", original_cookie);
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {"refresh": true, "timestamp": 1_710_000_000_000_u64}
@@ -2860,7 +2895,7 @@ mod tests {
         server.mock(|when, then| {
             when.method(GET)
                 .path_matches(r"^/correspond/1/[0-9a-f]{256}$")
-                .header("cookie", "SESSDATA=old;bili_jct=OLD_CSRF");
+                .header("cookie", original_cookie);
             then.status(200)
                 .body(r#"<html><div id="1-name">REFRESH_CSRF</div></html>"#);
         });
@@ -2871,7 +2906,7 @@ mod tests {
                 .form_urlencoded_tuple("refresh_csrf", "REFRESH_CSRF")
                 .form_urlencoded_tuple("refresh_token", "OLD_REFRESH")
                 .form_urlencoded_tuple("source", "main_web")
-                .header("cookie", "SESSDATA=old;bili_jct=OLD_CSRF");
+                .header("cookie", original_cookie);
             then.status(200)
                 .header("Set-Cookie", "SESSDATA=new; Path=/; Domain=.bilibili.com")
                 .header("Set-Cookie", "SESSDATA=; Path=/; Domain=.bilibili.com")
@@ -2889,8 +2924,7 @@ mod tests {
             }));
         });
         let client = test_client(&server);
-        let request =
-            WebCookieRefreshRequest::new("SESSDATA=old;bili_jct=OLD_CSRF", "OLD_REFRESH")?;
+        let request = WebCookieRefreshRequest::new(original_cookie, "OLD_REFRESH")?;
 
         let error = client.refresh_web_cookie(&request).await.err();
 

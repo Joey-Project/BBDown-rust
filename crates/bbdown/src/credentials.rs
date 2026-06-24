@@ -965,7 +965,6 @@ fn credential_refresh_token_secret_present(
     metadata: &CredentialLifecycleMetadata,
     secrets: &CredentialProfileSecrets,
 ) -> Option<bool> {
-    metadata.refresh_token_present?;
     match kind {
         CredentialKind::Cookie => Some(
             secrets
@@ -3310,6 +3309,51 @@ mod tests {
             .find(|status| status.kind == CredentialKind::AccessKey)
             .ok_or_else(|| anyhow::anyhow!("access-key status should exist"))?;
         assert_eq!(access_key_status.refresh_token_secret_present, Some(false));
+        Ok(())
+    }
+
+    #[test]
+    fn provider_refresh_secret_reports_ready_without_metadata_presence_flag() -> anyhow::Result<()>
+    {
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "intl",
+            Credentials {
+                cookie: None,
+                access_key: Some("ACCESS_SECRET".to_owned()),
+                tv_access_key: None,
+            },
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_access_key_provider(AccessKeyProvider::BalhBiliplus),
+        );
+        profiles.set_profile_metadata("intl", metadata)?;
+        let mut secrets = CredentialProfileSecrets::default();
+        secrets.set_access_key_provider(
+            AccessKeyProvider::BalhBiliplus,
+            AccessKeyProviderSecret::default()
+                .with_refresh_token("REFRESH_SECRET")
+                .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+                .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+        );
+        profiles.set_profile_secrets("intl", secrets)?;
+
+        let status = profiles.profile_lifecycle_status(
+            "intl",
+            &CredentialLifecyclePolicy::at_unix_millis(1_700_000_000_000),
+        )?;
+        let access_key_status = status
+            .credential_statuses
+            .iter()
+            .find(|status| status.kind == CredentialKind::AccessKey)
+            .ok_or_else(|| anyhow::anyhow!("access-key status should exist"))?;
+
+        assert_eq!(access_key_status.refresh_token_present, None);
+        assert_eq!(access_key_status.refresh_token_secret_present, Some(true));
         Ok(())
     }
 
