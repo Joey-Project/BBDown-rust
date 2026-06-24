@@ -788,6 +788,8 @@ impl BiliClient {
             .map_err(BiliClient::http_error_without_url)?
             .error_for_status()
             .map_err(BiliClient::http_error_without_url)?;
+        let has_refreshed_auth_cookie =
+            set_cookie_headers_contain_cookie(response.headers(), "SESSDATA");
         let refreshed_cookie =
             merge_cookie_with_set_cookie_headers(&request.cookie, response.headers());
         let response = response
@@ -797,6 +799,9 @@ impl BiliClient {
         let data = response.into_data()?;
         let refresh_token = non_empty_refresh_string(data.refresh_token)
             .ok_or(Error::MissingField("refresh_token"))?;
+        if !has_refreshed_auth_cookie {
+            return Err(Error::MissingField("SESSDATA Set-Cookie"));
+        }
 
         let confirm_csrf = csrf_from_cookie(&refreshed_cookie).unwrap_or(csrf);
         let confirm_url = Self::endpoint_url(
@@ -1609,6 +1614,16 @@ fn cookie_from_set_cookie_headers(headers: &HeaderMap) -> Option<String> {
     (!pairs.is_empty()).then(|| pairs.join(";"))
 }
 
+fn set_cookie_headers_contain_cookie(headers: &HeaderMap, expected_name: &str) -> bool {
+    headers
+        .get_all(SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .filter_map(cookie_pair_from_set_cookie)
+        .filter_map(|pair| cookie_pair_name(&pair))
+        .any(|name| name == expected_name)
+}
+
 fn merge_cookie_with_set_cookie_headers(cookie: &str, headers: &HeaderMap) -> String {
     let mut pairs = cookie_header_pairs(cookie);
     for pair in headers
@@ -1774,7 +1789,8 @@ mod tests {
         cookie_from_set_cookie_headers, cookie_from_success_url, csrf_from_cookie,
         intl_access_key_refresh_params, main_access_key_refresh_params,
         main_access_key_refresh_path, merge_cookie_with_set_cookie_headers, qrcode_key_from_url,
-        refresh_csrf_from_correspond_body, tv_login_params, web_cookie_refresh_correspond_path,
+        refresh_csrf_from_correspond_body, set_cookie_headers_contain_cookie, tv_login_params,
+        web_cookie_refresh_correspond_path,
     };
     use crate::{
         AccessKeyProvider, AccessKeyProviderSecret, AccessKeyRefreshKeypair,
@@ -1840,6 +1856,22 @@ mod tests {
 
         assert_eq!(csrf_from_cookie(&merged).as_deref(), Some("csrf"));
         assert_eq!(merged, "SESSDATA=new;bili_jct=csrf;DedeUserID=1");
+    }
+
+    #[test]
+    fn detects_auth_cookie_set_cookie_headers() {
+        let mut headers = HeaderMap::new();
+        headers.append(
+            SET_COOKIE,
+            HeaderValue::from_static("bili_jct=csrf; Path=/; Domain=.bilibili.com"),
+        );
+        assert!(!set_cookie_headers_contain_cookie(&headers, "SESSDATA"));
+
+        headers.append(
+            SET_COOKIE,
+            HeaderValue::from_static("SESSDATA=new; Path=/; Domain=.bilibili.com"),
+        );
+        assert!(set_cookie_headers_contain_cookie(&headers, "SESSDATA"));
     }
 
     #[test]
@@ -2713,6 +2745,62 @@ mod tests {
         let error = client.refresh_web_cookie(&request).await.err();
 
         assert!(matches!(error, Some(Error::MissingField("refresh_token"))));
+        refresh_mock.assert_calls(1);
+        confirm_mock.assert_calls(0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn web_cookie_refresh_requires_refreshed_auth_cookie_set_cookie() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/passport-login/web/cookie/info")
+                .query_param("csrf", "OLD_CSRF")
+                .header("cookie", "SESSDATA=old;bili_jct=OLD_CSRF");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {"refresh": true, "timestamp": 1_710_000_000_000_u64}
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path_matches(r"^/correspond/1/[0-9a-f]{256}$")
+                .header("cookie", "SESSDATA=old;bili_jct=OLD_CSRF");
+            then.status(200)
+                .body(r#"<html><div id="1-name">REFRESH_CSRF</div></html>"#);
+        });
+        let refresh_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/x/passport-login/web/cookie/refresh")
+                .form_urlencoded_tuple("csrf", "OLD_CSRF")
+                .form_urlencoded_tuple("refresh_csrf", "REFRESH_CSRF")
+                .form_urlencoded_tuple("refresh_token", "OLD_REFRESH")
+                .form_urlencoded_tuple("source", "main_web")
+                .header("cookie", "SESSDATA=old;bili_jct=OLD_CSRF");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {"refresh_token": "NEW_REFRESH"}
+            }));
+        });
+        let confirm_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/x/passport-login/web/confirm/refresh")
+                .form_urlencoded_tuple("refresh_token", "OLD_REFRESH");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0
+            }));
+        });
+        let client = test_client(&server);
+        let request =
+            WebCookieRefreshRequest::new("SESSDATA=old;bili_jct=OLD_CSRF", "OLD_REFRESH")?;
+
+        let error = client.refresh_web_cookie(&request).await.err();
+
+        assert!(matches!(
+            error,
+            Some(Error::MissingField("SESSDATA Set-Cookie"))
+        ));
         refresh_mock.assert_calls(1);
         confirm_mock.assert_calls(0);
         Ok(())

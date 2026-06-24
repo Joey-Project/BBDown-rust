@@ -2137,7 +2137,9 @@ async fn try_stored_credential_auto_refresh_for_preflight(
     }
     Ok(matches!(
         result.status,
-        RefreshedCredentialSaveStatus::Saved | RefreshedCredentialSaveStatus::Noop
+        RefreshedCredentialSaveStatus::Saved
+            | RefreshedCredentialSaveStatus::Noop
+            | RefreshedCredentialSaveStatus::SkippedStaleRequest
     ))
 }
 
@@ -4939,12 +4941,24 @@ fn credential_automatic_refresh_readiness(
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 struct StoredCredentialRefreshRequest {
     profile: String,
     kind: CredentialKind,
     credential: String,
     refresh_token: String,
+}
+
+impl std::fmt::Debug for StoredCredentialRefreshRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("StoredCredentialRefreshRequest")
+            .field("profile", &self.profile)
+            .field("kind", &self.kind)
+            .field("has_credential", &!self.credential.is_empty())
+            .field("has_refresh_token", &!self.refresh_token.is_empty())
+            .finish()
+    }
 }
 
 impl StoredCredentialRefreshRequest {
@@ -6160,8 +6174,9 @@ mod tests {
     use super::{
         Cli, CliProgressReporter, CredentialRuntime, DownloadCtrlCAction, DownloadOnlyArg,
         DuplicateDecisionRequest, DuplicatePromptActiveGuard, MediaCredentialPreflightContext,
-        SingleDownloadValidationArgs, SubtitleAiPolicyArg, access_key_lifecycle_metadata,
-        access_key_provider_secret, access_key_refresh_request_from_profiles, archive_sidecar_path,
+        SingleDownloadValidationArgs, StoredCredentialRefreshRequest, SubtitleAiPolicyArg,
+        access_key_lifecycle_metadata, access_key_provider_secret,
+        access_key_refresh_request_from_profiles, archive_sidecar_path,
         credential_profile_selection, download_ctrl_c_action,
         download_mode_may_use_intl_access_key, duplicate_decision_or_report, endpoints_from_cli,
         ensure_access_key_login_file_is_safe, ensure_access_key_login_stdin_is_safe,
@@ -6259,6 +6274,24 @@ mod tests {
         }));
         assert!(!input_requires_web_cookie(&Input::Aid(170_001)));
         assert!(!input_requires_web_cookie(&Input::IntlEpisode(341_736)));
+    }
+
+    #[test]
+    fn stored_credential_refresh_request_debug_redacts_secrets() {
+        let refresh = StoredCredentialRefreshRequest {
+            profile: "default".to_owned(),
+            kind: CredentialKind::Cookie,
+            credential: "SESSDATA=SECRET;bili_jct=CSRF".to_owned(),
+            refresh_token: "REFRESH_SECRET".to_owned(),
+        };
+
+        let debug = format!("{refresh:?}");
+
+        assert!(debug.contains("has_credential"));
+        assert!(debug.contains("has_refresh_token"));
+        assert!(!debug.contains("SESSDATA=SECRET"));
+        assert!(!debug.contains("CSRF"));
+        assert!(!debug.contains("REFRESH_SECRET"));
     }
 
     #[test]

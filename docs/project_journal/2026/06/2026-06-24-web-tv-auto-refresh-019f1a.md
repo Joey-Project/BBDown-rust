@@ -36,6 +36,7 @@ superseded_by:
   - `cargo test -p bbdown-cli --test cli_e2e auth --locked`
   - `cargo test -p bbdown-core web_cookie_refresh --locked`
   - `cargo test -p bbdown-core refreshes_web_cookie --locked`
+  - `cargo test -p bbdown-cli stored_credential_refresh_request_debug_redacts_secrets --locked`
   - `cargo test -p bbdown-cli --test cli_e2e web_cookie --locked`
   - `cargo test -p bbdown-cli --test cli_e2e auth_renew_web --locked`
   - `cargo fmt --all -- --check`
@@ -54,3 +55,9 @@ superseded_by:
   - PR-readiness independent Codex review returned `LGTM`; offline frozen diff review then found
     that WEB refresh tokens should not be sent in URL query strings and that WEB no-op refresh
     should update lifecycle checked time. Both were fixed with targeted regression coverage.
+  - A current-head independent Codex rerun found three follow-up issues: WEB cookie refresh could
+    save a successful refresh without a refreshed `SESSDATA` `Set-Cookie`, WEB/TV preflight did not
+    re-evaluate after a stale-response skip, and an internal stored-refresh request had a
+    non-redacted `Debug` implementation. These were fixed with core and CLI regression coverage.
+  - The helper-backed offline frozen diff review on `57bd18d..32faac5` returned `LGTM`; final PR
+    readiness evidence is tracked on PR #72.
