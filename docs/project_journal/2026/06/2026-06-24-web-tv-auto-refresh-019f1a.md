@@ -64,6 +64,9 @@ superseded_by:
   - `cargo test -p bbdown-cli deferred_preflight_forces_generic_access_key_after_auth_failure --bin bbdown --locked`
   - `cargo test -p bbdown-cli download_archive_does_not_refresh_tv_key_for_tv_mode_metadata_http_status --test cli_e2e --locked`
   - `cargo test -p bbdown-cli download_archive_retries_plan_after_auth_failure_with_fresh_refreshable_access_key --test cli_e2e --locked`
+  - `cargo test -p bbdown-core tv_keypair_refresh --lib --locked`
+  - `cargo test -p bbdown-cli download_archive_retries_tv_key_after_tv_playurl_login_failure --test cli_e2e --locked`
+  - `cargo test -p bbdown-cli auth_renew_tv_uses_passport_base_when_tv_base_is_implicit --test cli_e2e --locked`
   - `cargo check -p bbdown-cli --locked`
   - `cargo fmt --all -- --check`
   - `git diff --check`
@@ -177,3 +180,11 @@ superseded_by:
     metadata HTTP failures. The fix runs the forced generic access-key fallback from the deferred
     path when the original report did not already attempt access-key renewal, gates TV-mode forced
     TV refresh to TV playurl failures, and adds focused unit/e2e coverage for both paths.
+  - The next GitHub Codex review on `53ba0b9` found that TV playurl API code `-101` with Bilibili's
+    account-login message could still skip forced TV key refresh because the generic classifier
+    intentionally ignored non-access-key-specific messages, and that core embedders overriding only
+    `EndpointConfig::passport_base` still sent BiliTV refresh requests to the default TV poll host.
+    The fix adds TV-playurl-specific API error context, lets archive retry enter the stored TV
+    refresh path only for that context, preserves the metadata HTTP no-refresh guard, and makes core
+    BiliTV refresh fall back to a customized `passport_base` when `tv_passport_poll_base` remains at
+    its default while still honoring explicit TV poll overrides.

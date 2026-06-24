@@ -2747,7 +2747,10 @@ impl BiliClient {
             }
         }
         let streams = match source {
-            StreamSource::NormalTv => self.fetch_playurl_stream_set_without_cookie(url).await?,
+            StreamSource::NormalTv => self
+                .fetch_playurl_stream_set_without_cookie(url)
+                .await
+                .map_err(tv_playurl_context_error)?,
             _ => self.fetch_playurl_stream_set(url).await?,
         };
         Ok(ResolvedStreamSet::official(source, streams))
@@ -2853,7 +2856,10 @@ impl BiliClient {
             Some(epid),
             request_credential_value(self.config.credentials.tv_access_key.as_deref()),
         );
-        let streams = self.fetch_playurl_stream_set_without_cookie(url).await?;
+        let streams = self
+            .fetch_playurl_stream_set_without_cookie(url)
+            .await
+            .map_err(tv_playurl_context_error)?;
         Ok(ResolvedStreamSet::official(StreamSource::PgcTv, streams))
     }
 
@@ -4797,6 +4803,22 @@ fn is_restricted_area_fallback_error(source: &StreamSource, error: &Error) -> bo
                     && message.starts_with(app_playurl::APP_PREVIEW_ONLY_RESTRICTION_MESSAGE)
         }
         _ => false,
+    }
+}
+
+fn tv_playurl_context_error(error: Error) -> Error {
+    match error {
+        Error::Api { code, message } => Error::Api {
+            code,
+            message: if message.trim().is_empty() {
+                "TV playurl request failed".to_owned()
+            } else if message.starts_with("TV playurl request failed") {
+                message
+            } else {
+                format!("TV playurl request failed: {message}")
+            },
+        },
+        error => error,
     }
 }
 

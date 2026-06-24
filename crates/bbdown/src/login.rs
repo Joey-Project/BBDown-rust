@@ -1,7 +1,8 @@
 use crate::{
     AccessKeyProvider, AccessKeyRefreshKeypair, AccessKeyRefreshProvider, BiliClient,
     CredentialKind, CredentialLifecycleCredentialStatus, CredentialLifecycleSource,
-    CredentialLifecycleStatus, CredentialProfileLifecycleStatus, Credentials, Error, Result,
+    CredentialLifecycleStatus, CredentialProfileLifecycleStatus, Credentials, EndpointConfig,
+    Error, Result,
 };
 use md5::Digest;
 use rand::rngs::OsRng;
@@ -1286,8 +1287,25 @@ fn main_access_key_refresh_base<'a>(
         .refresh_keypair
         .ok_or(Error::MissingField("refresh_keypair"))?
     {
-        AccessKeyRefreshKeypair::BiliTv => Ok(tv_passport_poll_base),
+        AccessKeyRefreshKeypair::BiliTv => Ok(tv_access_key_refresh_base(
+            passport_base,
+            tv_passport_poll_base,
+        )),
         AccessKeyRefreshKeypair::Android | AccessKeyRefreshKeypair::AndroidB => Ok(passport_base),
+    }
+}
+
+fn tv_access_key_refresh_base<'a>(
+    passport_base: &'a str,
+    tv_passport_poll_base: &'a str,
+) -> &'a str {
+    let default_endpoints = EndpointConfig::default();
+    if tv_passport_poll_base == default_endpoints.tv_passport_poll_base
+        && passport_base != default_endpoints.passport_base
+    {
+        passport_base
+    } else {
+        tv_passport_poll_base
     }
 }
 
@@ -2561,7 +2579,8 @@ mod tests {
     }
 
     #[test]
-    fn tv_keypair_refresh_uses_poll_base_when_passport_base_is_customized() -> anyhow::Result<()> {
+    fn tv_keypair_refresh_falls_back_to_passport_base_when_poll_base_is_default()
+    -> anyhow::Result<()> {
         let default_endpoints = EndpointConfig::default();
         let request = AccessKeyRefreshRequest::new(
             "OLD_ACCESS",
@@ -2578,7 +2597,29 @@ mod tests {
             &default_endpoints.tv_passport_poll_base,
         )?;
 
-        assert_eq!(endpoint.base, default_endpoints.tv_passport_poll_base);
+        assert_eq!(endpoint.base, "https://custom-passport.example");
+        assert_eq!(endpoint.path, "/x/passport-tv-login/oauth2/refresh_token");
+        Ok(())
+    }
+
+    #[test]
+    fn tv_keypair_refresh_uses_explicit_poll_base_when_configured() -> anyhow::Result<()> {
+        let request = AccessKeyRefreshRequest::new(
+            "OLD_ACCESS",
+            "OLD_REFRESH",
+            AccessKeyRefreshProvider::BilibiliMainOauth2,
+        )?
+        .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv);
+
+        let endpoint = access_key_refresh_endpoint_and_params(
+            &request,
+            1_700_000_000,
+            "https://custom-passport.example",
+            "https://custom-intl-passport.example",
+            "https://custom-tv-poll.example",
+        )?;
+
+        assert_eq!(endpoint.base, "https://custom-tv-poll.example");
         assert_eq!(endpoint.path, "/x/passport-tv-login/oauth2/refresh_token");
         Ok(())
     }

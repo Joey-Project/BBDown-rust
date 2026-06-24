@@ -1971,6 +1971,7 @@ fn tv_playurl_auth_failure_may_have_used_selected_tv_access_key(
     match failure {
         bbdown_core::Error::Api { code, message } => {
             api_failure_may_be_credential_related(*code, message)
+                || (*code == -101 && tv_playurl_api_auth_failure_message(message))
         }
         bbdown_core::Error::Http(error) => {
             if error
@@ -1994,6 +1995,14 @@ fn tv_playurl_auth_failure_may_have_used_selected_tv_access_key(
         | bbdown_core::Error::Io(_)
         | bbdown_core::Error::MuxFailed { .. } => false,
     }
+}
+
+fn tv_playurl_api_auth_failure_message(message: &str) -> bool {
+    let Some(detail) = message.strip_prefix("TV playurl request failed") else {
+        return false;
+    };
+    let detail = detail.trim_start_matches(':').trim();
+    auth_like_failure_message(detail) || bili_account_not_logged_in_message(detail)
 }
 
 fn tv_access_key_playurl_json_path(path: &str) -> bool {
@@ -3071,6 +3080,8 @@ fn archive_plan_failure_may_be_credential_related(
             .as_ref()
             .is_some_and(|context| {
                 authenticated_web_api_failure_may_have_used_cookie(context, error)
+                    || (context.playurl_mode == Some(PlayurlMode::Tv)
+                        && tv_playurl_auth_failure_may_have_used_selected_tv_access_key(error))
             })
 }
 

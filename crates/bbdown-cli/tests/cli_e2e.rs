@@ -1762,6 +1762,127 @@ fn download_archive_does_not_refresh_tv_key_for_tv_mode_metadata_http_status() -
     Ok(())
 }
 
+#[test]
+#[allow(clippy::too_many_lines)]
+fn download_archive_retries_tv_key_after_tv_playurl_login_failure() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    save_fresh_refreshable_tv_access_key_profile(&credential_file)?;
+    mock_playback_metadata(&server);
+    let stale_tv_playurl = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/tv/playurl")
+            .query_param("access_key", "OLD_TV_ACCESS")
+            .query_param("appkey", "4409e2ce8ffd12b8")
+            .query_param("cid", "2")
+            .query_param("mobi_app", "android_tv_yst")
+            .query_param("object_id", "170001")
+            .query_param("platform", "android")
+            .query_param("playurl_type", "1")
+            .query_param_exists("ts")
+            .query_param_exists("sign");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -101,
+            "message": "账号未登录"
+        }));
+    });
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "OLD_TV_ACCESS")
+            .form_urlencoded_tuple("refresh_token", "OLD_TV_REFRESH");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "NEW_TV_ACCESS",
+                    "refresh_token": "NEW_TV_REFRESH",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+    let fresh_tv_playurl = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/tv/playurl")
+            .query_param("access_key", "NEW_TV_ACCESS")
+            .query_param("appkey", "4409e2ce8ffd12b8")
+            .query_param("cid", "2")
+            .query_param("mobi_app", "android_tv_yst")
+            .query_param("object_id", "170001")
+            .query_param("platform", "android")
+            .query_param("playurl_type", "1")
+            .query_param_exists("ts")
+            .query_param_exists("sign");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "dash": {
+                    "duration": 3,
+                    "video": [{
+                        "id": 80,
+                        "baseUrl": format!("{}/video.m4s", server.base_url()),
+                        "base_url": format!("{}/video.m4s", server.base_url())
+                    }],
+                    "audio": []
+                }
+            }
+        }));
+    });
+    mock_empty_player_v2(&server, "170001", "2");
+    let video = server.mock(|when, then| {
+        when.method(GET).path("/video.m4s");
+        then.status(200).body("video");
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--tv-api-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--tv-passport-poll-base")
+        .arg(server.base_url())
+        .arg("--playurl-mode")
+        .arg("tv")
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("download")
+        .arg("av170001")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(stderr.contains("credential preflight: tv_access_key refreshed"));
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load()?
+            .tv_access_key
+            .as_deref(),
+        Some("NEW_TV_ACCESS")
+    );
+    stale_tv_playurl.assert_calls(1);
+    refresh_mock.assert_calls(1);
+    fresh_tv_playurl.assert_calls(1);
+    video.assert_calls(1);
+    Ok(())
+}
+
 fn assert_playback_abr_metadata(json: &Value) -> anyhow::Result<()> {
     assert_eq!(
         json["entries"][0]["cache_key"]["content_id"],
