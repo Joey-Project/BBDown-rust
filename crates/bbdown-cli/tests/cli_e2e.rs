@@ -1,3 +1,4 @@
+use anyhow::Context;
 use assert_cmd::Command;
 use bbdown_core::{
     AccessKeyProvider, AccessKeyProviderSecret, AccessKeyRefreshKeypair, AccessKeyRefreshProvider,
@@ -10,13 +11,14 @@ use httpmock::prelude::*;
 use prost::Message as _;
 use serde_json::Value;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
+use std::process::Stdio;
 #[cfg(unix)]
-use std::process::{Command as StdCommand, Output, Stdio};
+use std::process::{Command as StdCommand, Output};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -628,6 +630,64 @@ fn plan_credential_preflight_renew_skips_access_key_refresh_when_required_cookie
     );
     refresh.assert_calls(0);
     history.assert_calls(1);
+    Ok(())
+}
+
+#[test]
+fn plan_credential_preflight_renew_skips_tv_refresh_when_required_cookie_is_missing()
+-> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    save_refreshable_tv_access_key_profile(&credential_file)?;
+    let refresh = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "OLD_TV_ACCESS");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "NEW_TV_ACCESS",
+                    "refresh_token": "NEW_TV_REFRESH",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--playurl-mode")
+        .arg("tv")
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("plan")
+        .arg("history")
+        .arg("--select")
+        .arg("latest")
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(stderr.contains("authenticated WEB API requires cookie"));
+    assert!(!stderr.contains("credential preflight: tv_access_key refreshed"));
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load()?
+            .tv_access_key
+            .as_deref(),
+        Some("OLD_TV_ACCESS")
+    );
+    refresh.assert_calls(0);
     Ok(())
 }
 
@@ -3789,6 +3849,90 @@ fn download_archive_cancel_defers_credential_preflight_renewal() -> anyhow::Resu
             .access_key
             .as_deref(),
         Some("ACCESS_SECRET")
+    );
+    Ok(())
+}
+
+#[test]
+fn download_archive_cancel_defers_stored_tv_preflight_renewal() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    save_refreshable_tv_access_key_profile(&credential_file)?;
+    mock_minimal_download(&server);
+    archive_download_command(&credential_file, &server, &output_dir, &archive_file, None)?
+        .assert()
+        .success();
+
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "OLD_TV_ACCESS")
+            .form_urlencoded_tuple("refresh_token", "OLD_TV_REFRESH");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "NEW_TV_ACCESS",
+                    "refresh_token": "NEW_TV_REFRESH",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+    let app_response = app_play_view_response_frame("https://app.example/video.m4s")?;
+    let app_playurl = server.mock(|when, then| {
+        when.method(POST)
+            .path("/bilibili.app.playurl.v1.PlayURL/PlayView")
+            .header("content-type", "application/grpc")
+            .header("authorization", "identify_v1 OLD_TV_ACCESS")
+            .header_exists("x-bili-metadata-bin")
+            .header_missing("cookie");
+        then.status(200).body(app_response.clone());
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--app-grpc-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--playurl-mode")
+        .arg("app")
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("download")
+        .arg("av170001")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--on-duplicate")
+        .arg("cancel")
+        .arg("--no-mux")
+        .arg("--no-subtitles")
+        .arg("--no-danmaku")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let json: Value = serde_json::from_slice(&output.stdout)?;
+
+    assert_eq!(json["status"], "canceled");
+    app_playurl.assert_calls(1);
+    refresh_mock.assert_calls(0);
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load()?
+            .tv_access_key
+            .as_deref(),
+        Some("OLD_TV_ACCESS")
     );
     Ok(())
 }
@@ -9413,6 +9557,108 @@ fn auth_renew_access_key_fails_when_profile_changes_before_save() -> anyhow::Res
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+fn auth_renew_access_key_stdin_fails_when_default_profile_changes_before_save() -> anyhow::Result<()>
+{
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    save_default_intl_access_key_profiles(&credential_file)?;
+
+    let mut command = bbdown_std_command();
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .args(["auth", "renew-access-key", "--stdin", "--json"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn()?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("child stdin was not piped"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("child stdout was not piped"))?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("child stderr was not piped"))?;
+    let (line_sender, line_receiver) = mpsc::channel();
+    let stdout_reader = thread::spawn(move || -> anyhow::Result<Vec<String>> {
+        let mut lines = Vec::new();
+        for line in BufReader::new(stdout).lines() {
+            let line = line?;
+            let _ = line_sender.send(line.clone());
+            lines.push(line);
+        }
+        Ok(lines)
+    });
+    let stderr_reader = thread::spawn(move || -> std::io::Result<Vec<u8>> {
+        let mut output = Vec::new();
+        stderr.read_to_end(&mut output)?;
+        Ok(output)
+    });
+
+    let decision_line = line_receiver
+        .recv_timeout(Duration::from_secs(5))
+        .context("timed out waiting for access-key renewal decision")?;
+    let ticket_line = line_receiver
+        .recv_timeout(Duration::from_secs(5))
+        .context("timed out waiting for access-key renewal ticket")?;
+    let decision: Value = serde_json::from_str(&decision_line)?;
+    let ticket: Value = serde_json::from_str(&ticket_line)?;
+
+    assert_eq!(decision["event"], "decision");
+    assert_eq!(decision["decision"]["profile"], "intl");
+    assert_eq!(ticket["event"], "ticket");
+    CredentialStore::new(credential_file.clone()).set_default_profile("main")?;
+    writeln!(
+        stdin,
+        "access_key=PIPE_ACCESS_SECRET&refresh_token=PIPE_REFRESH_SECRET&expires_in=60"
+    )?;
+    drop(stdin);
+
+    let status = child.wait()?;
+    let stdout_lines = stdout_reader
+        .join()
+        .map_err(|_| anyhow::anyhow!("stdout reader thread panicked"))??;
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| anyhow::anyhow!("stderr reader thread panicked"))??;
+    assert!(
+        !status.success(),
+        "renew-access-key should fail after profile switch; stderr={}",
+        String::from_utf8_lossy(&stderr)
+    );
+    let events = stdout_lines
+        .iter()
+        .map(|line| serde_json::from_str::<Value>(line).map_err(Into::into))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+
+    assert_eq!(events.len(), 3);
+    assert_eq!(events[2]["event"], "refresh_skipped");
+    assert_eq!(events[2]["kind"], "access_key");
+    assert_eq!(events[2]["reason"], "profile_changed");
+    let store = CredentialStore::new(credential_file);
+    assert_eq!(
+        store.load_profiles()?.default_profile,
+        "main",
+        "the test should switch the default profile before save"
+    );
+    assert_eq!(
+        store.load_profile("intl")?.access_key.as_deref(),
+        Some("ACCESS_SECRET")
+    );
+    assert_eq!(
+        store.load_profile("main")?.access_key.as_deref(),
+        Some("MAIN_ACCESS_SECRET")
+    );
+    Ok(())
+}
+
 #[test]
 fn auth_renew_access_key_auto_refresh_redacts_echoed_failure() -> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;
@@ -9659,6 +9905,33 @@ fn save_intl_access_key_profile(credential_file: &Path, access_key: &str) -> any
         "intl",
         Credentials::default().with_access_key(access_key.to_owned()),
     )?;
+    store.save_profiles(&profiles)?;
+    Ok(())
+}
+
+fn save_default_intl_access_key_profiles(credential_file: &Path) -> anyhow::Result<()> {
+    let store = CredentialStore::new(credential_file.to_path_buf());
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_profile(
+        "main",
+        Credentials::default().with_access_key("MAIN_ACCESS_SECRET"),
+    )?;
+    profiles.set_profile(
+        "intl",
+        Credentials::default().with_access_key("ACCESS_SECRET"),
+    )?;
+    profiles.set_default_profile("intl")?;
+    let mut metadata = CredentialProfileMetadata::default();
+    metadata.set_credential(
+        CredentialKind::AccessKey,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(1_000)
+            .with_expires_at_unix_millis(2_000)
+            .with_refresh_token_present(false),
+    );
+    profiles.set_profile_metadata("intl", metadata)?;
     store.save_profiles(&profiles)?;
     Ok(())
 }

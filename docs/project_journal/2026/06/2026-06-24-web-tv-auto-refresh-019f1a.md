@@ -44,6 +44,8 @@ superseded_by:
   - `cargo test -p bbdown-cli --test cli_e2e web_cookie --locked`
   - `cargo test -p bbdown-cli --test cli_e2e auth_renew_web --locked`
   - `cargo test -p bbdown-cli auth_renew --locked`
+  - `cargo test -p bbdown-cli credential_preflight_renew --locked`
+  - `cargo test -p bbdown-cli download_archive_cancel_defers --locked`
   - `cargo test -p bbdown-cli auth_renew_web_fails_when_refresh_secret_is_missing --locked`
   - `cargo test -p bbdown-cli auth_renew_tv_fails_when_refresh_secret_is_missing --locked`
   - `cargo test -p bbdown-core tv_keypair_access_key_refresh_uses_tv_passport_poll_base --locked`
@@ -118,3 +120,12 @@ superseded_by:
     coverage. The fix reloads lifecycle state for each stored preflight refresh attempt, makes
     direct generic access-key renewal fail after `refresh_skipped`, and adds direct WEB/generic
     access-key stale-save CLI e2e coverage.
+  - GitHub Codex review and the current-head independent Codex rerun on `dd04f75` found four
+    follow-up issues: stored WEB/TV refresh failures should have an explicit non-zero command path,
+    stored preflight refresh should not run when another required credential is missing, archive
+    duplicate/cancel flows should defer stored WEB/TV refresh just like generic access-key refresh,
+    and `auth renew-access-key --stdin/--file` should not save a browser handoff into a different
+    default profile if the selected profile changes while waiting for input. The fix tightens direct
+    refresh failure handling, gates unrelated preflight refresh attempts, defers stored refresh for
+    archive duplicate handling, binds handoff saves to the initial renewal decision profile, and adds
+    CLI e2e coverage for these cases.

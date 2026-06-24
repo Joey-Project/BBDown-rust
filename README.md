@@ -249,8 +249,9 @@ and stale reclaim are serialized by the same companion guard. Each write checks 
 is still current after the temporary file is written and immediately before replacing the credential
 file, and lock release checks the same token before deletion, so a live writer cannot overwrite a
 newer store after being reclaimed or remove a newer writer's lock after recovery.
-If a slower automatic refresh response no longer matches the current selected profile name or that
-profile's credential/refresh-secret state, JSON output emits `refresh_skipped` with
+If a slower automatic refresh response or access-key browser handoff save no longer matches the
+current selected profile name, or a refresh response no longer matches that profile's
+credential/refresh-secret state, JSON output emits `refresh_skipped` with
 `reason=profile_changed` and leaves the current credential store untouched. Direct
 `auth renew-access-key` / `auth renew-web` / `auth renew-tv` commands treat that stale save as a
 failed renewal and exit non-zero; media preflight re-evaluates the current profile before deciding
@@ -279,12 +280,14 @@ preflight checks the generic `access_key` only when one is configured; missing p
 not block proxy URLs that authenticate themselves or allow anonymous fallback. Preflight diagnostics
 are written to stderr so JSON stdout remains a single plan or report, and `download --progress-json`
 suppresses plaintext preflight diagnostics; wrappers should still parse only JSON object lines
-because the final CLI error line may also be written to stderr on failure. For archive downloads,
-`--credential-preflight renew` defers automatic access-key refresh until after duplicate handling when
-the initial plan succeeds, so `--on-duplicate cancel` stops without calling refresh endpoints or
-rewriting stored credentials. If initial archive planning fails with an auth-like credential error,
-the CLI refreshes a ready generic access key and retries planning once before reporting the failure,
-including cases where local lifecycle metadata had still considered the key fresh.
+because the final CLI error line may also be written to stderr on failure. In `renew` mode, a
+missing required credential that the current refresh cannot repair stops unrelated refresh attempts.
+For archive downloads, `--credential-preflight renew` defers automatic credential refresh until
+after duplicate handling when the initial plan succeeds, so `--on-duplicate cancel` stops without
+calling refresh endpoints or rewriting stored credentials. If initial archive planning fails with an
+auth-like credential error, the CLI refreshes a ready generic access key and retries planning once
+before reporting the failure, including cases where local lifecycle metadata had still considered
+the key fresh.
 When a selected WEB cookie or TV `tv_access_key` already exists, has non-fresh lifecycle metadata,
 and has a saved refresh secret, `--credential-preflight renew` attempts that credential's automatic
 refresh before resolving media requests. This covers authenticated feed inputs that require a WEB

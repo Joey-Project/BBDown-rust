@@ -232,9 +232,10 @@ owner 进程已退出的 stale lock file，以及旧式没有 owner-pid metadata
 恢复窗口后自动接管；仍在运行或无法确认是否退出的 owner 不会被接管。每次写入都会在临时文件写入完成后、真正替换 credential
 file 前，校验自己的 lock token 仍然有效；lock 获取和 stale reclaim 会用同一个 companion guard
 串行化，释放 lock 前也会校验同一个 token，因此仍在运行的 writer 不会在被接管后覆盖较新的
-store，也不会删掉新 writer 的 lock。如果较慢的自动刷新 response
-已经不再匹配当前选择的 profile name，或不再匹配该 profile 的 credential / refresh-secret
-状态，JSON 输出会发出 `refresh_skipped`，并带上 `reason=profile_changed`，同时保持当前
+store，也不会删掉新 writer 的 lock。如果较慢的自动刷新 response 或 access-key 浏览器 handoff
+保存已经不再匹配当前选择的 profile name，或 refresh response 不再匹配该 profile 的
+credential / refresh-secret 状态，JSON 输出会发出 `refresh_skipped`，并带上
+`reason=profile_changed`，同时保持当前
 credential store 不变。直接运行的 `auth renew-access-key` / `auth renew-web` /
 `auth renew-tv` 会把这种 stale save 视为刷新失败并以非零状态退出；media preflight 会重新评估当前
 profile 后再决定是否继续。
@@ -260,9 +261,10 @@ required-cookie preflight。preflight 对 restricted-area proxy 只有在
 已配置通用 `access_key` 时才检查该 token；缺失 proxy access key 不会阻断自带认证或允许匿名
 fallback 的 proxy URL。diagnostic 会写到 stderr，JSON stdout 仍保持为单个 plan 或 report
 payload；`download --progress-json` 会抑制 preflight 纯文本 diagnostic，但失败时最终 CLI error
-行仍可能写到 stderr，因此 wrapper 应只解析 JSON object line。对 archive 下载，如果初次 plan
-成功，`--credential-preflight renew` 会把自动
-access-key refresh 延后到 duplicate handling 之后，因此 `--on-duplicate cancel` 会停止且不会
+行仍可能写到 stderr，因此 wrapper 应只解析 JSON object line。在 `renew` 模式下，如果缺失的
+required credential 不是当前 refresh 能修复的对象，就会阻止无关 refresh 抢跑。对 archive
+下载，如果初次 plan 成功，`--credential-preflight renew` 会把自动
+credential refresh 延后到 duplicate handling 之后，因此 `--on-duplicate cancel` 会停止且不会
 调用 refresh endpoint 或重写已保存 credential。如果初次 archive planning 因类似 auth 的
 credential 错误失败，即使本地 lifecycle metadata 仍认为该 key fresh，CLI 也会刷新 ready
 的通用 access key 并重试一次 planning，然后才报告失败。

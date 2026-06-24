@@ -370,11 +370,12 @@ access key 如果已经 expired、expiring、stale 或 unknown，且状态为 `r
 `--force`、`--stdin` 或 `--file`，CLI 会先尝试 provider-specific automatic refresh。使用
 `--json` 时，自动刷新成功会输出 `decision`、`refreshed` 和 `saved` 事件，仍不会打印原始
 token。如果 refresh 失败，CLI 会输出 `refresh_failed`，然后回退到普通 authorization ticket，
-这样调用方可以提示用户重新授权而不会丢掉旧 credential。如果另一个协作进程在较旧 refresh
-response 保存前改变了当前选择的 profile name，或改变了该 profile 的 credential / refresh-secret
-状态，CLI 会输出 `refresh_skipped`，并带上 `reason=profile_changed`，同时保持当前 store 不变。
-直接运行的 `auth renew-access-key` / `auth renew-web` / `auth renew-tv` 会把这种 stale save
-视为刷新失败并以非零状态退出；media preflight 会重新评估当前 profile 后再决定是否继续。
+这样调用方可以提示用户重新授权而不会丢掉旧 credential。如果另一个协作进程在 access-key 浏览器
+handoff 保存前改变了当前选择的 profile name，或在较旧 refresh response 保存前改变了该
+profile 的 credential / refresh-secret 状态，CLI 会输出 `refresh_skipped`，并带上
+`reason=profile_changed`，同时保持当前 store 不变。直接运行的 `auth renew-access-key` /
+`auth renew-web` / `auth renew-tv` 会把这种 stale save 视为刷新失败并以非零状态退出；media
+preflight 会重新评估当前 profile 后再决定是否继续。
 WEB QR 和 TV QR login 也可能返回 refresh token。CLI 会把这些值作为明文 selected-profile
 secret 保存到 `profile_secrets.<profile>.cookie` 和
 `profile_secrets.<profile>.tv_access_key`，lifecycle metadata 只保存来源、获取时间、可选过期
@@ -420,11 +421,12 @@ cookie、TV `tv_access_key` 或通用 access-key credential。preflight
 不会写 stdout，因此 `--json` 仍保持单个 JSON plan、playback plan 或 download report。
 `download --progress-json` 会抑制 preflight 纯文本 diagnostic，但失败时最终 CLI error 行仍可能
 写到 stderr；wrapper 应只解析 JSON object line。在 `renew` 模式下，缺失 required 的非
-access-key credential 仍会阻止通用 access-key 自动刷新；但已存在且 lifecycle metadata 为
-stale、expiring、expired 或 unknown 的 credential 如果有匹配 refresh secret，会先在请求前刷新；
+access-key credential 仍会阻止通用 access-key 自动刷新；任何缺失的 required credential
+如果不是当前 refresh 能修复的对象，也会阻止无关 refresh 抢跑。但已存在且 lifecycle metadata
+为 stale、expiring、expired 或 unknown 的 credential 如果有匹配 refresh secret，会先在请求前刷新；
 否则不会阻止 refresh-ready 的通用 access key 刷新，后续实际请求仍会验证这些 credential 是否可用。
 对 archive 下载，如果初次 plan 成功，
-`renew` 会把自动 access-key refresh 延后到 duplicate handling 之后，因此 `--on-duplicate cancel`
+`renew` 会把自动 credential refresh 延后到 duplicate handling 之后，因此 `--on-duplicate cancel`
 会停止且不会调用 refresh endpoint 或重写已保存 credential。如果初次 archive planning 因类似
 auth 的 credential 错误失败，即使本地 lifecycle metadata 仍认为该 key fresh，CLI 也会刷新
 ready 的通用 access key 并重试一次 planning，然后才报告失败。可通过全局

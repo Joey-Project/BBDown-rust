@@ -11,10 +11,11 @@ use bbdown_core::{
     CredentialHealthSummaryStatus, CredentialKind, CredentialLifecycleMetadata,
     CredentialLifecyclePolicy, CredentialLifecycleSource, CredentialLifecycleStatus,
     CredentialPreflightMode, CredentialPreflightReport, CredentialPreflightRequestPath,
-    CredentialPreflightRequirement, CredentialProfileLifecycleStatus, CredentialProfileSelection,
-    CredentialProfiles, CredentialRefreshSecret, CredentialStore, Credentials, DanmakuFormat,
-    DanmakuUpdateOptions, DownloadArchive, DownloadCancellationToken, DownloadMode,
-    DownloadOptions, DownloadPathTemplates, DownloadPlan, DownloadPreflight, DownloadProgressEvent,
+    CredentialPreflightRequirement, CredentialPreflightRequirementStatus,
+    CredentialProfileLifecycleStatus, CredentialProfileSelection, CredentialProfiles,
+    CredentialRefreshSecret, CredentialStore, Credentials, DanmakuFormat, DanmakuUpdateOptions,
+    DownloadArchive, DownloadCancellationToken, DownloadMode, DownloadOptions,
+    DownloadPathTemplates, DownloadPlan, DownloadPreflight, DownloadProgressEvent,
     DownloadProgressSink, DownloadReport, DuplicateDecision, EndpointConfig, Input,
     MediaHostOptions, MediaStream, MuxOptions, PlaybackPlan, PlayurlMode, QrLoginCredentials,
     QrLoginCredentialsState, QrLoginKind, QrLoginTicket, QrLoginTicketOutput, ResolvedContent,
@@ -1285,17 +1286,19 @@ async fn prepare_credentials_for_media_request(
         credential_preflight,
         &media_preflight_context,
     )?;
-    refresh_stored_credentials_for_preflight(
-        credential_runtime,
-        client_runtime,
-        credential_preflight,
-        &media_preflight_context,
-        &mut report,
-        request.emit_diagnostics,
-    )
-    .await?;
     let defer_renewal = request.renewal_timing == CredentialPreflightRenewalTiming::Deferred
-        && report.should_attempt_access_key_renewal();
+        && report_should_attempt_any_credential_renewal(&report);
+    if !defer_renewal {
+        refresh_stored_credentials_for_preflight(
+            credential_runtime,
+            client_runtime,
+            credential_preflight,
+            &media_preflight_context,
+            &mut report,
+            request.emit_diagnostics,
+        )
+        .await?;
+    }
     if report.should_attempt_access_key_renewal() && !defer_renewal {
         let profiles = credential_runtime
             .store
@@ -1352,11 +1355,12 @@ async fn refresh_stored_credentials_for_preflight(
     media_preflight_context: &MediaCredentialPreflightContext,
     report: &mut CredentialPreflightReport,
     emit_diagnostics: bool,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     if credential_preflight.mode != CredentialPreflightMode::Renew {
-        return Ok(());
+        return Ok(false);
     }
 
+    let mut refreshed = false;
     for kind in [CredentialKind::Cookie, CredentialKind::TvAccessKey] {
         if !report_should_attempt_stored_credential_renewal(report, kind) {
             continue;
@@ -1387,10 +1391,11 @@ async fn refresh_stored_credentials_for_preflight(
                 credential_preflight,
                 media_preflight_context,
             )?;
+            refreshed = true;
         }
     }
 
-    Ok(())
+    Ok(refreshed)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1444,6 +1449,21 @@ async fn complete_deferred_media_preflight_renewal(
     };
     let mut refreshed = false;
     let mut report = deferred.report;
+    if refresh_stored_credentials_for_preflight(
+        credential_runtime,
+        client_runtime,
+        credential_preflight,
+        &deferred.context,
+        &mut report,
+        emit_diagnostics,
+    )
+    .await?
+    {
+        prepared.credentials = credential_runtime.load()?;
+        prepared.access_key_provider = credential_runtime.selected_access_key_provider()?;
+        refreshed = true;
+    }
+
     if report.should_attempt_access_key_renewal()
         && failure.is_none_or(|failure| {
             media_preflight_report_can_refresh_generic_access_key_for_failure(
@@ -1930,6 +1950,7 @@ fn report_should_attempt_stored_credential_renewal(
     kind: CredentialKind,
 ) -> bool {
     report.mode == CredentialPreflightMode::Renew
+        && !report_has_missing_requirement_not_addressed_by_stored_credential_renewal(report, kind)
         && report.issues.iter().any(|issue| {
             issue.selected_kind == Some(kind)
                 && !matches!(
@@ -1937,6 +1958,31 @@ fn report_should_attempt_stored_credential_renewal(
                     CredentialLifecycleStatus::Fresh | CredentialLifecycleStatus::Missing
                 )
         })
+}
+
+fn report_should_attempt_any_credential_renewal(report: &CredentialPreflightReport) -> bool {
+    report.should_attempt_access_key_renewal()
+        || report_should_attempt_stored_credential_renewal(report, CredentialKind::Cookie)
+        || report_should_attempt_stored_credential_renewal(report, CredentialKind::TvAccessKey)
+}
+
+fn report_has_missing_requirement_not_addressed_by_stored_credential_renewal(
+    report: &CredentialPreflightReport,
+    kind: CredentialKind,
+) -> bool {
+    report.requirements.iter().any(|requirement| {
+        requirement.required
+            && requirement.selected_status == CredentialLifecycleStatus::Missing
+            && !stored_credential_renewal_can_address_requirement(requirement, kind)
+    })
+}
+
+fn stored_credential_renewal_can_address_requirement(
+    requirement: &CredentialPreflightRequirementStatus,
+    kind: CredentialKind,
+) -> bool {
+    requirement.selected_kind == Some(kind)
+        || (requirement.selected_kind.is_none() && requirement.credential_kinds == [kind])
 }
 
 async fn handle_stored_credential_renewal(
@@ -2028,7 +2074,7 @@ async fn try_stored_credential_auto_refresh(
                 }
                 Err(error) => {
                     print_credential_refresh_failure(args.json, kind, &refresh, &error)?;
-                    Ok(false)
+                    bail!("automatic {} refresh failed", credential_kind_label(kind))
                 }
             }
         }
@@ -2046,7 +2092,7 @@ async fn try_stored_credential_auto_refresh(
                 }
                 Err(error) => {
                     print_credential_refresh_failure(args.json, kind, &refresh, &error)?;
-                    Ok(false)
+                    bail!("automatic {} refresh failed", credential_kind_label(kind))
                 }
             }
         }
@@ -4207,23 +4253,42 @@ async fn handle_access_key_renewal(
     let credentials =
         parse_access_key_login_input(&output, args.message_origin.as_deref(), &input)?;
     let acquired_at_unix_millis = current_unix_millis();
-    let summary = save_credentials_with_lifecycle_and_secrets(
+    let outcome = save_access_key_renewal_credentials_for_profile(
         credential_runtime,
-        credentials.credentials(),
-        [(
-            CredentialKind::AccessKey,
-            access_key_lifecycle_metadata(&credentials, acquired_at_unix_millis),
-        )],
-        [access_key_provider_secret(&credentials)],
+        &decision.profile,
+        &credentials,
+        acquired_at_unix_millis,
     )?;
     if args.json {
-        print_json_line(&serde_json::json!({
-            "event": "saved",
-            "kind": "access_key",
-            "saved": summary,
-        }))?;
+        match outcome.status {
+            RefreshedAccessKeySaveStatus::Saved => {
+                print_json_line(&serde_json::json!({
+                    "event": "saved",
+                    "kind": "access_key",
+                    "saved": outcome.summary,
+                }))?;
+            }
+            RefreshedAccessKeySaveStatus::SkippedStaleRequest => {
+                print_json_line(&serde_json::json!({
+                    "event": "refresh_skipped",
+                    "kind": "access_key",
+                    "reason": "profile_changed",
+                    "saved": outcome.summary,
+                }))?;
+            }
+        }
     } else {
-        print_human_line("access key saved")?;
+        match outcome.status {
+            RefreshedAccessKeySaveStatus::Saved => {
+                print_human_line("access key saved")?;
+            }
+            RefreshedAccessKeySaveStatus::SkippedStaleRequest => {
+                print_human_line("access key save skipped: selected profile already changed")?;
+            }
+        }
+    }
+    if outcome.status == RefreshedAccessKeySaveStatus::SkippedStaleRequest {
+        bail!("access_key renewal skipped because the selected profile changed");
     }
     Ok(())
 }
@@ -4380,6 +4445,44 @@ fn save_refreshed_access_key_silent(
                 refreshed_credentials,
                 lifecycle_metadata,
                 [refreshed_secret],
+            )?;
+            Ok(RefreshedAccessKeySaveOutcome {
+                status: RefreshedAccessKeySaveStatus::Saved,
+                summary,
+            })
+        })
+        .context("failed to save credentials")
+}
+
+fn save_access_key_renewal_credentials_for_profile(
+    credential_runtime: &CredentialRuntime,
+    profile: &str,
+    credentials: &AccessKeyLoginCredentials,
+    acquired_at_unix_millis: u64,
+) -> anyhow::Result<RefreshedAccessKeySaveOutcome> {
+    let profile = profile.to_owned();
+    let saved_credentials = credentials.credentials();
+    let lifecycle_metadata = [(
+        CredentialKind::AccessKey,
+        access_key_lifecycle_metadata(credentials, acquired_at_unix_millis),
+    )];
+    let access_key_secrets = [access_key_provider_secret(credentials)];
+    credential_runtime
+        .store
+        .update_profiles(|profiles| {
+            if credential_runtime.selected_profile_name(profiles) != profile {
+                let summary = profiles.profile(&profile)?.redacted_summary();
+                return Ok(RefreshedAccessKeySaveOutcome {
+                    status: RefreshedAccessKeySaveStatus::SkippedStaleRequest,
+                    summary,
+                });
+            }
+            let summary = merge_credentials_with_lifecycle_and_secrets(
+                profiles,
+                &profile,
+                saved_credentials,
+                lifecycle_metadata,
+                access_key_secrets,
             )?;
             Ok(RefreshedAccessKeySaveOutcome {
                 status: RefreshedAccessKeySaveStatus::Saved,

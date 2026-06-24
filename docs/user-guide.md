@@ -415,9 +415,10 @@ did not pass `--force`, `--stdin`, or `--file`, the CLI first tries provider-spe
 refresh. With `--json`, successful automatic refresh emits `decision`, `refreshed`, and `saved`
 events without printing raw tokens. If refresh fails, the CLI emits `refresh_failed` and falls back
 to the normal authorization ticket so callers can prompt the user without losing the old credential.
-If another cooperating process changes the current selected profile name, or changes that profile's
-credential or refresh-secret state before the older refresh response is saved, the CLI emits
-`refresh_skipped` with `reason=profile_changed` and leaves the current store untouched. Direct
+If another cooperating process changes the current selected profile name before an access-key
+browser handoff is saved, or changes that profile's credential or refresh-secret state before the
+older refresh response is saved, the CLI emits `refresh_skipped` with `reason=profile_changed` and
+leaves the current store untouched. Direct
 `auth renew-access-key` / `auth renew-web` / `auth renew-tv` commands treat that stale save as a
 failed renewal and exit non-zero; media preflight re-evaluates the current profile before deciding
 whether to continue.
@@ -475,16 +476,17 @@ matching refresh secret is stored. Preflight never writes to stdout, so `--json`
 single JSON plan, playback plan, or download report. `download --progress-json` suppresses plaintext preflight
 diagnostics, but the final CLI error line may still be written to stderr on failure; wrappers should
 parse only JSON object lines. In `renew` mode, missing required non-access-key credentials still stop
-generic access-key auto-refresh, but present credentials with stale, expiring, expired, or unknown
-lifecycle metadata can be refreshed before the request when a matching refresh secret is available;
-otherwise they do not prevent refreshing a ready generic access key, and the subsequent request still
-proves whether those credentials work. Stored credential values are trimmed before request use, and
-whitespace-only values are treated as missing. For archive downloads, `renew` defers automatic access-key refresh
-until after duplicate handling when the initial plan succeeds, so `--on-duplicate cancel` stops
-without calling refresh endpoints or rewriting stored credentials. If initial archive planning fails
-with an auth-like credential error, the CLI refreshes a ready generic access key and retries planning
-once before reporting the failure, including cases where local lifecycle metadata had still
-considered the key fresh. Tune the local lifecycle policy with global `--credential-stale-after-seconds` and
+generic access-key auto-refresh, and any missing required credential that the current refresh cannot
+repair stops unrelated refresh attempts. Present credentials with stale, expiring, expired, or
+unknown lifecycle metadata can be refreshed before the request when a matching refresh secret is
+available; otherwise they do not prevent refreshing a ready generic access key, and the subsequent
+request still proves whether those credentials work. Stored credential values are trimmed before
+request use, and whitespace-only values are treated as missing. For archive downloads, `renew`
+defers automatic credential refresh until after duplicate handling when the initial plan succeeds,
+so `--on-duplicate cancel` stops without calling refresh endpoints or rewriting stored credentials.
+If initial archive planning fails with an auth-like credential error, the CLI refreshes a ready
+generic access key and retries planning once before reporting the failure, including cases where
+local lifecycle metadata had still considered the key fresh. Tune the local lifecycle policy with global `--credential-stale-after-seconds` and
 `--credential-expiring-within-seconds`, or the equivalent `BBDOWN_CREDENTIAL_PREFLIGHT`,
 `BBDOWN_CREDENTIAL_STALE_AFTER_SECONDS`, and `BBDOWN_CREDENTIAL_EXPIRING_WITHIN_SECONDS`
 environment variables.
