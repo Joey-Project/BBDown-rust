@@ -373,8 +373,8 @@ token。如果 refresh 失败，CLI 会输出 `refresh_failed`，然后回退到
 这样调用方可以提示用户重新授权而不会丢掉旧 credential。如果另一个协作进程在较旧 refresh
 response 保存前改变了当前选择的 profile name，或改变了该 profile 的 credential / refresh-secret
 状态，CLI 会输出 `refresh_skipped`，并带上 `reason=profile_changed`，同时保持当前 store 不变。
-直接运行的 `auth renew-web` / `auth renew-tv` 会把这种 stale save 视为刷新失败并以非零状态退出；
-media preflight 会重新评估当前 profile 后再决定是否继续。
+直接运行的 `auth renew-access-key` / `auth renew-web` / `auth renew-tv` 会把这种 stale save
+视为刷新失败并以非零状态退出；media preflight 会重新评估当前 profile 后再决定是否继续。
 WEB QR 和 TV QR login 也可能返回 refresh token。CLI 会把这些值作为明文 selected-profile
 secret 保存到 `profile_secrets.<profile>.cookie` 和
 `profile_secrets.<profile>.tv_access_key`，lifecycle metadata 只保存来源、获取时间、可选过期

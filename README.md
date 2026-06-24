@@ -252,8 +252,9 @@ newer store after being reclaimed or remove a newer writer's lock after recovery
 If a slower automatic refresh response no longer matches the current selected profile name or that
 profile's credential/refresh-secret state, JSON output emits `refresh_skipped` with
 `reason=profile_changed` and leaves the current credential store untouched. Direct
-`auth renew-web` / `auth renew-tv` commands treat that stale save as a failed renewal and exit
-non-zero; media preflight re-evaluates the current profile before deciding whether to continue.
+`auth renew-access-key` / `auth renew-web` / `auth renew-tv` commands treat that stale save as a
+failed renewal and exit non-zero; media preflight re-evaluates the current profile before deciding
+whether to continue.
 WEB QR and TV QR login responses may also include refresh tokens. When present, the CLI stores them
 as plaintext profile secrets under `profile_secrets.<profile>.cookie` or
 `profile_secrets.<profile>.tv_access_key`, while lifecycle metadata records only token presence and

@@ -112,3 +112,9 @@ superseded_by:
     successfully. The fix makes direct renewal treat `SkippedStaleRequest` as a failed renewal while
     preserving the no-overwrite guard, adds a TV direct-renew CLI e2e regression, and documents the
     direct-command versus media-preflight behavior.
+  - The follow-up current-head independent Codex rerun on `a6923ac` found that preflight could keep
+    using stale profile/status input after a stale-save skip, that generic `auth renew-access-key`
+    still treated a stale-save skip as success, and that direct WEB stale-save behavior lacked e2e
+    coverage. The fix reloads lifecycle state for each stored preflight refresh attempt, makes
+    direct generic access-key renewal fail after `refresh_skipped`, and adds direct WEB/generic
+    access-key stale-save CLI e2e coverage.

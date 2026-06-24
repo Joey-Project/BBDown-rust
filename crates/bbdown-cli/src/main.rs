@@ -1357,16 +1357,16 @@ async fn refresh_stored_credentials_for_preflight(
         return Ok(());
     }
 
-    let policy = credential_preflight.policy();
-    let (profiles, _selected_profile, mut statuses) =
-        lifecycle_statuses_for_selection(credential_runtime, false, &policy)?;
-    let status = statuses
-        .pop()
-        .context("failed to evaluate selected credential profile")?;
     for kind in [CredentialKind::Cookie, CredentialKind::TvAccessKey] {
         if !report_should_attempt_stored_credential_renewal(report, kind) {
             continue;
         }
+        let policy = credential_preflight.policy();
+        let (profiles, _selected_profile, mut statuses) =
+            lifecycle_statuses_for_selection(credential_runtime, false, &policy)?;
+        let status = statuses
+            .pop()
+            .context("failed to evaluate selected credential profile")?;
         let decision = CredentialRenewalDecision::from_profile_status(&status, kind, false);
         if decision.automatic_refresh_readiness != CredentialAutomaticRefreshReadiness::Ready {
             continue;
@@ -4249,8 +4249,16 @@ async fn try_access_key_auto_refresh(
     let client = BiliClient::new(client_runtime.client_config(Credentials::default()));
     match client.refresh_access_key(&refresh.request).await {
         Ok(refreshed) => {
-            save_refreshed_access_key(credential_runtime, &refresh, &refreshed, args.json)?;
-            Ok(true)
+            let outcome =
+                save_refreshed_access_key(credential_runtime, &refresh, &refreshed, args.json)?;
+            match outcome.status {
+                RefreshedAccessKeySaveStatus::Saved => Ok(true),
+                RefreshedAccessKeySaveStatus::SkippedStaleRequest => {
+                    bail!(
+                        "automatic access_key refresh skipped because the selected profile changed"
+                    )
+                }
+            }
         }
         Err(error) => {
             print_access_key_auto_refresh_failure(args.json, &refresh.request, &error)?;
@@ -4283,7 +4291,7 @@ fn save_refreshed_access_key(
     refresh: &StoredAccessKeyRefreshRequest,
     refreshed: &AccessKeyLoginCredentials,
     json: bool,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<RefreshedAccessKeySaveOutcome> {
     let outcome = save_refreshed_access_key_silent(credential_runtime, refresh, refreshed)?;
     if json {
         match outcome.status {
@@ -4298,7 +4306,7 @@ fn save_refreshed_access_key(
                     "event": "saved",
                     "kind": "access_key",
                     "saved": outcome.summary,
-                }))
+                }))?;
             }
             RefreshedAccessKeySaveStatus::SkippedStaleRequest => {
                 print_json_line(&serde_json::json!({
@@ -4306,20 +4314,21 @@ fn save_refreshed_access_key(
                     "kind": "access_key",
                     "reason": "profile_changed",
                     "saved": outcome.summary,
-                }))
+                }))?;
             }
         }
     } else {
         match outcome.status {
             RefreshedAccessKeySaveStatus::Saved => {
                 print_human_line("access key refreshed")?;
-                print_human_line("access key saved")
+                print_human_line("access key saved")?;
             }
             RefreshedAccessKeySaveStatus::SkippedStaleRequest => {
-                print_human_line("access key refresh skipped: selected profile already changed")
+                print_human_line("access key refresh skipped: selected profile already changed")?;
             }
         }
     }
+    Ok(outcome)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

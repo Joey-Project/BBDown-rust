@@ -8032,6 +8032,30 @@ fn save_refreshable_cookie_profile(credential_file: &Path) -> anyhow::Result<()>
     Ok(())
 }
 
+fn save_newer_cookie_profile(credential_file: &Path) -> anyhow::Result<()> {
+    let store = CredentialStore::new(credential_file.to_path_buf());
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_profile(
+        "default",
+        Credentials::default().with_cookie("SESSDATA=newer;bili_jct=NEWER_CSRF"),
+    )?;
+    let mut metadata = CredentialProfileMetadata::default();
+    metadata.set_credential(
+        CredentialKind::Cookie,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::WebQrLogin)
+            .with_acquired_at_unix_millis(2_000)
+            .with_refresh_token_present(true),
+    );
+    profiles.set_profile_metadata("default", metadata)?;
+    let mut secrets = CredentialProfileSecrets::default();
+    secrets
+        .set_cookie(CredentialRefreshSecret::default().with_refresh_token("NEWER_COOKIE_REFRESH"));
+    profiles.set_profile_secrets("default", secrets)?;
+    store.save_profiles(&profiles)?;
+    Ok(())
+}
+
 fn save_cookie_profile_without_refresh_secret(credential_file: &Path) -> anyhow::Result<()> {
     let store = CredentialStore::new(credential_file.to_path_buf());
     let mut profiles = CredentialProfiles::default();
@@ -8559,6 +8583,100 @@ fn auth_renew_web_fails_when_cookie_refresh_request_fails() -> anyhow::Result<()
     info_mock.assert_calls(1);
     correspond_mock.assert_calls(1);
     refresh_mock.assert_calls(1);
+    Ok(())
+}
+
+#[test]
+fn auth_renew_web_fails_when_profile_changes_before_save() -> anyhow::Result<()> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let server_url = format!("http://{}", listener.local_addr()?);
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    save_refreshable_cookie_profile(&credential_file)?;
+    let thread_credential_file = credential_file.clone();
+    let server_handle = thread::spawn(move || -> anyhow::Result<()> {
+        for step in 0..4 {
+            let (mut stream, _) = listener.accept()?;
+            let mut buffer = [0_u8; 8192];
+            let request_len = stream.read(&mut buffer)?;
+            let request = String::from_utf8_lossy(&buffer[..request_len]);
+            let (body, headers) = if step == 0
+                && request.starts_with("GET /x/passport-login/web/cookie/info?")
+            {
+                (
+                    r#"{"code":0,"data":{"refresh":true,"timestamp":1710000000000}}"#,
+                    String::new(),
+                )
+            } else if step == 1 && request.starts_with("GET /correspond/1/") {
+                (
+                    r#"<html><div id="1-name">REFRESH_CSRF</div></html>"#,
+                    String::new(),
+                )
+            } else if step == 2 && request.starts_with("POST /x/passport-login/web/cookie/refresh ")
+            {
+                save_newer_cookie_profile(&thread_credential_file)?;
+                (
+                    r#"{"code":0,"data":{"refresh_token":"NEW_COOKIE_REFRESH"}}"#,
+                    concat!(
+                        "Set-Cookie: SESSDATA=new; Path=/; Domain=.bilibili.com\r\n",
+                        "Set-Cookie: bili_jct=NEW_CSRF; Path=/; Domain=.bilibili.com\r\n"
+                    )
+                    .to_owned(),
+                )
+            } else if step == 3
+                && request.starts_with("POST /x/passport-login/web/confirm/refresh ")
+            {
+                (r#"{"code":0}"#, String::new())
+            } else {
+                anyhow::bail!("unexpected web refresh request at step {step}: {request}");
+            };
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{}Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+                headers,
+                body.len(),
+                body
+            )?;
+        }
+        Ok(())
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--passport-base")
+        .arg(server_url.clone())
+        .arg("--web-base")
+        .arg(server_url)
+        .args(["auth", "renew-web", "--json"])
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    server_handle
+        .join()
+        .map_err(|_| anyhow::anyhow!("web refresh mock server thread panicked"))??;
+    let events = json_lines(&output)?;
+
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["event"], "decision");
+    assert_eq!(events[0]["decision"]["action"], "refresh");
+    assert_eq!(events[1]["event"], "refresh_skipped");
+    assert_eq!(events[1]["kind"], "cookie");
+    assert_eq!(events[1]["reason"], "profile_changed");
+    let profiles = CredentialStore::new(credential_file).load_profiles()?;
+    assert_eq!(
+        profiles.profile("default")?.cookie.as_deref(),
+        Some("SESSDATA=newer;bili_jct=NEWER_CSRF")
+    );
+    let secrets = profiles.profile_secrets("default")?;
+    assert_eq!(
+        secrets
+            .cookie()
+            .and_then(|secret| secret.refresh_token.as_deref()),
+        Some("NEWER_COOKIE_REFRESH")
+    );
     Ok(())
 }
 
@@ -9213,6 +9331,89 @@ fn auth_renew_access_key_auto_refreshes_ready_provider_secret() -> anyhow::Resul
 }
 
 #[test]
+fn auth_renew_access_key_fails_when_profile_changes_before_save() -> anyhow::Result<()> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let server_url = format!("http://{}", listener.local_addr()?);
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    save_lifecycle_cli_profiles_with_access_key_secret(
+        &credential_file,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_checked_at_unix_millis(9_000_000_000_000),
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(1_000)
+            .with_expires_at_unix_millis(2_000)
+            .with_refresh_token_present(true),
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("OLD_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    )?;
+    let thread_credential_file = credential_file.clone();
+    let server_handle = thread::spawn(move || -> anyhow::Result<()> {
+        let (mut stream, _) = listener.accept()?;
+        let mut buffer = [0_u8; 4096];
+        let request_len = stream.read(&mut buffer)?;
+        let request = String::from_utf8_lossy(&buffer[..request_len]);
+        if !request.starts_with("POST /x/passport-tv-login/oauth2/refresh_token ") {
+            anyhow::bail!("unexpected request: {request}");
+        }
+        save_newer_intl_access_key_profile(&thread_credential_file)?;
+        let body = r#"{"code":0,"data":{"token_info":{"access_token":"AUTO_ACCESS_SECRET","refresh_token":"AUTO_REFRESH_SECRET","expires_in":60}}}"#;
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        )?;
+        Ok(())
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--passport-base")
+        .arg(server_url)
+        .args(["auth", "renew-access-key", "--json"])
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    server_handle
+        .join()
+        .map_err(|_| anyhow::anyhow!("access-key refresh mock server thread panicked"))??;
+    let events = json_lines(&output)?;
+
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["event"], "decision");
+    assert_eq!(events[0]["decision"]["action"], "reauthorize");
+    assert_eq!(events[1]["event"], "refresh_skipped");
+    assert_eq!(events[1]["kind"], "access_key");
+    assert_eq!(events[1]["reason"], "profile_changed");
+    let profiles = CredentialStore::new(credential_file).load_profiles()?;
+    assert_eq!(
+        profiles.profile("intl")?.access_key.as_deref(),
+        Some("NEWER_ACCESS_SECRET")
+    );
+    let secrets = profiles.profile_secrets("intl")?;
+    let secret = secrets
+        .access_key_provider(AccessKeyProvider::BalhBiliplus)
+        .ok_or_else(|| anyhow::anyhow!("missing newer access-key provider secret"))?;
+    assert_eq!(
+        secret.refresh_token.as_deref(),
+        Some("NEWER_REFRESH_SECRET")
+    );
+    Ok(())
+}
+
+#[test]
 fn auth_renew_access_key_auto_refresh_redacts_echoed_failure() -> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;
     let credential_file = temp.path().join("credentials.json");
@@ -9458,6 +9659,37 @@ fn save_intl_access_key_profile(credential_file: &Path, access_key: &str) -> any
         "intl",
         Credentials::default().with_access_key(access_key.to_owned()),
     )?;
+    store.save_profiles(&profiles)?;
+    Ok(())
+}
+
+fn save_newer_intl_access_key_profile(credential_file: &Path) -> anyhow::Result<()> {
+    let store = CredentialStore::new(credential_file.to_path_buf());
+    let mut profiles = store.load_profiles()?;
+    profiles.set_profile(
+        "intl",
+        Credentials::default().with_access_key("NEWER_ACCESS_SECRET"),
+    )?;
+    let mut metadata = CredentialProfileMetadata::default();
+    metadata.set_credential(
+        CredentialKind::AccessKey,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(2_000)
+            .with_expires_at_unix_millis(3_000)
+            .with_refresh_token_present(true),
+    );
+    profiles.set_profile_metadata("intl", metadata)?;
+    let mut secrets = CredentialProfileSecrets::default();
+    secrets.set_access_key_provider(
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token("NEWER_REFRESH_SECRET")
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    );
+    profiles.set_profile_secrets("intl", secrets)?;
     store.save_profiles(&profiles)?;
     Ok(())
 }
