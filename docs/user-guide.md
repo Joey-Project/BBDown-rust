@@ -427,7 +427,8 @@ cookie and `auth renew-tv` to refresh a saved TV token. With `--json`, both comm
 profile is fresh, they emit only `no_action`; if the profile has no stored refresh secret, they emit
 a redacted `refresh_failed` event instead of prompting for login. If Bilibili says the selected WEB
 cookie does not need refresh yet, `auth renew-web --json` emits `refresh_not_needed` and does not
-rewrite the stored credential or lifecycle acquisition timestamp.
+rewrite the stored credential or lifecycle acquisition timestamp; it records a new lifecycle checked
+timestamp so later preflight checks do not repeatedly treat the same confirmed cookie as stale.
 All credential import, access-key login, and access-key renewal writes are selected-profile updates:
 the CLI reloads the latest profile document under a cooperative credential-store lock, merges only
 the chosen profile, then writes the private file back. Other profiles, unrelated credential kinds,

@@ -381,7 +381,8 @@ secret 保存到 `profile_secrets.<profile>.cookie` 和
 `decision` event，非交互刷新成功后输出 `refreshed` 和 `saved`。如果当前 profile 仍是 fresh，
 只会输出 `no_action`；如果没有保存 refresh secret，则输出脱敏的 `refresh_failed`，不会进入
 交互登录流程。如果 Bilibili 表示当前 WEB cookie 暂时不需要 refresh，`auth renew-web --json`
-会输出 `refresh_not_needed`，并且不会重写已存 credential 或 lifecycle 获取时间戳。
+会输出 `refresh_not_needed`，并且不会重写已存 credential 或 lifecycle 获取时间戳；它会记录新的
+lifecycle 检查时间，避免后续 preflight 反复把同一个已确认 cookie 判为 stale。
 所有 credential import、access-key login
 和 access-key renewal 写入都是 selected-profile update：CLI 会在协作 credential-store lock 内
 重新读取最新 profile document，只 merge 当前选择的 profile，然后写回私有文件。其它 profile、

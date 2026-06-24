@@ -34,6 +34,10 @@ superseded_by:
 - Validation:
   - `cargo test -p bbdown-core login --locked`
   - `cargo test -p bbdown-cli --test cli_e2e auth --locked`
+  - `cargo test -p bbdown-core web_cookie_refresh --locked`
+  - `cargo test -p bbdown-core refreshes_web_cookie --locked`
+  - `cargo test -p bbdown-cli --test cli_e2e web_cookie --locked`
+  - `cargo test -p bbdown-cli --test cli_e2e auth_renew_web --locked`
   - `cargo fmt --all -- --check`
   - `git diff --check`
   - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/5f1ab3fa5d9f7d534507216a2d6f765694f9b710/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`
@@ -47,3 +51,6 @@ superseded_by:
     coverage.
   - A later whole-diff rerun was inconclusive after a bounded wait; a focused Codex fallback review
     over the repaired refresh paths returned `LGTM`.
+  - PR-readiness independent Codex review returned `LGTM`; offline frozen diff review then found
+    that WEB refresh tokens should not be sent in URL query strings and that WEB no-op refresh
+    should update lifecycle checked time. Both were fixed with targeted regression coverage.

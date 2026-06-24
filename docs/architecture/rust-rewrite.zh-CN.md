@@ -425,10 +425,11 @@ WEB cookie 和 TV `tv_access_key` refresh 使用独立 credential slot，而不�
 metadata 只保留 `refresh_token_present` 布尔值和时间戳。
 `BiliClient::refresh_web_cookie(...)` 会执行 WEB cookie refresh handshake，包括
 `cookie/info`、加密的 `correspond/1/{path}`、cookie refresh 和 confirm-refresh 调用。
-`BiliClient::refresh_tv_access_key(...)` 会复用 TV OAuth refresh endpoint，并返回刷新后的运行
-时 `tv_access_key`、可选 replacement refresh token 和过期 metadata。WEB cookie refresh
-result 会携带 `refreshed` 标记；当 `cookie/info` 表示暂时不需要 refresh 时，CLI 会把结果视为
-no-op，不会重写 lifecycle acquisition metadata。CLI 只有在 credential store update lock 内
+refresh token 会放在 POST form body 中，不进入 URL query string。
+`BiliClient::refresh_tv_access_key(...)` 会复用 TV OAuth refresh endpoint，并返回刷新后的运行时
+`tv_access_key`、可选 replacement refresh token 和过期 metadata。WEB cookie refresh result
+会携带 `refreshed` 标记；当 `cookie/info` 表示暂时不需要 refresh 时，CLI 会把结果视为 no-op，
+不会重写 lifecycle acquisition metadata，并会记录新的 checked timestamp。CLI 只有在 credential store update lock 内
 确认当前所选 profile、原 credential 和 refresh secret 仍与产生 response 的 request 匹配后，
 才会保存刷新后的 WEB/TV credential。
 media credential preflight 被建模为显式 policy layer，而不是隐藏在

@@ -767,21 +767,22 @@ impl BiliClient {
             .fetch_web_cookie_refresh_csrf(&request.cookie, &correspond_path)
             .await?;
 
-        let mut refresh_url = Self::endpoint_url(
+        let refresh_url = Self::endpoint_url(
             &self.config.endpoints.passport_base,
             "/x/passport-login/web/cookie/refresh",
         )?;
-        refresh_url
-            .query_pairs_mut()
-            .append_pair("csrf", &csrf)
-            .append_pair("refresh_csrf", &refresh_csrf)
-            .append_pair("refresh_token", &request.refresh_token)
-            .append_pair("source", "main_web");
+        let refresh_form = [
+            ("csrf", csrf.as_str()),
+            ("refresh_csrf", refresh_csrf.as_str()),
+            ("refresh_token", request.refresh_token.as_str()),
+            ("source", "main_web"),
+        ];
         let response = self
             .http
             .post(refresh_url)
             .headers(self.web_cookie_refresh_headers(&request.cookie)?)
             .timeout(self.config.request_timeout)
+            .form(&refresh_form)
             .send()
             .await
             .map_err(BiliClient::http_error_without_url)?
@@ -798,18 +799,19 @@ impl BiliClient {
             .ok_or(Error::MissingField("refresh_token"))?;
 
         let confirm_csrf = csrf_from_cookie(&refreshed_cookie).unwrap_or(csrf);
-        let mut confirm_url = Self::endpoint_url(
+        let confirm_url = Self::endpoint_url(
             &self.config.endpoints.passport_base,
             "/x/passport-login/web/confirm/refresh",
         )?;
-        confirm_url
-            .query_pairs_mut()
-            .append_pair("csrf", &confirm_csrf)
-            .append_pair("refresh_token", &request.refresh_token);
+        let confirm_form = [
+            ("csrf", confirm_csrf.as_str()),
+            ("refresh_token", request.refresh_token.as_str()),
+        ];
         self.http
             .post(confirm_url)
             .headers(self.web_cookie_refresh_headers(&refreshed_cookie)?)
             .timeout(self.config.request_timeout)
+            .form(&confirm_form)
             .send()
             .await
             .map_err(BiliClient::http_error_without_url)?
@@ -2621,10 +2623,10 @@ mod tests {
         let refresh_mock = server.mock(|when, then| {
             when.method(POST)
                 .path("/x/passport-login/web/cookie/refresh")
-                .query_param("csrf", "OLD_CSRF")
-                .query_param("refresh_csrf", "REFRESH_CSRF")
-                .query_param("refresh_token", "OLD_REFRESH")
-                .query_param("source", "main_web")
+                .form_urlencoded_tuple("csrf", "OLD_CSRF")
+                .form_urlencoded_tuple("refresh_csrf", "REFRESH_CSRF")
+                .form_urlencoded_tuple("refresh_token", "OLD_REFRESH")
+                .form_urlencoded_tuple("source", "main_web")
                 .header("cookie", "SESSDATA=old;bili_jct=OLD_CSRF");
             then.status(200)
                 .header("Set-Cookie", "SESSDATA=new; Path=/; Domain=.bilibili.com")
@@ -2640,8 +2642,8 @@ mod tests {
         let confirm_mock = server.mock(|when, then| {
             when.method(POST)
                 .path("/x/passport-login/web/confirm/refresh")
-                .query_param("csrf", "NEW_CSRF")
-                .query_param("refresh_token", "OLD_REFRESH")
+                .form_urlencoded_tuple("csrf", "NEW_CSRF")
+                .form_urlencoded_tuple("refresh_token", "OLD_REFRESH")
                 .header("cookie", "SESSDATA=new;bili_jct=NEW_CSRF");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0
@@ -2686,10 +2688,10 @@ mod tests {
         let refresh_mock = server.mock(|when, then| {
             when.method(POST)
                 .path("/x/passport-login/web/cookie/refresh")
-                .query_param("csrf", "OLD_CSRF")
-                .query_param("refresh_csrf", "REFRESH_CSRF")
-                .query_param("refresh_token", "OLD_REFRESH")
-                .query_param("source", "main_web")
+                .form_urlencoded_tuple("csrf", "OLD_CSRF")
+                .form_urlencoded_tuple("refresh_csrf", "REFRESH_CSRF")
+                .form_urlencoded_tuple("refresh_token", "OLD_REFRESH")
+                .form_urlencoded_tuple("source", "main_web")
                 .header("cookie", "SESSDATA=old;bili_jct=OLD_CSRF");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
@@ -2699,7 +2701,7 @@ mod tests {
         let confirm_mock = server.mock(|when, then| {
             when.method(POST)
                 .path("/x/passport-login/web/confirm/refresh")
-                .query_param("refresh_token", "OLD_REFRESH");
+                .form_urlencoded_tuple("refresh_token", "OLD_REFRESH");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0
             }));

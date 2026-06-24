@@ -2016,8 +2016,10 @@ async fn try_stored_credential_auto_refresh(
                         )?;
                         Ok(true)
                     } else {
-                        print_credential_refresh_not_needed(args.json, kind)?;
-                        Ok(false)
+                        let outcome =
+                            save_web_cookie_refresh_checked_silent(credential_runtime, &refresh)?;
+                        print_refreshed_credential_save_outcome(args.json, kind, &outcome)?;
+                        Ok(outcome.status == RefreshedCredentialSaveStatus::Noop)
                     }
                 }
                 Err(error) => {
@@ -2079,10 +2081,7 @@ async fn try_stored_credential_auto_refresh_for_preflight(
                     if refreshed.refreshed {
                         save_refreshed_web_cookie_silent(credential_runtime, &refresh, &refreshed)
                     } else {
-                        Ok(RefreshedCredentialSaveOutcome {
-                            status: RefreshedCredentialSaveStatus::Noop,
-                            summary: profiles.profile(&refresh.profile)?.redacted_summary(),
-                        })
+                        save_web_cookie_refresh_checked_silent(credential_runtime, &refresh)
                     }
                 }
                 Err(error) => {
@@ -2138,7 +2137,7 @@ async fn try_stored_credential_auto_refresh_for_preflight(
     }
     Ok(matches!(
         result.status,
-        RefreshedCredentialSaveStatus::Saved
+        RefreshedCredentialSaveStatus::Saved | RefreshedCredentialSaveStatus::Noop
     ))
 }
 
@@ -5095,6 +5094,44 @@ fn save_refreshed_web_cookie_silent(
         .context("failed to save credentials")
 }
 
+fn save_web_cookie_refresh_checked_silent(
+    credential_runtime: &CredentialRuntime,
+    refresh: &StoredCredentialRefreshRequest,
+) -> anyhow::Result<RefreshedCredentialSaveOutcome> {
+    let checked_at_unix_millis = current_unix_millis();
+    credential_runtime
+        .store
+        .update_profiles(|profiles| {
+            if !stored_refresh_request_matches_selected_profile(
+                credential_runtime,
+                profiles,
+                refresh,
+            )? {
+                let summary = profiles.profile(&refresh.profile)?.redacted_summary();
+                return Ok(RefreshedCredentialSaveOutcome {
+                    status: RefreshedCredentialSaveStatus::SkippedStaleRequest,
+                    summary,
+                });
+            }
+
+            let mut metadata = profiles.profile_metadata(&refresh.profile)?;
+            let cookie_metadata = metadata
+                .credential(CredentialKind::Cookie)
+                .cloned()
+                .unwrap_or_default()
+                .with_checked_at_unix_millis(checked_at_unix_millis)
+                .with_refresh_token_present(true);
+            metadata.set_credential(CredentialKind::Cookie, cookie_metadata);
+            profiles.set_profile_metadata(&refresh.profile, metadata)?;
+            let summary = profiles.profile(&refresh.profile)?.redacted_summary();
+            Ok(RefreshedCredentialSaveOutcome {
+                status: RefreshedCredentialSaveStatus::Noop,
+                summary,
+            })
+        })
+        .context("failed to save credentials")
+}
+
 fn save_refreshed_tv_access_key(
     credential_runtime: &CredentialRuntime,
     refresh: &StoredCredentialRefreshRequest,
@@ -5239,20 +5276,6 @@ fn print_refreshed_credential_save_outcome(
                 credential_kind_label(kind)
             )),
         }
-    }
-}
-
-fn print_credential_refresh_not_needed(json: bool, kind: CredentialKind) -> anyhow::Result<()> {
-    if json {
-        print_json_line(&serde_json::json!({
-            "event": "refresh_not_needed",
-            "kind": credential_kind_label(kind),
-        }))
-    } else {
-        print_human_line(format_args!(
-            "{} refresh not needed",
-            credential_kind_label(kind)
-        ))
     }
 }
 

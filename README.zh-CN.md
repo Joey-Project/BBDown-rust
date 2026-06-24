@@ -244,7 +244,7 @@ profile secret 保存到 `profile_secrets.<profile>.cookie` 或
 刷新成功时都会输出 `decision`、`refreshed` 和 `saved` JSON event，脱敏原始 cookie/token，
 并使用与 access-key refresh 相同的 stale-response guard。如果 Bilibili 返回当前 WEB cookie
 暂时不需要 refresh，`auth renew-web --json` 会输出 `refresh_not_needed`，并保持已存 cookie、
-refresh token 和 lifecycle 获取时间不变。
+refresh token 和 lifecycle 获取时间不变，同时更新 lifecycle 检查时间。
 `plan`、
 `playback` 和 `download` 也支持 `--credential-preflight warn|fail|renew`，方便调用方在 media
 request 前检查当前 profile，也会覆盖使用通用 `access_key` 的 intl/Bstar media path；同样可以用

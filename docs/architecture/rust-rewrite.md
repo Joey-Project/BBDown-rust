@@ -490,11 +490,12 @@ saves them under `profile_secrets.<profile>.cookie` and
 `profile_secrets.<profile>.tv_access_key` while lifecycle metadata keeps only the
 `refresh_token_present` bit and timestamps. `BiliClient::refresh_web_cookie(...)` performs the WEB
 cookie refresh handshake with `cookie/info`, the encrypted `correspond/1/{path}` step, cookie
-refresh, and confirm-refresh calls. `BiliClient::refresh_tv_access_key(...)` reuses the TV OAuth
-refresh endpoint and returns a refreshed runtime `tv_access_key`, optional replacement refresh
-token, and expiry metadata. WEB cookie refresh results carry a `refreshed` flag; when
-`cookie/info` reports no refresh is needed, the CLI treats that result as a no-op and does not
-rewrite lifecycle acquisition metadata. The CLI saves refreshed WEB/TV credentials only after
+refresh, and confirm-refresh calls, keeping the refresh token in POST form bodies instead of URL
+query strings. `BiliClient::refresh_tv_access_key(...)` reuses the TV OAuth refresh endpoint and
+returns a refreshed runtime `tv_access_key`, optional replacement refresh token, and expiry
+metadata. WEB cookie refresh results carry a `refreshed` flag; when `cookie/info` reports no
+refresh is needed, the CLI treats that result as a no-op, does not rewrite lifecycle acquisition
+metadata, and records a fresh checked timestamp. The CLI saves refreshed WEB/TV credentials only after
 checking, under the credential-store update lock, that the selected profile and original
 credential/refresh secret still match the request that produced the response.
 Media credential preflight is modeled as an explicit policy layer rather than hidden behavior inside

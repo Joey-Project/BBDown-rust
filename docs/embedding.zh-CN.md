@@ -270,7 +270,8 @@ key。嵌入方可以用已保存 cookie 和对应 refresh token 构造 `WebCook
 `EndpointConfig::web_base` 提取 `refresh_csrf`，调用 cookie refresh endpoint，合并
 `Set-Cookie` header，并确认旧 refresh token。如果 Bilibili 表示现有 cookie 暂时不需要
 refresh，返回的 `WebCookieRefreshCredentials::refreshed` 会是 `false`；嵌入方应把它当成
-no-op，而不是重写 acquisition metadata。用已保存 TV token 和 refresh token 构造
+no-op，而不是重写 credential 或 acquisition metadata，但记录新的 checked timestamp 有助于后续
+preflight 决策。用已保存 TV token 和 refresh token 构造
 `TvAccessKeyRefreshRequest` 后调用 `BiliClient::refresh_tv_access_key(...)`；它会走 TV OAuth
 refresh endpoint，并返回带运行时 `tv_access_key`、可选 refresh token 和过期 metadata 的
 `TvAccessKeyLoginCredentials`。这些 refresh 调用不会修改存储；嵌入方应在确认请求仍匹配当前

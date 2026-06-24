@@ -479,6 +479,73 @@ fn plan_credential_preflight_fail_blocks_missing_cookie_for_history() -> anyhow:
 }
 
 #[test]
+fn plan_credential_preflight_renew_marks_web_cookie_checked_when_refresh_not_needed()
+-> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    save_refreshable_cookie_profile(&credential_file)?;
+    mock_history_collection(&server);
+    mock_history_stream_plan_endpoints(&server);
+    let info_mock = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/passport-login/web/cookie/info")
+            .query_param("csrf", "OLD_CSRF")
+            .header("cookie", "SESSDATA=old;bili_jct=OLD_CSRF");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {"refresh": false, "timestamp": 1_710_000_000_000_u64}
+        }));
+    });
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-login/web/cookie/refresh");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {"refresh_token": "UNUSED"}
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--web-base")
+        .arg(server.base_url())
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("--credential-stale-after-seconds")
+        .arg("1")
+        .arg("plan")
+        .arg("history")
+        .arg("--select")
+        .arg("latest")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let json: Value = serde_json::from_slice(&output.stdout)?;
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert_eq!(json["entries"][0]["title"], "History video");
+    assert!(!stderr.contains("cookie for authenticated WEB API has stale lifecycle metadata"));
+    let profiles = CredentialStore::new(credential_file).load_profiles()?;
+    let metadata = profiles.profile_metadata("default")?;
+    let cookie_metadata = metadata
+        .credential(CredentialKind::Cookie)
+        .ok_or_else(|| anyhow::anyhow!("missing cookie metadata"))?;
+    assert_eq!(cookie_metadata.acquired_at_unix_millis, Some(1_000));
+    assert!(cookie_metadata.checked_at_unix_millis.is_some());
+    info_mock.assert_calls(1);
+    refresh_mock.assert_calls(0);
+    Ok(())
+}
+
+#[test]
 fn plan_credential_preflight_renew_skips_access_key_refresh_when_required_cookie_is_missing()
 -> anyhow::Result<()> {
     let server = MockServer::start();
@@ -1099,6 +1166,40 @@ fn mock_video_stream_plan_endpoints(server: &MockServer) {
                     {"content": "Main", "from": 15, "to": 180}
                 ]
             }
+        }));
+    });
+}
+
+fn mock_history_stream_plan_endpoints(server: &MockServer) {
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/playurl")
+            .query_param("avid", "170001")
+            .query_param("cid", "9988")
+            .query_param("try_look", "1");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "dash": {
+                    "duration": 3,
+                    "video": [{
+                        "id": 80,
+                        "baseUrl": "https://video.example/history-80.m4s",
+                        "base_url": "https://video.example/history-80.m4s"
+                    }],
+                    "audio": []
+                }
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/v2")
+            .query_param("aid", "170001")
+            .query_param("cid", "9988");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {"subtitle": {"subtitles": []}}
         }));
     });
 }
@@ -7993,10 +8094,10 @@ fn mock_web_cookie_refresh(server: &MockServer) -> WebCookieRefreshMocks<'_> {
     let refresh = server.mock(|when, then| {
         when.method(POST)
             .path("/x/passport-login/web/cookie/refresh")
-            .query_param("csrf", "OLD_CSRF")
-            .query_param("refresh_csrf", "REFRESH_CSRF")
-            .query_param("refresh_token", "OLD_COOKIE_REFRESH")
-            .query_param("source", "main_web")
+            .form_urlencoded_tuple("csrf", "OLD_CSRF")
+            .form_urlencoded_tuple("refresh_csrf", "REFRESH_CSRF")
+            .form_urlencoded_tuple("refresh_token", "OLD_COOKIE_REFRESH")
+            .form_urlencoded_tuple("source", "main_web")
             .header("cookie", "SESSDATA=old;bili_jct=OLD_CSRF");
         then.status(200)
             .header("Set-Cookie", "SESSDATA=new; Path=/; Domain=.bilibili.com")
@@ -8012,8 +8113,8 @@ fn mock_web_cookie_refresh(server: &MockServer) -> WebCookieRefreshMocks<'_> {
     let confirm = server.mock(|when, then| {
         when.method(POST)
             .path("/x/passport-login/web/confirm/refresh")
-            .query_param("csrf", "NEW_CSRF")
-            .query_param("refresh_token", "OLD_COOKIE_REFRESH")
+            .form_urlencoded_tuple("csrf", "NEW_CSRF")
+            .form_urlencoded_tuple("refresh_token", "OLD_COOKIE_REFRESH")
             .header("cookie", "SESSDATA=new;bili_jct=NEW_CSRF");
         then.status(200)
             .json_body_obj(&serde_json::json!({"code": 0}));
@@ -8220,7 +8321,7 @@ fn auth_renew_web_refreshes_cookie_secret() -> anyhow::Result<()> {
 }
 
 #[test]
-fn auth_renew_web_does_not_save_when_cookie_refresh_is_not_needed() -> anyhow::Result<()> {
+fn auth_renew_web_marks_checked_when_cookie_refresh_is_not_needed() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;
     let credential_file = temp.path().join("credentials.json");
@@ -8275,6 +8376,7 @@ fn auth_renew_web_does_not_save_when_cookie_refresh_is_not_needed() -> anyhow::R
         .credential(CredentialKind::Cookie)
         .ok_or_else(|| anyhow::anyhow!("missing cookie metadata"))?;
     assert_eq!(cookie_metadata.acquired_at_unix_millis, Some(1_000));
+    assert!(cookie_metadata.checked_at_unix_millis.is_some());
     let secrets = profiles.profile_secrets("default")?;
     assert_eq!(
         secrets

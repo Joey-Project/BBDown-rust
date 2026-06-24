@@ -289,8 +289,9 @@ saved refresh token, then call `BiliClient::refresh_web_cookie(...)`; the client
 `refresh_csrf` from `EndpointConfig::web_base`, calls the cookie refresh endpoint, merges
 `Set-Cookie` headers, and confirms the old refresh token. The returned
 `WebCookieRefreshCredentials::refreshed` flag is `false` when Bilibili says the existing cookie does
-not need refresh; embedders should treat that as a no-op rather than rewriting acquisition
-metadata. Build `TvAccessKeyRefreshRequest` from
+not need refresh; embedders should treat that as a no-op rather than rewriting credentials or
+acquisition metadata, though recording a fresh checked timestamp is useful for later preflight
+decisions. Build `TvAccessKeyRefreshRequest` from
 the saved TV token plus its refresh token, then call `BiliClient::refresh_tv_access_key(...)`; this
 routes through the TV OAuth refresh endpoint and returns `TvAccessKeyLoginCredentials` with a
 runtime `tv_access_key`, optional refresh token, and expiry metadata. These refresh calls do not
