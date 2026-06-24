@@ -10349,6 +10349,7 @@ fn mock_web_qr_login(web_server: &MockServer) {
             .header_missing("cookie");
         then.status(200)
             .header("Set-Cookie", "SESSDATA=sess; Path=/; Domain=.bilibili.com")
+            .header("Set-Cookie", "bili_jct=csrf; Path=/; Domain=.bilibili.com")
             .json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {

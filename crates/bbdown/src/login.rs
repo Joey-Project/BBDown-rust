@@ -984,7 +984,7 @@ impl BiliClient {
             .error_for_status()
             .map_err(BiliClient::http_error_without_url)?;
         let header_cookie = cookie_from_set_cookie_headers(response.headers())
-            .filter(|cookie| cookie_header_contains_non_empty_cookie(cookie, "SESSDATA"));
+            .filter(|cookie| web_qr_login_cookie_is_refreshable(cookie));
         let response = response
             .json::<ApiData<WebQrPollData>>()
             .await
@@ -1001,6 +1001,7 @@ impl BiliClient {
                     let url = data.url.ok_or(Error::MissingField("url"))?;
                     cookie_from_success_url(&url)?
                 };
+                let cookie = require_web_qr_login_cookie(cookie)?;
                 Ok(QrLoginCredentialsState::Succeeded {
                     credentials: QrLoginCredentials::new(Credentials {
                         cookie: Some(cookie),
@@ -1689,6 +1690,21 @@ fn cookie_header_contains_non_empty_cookie(cookie: &str, expected_name: &str) ->
         pair.split_once('=')
             .is_some_and(|(name, value)| name.trim() == expected_name && !value.trim().is_empty())
     })
+}
+
+fn web_qr_login_cookie_is_refreshable(cookie: &str) -> bool {
+    cookie_header_contains_non_empty_cookie(cookie, "SESSDATA")
+        && csrf_from_cookie(cookie).is_some()
+}
+
+fn require_web_qr_login_cookie(cookie: String) -> Result<String> {
+    if !cookie_header_contains_non_empty_cookie(&cookie, "SESSDATA") {
+        return Err(Error::MissingField("SESSDATA"));
+    }
+    if csrf_from_cookie(&cookie).is_none() {
+        return Err(Error::MissingField("bili_jct"));
+    }
+    Ok(cookie)
 }
 
 fn merge_cookie_with_set_cookie_headers(cookie: &str, headers: &HeaderMap) -> String {
@@ -3163,6 +3179,7 @@ mod tests {
                 .header_missing("cookie");
             then.status(200)
                 .header("Set-Cookie", "SESSDATA=sess; Path=/; Domain=.bilibili.com")
+                .header("Set-Cookie", "bili_jct=csrf; Path=/; Domain=.bilibili.com")
                 .json_body_obj(&serde_json::json!({
                     "code": 0,
                     "data": {
@@ -3199,7 +3216,7 @@ mod tests {
             client.poll_web_qr_login("DONE").await?,
             QrLoginState::Succeeded {
                 credentials: Credentials {
-                    cookie: Some("SESSDATA=sess".to_owned()),
+                    cookie: Some("SESSDATA=sess;bili_jct=csrf".to_owned()),
                     access_key: None,
                     tv_access_key: None,
                 }
@@ -3209,7 +3226,7 @@ mod tests {
             client.poll_web_qr_login_credentials("DONE").await?,
             QrLoginCredentialsState::Succeeded {
                 credentials: QrLoginCredentials::new(Credentials {
-                    cookie: Some("SESSDATA=sess".to_owned()),
+                    cookie: Some("SESSDATA=sess;bili_jct=csrf".to_owned()),
                     access_key: None,
                     tv_access_key: None,
                 })
@@ -3224,8 +3241,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn web_qr_poll_falls_back_to_url_when_header_cookie_has_no_sessdata() -> anyhow::Result<()>
-    {
+    async fn web_qr_poll_falls_back_to_url_when_header_cookie_is_not_refreshable()
+    -> anyhow::Result<()> {
         let server = MockServer::start();
         server.mock(|when, then| {
             when.method(GET)
@@ -3235,7 +3252,7 @@ mod tests {
             then.status(200)
                 .header(
                     "Set-Cookie",
-                    "buvid3=auxiliary; Path=/; Domain=.bilibili.com",
+                    "SESSDATA=partial; Path=/; Domain=.bilibili.com",
                 )
                 .json_body_obj(&serde_json::json!({
                     "code": 0,
@@ -3259,6 +3276,32 @@ mod tests {
                 .with_refresh_token("WEB_RT_URL")
             }
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn web_qr_poll_rejects_success_url_without_csrf() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/passport-login/web/qrcode/poll")
+                .query_param("qrcode_key", "DONE_BAD_URL")
+                .header_missing("cookie");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "code": 0,
+                    "refresh_token": "WEB_RT_BAD",
+                    "url": "https://www.bilibili.com/?SESSDATA=url_sess"
+                }
+            }));
+        });
+        let client = test_client(&server);
+
+        let Err(error) = client.poll_web_qr_login_credentials("DONE_BAD_URL").await else {
+            anyhow::bail!("success URL without csrf should fail");
+        };
+        assert!(matches!(error, Error::MissingField("bili_jct")));
         Ok(())
     }
 

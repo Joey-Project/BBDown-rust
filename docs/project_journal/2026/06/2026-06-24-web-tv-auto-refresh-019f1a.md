@@ -52,7 +52,8 @@ superseded_by:
   - `cargo test -p bbdown-cli download_archive_retries_plan_after_auth_failure_with_fresh_refreshable_access_key --test cli_e2e --locked`
   - `cargo test -p bbdown-cli passport_base_controls_tv_poll_when_tv_base_is_implicit --locked`
   - `cargo test -p bbdown-cli auth_renew_tv_uses_passport_base_when_tv_base_is_implicit --test cli_e2e --locked`
-  - `cargo test -p bbdown-core web_qr_poll_falls_back_to_url_when_header_cookie_has_no_sessdata --locked`
+  - `cargo test -p bbdown-core web_qr_poll_falls_back_to_url_when_header_cookie_is_not_refreshable --locked`
+  - `cargo test -p bbdown-core web_qr_poll_rejects_success_url_without_csrf --locked`
   - `cargo test -p bbdown-cli auth_renew_web_fails_when_refresh_secret_is_missing --locked`
   - `cargo test -p bbdown-cli auth_renew_tv_fails_when_refresh_secret_is_missing --locked`
   - `cargo test -p bbdown-core tv_keypair_access_key_refresh_uses_tv_passport_poll_base --locked`
@@ -157,7 +158,8 @@ superseded_by:
     despite the documented compatibility behavior. The fix makes the implicit TV poll base follow
     `--passport-base` unless `--tv-passport-base` or `--tv-passport-poll-base` is provided, with
     unit and CLI e2e coverage.
-  - The next independent Codex rerun on `5004ec9` found that successful WEB QR polling preferred
-    any `Set-Cookie` header over the success URL fallback, so an auxiliary-only cookie header could
-    bind a refresh token to a non-login cookie. The fix only trusts header cookies with non-empty
-    `SESSDATA`; otherwise WEB QR polling falls back to the success URL cookie, with core coverage.
+  - The final independent Codex rerun found two WEB QR cookie validation gaps: successful polling
+    preferred any `Set-Cookie` header over the success URL fallback, and WEB QR login could save a
+    refresh token with a cookie that lacked `bili_jct`/csrf, making later auto-refresh impossible.
+    The fix only trusts refreshable header cookies and requires the selected WEB QR cookie to contain
+    non-empty `SESSDATA` plus csrf, with core and CLI fixture coverage.
