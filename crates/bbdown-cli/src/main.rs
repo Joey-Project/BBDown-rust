@@ -1944,7 +1944,7 @@ fn app_playurl_auth_failure_may_have_used_selected_tv_access_key(
         bbdown_core::Error::Http(error) => {
             if error
                 .url()
-                .is_some_and(|url| !tv_access_key_playurl_json_path(url.path()))
+                .is_some_and(|url| !app_playurl_grpc_path(url.path()))
             {
                 return false;
             }
@@ -2009,6 +2009,14 @@ fn tv_access_key_playurl_json_path(path: &str) -> bool {
     const TV_ACCESS_KEY_PLAYURL_ENDPOINT_PATHS: &[&str] =
         &["/x/tv/playurl", "/pgc/player/api/playurltv"];
     endpoint_path_matches_any(path, TV_ACCESS_KEY_PLAYURL_ENDPOINT_PATHS)
+}
+
+fn app_playurl_grpc_path(path: &str) -> bool {
+    const APP_PLAYURL_GRPC_ENDPOINT_PATHS: &[&str] = &[
+        "/bilibili.app.playurl.v1.PlayURL/PlayView",
+        "/bilibili.pgc.gateway.player.v2.PlayURL/PlayView",
+    ];
+    endpoint_path_matches_any(path, APP_PLAYURL_GRPC_ENDPOINT_PATHS)
 }
 
 fn credential_preflight_report(
@@ -3082,7 +3090,40 @@ fn archive_plan_failure_may_be_credential_related(
                 authenticated_web_api_failure_may_have_used_cookie(context, error)
                     || (context.playurl_mode == Some(PlayurlMode::Tv)
                         && tv_playurl_auth_failure_may_have_used_selected_tv_access_key(error))
+                    || prepared_app_playurl_failure_may_have_used_selected_tv_access_key(
+                        prepared, context, error,
+                    )
             })
+}
+
+fn prepared_app_playurl_failure_may_have_used_selected_tv_access_key(
+    prepared: &PreparedMediaRequest,
+    context: &MediaCredentialPreflightContext,
+    error: &bbdown_core::Error,
+) -> bool {
+    context.playurl_mode == Some(PlayurlMode::App)
+        && prepared_app_playurl_selected_tv_access_key(prepared)
+        && app_playurl_auth_failure_may_have_used_selected_tv_access_key(error)
+}
+
+fn prepared_app_playurl_selected_tv_access_key(prepared: &PreparedMediaRequest) -> bool {
+    if let Some(deferred) = prepared.deferred_preflight.as_ref() {
+        return app_playurl_selected_tv_access_key(&deferred.report);
+    }
+
+    let has_access_key = trimmed_non_empty(prepared.credentials.access_key.as_deref()).is_some();
+    let has_tv_access_key =
+        trimmed_non_empty(prepared.credentials.tv_access_key.as_deref()).is_some();
+    if !has_tv_access_key {
+        return false;
+    }
+    if !has_access_key {
+        return true;
+    }
+    match prepared.access_key_provider {
+        Some(AccessKeyProvider::BalhBiliplus | AccessKeyProvider::BilibiliMainOauth2) => false,
+        Some(AccessKeyProvider::BiliIntlOauth2) | None => true,
+    }
 }
 
 fn plan_failure_may_be_credential_related(error: &bbdown_core::Error) -> bool {

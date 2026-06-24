@@ -1835,7 +1835,7 @@ fn download_archive_retries_tv_key_after_tv_playurl_login_failure() -> anyhow::R
     mock_empty_player_v2(&server, "170001", "2");
     let video = server.mock(|when, then| {
         when.method(GET).path("/video.m4s");
-        then.status(200).body("video");
+        then.status(200).body("v".repeat(1000));
     });
 
     let output = bbdown_command()?
@@ -1879,6 +1879,101 @@ fn download_archive_retries_tv_key_after_tv_playurl_login_failure() -> anyhow::R
     stale_tv_playurl.assert_calls(1);
     refresh_mock.assert_calls(1);
     fresh_tv_playurl.assert_calls(1);
+    video.assert_calls(1);
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn download_archive_retries_tv_key_after_app_playurl_http_auth_failure() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    save_fresh_refreshable_tv_access_key_profile(&credential_file)?;
+    mock_playback_metadata(&server);
+    let stale_app_playurl = server.mock(|when, then| {
+        when.method(POST)
+            .path("/bilibili.app.playurl.v1.PlayURL/PlayView")
+            .header("content-type", "application/grpc")
+            .header("authorization", "identify_v1 OLD_TV_ACCESS")
+            .header_exists("x-bili-metadata-bin")
+            .header_missing("cookie");
+        then.status(403).body("forbidden token expired");
+    });
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "OLD_TV_ACCESS")
+            .form_urlencoded_tuple("refresh_token", "OLD_TV_REFRESH");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "NEW_TV_ACCESS",
+                    "refresh_token": "NEW_TV_REFRESH",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+    let app_response = app_play_view_response_frame(&format!("{}/video.m4s", server.base_url()))?;
+    let fresh_app_playurl = server.mock(|when, then| {
+        when.method(POST)
+            .path("/bilibili.app.playurl.v1.PlayURL/PlayView")
+            .header("content-type", "application/grpc")
+            .header("authorization", "identify_v1 NEW_TV_ACCESS")
+            .header_exists("x-bili-metadata-bin")
+            .header_missing("cookie");
+        then.status(200).body(app_response.clone());
+    });
+    let video = server.mock(|when, then| {
+        when.method(GET).path("/video.m4s");
+        then.status(200).body("v".repeat(1000));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--app-grpc-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--tv-passport-poll-base")
+        .arg(server.base_url())
+        .arg("--playurl-mode")
+        .arg("app")
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("download")
+        .arg("av170001")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("video")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(stderr.contains("credential preflight: tv_access_key refreshed"));
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load()?
+            .tv_access_key
+            .as_deref(),
+        Some("NEW_TV_ACCESS")
+    );
+    stale_app_playurl.assert_calls(1);
+    refresh_mock.assert_calls(1);
+    fresh_app_playurl.assert_calls(1);
     video.assert_calls(1);
     Ok(())
 }

@@ -66,6 +66,8 @@ superseded_by:
   - `cargo test -p bbdown-cli download_archive_retries_plan_after_auth_failure_with_fresh_refreshable_access_key --test cli_e2e --locked`
   - `cargo test -p bbdown-core tv_keypair_refresh --lib --locked`
   - `cargo test -p bbdown-cli download_archive_retries_tv_key_after_tv_playurl_login_failure --test cli_e2e --locked`
+  - `cargo test -p bbdown-cli download_archive_retries_tv_key_after_app_playurl_http_auth_failure --test cli_e2e --locked`
+  - `cargo test -p bbdown-cli download_archive_does_not_refresh_generic_key_when_pgc_app_http_status_used_tv_key --test cli_e2e --locked`
   - `cargo test -p bbdown-cli auth_renew_tv_uses_passport_base_when_tv_base_is_implicit --test cli_e2e --locked`
   - `cargo check -p bbdown-cli --locked`
   - `cargo fmt --all -- --check`
@@ -188,3 +190,8 @@ superseded_by:
     refresh path only for that context, preserves the metadata HTTP no-refresh guard, and makes core
     BiliTV refresh fall back to a customized `passport_base` when `tv_passport_poll_base` remains at
     its default while still honoring explicit TV poll overrides.
+  - The helper-backed offline frozen diff review on `7c7e79c` found that APP playurl HTTP auth
+    failures still reused the TV JSON playurl path allowlist, and that archive retry did not admit
+    APP playurl failures that actually used the selected stored TV key. The fix adds an APP gRPC
+    path classifier, gates archive retry to APP requests that selected the TV key, and adds CLI e2e
+    coverage for APP playurl HTTP `403` followed by forced stored TV-key refresh.
