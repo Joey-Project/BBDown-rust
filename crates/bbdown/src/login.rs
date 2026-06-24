@@ -789,7 +789,7 @@ impl BiliClient {
             .error_for_status()
             .map_err(BiliClient::http_error_without_url)?;
         let has_refreshed_auth_cookie =
-            set_cookie_headers_contain_cookie(response.headers(), "SESSDATA");
+            set_cookie_headers_contain_non_empty_cookie(response.headers(), "SESSDATA");
         let refreshed_cookie =
             merge_cookie_with_set_cookie_headers(&request.cookie, response.headers());
         let response = response
@@ -1614,14 +1614,17 @@ fn cookie_from_set_cookie_headers(headers: &HeaderMap) -> Option<String> {
     (!pairs.is_empty()).then(|| pairs.join(";"))
 }
 
-fn set_cookie_headers_contain_cookie(headers: &HeaderMap, expected_name: &str) -> bool {
+fn set_cookie_headers_contain_non_empty_cookie(headers: &HeaderMap, expected_name: &str) -> bool {
     headers
         .get_all(SET_COOKIE)
         .iter()
         .filter_map(|value| value.to_str().ok())
         .filter_map(cookie_pair_from_set_cookie)
-        .filter_map(|pair| cookie_pair_name(&pair))
-        .any(|name| name == expected_name)
+        .any(|pair| {
+            pair.split_once('=').is_some_and(|(name, value)| {
+                name.trim() == expected_name && !value.trim().is_empty()
+            })
+        })
 }
 
 fn merge_cookie_with_set_cookie_headers(cookie: &str, headers: &HeaderMap) -> String {
@@ -1789,8 +1792,8 @@ mod tests {
         cookie_from_set_cookie_headers, cookie_from_success_url, csrf_from_cookie,
         intl_access_key_refresh_params, main_access_key_refresh_params,
         main_access_key_refresh_path, merge_cookie_with_set_cookie_headers, qrcode_key_from_url,
-        refresh_csrf_from_correspond_body, set_cookie_headers_contain_cookie, tv_login_params,
-        web_cookie_refresh_correspond_path,
+        refresh_csrf_from_correspond_body, set_cookie_headers_contain_non_empty_cookie,
+        tv_login_params, web_cookie_refresh_correspond_path,
     };
     use crate::{
         AccessKeyProvider, AccessKeyProviderSecret, AccessKeyRefreshKeypair,
@@ -1865,13 +1868,25 @@ mod tests {
             SET_COOKIE,
             HeaderValue::from_static("bili_jct=csrf; Path=/; Domain=.bilibili.com"),
         );
-        assert!(!set_cookie_headers_contain_cookie(&headers, "SESSDATA"));
+        assert!(!set_cookie_headers_contain_non_empty_cookie(
+            &headers, "SESSDATA"
+        ));
+
+        headers.append(
+            SET_COOKIE,
+            HeaderValue::from_static("SESSDATA=; Path=/; Domain=.bilibili.com"),
+        );
+        assert!(!set_cookie_headers_contain_non_empty_cookie(
+            &headers, "SESSDATA"
+        ));
 
         headers.append(
             SET_COOKIE,
             HeaderValue::from_static("SESSDATA=new; Path=/; Domain=.bilibili.com"),
         );
-        assert!(set_cookie_headers_contain_cookie(&headers, "SESSDATA"));
+        assert!(set_cookie_headers_contain_non_empty_cookie(
+            &headers, "SESSDATA"
+        ));
     }
 
     #[test]
@@ -2778,10 +2793,12 @@ mod tests {
                 .form_urlencoded_tuple("refresh_token", "OLD_REFRESH")
                 .form_urlencoded_tuple("source", "main_web")
                 .header("cookie", "SESSDATA=old;bili_jct=OLD_CSRF");
-            then.status(200).json_body_obj(&serde_json::json!({
-                "code": 0,
-                "data": {"refresh_token": "NEW_REFRESH"}
-            }));
+            then.status(200)
+                .header("Set-Cookie", "SESSDATA=; Path=/; Domain=.bilibili.com")
+                .json_body_obj(&serde_json::json!({
+                    "code": 0,
+                    "data": {"refresh_token": "NEW_REFRESH"}
+                }));
         });
         let confirm_mock = server.mock(|when, then| {
             when.method(POST)

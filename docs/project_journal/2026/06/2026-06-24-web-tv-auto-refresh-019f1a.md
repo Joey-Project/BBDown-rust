@@ -59,5 +59,8 @@ superseded_by:
     save a successful refresh without a refreshed `SESSDATA` `Set-Cookie`, WEB/TV preflight did not
     re-evaluate after a stale-response skip, and an internal stored-refresh request had a
     non-redacted `Debug` implementation. These were fixed with core and CLI regression coverage.
+  - The next current-head independent Codex rerun found that `Set-Cookie: SESSDATA=` empty values
+    still counted as refreshed auth cookies. This was fixed by requiring a non-empty `SESSDATA`
+    value and extending WEB cookie refresh regression coverage.
   - The helper-backed offline frozen diff review on `57bd18d..32faac5` returned `LGTM`; final PR
     readiness evidence is tracked on PR #72.
