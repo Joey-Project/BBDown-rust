@@ -62,5 +62,9 @@ superseded_by:
   - The next current-head independent Codex rerun found that `Set-Cookie: SESSDATA=` empty values
     still counted as refreshed auth cookies. This was fixed by requiring a non-empty `SESSDATA`
     value and extending WEB cookie refresh regression coverage.
+  - A subsequent current-head independent Codex rerun found that a later empty `SESSDATA`
+    `Set-Cookie` could still overwrite an earlier non-empty one after merge, and that internal
+    token-bearing refresh DTOs/endpoints still derived `Debug`. These were fixed by validating the
+    merged cookie header before confirmation and removing sensitive `Debug` derives.
   - The helper-backed offline frozen diff review on `57bd18d..32faac5` returned `LGTM`; final PR
     readiness evidence is tracked on PR #72.

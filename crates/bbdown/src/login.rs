@@ -788,10 +788,11 @@ impl BiliClient {
             .map_err(BiliClient::http_error_without_url)?
             .error_for_status()
             .map_err(BiliClient::http_error_without_url)?;
-        let has_refreshed_auth_cookie =
-            set_cookie_headers_contain_non_empty_cookie(response.headers(), "SESSDATA");
         let refreshed_cookie =
             merge_cookie_with_set_cookie_headers(&request.cookie, response.headers());
+        let has_refreshed_auth_cookie =
+            set_cookie_headers_contain_non_empty_cookie(response.headers(), "SESSDATA")
+                && cookie_header_contains_non_empty_cookie(&refreshed_cookie, "SESSDATA");
         let response = response
             .json::<ApiData<WebCookieRefreshData>>()
             .await
@@ -1097,13 +1098,13 @@ impl<T> ApiData<T> {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct WebQrGenerateData {
     url: String,
     qrcode_key: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct WebQrPollData {
     code: i64,
     message: Option<String>,
@@ -1111,13 +1112,13 @@ struct WebQrPollData {
     refresh_token: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct TvQrGenerateData {
     url: String,
     auth_code: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct TvQrPollData {
     access_token: String,
     refresh_token: Option<String>,
@@ -1130,12 +1131,12 @@ struct WebCookieRefreshInfoData {
     timestamp: u64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct WebCookieRefreshData {
     refresh_token: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct AccessKeyRefreshData {
     token_info: Option<AccessKeyRefreshTokenInfo>,
     access_key: Option<String>,
@@ -1146,7 +1147,7 @@ struct AccessKeyRefreshData {
     expires_in: Option<u64>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Default, Deserialize)]
 struct AccessKeyRefreshTokenInfo {
     access_key: Option<String>,
     access_token: Option<String>,
@@ -1206,7 +1207,6 @@ impl TvLoginContext {
     }
 }
 
-#[derive(Debug)]
 struct AccessKeyRefreshEndpoint<'a> {
     base: &'a str,
     path: &'static str,
@@ -1627,6 +1627,13 @@ fn set_cookie_headers_contain_non_empty_cookie(headers: &HeaderMap, expected_nam
         })
 }
 
+fn cookie_header_contains_non_empty_cookie(cookie: &str, expected_name: &str) -> bool {
+    cookie_header_pairs(cookie).into_iter().any(|pair| {
+        pair.split_once('=')
+            .is_some_and(|(name, value)| name.trim() == expected_name && !value.trim().is_empty())
+    })
+}
+
 fn merge_cookie_with_set_cookie_headers(cookie: &str, headers: &HeaderMap) -> String {
     let mut pairs = cookie_header_pairs(cookie);
     for pair in headers
@@ -1789,9 +1796,10 @@ mod tests {
         AccessKeyRenewalAction, AccessKeyRenewalDecision, AccessKeyRenewalReason,
         QrLoginCredentials, QrLoginState, QrLoginTicket, TvAccessKeyRefreshRequest, TvLoginContext,
         WebCookieRefreshRequest, access_key_credentials_from_refresh_data,
-        cookie_from_set_cookie_headers, cookie_from_success_url, csrf_from_cookie,
-        intl_access_key_refresh_params, main_access_key_refresh_params,
-        main_access_key_refresh_path, merge_cookie_with_set_cookie_headers, qrcode_key_from_url,
+        cookie_from_set_cookie_headers, cookie_from_success_url,
+        cookie_header_contains_non_empty_cookie, csrf_from_cookie, intl_access_key_refresh_params,
+        main_access_key_refresh_params, main_access_key_refresh_path,
+        merge_cookie_with_set_cookie_headers, qrcode_key_from_url,
         refresh_csrf_from_correspond_body, set_cookie_headers_contain_non_empty_cookie,
         tv_login_params, web_cookie_refresh_correspond_path,
     };
@@ -1859,6 +1867,7 @@ mod tests {
 
         assert_eq!(csrf_from_cookie(&merged).as_deref(), Some("csrf"));
         assert_eq!(merged, "SESSDATA=new;bili_jct=csrf;DedeUserID=1");
+        assert!(cookie_header_contains_non_empty_cookie(&merged, "SESSDATA"));
     }
 
     #[test]
@@ -1886,6 +1895,18 @@ mod tests {
         );
         assert!(set_cookie_headers_contain_non_empty_cookie(
             &headers, "SESSDATA"
+        ));
+    }
+
+    #[test]
+    fn detects_non_empty_cookie_header_values() {
+        assert!(cookie_header_contains_non_empty_cookie(
+            "SESSDATA=new;bili_jct=csrf",
+            "SESSDATA"
+        ));
+        assert!(!cookie_header_contains_non_empty_cookie(
+            "SESSDATA=;bili_jct=csrf",
+            "SESSDATA"
         ));
     }
 
@@ -2794,6 +2815,65 @@ mod tests {
                 .form_urlencoded_tuple("source", "main_web")
                 .header("cookie", "SESSDATA=old;bili_jct=OLD_CSRF");
             then.status(200)
+                .header("Set-Cookie", "SESSDATA=; Path=/; Domain=.bilibili.com")
+                .json_body_obj(&serde_json::json!({
+                    "code": 0,
+                    "data": {"refresh_token": "NEW_REFRESH"}
+                }));
+        });
+        let confirm_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/x/passport-login/web/confirm/refresh")
+                .form_urlencoded_tuple("refresh_token", "OLD_REFRESH");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0
+            }));
+        });
+        let client = test_client(&server);
+        let request =
+            WebCookieRefreshRequest::new("SESSDATA=old;bili_jct=OLD_CSRF", "OLD_REFRESH")?;
+
+        let error = client.refresh_web_cookie(&request).await.err();
+
+        assert!(matches!(
+            error,
+            Some(Error::MissingField("SESSDATA Set-Cookie"))
+        ));
+        refresh_mock.assert_calls(1);
+        confirm_mock.assert_calls(0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn web_cookie_refresh_rejects_merged_empty_auth_cookie() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/passport-login/web/cookie/info")
+                .query_param("csrf", "OLD_CSRF")
+                .header("cookie", "SESSDATA=old;bili_jct=OLD_CSRF");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {"refresh": true, "timestamp": 1_710_000_000_000_u64}
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path_matches(r"^/correspond/1/[0-9a-f]{256}$")
+                .header("cookie", "SESSDATA=old;bili_jct=OLD_CSRF");
+            then.status(200)
+                .body(r#"<html><div id="1-name">REFRESH_CSRF</div></html>"#);
+        });
+        let refresh_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/x/passport-login/web/cookie/refresh")
+                .form_urlencoded_tuple("csrf", "OLD_CSRF")
+                .form_urlencoded_tuple("refresh_csrf", "REFRESH_CSRF")
+                .form_urlencoded_tuple("refresh_token", "OLD_REFRESH")
+                .form_urlencoded_tuple("source", "main_web")
+                .header("cookie", "SESSDATA=old;bili_jct=OLD_CSRF");
+            then.status(200)
+                .header("Set-Cookie", "SESSDATA=new; Path=/; Domain=.bilibili.com")
                 .header("Set-Cookie", "SESSDATA=; Path=/; Domain=.bilibili.com")
                 .json_body_obj(&serde_json::json!({
                     "code": 0,
