@@ -983,7 +983,8 @@ impl BiliClient {
             .map_err(BiliClient::http_error_without_url)?
             .error_for_status()
             .map_err(BiliClient::http_error_without_url)?;
-        let header_cookie = cookie_from_set_cookie_headers(response.headers());
+        let header_cookie = cookie_from_set_cookie_headers(response.headers())
+            .filter(|cookie| cookie_header_contains_non_empty_cookie(cookie, "SESSDATA"));
         let response = response
             .json::<ApiData<WebQrPollData>>()
             .await
@@ -3218,6 +3219,45 @@ mod tests {
         assert_eq!(
             client.poll_web_qr_login("EXPIRED").await?,
             QrLoginState::Expired
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn web_qr_poll_falls_back_to_url_when_header_cookie_has_no_sessdata() -> anyhow::Result<()>
+    {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/passport-login/web/qrcode/poll")
+                .query_param("qrcode_key", "DONE_URL")
+                .header_missing("cookie");
+            then.status(200)
+                .header(
+                    "Set-Cookie",
+                    "buvid3=auxiliary; Path=/; Domain=.bilibili.com",
+                )
+                .json_body_obj(&serde_json::json!({
+                    "code": 0,
+                    "data": {
+                        "code": 0,
+                        "refresh_token": "WEB_RT_URL",
+                        "url": "https://www.bilibili.com/?SESSDATA=url_sess&bili_jct=url_csrf"
+                    }
+                }));
+        });
+        let client = test_client(&server);
+
+        assert_eq!(
+            client.poll_web_qr_login_credentials("DONE_URL").await?,
+            QrLoginCredentialsState::Succeeded {
+                credentials: QrLoginCredentials::new(Credentials {
+                    cookie: Some("SESSDATA=url_sess;bili_jct=url_csrf".to_owned()),
+                    access_key: None,
+                    tv_access_key: None,
+                })
+                .with_refresh_token("WEB_RT_URL")
+            }
         );
         Ok(())
     }
