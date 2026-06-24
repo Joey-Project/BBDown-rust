@@ -215,3 +215,7 @@ superseded_by:
     rewrite credentials. The fix updates English and Chinese README/user-guide text to match the
     implemented ordering: archive renew refreshes and replans before duplicate decisions, so cancel
     still skips media download/archive writes but can refresh and save WEB/TV credentials.
+  - The helper-backed frozen diff review on `e10e8a5` found that successful TV QR polling accepted
+    an empty `access_token`, which could let CLI storage overwrite or corrupt a saved TV token. The
+    fix rejects trim-empty TV QR `access_token` values with `MissingField("access_token")` and adds a
+    core regression.

@@ -1095,11 +1095,15 @@ impl BiliClient {
             TV_QR_EXPIRED => Ok(QrLoginCredentialsState::Expired),
             0 => {
                 let data = response.data.ok_or(Error::MissingField("data"))?;
+                let access_token = data.access_token.trim();
+                if access_token.is_empty() {
+                    return Err(Error::MissingField("access_token"));
+                }
                 Ok(QrLoginCredentialsState::Succeeded {
                     credentials: QrLoginCredentials::new(Credentials {
                         cookie: None,
                         access_key: None,
-                        tv_access_key: Some(data.access_token),
+                        tv_access_key: Some(access_token.to_owned()),
                     })
                     .with_refresh_token(data.refresh_token.unwrap_or_default())
                     .with_expires_in(data.expires_in),
@@ -3490,6 +3494,44 @@ mod tests {
                 .with_expires_in(Some(7200))
             }
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn tv_qr_poll_rejects_empty_access_token() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(POST)
+                .path("/x/passport-tv-login/qrcode/auth_code")
+                .header_missing("cookie")
+                .form_urlencoded_tuple("appkey", "4409e2ce8ffd12b8")
+                .form_urlencoded_tuple("auth_code", "")
+                .form_urlencoded_tuple("mobi_app", "android_tv_yst")
+                .form_urlencoded_tuple_exists("sign");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {"url": "https://tv.example/scan", "auth_code": "AUTH"}
+            }));
+        });
+        mock_tv_qr_poll(
+            &server,
+            "AUTH",
+            &serde_json::json!({
+                "code": 0,
+                "data": {
+                    "access_token": " ",
+                    "refresh_token": "TV_RT",
+                    "expires_in": 7200
+                }
+            }),
+        );
+        let client = test_client(&server);
+        let ticket = client.create_tv_qr_login().await?;
+
+        let Err(error) = client.poll_tv_qr_login_credentials(&ticket).await else {
+            anyhow::bail!("empty TV access token should fail");
+        };
+        assert!(matches!(error, Error::MissingField("access_token")));
         Ok(())
     }
 
