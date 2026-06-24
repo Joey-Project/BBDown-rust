@@ -227,7 +227,7 @@ reject terminal stdin, and `--file` rejects terminal-backed paths. The command n
 implicit stdin; pass `--stdin` for pipes or redirects. Use `--message-origin` when ingesting browser
 `postMessage` data and `--auth-base` / `--callback-origin` for compatible mocks or deployments.
 Use `--credential-profile <name>` for a single command, or `auth switch <name>` to persistently make
-an existing profile the default account for later commands.
+an existing profile, or the current default profile, the default account for later commands.
 `auth renew-access-key` evaluates the selected profile's access-key lifecycle metadata and emits a
 structured renewal decision. Fresh credentials return `no_action`; missing, unknown, stale,
 expiring, expired, or forced credentials return a BiliPlus/BALH reauthorization ticket. Passing

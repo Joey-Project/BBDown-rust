@@ -559,12 +559,15 @@ superseded_by:
   - `just ci`.
 - PR 11 implements persistent account switching:
   - `CredentialStore::set_default_profile(profile)` persists an existing profile as the default
-    account using the same cooperative update lock as other profile mutations.
+    account using the same cooperative update lock as other profile mutations; selecting the current
+    default profile is accepted as a no-op even before that empty profile has saved credentials.
   - `bbdown auth switch <profile>` changes the default account for later commands and supports
     `--json` for UI wrappers; it rejects missing profiles instead of creating empty accounts.
   - `--credential-profile <name>` remains a per-process override and does not mutate the persistent
     default.
   - User-facing and embedding docs now describe the persistent switch versus one-command override.
+  - Independent review follow-up fixed the fresh-store no-op case so `auth switch default` can keep
+    the selected default instead of requiring a profile document to exist first.
   - Current checkpoint:
     - `cargo fmt --all -- --check` reported formatting drift before `cargo fmt --all`.
     - `cargo fmt --all`.
@@ -574,6 +577,12 @@ superseded_by:
     - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/5f1ab3fa5d9f7d534507216a2d6f765694f9b710/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.
     - `git diff --check`.
     - `just ci`.
+    - Review-fix checkpoint:
+      - `cargo fmt --all -- --check`.
+      - `cargo test -p bbdown-core set_default_profile --locked`.
+      - `cargo test -p bbdown-cli --test cli_e2e auth_switch --locked`.
+      - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/5f1ab3fa5d9f7d534507216a2d6f765694f9b710/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.
+      - `just ci`.
 
 ## Next Steps
 

@@ -389,8 +389,8 @@ paths. The command never consumes implicit stdin; pass `--stdin` for pipes or re
 the login ticket; trusted manual callback URL/query input does not need that flag. Use `--auth-base`
 and `--callback-origin` for compatible mocks or deployments.
 Use `--credential-profile <name>` when one command should target a non-default account. Use
-`auth switch <name>` to persistently set an existing profile as the default account for later
-commands; it does not create empty profiles.
+`auth switch <name>` to persistently set an existing profile, or the current default profile, as the
+default account for later commands; it does not create new empty profiles.
 When the access-key callback includes `oauth_expires_at`, `expires_at`, or `expires_in`, the CLI
 records the derived lifecycle expiry metadata in the selected credential profile. It also records
 whether a refresh token was present without storing that token value in lifecycle metadata. When the
@@ -487,7 +487,8 @@ metadata, and non-secret guidance. Add `--all-profiles` to report every saved pr
 the profile output is limited to the selected profile. `--stale-after-seconds` and
 `--expiring-within-seconds` tune the local lifecycle policy for status and human health guidance.
 `auth switch <name>` changes which profile counts as the default account in future commands, while
-`--credential-profile <name>` still overrides the selected profile for only that process.
+`--credential-profile <name>` still overrides the selected profile for only that process. Switching
+to the current default profile is allowed as a no-op even before any credentials have been saved.
 
 Use `auth health` to diagnose configured credentials without exposing secret values. The command
 checks the WEB cookie against the web nav endpoint and checks both the generic `access_key` and TV

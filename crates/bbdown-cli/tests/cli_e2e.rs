@@ -7501,6 +7501,27 @@ fn auth_switch_rejects_missing_profile() -> anyhow::Result<()> {
 }
 
 #[test]
+fn auth_switch_allows_empty_current_default_profile() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .args(["auth", "switch", "default", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let switch_report: Value = serde_json::from_slice(&output)?;
+    assert_eq!(switch_report["previous_default_profile"], "default");
+    assert_eq!(switch_report["selected_profile"], "default");
+    assert!(!credential_file.exists());
+    Ok(())
+}
+
+#[test]
 fn credential_profile_arg_overrides_persistent_auth_switch() -> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;
     let credential_file = temp.path().join("credentials.json");

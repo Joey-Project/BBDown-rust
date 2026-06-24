@@ -1265,12 +1265,12 @@ impl CredentialStore {
     pub fn set_default_profile(&self, profile: &str) -> Result<String> {
         let profile = normalize_profile_name(profile)?;
         self.update_profiles(|profiles| {
-            if !profiles.profiles.contains_key(&profile) {
+            let previous = profiles.default_profile.clone();
+            if profile != previous && !profiles.profiles.contains_key(&profile) {
                 return Err(Error::InvalidInput(format!(
                     "credential profile {profile:?} does not exist"
                 )));
             }
-            let previous = profiles.default_profile.clone();
             profiles.set_default_profile(&profile)?;
             Ok(previous)
         })
@@ -2373,6 +2373,23 @@ mod tests {
                 .to_string()
                 .contains("credential profile \"missing\" does not exist")
         );
+        assert_eq!(
+            store.load_profiles()?.default_profile,
+            DEFAULT_CREDENTIAL_PROFILE
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn set_default_profile_allows_empty_current_default_profile() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("credentials.json");
+        let store = CredentialStore::new(path.clone());
+
+        let previous = store.set_default_profile(DEFAULT_CREDENTIAL_PROFILE)?;
+
+        assert_eq!(previous, DEFAULT_CREDENTIAL_PROFILE);
+        assert!(!path.exists());
         assert_eq!(
             store.load_profiles()?.default_profile,
             DEFAULT_CREDENTIAL_PROFILE
