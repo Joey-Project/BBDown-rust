@@ -325,6 +325,8 @@ bbdown auth renew-access-key --json
 bbdown auth renew-access-key --stdin < balh-callback.txt
 bbdown auth login-web
 bbdown auth login-tv
+bbdown auth renew-web --json
+bbdown auth renew-tv --json
 bbdown auth status
 bbdown auth status --profiles
 bbdown auth status --profiles --all-profiles
@@ -371,6 +373,15 @@ token。如果 refresh 失败，CLI 会输出 `refresh_failed`，然后回退到
 这样调用方可以提示用户重新授权而不会丢掉旧 credential。如果另一个协作进程在较旧 refresh
 response 保存前改变了当前选择的 profile name，或改变了该 profile 的 credential / refresh-secret
 状态，CLI 会输出 `refresh_skipped`，并带上 `reason=profile_changed`，同时保持当前 store 不变。
+WEB QR 和 TV QR login 也可能返回 refresh token。CLI 会把这些值作为明文 selected-profile
+secret 保存到 `profile_secrets.<profile>.cookie` 和
+`profile_secrets.<profile>.tv_access_key`，lifecycle metadata 只保存来源、获取时间、可选过期
+时间以及 refresh token 是否出现。使用 `auth renew-web` 可以刷新已保存的 WEB cookie；
+使用 `auth renew-tv` 可以刷新已保存的 TV token。带 `--json` 时，这两个命令会先输出
+`decision` event，非交互刷新成功后输出 `refreshed` 和 `saved`。如果当前 profile 仍是 fresh，
+只会输出 `no_action`；如果没有保存 refresh secret，则输出脱敏的 `refresh_failed`，不会进入
+交互登录流程。如果 Bilibili 表示当前 WEB cookie 暂时不需要 refresh，`auth renew-web --json`
+会输出 `refresh_not_needed`，并且不会重写已存 credential 或 lifecycle 获取时间戳。
 所有 credential import、access-key login
 和 access-key renewal 写入都是 selected-profile update：CLI 会在协作 credential-store lock 内
 重新读取最新 profile document，只 merge 当前选择的 profile，然后写回私有文件。其它 profile、
@@ -400,13 +411,15 @@ preflight，因为它们只需要 metadata 和 sidecar endpoint；如果 profile
 `download --only subtitle|danmaku|cover` 会跳过 TV/APP/restricted-proxy stream preflight，因为这些模式
 不会解析 media stream。`warn` 会把 diagnostic 写到 stderr 并继续；`fail` 会在缺少 required credential 或相关
 credential lifecycle metadata 不是 fresh 时，在网络 stream resolution 前中止；`renew` 会在
-当前 profile refresh-ready 时先尝试 provider-specific generic access-key refresh。preflight
+当前 profile metadata 不是 fresh 且保存了匹配 refresh secret 时，先尝试刷新当前选择的 WEB
+cookie、TV `tv_access_key` 或通用 access-key credential。preflight
 不会写 stdout，因此 `--json` 仍保持单个 JSON plan、playback plan 或 download report。
 `download --progress-json` 会抑制 preflight 纯文本 diagnostic，但失败时最终 CLI error 行仍可能
 写到 stderr；wrapper 应只解析 JSON object line。在 `renew` 模式下，缺失 required 的非
 access-key credential 仍会阻止通用 access-key 自动刷新；但已存在且 lifecycle metadata 为
-stale、expiring、expired 或 unknown 的 credential 不会阻止 refresh-ready 的通用 access key
-刷新，后续实际请求仍会验证这些 credential 是否可用。对 archive 下载，如果初次 plan 成功，
+stale、expiring、expired 或 unknown 的 credential 如果有匹配 refresh secret，会先在请求前刷新；
+否则不会阻止 refresh-ready 的通用 access key 刷新，后续实际请求仍会验证这些 credential 是否可用。
+对 archive 下载，如果初次 plan 成功，
 `renew` 会把自动 access-key refresh 延后到 duplicate handling 之后，因此 `--on-duplicate cancel`
 会停止且不会调用 refresh endpoint 或重写已保存 credential。如果初次 archive planning 因类似
 auth 的 credential 错误失败，即使本地 lifecycle metadata 仍认为该 key fresh，CLI 也会刷新
@@ -423,7 +436,9 @@ cookie。`auth login-tv` 使用 TV 二维码流程，保存 TV 专用 access key
 时登录密钥，因为它们包含登录 handoff 状态。状态输出或 `saved` JSON 事件不会打印 token
 值。
 WEB 和 TV 二维码登录会记录 lifecycle source 和获取时间；只有上游响应提供可靠过期字段时
-才会记录 expiry。
+才会记录 expiry。如果 QR polling 返回 refresh metadata，CLI 会把原始 refresh token 保存为
+profile secret，供之后 `auth renew-web`、`auth renew-tv` 或 preflight renewal 使用；status 和
+`saved` JSON output 不会暴露该值。
 
 `auth status` 会保留旧的 selected-profile JSON 形态，只报告脱敏凭据布尔值；只含空白字符的
 已保存 credential 会按 missing 报告。发送请求前会 trim 已保存 credential；trim 后为空的

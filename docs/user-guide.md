@@ -367,6 +367,8 @@ bbdown auth renew-access-key --json
 bbdown auth renew-access-key --stdin < balh-callback.txt
 bbdown auth login-web
 bbdown auth login-tv
+bbdown auth renew-web --json
+bbdown auth renew-tv --json
 bbdown auth status
 bbdown auth status --profiles
 bbdown auth status --profiles --all-profiles
@@ -416,6 +418,16 @@ to the normal authorization ticket so callers can prompt the user without losing
 If another cooperating process changes the current selected profile name, or changes that profile's
 credential or refresh-secret state before the older refresh response is saved, the CLI emits
 `refresh_skipped` with `reason=profile_changed` and leaves the current store untouched.
+WEB QR and TV QR login can also return refresh tokens. The CLI stores those values as plaintext
+selected-profile secrets under `profile_secrets.<profile>.cookie` and
+`profile_secrets.<profile>.tv_access_key`, while lifecycle metadata stores only source, acquisition
+time, optional expiry, and refresh-token presence. Use `auth renew-web` to refresh a saved WEB
+cookie and `auth renew-tv` to refresh a saved TV token. With `--json`, both commands emit a
+`decision` event, then `refreshed` and `saved` when non-interactive refresh succeeds. If the selected
+profile is fresh, they emit only `no_action`; if the profile has no stored refresh secret, they emit
+a redacted `refresh_failed` event instead of prompting for login. If Bilibili says the selected WEB
+cookie does not need refresh yet, `auth renew-web --json` emits `refresh_not_needed` and does not
+rewrite the stored credential or lifecycle acquisition timestamp.
 All credential import, access-key login, and access-key renewal writes are selected-profile updates:
 the CLI reloads the latest profile document under a cooperative credential-store lock, merges only
 the chosen profile, then writes the private file back. Other profiles, unrelated credential kinds,
@@ -450,13 +462,15 @@ requirements.
 `download --only subtitle|danmaku|cover` skips TV/APP/restricted-proxy stream preflight because
 those modes do not resolve media streams. `warn` writes diagnostics to stderr and continues, `fail`
 aborts before network stream resolution when a required credential is missing or has non-fresh
-lifecycle metadata, and `renew` first tries provider-specific generic access-key refresh when the
-selected profile is refresh-ready. Preflight never writes to stdout, so `--json` output remains a
+lifecycle metadata, and `renew` first tries automatic refresh for selected WEB cookie, selected TV
+`tv_access_key`, or generic access-key credentials when their profile metadata is non-fresh and a
+matching refresh secret is stored. Preflight never writes to stdout, so `--json` output remains a
 single JSON plan, playback plan, or download report. `download --progress-json` suppresses plaintext preflight
 diagnostics, but the final CLI error line may still be written to stderr on failure; wrappers should
 parse only JSON object lines. In `renew` mode, missing required non-access-key credentials still stop
 generic access-key auto-refresh, but present credentials with stale, expiring, expired, or unknown
-lifecycle metadata do not prevent refreshing a ready generic access key; the subsequent request still
+lifecycle metadata can be refreshed before the request when a matching refresh secret is available;
+otherwise they do not prevent refreshing a ready generic access key, and the subsequent request still
 proves whether those credentials work. Stored credential values are trimmed before request use, and
 whitespace-only values are treated as missing. For archive downloads, `renew` defers automatic access-key refresh
 until after duplicate handling when the initial plan succeeds, so `--on-duplicate cancel` stops
@@ -477,7 +491,9 @@ can be rendered directly as a QR code by embedding projects. Treat login URLs an
 temporary login secrets because they contain login handoff state. Token values are not printed by
 status or the `saved` JSON event.
 WEB and TV QR login record lifecycle source and acquisition time, but only record an expiry when the
-upstream response provides a reliable expiry field.
+upstream response provides a reliable expiry field. When QR polling returns refresh metadata, the CLI
+saves the raw refresh token as a profile secret for later `auth renew-web`, `auth renew-tv`, or
+preflight renewal without exposing it through status or saved JSON output.
 
 `auth status` keeps the legacy selected-profile JSON shape and only reports redacted credential
 booleans; whitespace-only stored credential values are reported as missing. Add `--profiles` to

@@ -47,6 +47,7 @@ fn request_credential_value(value: Option<&str>) -> Option<&str> {
 pub struct EndpointConfig {
     pub api_base: String,
     pub pgc_base: String,
+    pub web_base: String,
     pub intl_base: String,
     pub intl_passport_base: String,
     pub comment_base: String,
@@ -63,6 +64,7 @@ impl Default for EndpointConfig {
         Self {
             api_base: "https://api.bilibili.com".to_owned(),
             pgc_base: "https://api.bilibili.com".to_owned(),
+            web_base: "https://www.bilibili.com".to_owned(),
             intl_base: "https://api.bilibili.tv".to_owned(),
             intl_passport_base: "https://passport.biliintl.com".to_owned(),
             comment_base: "https://comment.bilibili.com".to_owned(),
@@ -86,6 +88,12 @@ impl EndpointConfig {
     #[must_use]
     pub fn with_pgc_base(mut self, pgc_base: impl Into<String>) -> Self {
         self.pgc_base = pgc_base.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_web_base(mut self, web_base: impl Into<String>) -> Self {
+        self.web_base = web_base.into();
         self
     }
 
@@ -9720,6 +9728,7 @@ mod tests {
             endpoints: EndpointConfig {
                 api_base: server.base_url(),
                 pgc_base: server.base_url(),
+                web_base: server.base_url(),
                 intl_base: server.base_url(),
                 intl_passport_base: server.base_url(),
                 comment_base: server.base_url(),
@@ -9930,6 +9939,7 @@ mod tests {
             endpoints: EndpointConfig {
                 api_base: server.base_url(),
                 pgc_base: server.base_url(),
+                web_base: server.base_url(),
                 intl_base: server.base_url(),
                 intl_passport_base: server.base_url(),
                 comment_base: server.base_url(),
@@ -10652,6 +10662,7 @@ mod tests {
             endpoints: EndpointConfig {
                 api_base: server.base_url(),
                 pgc_base: server.base_url(),
+                web_base: server.base_url(),
                 comment_base: server.base_url(),
                 ..EndpointConfig::default()
             },
@@ -10746,6 +10757,7 @@ mod tests {
             endpoints: EndpointConfig {
                 api_base: server.base_url(),
                 pgc_base: server.base_url(),
+                web_base: server.base_url(),
                 intl_base: server.base_url(),
                 intl_passport_base: server.base_url(),
                 comment_base: server.base_url(),
@@ -10840,6 +10852,7 @@ mod tests {
                 endpoints: EndpointConfig {
                     api_base: server.base_url(),
                     pgc_base: server.base_url(),
+                    web_base: server.base_url(),
                     intl_base: server.base_url(),
                     intl_passport_base: server.base_url(),
                     comment_base: server.base_url(),
@@ -10919,6 +10932,7 @@ mod tests {
             endpoints: EndpointConfig {
                 api_base: server.base_url(),
                 pgc_base: server.base_url(),
+                web_base: server.base_url(),
                 intl_base: server.base_url(),
                 intl_passport_base: server.base_url(),
                 comment_base: server.base_url(),
@@ -11075,6 +11089,7 @@ mod tests {
             endpoints: EndpointConfig {
                 api_base: server.base_url(),
                 pgc_base: server.base_url(),
+                web_base: server.base_url(),
                 intl_base: server.base_url(),
                 intl_passport_base: server.base_url(),
                 comment_base: server.base_url(),
@@ -11198,6 +11213,7 @@ mod tests {
             endpoints: EndpointConfig {
                 api_base: format!("http://{address}"),
                 pgc_base: "http://127.0.0.1:1".to_owned(),
+                web_base: "http://127.0.0.1:1".to_owned(),
                 intl_base: "http://127.0.0.1:1".to_owned(),
                 intl_passport_base: "http://127.0.0.1:1".to_owned(),
                 comment_base: "http://127.0.0.1:1".to_owned(),
@@ -11440,6 +11456,7 @@ mod tests {
             endpoints: EndpointConfig {
                 api_base: server.base_url(),
                 pgc_base: server.base_url(),
+                web_base: server.base_url(),
                 intl_base: server.base_url(),
                 intl_passport_base: server.base_url(),
                 comment_base: server.base_url(),

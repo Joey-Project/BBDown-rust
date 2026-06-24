@@ -197,6 +197,8 @@ bbdown auth renew-access-key --json
 bbdown auth renew-access-key --stdin < balh-callback.txt
 bbdown auth login-web
 bbdown auth login-tv
+bbdown auth renew-web --json
+bbdown auth renew-tv --json
 bbdown auth status
 bbdown auth switch intl
 bbdown auth health --json
@@ -233,7 +235,17 @@ file 前，校验自己的 lock token 仍然有效；lock 获取和 stale reclai
 store，也不会删掉新 writer 的 lock。如果较慢的自动刷新 response
 已经不再匹配当前选择的 profile name，或不再匹配该 profile 的 credential / refresh-secret
 状态，JSON 输出会发出 `refresh_skipped`，并带上 `reason=profile_changed`，同时保持当前
-credential store 不变。`plan`、
+credential store 不变。
+WEB QR 和 TV QR login response 也可能包含 refresh token。出现时，CLI 会把它们作为明文
+profile secret 保存到 `profile_secrets.<profile>.cookie` 或
+`profile_secrets.<profile>.tv_access_key`，lifecycle metadata 只记录 token 是否出现以及时间戳。
+`auth renew-web` 会通过 Bilibili cookie refresh flow 刷新当前选择的 WEB cookie；
+`auth renew-tv` 会通过 TV OAuth refresh endpoint 刷新当前选择的 TV token。两个命令在非交互
+刷新成功时都会输出 `decision`、`refreshed` 和 `saved` JSON event，脱敏原始 cookie/token，
+并使用与 access-key refresh 相同的 stale-response guard。如果 Bilibili 返回当前 WEB cookie
+暂时不需要 refresh，`auth renew-web --json` 会输出 `refresh_not_needed`，并保持已存 cookie、
+refresh token 和 lifecycle 获取时间不变。
+`plan`、
 `playback` 和 `download` 也支持 `--credential-preflight warn|fail|renew`，方便调用方在 media
 request 前检查当前 profile，也会覆盖使用通用 `access_key` 的 intl/Bstar media path；同样可以用
 `BBDOWN_CREDENTIAL_PREFLIGHT`、`BBDOWN_CREDENTIAL_STALE_AFTER_SECONDS` 和
@@ -250,6 +262,10 @@ access-key refresh 延后到 duplicate handling 之后，因此 `--on-duplicate 
 调用 refresh endpoint 或重写已保存 credential。如果初次 archive planning 因类似 auth 的
 credential 错误失败，即使本地 lifecycle metadata 仍认为该 key fresh，CLI 也会刷新 ready
 的通用 access key 并重试一次 planning，然后才报告失败。
+当当前选择的 WEB cookie 或 TV `tv_access_key` 已存在、lifecycle metadata 不是 fresh，且本地
+保存了 refresh secret 时，`--credential-preflight renew` 会在解析 media request 前先尝试刷新
+该 credential。这覆盖需要 WEB cookie 的账号级 feed 输入，以及选择 TV token 的 APP/TV playurl
+路径。
 二维码登录命令会轮询
 Bilibili 二维码状态机，并只保存最终得到的凭据。WEB 二维码登录保存 cookie；TV 二维码登录保存
 TV 专用 access key，不会覆盖由通用 access-key 命令导入或获取的 intl/Bstar access key。
@@ -257,6 +273,8 @@ TV 专用 access key，不会覆盖由通用 access-key 命令导入或获取的
 `ticket` 事件，再在凭据保存后输出
 `saved` 事件。当前 WEB 和 TV 登录流程会直接使用扫码 URL 作为 QR payload。请把登录 URL
 和 QR payload 当成临时登录密钥；状态输出和 `saved` 事件只暴露脱敏布尔值。
+如果 QR poll response 包含 refresh metadata，这些 secret 会被保存下来，供之后
+`auth renew-web`、`auth renew-tv` 和 preflight renewal 使用。
 `auth health` 会在不打印密钥值的情况下检查已配置凭据：WEB cookie 通过 web nav 端点检查；
 通用 `access_key` 和 TV `tv_access_key` 会通过 OAuth info 端点以 signed `access_key` app
 query 值检查。通用 token probe 当前覆盖 intl/Bstar scope，并使用 `--passport-base`；它不会

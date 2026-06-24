@@ -2,8 +2,8 @@ use assert_cmd::Command;
 use bbdown_core::{
     AccessKeyProvider, AccessKeyProviderSecret, AccessKeyRefreshKeypair, AccessKeyRefreshProvider,
     CredentialKind, CredentialLifecycleMetadata, CredentialLifecycleSource,
-    CredentialProfileMetadata, CredentialProfileSecrets, CredentialProfiles, CredentialStore,
-    Credentials,
+    CredentialProfileMetadata, CredentialProfileSecrets, CredentialProfiles,
+    CredentialRefreshSecret, CredentialStore, Credentials,
 };
 use httpmock::MockServer;
 use httpmock::prelude::*;
@@ -24,6 +24,7 @@ use std::time::{Duration, Instant};
 const CLI_OVERRIDE_ENV_VARS: &[&str] = &[
     "BBDOWN_API_BASE",
     "BBDOWN_PGC_BASE",
+    "BBDOWN_WEB_BASE",
     "BBDOWN_INTL_BASE",
     "BBDOWN_INTL_PASSPORT_BASE",
     "BBDOWN_COMMENT_BASE",
@@ -1373,6 +1374,79 @@ fn playback_app_uses_tv_access_key_when_generic_key_is_intl_provider() -> anyhow
 
     app_playurl.assert();
     assert_eq!(json["entries"][0]["source"], "normal_app");
+    Ok(())
+}
+
+#[test]
+fn auth_preflight_renews_tv_access_key_for_app_playback() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    save_refreshable_tv_access_key_profile(&credential_file)?;
+    mock_playback_metadata(&server);
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "OLD_TV_ACCESS")
+            .form_urlencoded_tuple("refresh_token", "OLD_TV_REFRESH")
+            .form_urlencoded_tuple("appkey", "4409e2ce8ffd12b8")
+            .form_urlencoded_tuple_exists("sign");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "NEW_TV_ACCESS",
+                    "refresh_token": "NEW_TV_REFRESH",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+    let app_response = app_play_view_response_frame("https://app.example/video.m4s")?;
+    let app_playurl = server.mock(|when, then| {
+        when.method(POST)
+            .path("/bilibili.app.playurl.v1.PlayURL/PlayView")
+            .header("content-type", "application/grpc")
+            .header("authorization", "identify_v1 NEW_TV_ACCESS")
+            .header_exists("x-bili-metadata-bin")
+            .header_missing("cookie");
+        then.status(200).body(app_response.clone());
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--app-grpc-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--playurl-mode")
+        .arg("app")
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("playback")
+        .arg("av170001")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(output.stderr)?;
+    let json: Value = serde_json::from_slice(&output.stdout)?;
+
+    assert!(stderr.contains("credential preflight: tv_access_key refreshed"));
+    assert_eq!(json["entries"][0]["source"], "normal_app");
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load()?
+            .tv_access_key
+            .as_deref(),
+        Some("NEW_TV_ACCESS")
+    );
+    refresh_mock.assert_calls(1);
+    app_playurl.assert_calls(1);
     Ok(())
 }
 
@@ -7834,6 +7908,125 @@ fn save_lifecycle_cli_profile_with_cookie_and_access_key_secret(
     Ok(())
 }
 
+fn save_refreshable_cookie_profile(credential_file: &Path) -> anyhow::Result<()> {
+    let store = CredentialStore::new(credential_file.to_path_buf());
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_profile(
+        "default",
+        Credentials::default().with_cookie("SESSDATA=old;bili_jct=OLD_CSRF"),
+    )?;
+    let mut metadata = CredentialProfileMetadata::default();
+    metadata.set_credential(
+        CredentialKind::Cookie,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::WebQrLogin)
+            .with_acquired_at_unix_millis(1_000)
+            .with_refresh_token_present(true),
+    );
+    profiles.set_profile_metadata("default", metadata)?;
+    let mut secrets = CredentialProfileSecrets::default();
+    secrets.set_cookie(CredentialRefreshSecret::default().with_refresh_token("OLD_COOKIE_REFRESH"));
+    profiles.set_profile_secrets("default", secrets)?;
+    store.save_profiles(&profiles)?;
+    Ok(())
+}
+
+fn save_refreshable_tv_access_key_profile(credential_file: &Path) -> anyhow::Result<()> {
+    let store = CredentialStore::new(credential_file.to_path_buf());
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_profile(
+        "default",
+        Credentials::default().with_tv_access_key("OLD_TV_ACCESS"),
+    )?;
+    let mut metadata = CredentialProfileMetadata::default();
+    metadata.set_credential(
+        CredentialKind::TvAccessKey,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::TvQrLogin)
+            .with_acquired_at_unix_millis(1_000)
+            .with_expires_at_unix_millis(2_000)
+            .with_refresh_token_present(true),
+    );
+    profiles.set_profile_metadata("default", metadata)?;
+    let mut secrets = CredentialProfileSecrets::default();
+    secrets
+        .set_tv_access_key(CredentialRefreshSecret::default().with_refresh_token("OLD_TV_REFRESH"));
+    profiles.set_profile_secrets("default", secrets)?;
+    store.save_profiles(&profiles)?;
+    Ok(())
+}
+
+struct WebCookieRefreshMocks<'a> {
+    info: httpmock::Mock<'a>,
+    correspond: httpmock::Mock<'a>,
+    refresh: httpmock::Mock<'a>,
+    confirm: httpmock::Mock<'a>,
+}
+
+impl WebCookieRefreshMocks<'_> {
+    fn assert_called_once(&self) {
+        self.info.assert_calls(1);
+        self.correspond.assert_calls(1);
+        self.refresh.assert_calls(1);
+        self.confirm.assert_calls(1);
+    }
+}
+
+fn mock_web_cookie_refresh(server: &MockServer) -> WebCookieRefreshMocks<'_> {
+    let info = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/passport-login/web/cookie/info")
+            .query_param("csrf", "OLD_CSRF")
+            .header("cookie", "SESSDATA=old;bili_jct=OLD_CSRF");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {"refresh": true, "timestamp": 1_710_000_000_000_u64}
+        }));
+    });
+    let correspond = server.mock(|when, then| {
+        when.method(GET)
+            .path_matches(r"^/correspond/1/[0-9a-f]{256}$")
+            .header("cookie", "SESSDATA=old;bili_jct=OLD_CSRF");
+        then.status(200)
+            .body(r#"<html><div id="1-name">REFRESH_CSRF</div></html>"#);
+    });
+    let refresh = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-login/web/cookie/refresh")
+            .query_param("csrf", "OLD_CSRF")
+            .query_param("refresh_csrf", "REFRESH_CSRF")
+            .query_param("refresh_token", "OLD_COOKIE_REFRESH")
+            .query_param("source", "main_web")
+            .header("cookie", "SESSDATA=old;bili_jct=OLD_CSRF");
+        then.status(200)
+            .header("Set-Cookie", "SESSDATA=new; Path=/; Domain=.bilibili.com")
+            .header(
+                "Set-Cookie",
+                "bili_jct=NEW_CSRF; Path=/; Domain=.bilibili.com",
+            )
+            .json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {"refresh_token": "NEW_COOKIE_REFRESH"}
+            }));
+    });
+    let confirm = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-login/web/confirm/refresh")
+            .query_param("csrf", "NEW_CSRF")
+            .query_param("refresh_token", "OLD_COOKIE_REFRESH")
+            .header("cookie", "SESSDATA=new;bili_jct=NEW_CSRF");
+        then.status(200)
+            .json_body_obj(&serde_json::json!({"code": 0}));
+    });
+
+    WebCookieRefreshMocks {
+        info,
+        correspond,
+        refresh,
+        confirm,
+    }
+}
+
 fn mock_valid_cookie_health(server: &MockServer) -> httpmock::Mock<'_> {
     server.mock(|when, then| {
         when.method(GET)
@@ -7927,6 +8120,7 @@ fn auth_qr_login_web_and_tv_use_local_store() -> anyhow::Result<()> {
     );
     assert!(cookie_metadata.acquired_at_unix_millis.is_some());
     assert_eq!(cookie_metadata.expires_at_unix_millis, None);
+    assert_eq!(cookie_metadata.refresh_token_present, Some(true));
     let tv_metadata = metadata
         .credential(CredentialKind::TvAccessKey)
         .ok_or_else(|| anyhow::anyhow!("missing TV lifecycle metadata"))?;
@@ -7935,7 +8129,241 @@ fn auth_qr_login_web_and_tv_use_local_store() -> anyhow::Result<()> {
         Some(CredentialLifecycleSource::TvQrLogin)
     );
     assert!(tv_metadata.acquired_at_unix_millis.is_some());
-    assert_eq!(tv_metadata.expires_at_unix_millis, None);
+    assert_eq!(tv_metadata.refresh_token_present, Some(true));
+    let tv_acquired_at = tv_metadata
+        .acquired_at_unix_millis
+        .ok_or_else(|| anyhow::anyhow!("missing TV acquired_at metadata"))?;
+    assert_eq!(
+        tv_metadata.expires_at_unix_millis,
+        Some(tv_acquired_at + 7_200_000)
+    );
+    let secrets = profiles.profile_secrets("default")?;
+    assert_eq!(
+        secrets
+            .cookie()
+            .and_then(|secret| secret.refresh_token.as_deref()),
+        Some("WEB_REFRESH")
+    );
+    assert_eq!(
+        secrets
+            .tv_access_key()
+            .and_then(|secret| secret.refresh_token.as_deref()),
+        Some("TV_REFRESH")
+    );
+    Ok(())
+}
+
+#[test]
+fn auth_renew_web_refreshes_cookie_secret() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    save_refreshable_cookie_profile(&credential_file)?;
+    let refresh_mocks = mock_web_cookie_refresh(&server);
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--web-base")
+        .arg(server.base_url())
+        .args(["auth", "renew-web", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let events = json_lines(&output)?;
+
+    assert_eq!(events.len(), 3);
+    assert_eq!(events[0]["event"], "decision");
+    assert_eq!(events[0]["kind"], "cookie");
+    assert_eq!(
+        events[0]["decision"]["automatic_refresh_readiness"],
+        "ready"
+    );
+    assert_eq!(events[0]["decision"]["action"], "refresh");
+    assert_eq!(events[1]["event"], "refreshed");
+    assert_eq!(events[1]["kind"], "cookie");
+    assert_eq!(events[2]["event"], "saved");
+    assert_eq!(events[2]["saved"]["has_cookie"], true);
+    let output_text = String::from_utf8(output)?;
+    for secret in [
+        "SESSDATA=old",
+        "OLD_CSRF",
+        "OLD_COOKIE_REFRESH",
+        "NEW_COOKIE_REFRESH",
+    ] {
+        assert!(!output_text.contains(secret));
+    }
+    let profiles = CredentialStore::new(credential_file).load_profiles()?;
+    let saved = profiles.profile("default")?;
+    assert_eq!(
+        saved.cookie.as_deref(),
+        Some("SESSDATA=new;bili_jct=NEW_CSRF")
+    );
+    let metadata = profiles.profile_metadata("default")?;
+    let cookie_metadata = metadata
+        .credential(CredentialKind::Cookie)
+        .ok_or_else(|| anyhow::anyhow!("missing refreshed cookie metadata"))?;
+    assert_eq!(cookie_metadata.refresh_token_present, Some(true));
+    let secrets = profiles.profile_secrets("default")?;
+    assert_eq!(
+        secrets
+            .cookie()
+            .and_then(|secret| secret.refresh_token.as_deref()),
+        Some("NEW_COOKIE_REFRESH")
+    );
+    refresh_mocks.assert_called_once();
+    Ok(())
+}
+
+#[test]
+fn auth_renew_web_does_not_save_when_cookie_refresh_is_not_needed() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    save_refreshable_cookie_profile(&credential_file)?;
+    let info_mock = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/passport-login/web/cookie/info")
+            .query_param("csrf", "OLD_CSRF")
+            .header("cookie", "SESSDATA=old;bili_jct=OLD_CSRF");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {"refresh": false, "timestamp": 1_710_000_000_000_u64}
+        }));
+    });
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-login/web/cookie/refresh");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {"refresh_token": "UNUSED"}
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--web-base")
+        .arg(server.base_url())
+        .args(["auth", "renew-web", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let events = json_lines(&output)?;
+
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["event"], "decision");
+    assert_eq!(events[0]["decision"]["action"], "refresh");
+    assert_eq!(events[1]["event"], "refresh_not_needed");
+    assert_eq!(events[1]["kind"], "cookie");
+    let profiles = CredentialStore::new(credential_file).load_profiles()?;
+    let saved = profiles.profile("default")?;
+    assert_eq!(
+        saved.cookie.as_deref(),
+        Some("SESSDATA=old;bili_jct=OLD_CSRF")
+    );
+    let metadata = profiles.profile_metadata("default")?;
+    let cookie_metadata = metadata
+        .credential(CredentialKind::Cookie)
+        .ok_or_else(|| anyhow::anyhow!("missing cookie metadata"))?;
+    assert_eq!(cookie_metadata.acquired_at_unix_millis, Some(1_000));
+    let secrets = profiles.profile_secrets("default")?;
+    assert_eq!(
+        secrets
+            .cookie()
+            .and_then(|secret| secret.refresh_token.as_deref()),
+        Some("OLD_COOKIE_REFRESH")
+    );
+    info_mock.assert_calls(1);
+    refresh_mock.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+fn auth_renew_tv_refreshes_tv_access_key_secret() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    save_refreshable_tv_access_key_profile(&credential_file)?;
+    let refresh_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", "OLD_TV_ACCESS")
+            .form_urlencoded_tuple("access_token", "OLD_TV_ACCESS")
+            .form_urlencoded_tuple("refresh_token", "OLD_TV_REFRESH")
+            .form_urlencoded_tuple("appkey", "4409e2ce8ffd12b8")
+            .form_urlencoded_tuple_exists("sign");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": "NEW_TV_ACCESS",
+                    "refresh_token": "NEW_TV_REFRESH",
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .args(["auth", "renew-tv", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let events = json_lines(&output)?;
+
+    assert_eq!(events.len(), 3);
+    assert_eq!(events[0]["event"], "decision");
+    assert_eq!(events[0]["kind"], "tv_access_key");
+    assert_eq!(
+        events[0]["decision"]["automatic_refresh_readiness"],
+        "ready"
+    );
+    assert_eq!(events[0]["decision"]["action"], "refresh");
+    assert_eq!(events[1]["event"], "refreshed");
+    assert_eq!(events[1]["kind"], "tv_access_key");
+    assert_eq!(events[2]["event"], "saved");
+    assert_eq!(events[2]["saved"]["has_tv_access_key"], true);
+    let output_text = String::from_utf8(output)?;
+    for secret in [
+        "OLD_TV_ACCESS",
+        "OLD_TV_REFRESH",
+        "NEW_TV_ACCESS",
+        "NEW_TV_REFRESH",
+    ] {
+        assert!(!output_text.contains(secret));
+    }
+    let profiles = CredentialStore::new(credential_file).load_profiles()?;
+    let saved = profiles.profile("default")?;
+    assert_eq!(saved.tv_access_key.as_deref(), Some("NEW_TV_ACCESS"));
+    let metadata = profiles.profile_metadata("default")?;
+    let tv_metadata = metadata
+        .credential(CredentialKind::TvAccessKey)
+        .ok_or_else(|| anyhow::anyhow!("missing refreshed TV metadata"))?;
+    assert_eq!(tv_metadata.refresh_token_present, Some(true));
+    assert!(tv_metadata.expires_at_unix_millis.is_some());
+    let secrets = profiles.profile_secrets("default")?;
+    assert_eq!(
+        secrets
+            .tv_access_key()
+            .and_then(|secret| secret.refresh_token.as_deref()),
+        Some("NEW_TV_REFRESH")
+    );
+    refresh_mock.assert_calls(1);
     Ok(())
 }
 
@@ -8728,6 +9156,7 @@ fn mock_web_qr_login(web_server: &MockServer) {
                 "code": 0,
                 "data": {
                     "code": 0,
+                    "refresh_token": "WEB_REFRESH",
                     "url": "https://passport.biligame.com/crossDomain?source=main_web&go_url=https%3A%2F%2Fpassport.bilibili.com"
                 }
             }));
@@ -8817,7 +9246,11 @@ fn mock_tv_qr_login(tv_server: &MockServer) {
             .form_urlencoded_tuple_exists("sign");
         then.status(200).json_body_obj(&serde_json::json!({
             "code": 0,
-            "data": {"access_token": "ACCESS"}
+            "data": {
+                "access_token": "ACCESS",
+                "refresh_token": "TV_REFRESH",
+                "expires_in": 7200
+            }
         }));
     });
 }

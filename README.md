@@ -209,6 +209,8 @@ bbdown auth renew-access-key --json
 bbdown auth renew-access-key --stdin < balh-callback.txt
 bbdown auth login-web
 bbdown auth login-tv
+bbdown auth renew-web --json
+bbdown auth renew-tv --json
 bbdown auth status
 bbdown auth switch intl
 bbdown auth health --json
@@ -250,6 +252,16 @@ newer store after being reclaimed or remove a newer writer's lock after recovery
 If a slower automatic refresh response no longer matches the current selected profile name or that
 profile's credential/refresh-secret state, JSON output emits `refresh_skipped` with
 `reason=profile_changed` and leaves the current credential store untouched.
+WEB QR and TV QR login responses may also include refresh tokens. When present, the CLI stores them
+as plaintext profile secrets under `profile_secrets.<profile>.cookie` or
+`profile_secrets.<profile>.tv_access_key`, while lifecycle metadata records only token presence and
+timestamps. `auth renew-web` refreshes the selected WEB cookie through Bilibili's cookie refresh
+flow, and `auth renew-tv` refreshes the selected TV token through the TV OAuth refresh endpoint.
+Both commands emit `decision`, `refreshed`, and `saved` JSON events on successful non-interactive
+refresh, redact raw cookies/tokens, and use the same stale-response guard as access-key refresh. If
+Bilibili reports that a WEB cookie does not need refresh yet, `auth renew-web --json` emits
+`refresh_not_needed` and leaves the stored cookie, refresh token, and lifecycle acquisition time
+unchanged.
 `plan`, `playback`, and `download` also accept `--credential-preflight warn|fail|renew` so callers
 can check the selected profile before media requests, including intl/Bstar media paths that use the
 generic `access_key`. The same controls are available as `BBDOWN_CREDENTIAL_PREFLIGHT`,
@@ -268,6 +280,10 @@ the initial plan succeeds, so `--on-duplicate cancel` stops without calling refr
 rewriting stored credentials. If initial archive planning fails with an auth-like credential error,
 the CLI refreshes a ready generic access key and retries planning once before reporting the failure,
 including cases where local lifecycle metadata had still considered the key fresh.
+When a selected WEB cookie or TV `tv_access_key` already exists, has non-fresh lifecycle metadata,
+and has a saved refresh secret, `--credential-preflight renew` attempts that credential's automatic
+refresh before resolving media requests. This covers authenticated feed inputs that require a WEB
+cookie and APP/TV playurl paths that select the TV token.
 QR login commands poll the Bilibili QR state machine and save only the resulting credential. WEB QR
 login saves a cookie; TV QR login saves a TV-specific access
 key without overwriting the generic intl/Bstar access key. With `--json`, login commands emit
@@ -275,6 +291,8 @@ newline-delimited JSON events: a `ticket` event with the login URL and `qr_paylo
 credential handoff or poll, then a `saved` event after credentials are stored. The current WEB and
 TV login flows use the scan URL itself as the QR payload. Treat login URLs and QR payloads as
 temporary login secrets; status output and the `saved` event expose redacted booleans only.
+If QR poll responses include refresh metadata, those secrets are saved for later `auth renew-web`,
+`auth renew-tv`, and preflight renewal.
 `auth health` checks configured credentials without printing secret values: the WEB cookie is
 checked through the web nav endpoint, while the generic `access_key` and TV `tv_access_key` are
 checked through the OAuth info endpoint as signed `access_key` app query values. Generic token probes
