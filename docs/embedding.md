@@ -240,9 +240,12 @@ unknown or malformed optional metadata is ignored on load, and automatic refresh
 policy layer.
 For QR login, convert `QrLoginTicket` to `QrLoginTicketOutput` when a downstream application needs a
 stable serialized scan URL and `qr_payload`; current WEB and TV login flows use the scan URL itself
-as the QR payload. `QrLoginState::Succeeded` carries `QrLoginCredentials`, which contains the
-runtime `Credentials` plus optional refresh metadata. Embedders that own storage should persist the
-runtime credential separately from the refresh token: store WEB refresh tokens with
+as the QR payload. The compatibility `poll_web_qr_login` / `poll_tv_qr_login` methods return
+`QrLoginState::Succeeded { credentials: Credentials }`. Call
+`poll_web_qr_login_credentials` / `poll_tv_qr_login_credentials` when storage needs
+`QrLoginCredentials`, which contains the runtime `Credentials` plus optional refresh metadata.
+Embedders that own storage should persist the runtime credential separately from the refresh token:
+store WEB refresh tokens with
 `CredentialProfileSecrets::set_cookie(CredentialRefreshSecret::default().with_refresh_token(...))`
 and TV refresh tokens with `set_tv_access_key(...)`, while lifecycle metadata records only
 `refresh_token_present` and any expiry derived from `expires_in`.
@@ -285,7 +288,8 @@ reauthorization UI when policy requires user action.
 WEB cookie and TV-token refresh are exposed as separate primitives because they are not
 provider-scoped generic access keys. Build `WebCookieRefreshRequest` from the saved cookie plus its
 saved refresh token, then call `BiliClient::refresh_web_cookie(...)`; the client checks
-`/x/passport-login/web/cookie/info`, derives the RSA-OAEP correspond path, extracts
+`/x/passport-login/web/cookie/info`, derives the JSEncrypt-compatible RSAES-PKCS1-v1_5
+`correspond/1/{path}` challenge, extracts
 `refresh_csrf` from `EndpointConfig::web_base`, calls the cookie refresh endpoint, merges
 `Set-Cookie` headers, and confirms the old refresh token. The returned
 `WebCookieRefreshCredentials::refreshed` flag is `false` when Bilibili says the existing cookie does

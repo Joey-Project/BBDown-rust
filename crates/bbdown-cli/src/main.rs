@@ -17,11 +17,12 @@ use bbdown_core::{
     DownloadOptions, DownloadPathTemplates, DownloadPlan, DownloadPreflight, DownloadProgressEvent,
     DownloadProgressSink, DownloadReport, DuplicateDecision, EndpointConfig, Input,
     MediaHostOptions, MediaStream, MuxOptions, PlaybackPlan, PlayurlMode, QrLoginCredentials,
-    QrLoginKind, QrLoginState, QrLoginTicket, QrLoginTicketOutput, ResolvedContent, RestrictedArea,
-    RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection,
-    StreamQuality, StreamSelection, StreamSet, SubtitleAiPolicy, TvAccessKeyLoginCredentials,
-    TvAccessKeyRefreshRequest, WebCookieRefreshCredentials, WebCookieRefreshRequest,
-    archive_entry_allows_danmaku_update, credential_preflight_requirements_for_media_paths,
+    QrLoginCredentialsState, QrLoginKind, QrLoginTicket, QrLoginTicketOutput, ResolvedContent,
+    RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind,
+    RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet, SubtitleAiPolicy,
+    TvAccessKeyLoginCredentials, TvAccessKeyRefreshRequest, WebCookieRefreshCredentials,
+    WebCookieRefreshRequest, archive_entry_allows_danmaku_update,
+    credential_preflight_requirements_for_media_paths,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::ffi::{OsStr, OsString};
@@ -5682,20 +5683,20 @@ async fn wait_for_qr_login(
             remaining_until(Instant::now(), deadline).context("QR login timed out")?;
         let state = poll_qr_login(client, ticket, poll_timeout).await?;
         match state {
-            QrLoginState::WaitingForScan => {
+            QrLoginCredentialsState::WaitingForScan => {
                 if !args.json && last_waiting_state != Some("waiting_for_scan") {
                     print_human_line("waiting for scan")?;
                 }
                 last_waiting_state = Some("waiting_for_scan");
             }
-            QrLoginState::WaitingForConfirm => {
+            QrLoginCredentialsState::WaitingForConfirm => {
                 if !args.json && last_waiting_state != Some("waiting_for_confirm") {
                     print_human_line("waiting for confirmation")?;
                 }
                 last_waiting_state = Some("waiting_for_confirm");
             }
-            QrLoginState::Expired => bail!("QR code expired"),
-            QrLoginState::Succeeded { credentials } => return Ok(credentials),
+            QrLoginCredentialsState::Expired => bail!("QR code expired"),
+            QrLoginCredentialsState::Succeeded { credentials } => return Ok(credentials),
         }
         let sleep_duration =
             next_poll_sleep(Instant::now(), deadline, interval).context("QR login timed out")?;
@@ -5707,11 +5708,11 @@ async fn poll_qr_login(
     client: &BiliClient,
     ticket: &QrLoginTicket,
     timeout: Duration,
-) -> anyhow::Result<QrLoginState> {
+) -> anyhow::Result<QrLoginCredentialsState> {
     tokio::time::timeout(timeout, async {
         match ticket.kind {
-            QrLoginKind::Web => client.poll_web_qr_login(&ticket.key).await,
-            QrLoginKind::Tv => client.poll_tv_qr_login(ticket).await,
+            QrLoginKind::Web => client.poll_web_qr_login_credentials(&ticket.key).await,
+            QrLoginKind::Tv => client.poll_tv_qr_login_credentials(ticket).await,
         }
     })
     .await

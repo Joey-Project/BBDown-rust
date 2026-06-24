@@ -6,9 +6,8 @@ use crate::{
 use md5::Digest;
 use rand::rngs::OsRng;
 use reqwest::header::{ACCEPT, COOKIE, HeaderMap, HeaderValue, ORIGIN, REFERER, SET_COOKIE};
-use rsa::{Oaep, RsaPublicKey, pkcs8::DecodePublicKey};
+use rsa::{Pkcs1v15Encrypt, RsaPublicKey, pkcs8::DecodePublicKey};
 use serde::{Deserialize, Serialize};
-use sha2::Sha256;
 use std::{
     fmt,
     time::{SystemTime, UNIX_EPOCH},
@@ -639,6 +638,28 @@ pub enum QrLoginState {
     WaitingForScan,
     WaitingForConfirm,
     Expired,
+    Succeeded { credentials: Credentials },
+}
+
+impl QrLoginState {
+    #[must_use]
+    pub fn from_credentials_state(state: QrLoginCredentialsState) -> Self {
+        match state {
+            QrLoginCredentialsState::WaitingForScan => Self::WaitingForScan,
+            QrLoginCredentialsState::WaitingForConfirm => Self::WaitingForConfirm,
+            QrLoginCredentialsState::Expired => Self::Expired,
+            QrLoginCredentialsState::Succeeded { credentials } => Self::Succeeded {
+                credentials: credentials.credentials,
+            },
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum QrLoginCredentialsState {
+    WaitingForScan,
+    WaitingForConfirm,
+    Expired,
     Succeeded { credentials: QrLoginCredentials },
 }
 
@@ -934,6 +955,15 @@ impl BiliClient {
     }
 
     pub async fn poll_web_qr_login(&self, qrcode_key: &str) -> Result<QrLoginState> {
+        self.poll_web_qr_login_credentials(qrcode_key)
+            .await
+            .map(QrLoginState::from_credentials_state)
+    }
+
+    pub async fn poll_web_qr_login_credentials(
+        &self,
+        qrcode_key: &str,
+    ) -> Result<QrLoginCredentialsState> {
         let mut url = Self::endpoint_url(
             &self.config.endpoints.passport_base,
             "/x/passport-login/web/qrcode/poll",
@@ -958,9 +988,9 @@ impl BiliClient {
             .map_err(BiliClient::http_error_without_url)?;
         let data = response.into_data()?;
         match data.code {
-            WEB_QR_WAITING_SCAN => Ok(QrLoginState::WaitingForScan),
-            WEB_QR_WAITING_CONFIRM => Ok(QrLoginState::WaitingForConfirm),
-            WEB_QR_EXPIRED => Ok(QrLoginState::Expired),
+            WEB_QR_WAITING_SCAN => Ok(QrLoginCredentialsState::WaitingForScan),
+            WEB_QR_WAITING_CONFIRM => Ok(QrLoginCredentialsState::WaitingForConfirm),
+            WEB_QR_EXPIRED => Ok(QrLoginCredentialsState::Expired),
             0 => {
                 let cookie = if let Some(cookie) = header_cookie {
                     cookie
@@ -968,7 +998,7 @@ impl BiliClient {
                     let url = data.url.ok_or(Error::MissingField("url"))?;
                     cookie_from_success_url(&url)?
                 };
-                Ok(QrLoginState::Succeeded {
+                Ok(QrLoginCredentialsState::Succeeded {
                     credentials: QrLoginCredentials::new(Credentials {
                         cookie: Some(cookie),
                         access_key: None,
@@ -1016,6 +1046,15 @@ impl BiliClient {
     }
 
     pub async fn poll_tv_qr_login(&self, ticket: &QrLoginTicket) -> Result<QrLoginState> {
+        self.poll_tv_qr_login_credentials(ticket)
+            .await
+            .map(QrLoginState::from_credentials_state)
+    }
+
+    pub async fn poll_tv_qr_login_credentials(
+        &self,
+        ticket: &QrLoginTicket,
+    ) -> Result<QrLoginCredentialsState> {
         if ticket.kind != QrLoginKind::Tv {
             return Err(Error::InvalidInput(
                 "poll_tv_qr_login requires a TV QR login ticket".to_owned(),
@@ -1045,12 +1084,12 @@ impl BiliClient {
             .await
             .map_err(BiliClient::http_error_without_url)?;
         match response.code {
-            TV_QR_WAITING_SCAN => Ok(QrLoginState::WaitingForScan),
-            TV_QR_WAITING_CONFIRM => Ok(QrLoginState::WaitingForConfirm),
-            TV_QR_EXPIRED => Ok(QrLoginState::Expired),
+            TV_QR_WAITING_SCAN => Ok(QrLoginCredentialsState::WaitingForScan),
+            TV_QR_WAITING_CONFIRM => Ok(QrLoginCredentialsState::WaitingForConfirm),
+            TV_QR_EXPIRED => Ok(QrLoginCredentialsState::Expired),
             0 => {
                 let data = response.data.ok_or(Error::MissingField("data"))?;
-                Ok(QrLoginState::Succeeded {
+                Ok(QrLoginCredentialsState::Succeeded {
                     credentials: QrLoginCredentials::new(Credentials {
                         cookie: None,
                         access_key: None,
@@ -1709,7 +1748,7 @@ fn web_cookie_refresh_correspond_path(timestamp_unix_millis: u64) -> Result<Stri
     let encrypted = public_key
         .encrypt(
             &mut OsRng,
-            Oaep::new::<Sha256>(),
+            Pkcs1v15Encrypt,
             format!("refresh_{timestamp_unix_millis}").as_bytes(),
         )
         .map_err(|error| {
@@ -1805,12 +1844,12 @@ mod tests {
         AccessKeyAutomaticRefreshReadiness, AccessKeyLoginConfig, AccessKeyLoginCredentials,
         AccessKeyRefreshData, AccessKeyRefreshRequest, AccessKeyRefreshTokenInfo,
         AccessKeyRenewalAction, AccessKeyRenewalDecision, AccessKeyRenewalReason,
-        QrLoginCredentials, QrLoginState, QrLoginTicket, TvAccessKeyRefreshRequest, TvLoginContext,
-        WebCookieRefreshRequest, access_key_credentials_from_refresh_data,
-        cookie_from_set_cookie_headers, cookie_from_success_url,
-        cookie_header_contains_non_empty_cookie, csrf_from_cookie, intl_access_key_refresh_params,
-        main_access_key_refresh_params, main_access_key_refresh_path,
-        merge_cookie_with_set_cookie_headers, qrcode_key_from_url,
+        QrLoginCredentials, QrLoginCredentialsState, QrLoginState, QrLoginTicket,
+        TvAccessKeyRefreshRequest, TvLoginContext, WebCookieRefreshRequest,
+        access_key_credentials_from_refresh_data, cookie_from_set_cookie_headers,
+        cookie_from_success_url, cookie_header_contains_non_empty_cookie, csrf_from_cookie,
+        intl_access_key_refresh_params, main_access_key_refresh_params,
+        main_access_key_refresh_path, merge_cookie_with_set_cookie_headers, qrcode_key_from_url,
         refresh_csrf_from_correspond_body, set_cookie_headers_contain_non_empty_cookie,
         tv_login_params, web_cookie_refresh_correspond_path,
     };
@@ -3073,6 +3112,16 @@ mod tests {
         assert_eq!(
             client.poll_web_qr_login("DONE").await?,
             QrLoginState::Succeeded {
+                credentials: Credentials {
+                    cookie: Some("SESSDATA=sess".to_owned()),
+                    access_key: None,
+                    tv_access_key: None,
+                }
+            }
+        );
+        assert_eq!(
+            client.poll_web_qr_login_credentials("DONE").await?,
+            QrLoginCredentialsState::Succeeded {
                 credentials: QrLoginCredentials::new(Credentials {
                     cookie: Some("SESSDATA=sess".to_owned()),
                     access_key: None,
@@ -3104,54 +3153,33 @@ mod tests {
                 "data": {"url": "https://tv.example/scan", "auth_code": "AUTH"}
             }));
         });
-        server.mock(|when, then| {
-            when.method(POST)
-                .path("/x/passport-tv-login/qrcode/poll")
-                .header_missing("cookie")
-                .form_urlencoded_tuple("auth_code", "WAIT")
-                .form_urlencoded_tuple_exists("sign");
-            then.status(200).json_body_obj(&serde_json::json!({
-                "code": 86039,
-                "message": "waiting scan"
-            }));
-        });
-        server.mock(|when, then| {
-            when.method(POST)
-                .path("/x/passport-tv-login/qrcode/poll")
-                .header_missing("cookie")
-                .form_urlencoded_tuple("auth_code", "CONFIRM")
-                .form_urlencoded_tuple_exists("sign");
-            then.status(200).json_body_obj(&serde_json::json!({
-                "code": 86090,
-                "message": "waiting confirm"
-            }));
-        });
-        server.mock(|when, then| {
-            when.method(POST)
-                .path("/x/passport-tv-login/qrcode/poll")
-                .header_missing("cookie")
-                .form_urlencoded_tuple("auth_code", "EXPIRED")
-                .form_urlencoded_tuple_exists("sign");
-            then.status(200).json_body_obj(&serde_json::json!({
-                "code": 86038,
-                "message": "expired"
-            }));
-        });
-        server.mock(|when, then| {
-            when.method(POST)
-                .path("/x/passport-tv-login/qrcode/poll")
-                .header_missing("cookie")
-                .form_urlencoded_tuple("auth_code", "AUTH")
-                .form_urlencoded_tuple_exists("sign");
-            then.status(200).json_body_obj(&serde_json::json!({
+        mock_tv_qr_poll(
+            &server,
+            "WAIT",
+            &serde_json::json!({"code": 86039, "message": "waiting scan"}),
+        );
+        mock_tv_qr_poll(
+            &server,
+            "CONFIRM",
+            &serde_json::json!({"code": 86090, "message": "waiting confirm"}),
+        );
+        mock_tv_qr_poll(
+            &server,
+            "EXPIRED",
+            &serde_json::json!({"code": 86038, "message": "expired"}),
+        );
+        mock_tv_qr_poll(
+            &server,
+            "AUTH",
+            &serde_json::json!({
                 "code": 0,
                 "data": {
                     "access_token": "ACCESS",
                     "refresh_token": "TV_RT",
                     "expires_in": 7200
                 }
-            }));
-        });
+            }),
+        );
         let client = test_client(&server);
         let ticket = client.create_tv_qr_login().await?;
 
@@ -3177,6 +3205,16 @@ mod tests {
         assert_eq!(
             client.poll_tv_qr_login(&ticket).await?,
             QrLoginState::Succeeded {
+                credentials: Credentials {
+                    cookie: None,
+                    access_key: None,
+                    tv_access_key: Some("ACCESS".to_owned()),
+                }
+            }
+        );
+        assert_eq!(
+            client.poll_tv_qr_login_credentials(&ticket).await?,
+            QrLoginCredentialsState::Succeeded {
                 credentials: QrLoginCredentials::new(Credentials {
                     cookie: None,
                     access_key: None,
@@ -3187,6 +3225,17 @@ mod tests {
             }
         );
         Ok(())
+    }
+
+    fn mock_tv_qr_poll(server: &MockServer, auth_code: &str, body: &serde_json::Value) {
+        server.mock(|when, then| {
+            when.method(POST)
+                .path("/x/passport-tv-login/qrcode/poll")
+                .header_missing("cookie")
+                .form_urlencoded_tuple("auth_code", auth_code)
+                .form_urlencoded_tuple_exists("sign");
+            then.status(200).json_body_obj(&body);
+        });
     }
 
     fn test_client(server: &MockServer) -> BiliClient {

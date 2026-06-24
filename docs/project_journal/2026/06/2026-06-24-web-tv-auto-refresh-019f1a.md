@@ -5,7 +5,7 @@ status: completed
 created: 2026-06-24
 updated: 2026-06-24
 branch: feature/web-tv-auto-refresh
-pr:
+pr: https://github.com/Joey-Project/BBDown-rust/pull/72
 supersedes: []
 superseded_by:
 ---
@@ -36,11 +36,15 @@ superseded_by:
   - `cargo test -p bbdown-cli --test cli_e2e auth --locked`
   - `cargo test -p bbdown-core refresh_secret --locked`
   - `cargo test -p bbdown-core web_cookie_refresh --locked`
+  - `cargo test -p bbdown-core polls_web_qr_login_states --locked`
+  - `cargo test -p bbdown-core creates_and_polls_tv_qr_login --locked`
   - `cargo test -p bbdown-core refreshed_cookie_merge_deduplicates_replaced_cookie_pairs --locked`
   - `cargo test -p bbdown-core refreshes_web_cookie --locked`
   - `cargo test -p bbdown-cli stored_credential_refresh_request_debug_redacts_secrets --locked`
   - `cargo test -p bbdown-cli --test cli_e2e web_cookie --locked`
   - `cargo test -p bbdown-cli --test cli_e2e auth_renew_web --locked`
+  - `cargo test -p bbdown-cli auth_renew --locked`
+  - `cargo check -p bbdown-cli --locked`
   - `cargo fmt --all -- --check`
   - `git diff --check`
   - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/5f1ab3fa5d9f7d534507216a2d6f765694f9b710/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`
@@ -75,5 +79,11 @@ superseded_by:
     optional lifecycle `refresh_token_present` metadata flag. This was fixed so stored provider
     secrets make legacy/manual profiles refresh-ready even when old metadata omitted the presence
     flag, with core regression coverage.
-  - The helper-backed offline frozen diff review on `57bd18d..32faac5` returned `LGTM`; final PR
-    readiness evidence is tracked on PR #72.
+  - The helper-backed offline frozen diff review on `57bd18d..9382f6b` found that WEB
+    `correspond/1` challenge generation used RSA-OAEP instead of the JSEncrypt-compatible
+    RSAES-PKCS1-v1_5 flow expected by Bilibili, and that `QrLoginState::Succeeded` changed its
+    public payload type before the release bump. The follow-up fix switched the challenge padding,
+    restored the legacy `QrLoginState` payload, and added detail polling methods for QR refresh
+    metadata.
+  - Current-head GitHub Codex review for `9382f6b` returned no major issues; final PR readiness
+    evidence is tracked on PR #72.

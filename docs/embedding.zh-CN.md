@@ -223,9 +223,11 @@ refresh token，但不会在 metadata map 中保存原始 refresh token 值。�
 会在加载时被忽略，自动续期仍然属于独立策略层。
 对于二维码登录，如果下游应用需要稳定的可序列化扫码 URL 和 `qr_payload`，可以把
 `QrLoginTicket` 转换成 `QrLoginTicketOutput`；当前 WEB 和 TV 登录流程会直接使用扫码 URL
-作为 QR payload。`QrLoginState::Succeeded` 会携带 `QrLoginCredentials`，其中包含运行时
-`Credentials` 和可选 refresh metadata。自行管理存储的嵌入方应把运行时 credential 与 refresh
-token 分开持久化：WEB refresh token 使用
+作为 QR payload。兼容方法 `poll_web_qr_login` / `poll_tv_qr_login` 会返回
+`QrLoginState::Succeeded { credentials: Credentials }`。当存储层需要 refresh metadata 时，调用
+`poll_web_qr_login_credentials` / `poll_tv_qr_login_credentials` 获取
+`QrLoginCredentials`，其中包含运行时 `Credentials` 和可选 refresh metadata。自行管理存储的嵌入方应把运行时
+credential 与 refresh token 分开持久化：WEB refresh token 使用
 `CredentialProfileSecrets::set_cookie(CredentialRefreshSecret::default().with_refresh_token(...))`
 保存，TV refresh token 使用 `set_tv_access_key(...)` 保存；lifecycle metadata 只记录
 `refresh_token_present`，以及从 `expires_in` 派生出的过期时间。
@@ -266,7 +268,8 @@ keypair 会路由到 TV OAuth refresh path。成功后会返回新的 `AccessKey
 WEB cookie 和 TV token refresh 是独立 primitive，因为它们不是 provider-scoped generic access
 key。嵌入方可以用已保存 cookie 和对应 refresh token 构造 `WebCookieRefreshRequest`，再调用
 `BiliClient::refresh_web_cookie(...)`；client 会检查
-`/x/passport-login/web/cookie/info`，派生 RSA-OAEP correspond path，从
+`/x/passport-login/web/cookie/info`，派生与 JSEncrypt 兼容的 RSAES-PKCS1-v1_5
+`correspond/1/{path}` challenge，从
 `EndpointConfig::web_base` 提取 `refresh_csrf`，调用 cookie refresh endpoint，合并
 `Set-Cookie` header，并确认旧 refresh token。如果 Bilibili 表示现有 cookie 暂时不需要
 refresh，返回的 `WebCookieRefreshCredentials::refreshed` 会是 `false`；嵌入方应把它当成
