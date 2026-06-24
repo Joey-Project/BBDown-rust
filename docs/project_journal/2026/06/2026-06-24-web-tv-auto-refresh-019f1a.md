@@ -129,3 +129,8 @@ superseded_by:
     refresh failure handling, gates unrelated preflight refresh attempts, defers stored refresh for
     archive duplicate handling, binds handoff saves to the initial renewal decision profile, and adds
     CLI e2e coverage for these cases.
+  - A follow-up independent Codex rerun on `7792402` found that deferred archive preflight could
+    lose a successful stored WEB/TV refresh result when a later generic access-key refresh attempt
+    returned `false`, preventing archive downloads from rebuilding the client and plan with the
+    refreshed stored credential. The fix preserves the earlier stored-refresh success and adds a
+    regression covering stored TV refresh success plus generic access-key refresh failure.
