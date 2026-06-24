@@ -46,6 +46,10 @@ superseded_by:
   - `cargo test -p bbdown-cli auth_renew --locked`
   - `cargo test -p bbdown-cli credential_preflight_renew --locked`
   - `cargo test -p bbdown-cli download_archive_cancel_defers --locked`
+  - `cargo test -p bbdown-cli deferred_preflight_forces_failed_kind_after_unrelated_stored_refresh_noop --locked`
+  - `cargo test -p bbdown-cli deferred_preflight_preserves_stored_refresh_when_access_key_refresh_fails --locked`
+  - `cargo test -p bbdown-cli download_archive_retries_fresh_web_cookie_after_authenticated_feed_failure --test cli_e2e --locked`
+  - `cargo test -p bbdown-cli download_archive_retries_plan_after_auth_failure_with_fresh_refreshable_access_key --test cli_e2e --locked`
   - `cargo test -p bbdown-cli auth_renew_web_fails_when_refresh_secret_is_missing --locked`
   - `cargo test -p bbdown-cli auth_renew_tv_fails_when_refresh_secret_is_missing --locked`
   - `cargo test -p bbdown-core tv_keypair_access_key_refresh_uses_tv_passport_poll_base --locked`
@@ -141,3 +145,7 @@ superseded_by:
     routes BiliTV keypair refresh through `tv_passport_poll_base` unconditionally, adds forced
     stored WEB/TV refresh on media retry failures, and covers the fresh WEB cookie history retry
     path with CLI e2e coverage.
+  - The paired offline frozen diff review on `eba8713` found that deferred archive retry used a
+    global stored-refresh gate, so an unrelated WEB cookie no-op could prevent forced TV key refresh
+    for the actual playurl failure. The fix tracks stored-refresh handling per credential kind and
+    adds regression coverage for the unrelated no-op plus forced TV refresh path.
