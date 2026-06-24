@@ -425,10 +425,11 @@ time, optional expiry, and refresh-token presence. Use `auth renew-web` to refre
 cookie and `auth renew-tv` to refresh a saved TV token. With `--json`, both commands emit a
 `decision` event, then `refreshed` and `saved` when non-interactive refresh succeeds. If the selected
 profile is fresh, they emit only `no_action`; if the profile has no stored refresh secret, they emit
-a redacted `refresh_failed` event instead of prompting for login. If Bilibili says the selected WEB
-cookie does not need refresh yet, `auth renew-web --json` emits `refresh_not_needed` and does not
-rewrite the stored credential or lifecycle acquisition timestamp; it records a new lifecycle checked
-timestamp so later preflight checks do not repeatedly treat the same confirmed cookie as stale.
+a redacted `refresh_failed` event and exit non-zero instead of prompting for login. If Bilibili says
+the selected WEB cookie does not need refresh yet, `auth renew-web --json` emits
+`refresh_not_needed` and does not rewrite the stored credential or lifecycle acquisition timestamp;
+it records a new lifecycle checked timestamp so later preflight checks do not repeatedly treat the
+same confirmed cookie as stale.
 Stored WEB/TV refresh server failures also emit `refresh_failed` and exit non-zero because these
 commands do not have an interactive fallback flow.
 All credential import, access-key login, and access-key renewal writes are selected-profile updates:

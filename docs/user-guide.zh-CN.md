@@ -379,8 +379,8 @@ secret 保存到 `profile_secrets.<profile>.cookie` 和
 时间以及 refresh token 是否出现。使用 `auth renew-web` 可以刷新已保存的 WEB cookie；
 使用 `auth renew-tv` 可以刷新已保存的 TV token。带 `--json` 时，这两个命令会先输出
 `decision` event，非交互刷新成功后输出 `refreshed` 和 `saved`。如果当前 profile 仍是 fresh，
-只会输出 `no_action`；如果没有保存 refresh secret，则输出脱敏的 `refresh_failed`，不会进入
-交互登录流程。如果 Bilibili 表示当前 WEB cookie 暂时不需要 refresh，`auth renew-web --json`
+只会输出 `no_action`；如果没有保存 refresh secret，则输出脱敏的 `refresh_failed` 并以非零状态退出，
+不会进入交互登录流程。如果 Bilibili 表示当前 WEB cookie 暂时不需要 refresh，`auth renew-web --json`
 会输出 `refresh_not_needed`，并且不会重写已存 credential 或 lifecycle 获取时间戳；它会记录新的
 lifecycle 检查时间，避免后续 preflight 反复把同一个已确认 cookie 判为 stale。已保存 WEB/TV
 refresh 的服务端失败也会输出 `refresh_failed` 并以非零状态退出，因为这两个命令没有交互式回退流程。

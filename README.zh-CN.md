@@ -245,6 +245,8 @@ profile secret 保存到 `profile_secrets.<profile>.cookie` 或
 并使用与 access-key refresh 相同的 stale-response guard。如果 Bilibili 返回当前 WEB cookie
 暂时不需要 refresh，`auth renew-web --json` 会输出 `refresh_not_needed`，并保持已存 cookie、
 refresh token 和 lifecycle 获取时间不变，同时更新 lifecycle 检查时间。
+缺少 WEB/TV refresh secret 或 refresh 服务端失败时，命令会输出 `refresh_failed` 并以非零状态退出，
+因为这两个命令没有交互式回退流程。
 `plan`、
 `playback` 和 `download` 也支持 `--credential-preflight warn|fail|renew`，方便调用方在 media
 request 前检查当前 profile，也会覆盖使用通用 `access_key` 的 intl/Bstar media path；同样可以用

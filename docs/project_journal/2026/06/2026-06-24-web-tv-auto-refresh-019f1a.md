@@ -44,6 +44,8 @@ superseded_by:
   - `cargo test -p bbdown-cli --test cli_e2e web_cookie --locked`
   - `cargo test -p bbdown-cli --test cli_e2e auth_renew_web --locked`
   - `cargo test -p bbdown-cli auth_renew --locked`
+  - `cargo test -p bbdown-cli auth_renew_web_fails_when_refresh_secret_is_missing --locked`
+  - `cargo test -p bbdown-cli auth_renew_tv_fails_when_refresh_secret_is_missing --locked`
   - `cargo check -p bbdown-cli --locked`
   - `cargo fmt --all -- --check`
   - `git diff --check`
@@ -92,3 +94,7 @@ superseded_by:
     `refresh=false` path treated a stale checked-save guard as a failed command. The fix now treats
     `SkippedStaleRequest` as handled for that no-op path and adds unit coverage that the stale guard
     does not overwrite a concurrently updated WEB cookie profile or refresh secret.
+  - The current-head independent Codex rerun on `30cd646` found that direct `auth renew-web` /
+    `auth renew-tv` setup failures, such as metadata-only refresh tokens without stored refresh
+    secrets, emitted `refresh_failed` but still exited successfully. The fix makes these direct
+    renewal commands exit non-zero and adds WEB/TV CLI e2e coverage for missing refresh secrets.

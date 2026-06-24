@@ -262,6 +262,8 @@ refresh, redact raw cookies/tokens, and use the same stale-response guard as acc
 Bilibili reports that a WEB cookie does not need refresh yet, `auth renew-web --json` emits
 `refresh_not_needed`, leaves the stored cookie, refresh token, and lifecycle acquisition time
 unchanged, and updates lifecycle checked time.
+Missing WEB/TV refresh secrets and refresh server failures emit `refresh_failed` and exit non-zero
+because these commands do not have an interactive fallback flow.
 `plan`, `playback`, and `download` also accept `--credential-preflight warn|fail|renew` so callers
 can check the selected profile before media requests, including intl/Bstar media paths that use the
 generic `access_key`. The same controls are available as `BBDOWN_CREDENTIAL_PREFLIGHT`,

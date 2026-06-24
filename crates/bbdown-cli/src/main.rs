@@ -1972,7 +1972,7 @@ async fn handle_stored_credential_renewal(
             kind,
             "automatic refresh secret is unavailable for the selected profile",
         )?;
-        return Ok(());
+        bail!("automatic {} refresh failed", credential_kind_label(kind));
     }
     let refreshed = try_stored_credential_auto_refresh(
         kind,

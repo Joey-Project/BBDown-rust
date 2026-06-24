@@ -8032,6 +8032,26 @@ fn save_refreshable_cookie_profile(credential_file: &Path) -> anyhow::Result<()>
     Ok(())
 }
 
+fn save_cookie_profile_without_refresh_secret(credential_file: &Path) -> anyhow::Result<()> {
+    let store = CredentialStore::new(credential_file.to_path_buf());
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_profile(
+        "default",
+        Credentials::default().with_cookie("SESSDATA=old;bili_jct=OLD_CSRF"),
+    )?;
+    let mut metadata = CredentialProfileMetadata::default();
+    metadata.set_credential(
+        CredentialKind::Cookie,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::WebQrLogin)
+            .with_acquired_at_unix_millis(1_000)
+            .with_refresh_token_present(true),
+    );
+    profiles.set_profile_metadata("default", metadata)?;
+    store.save_profiles(&profiles)?;
+    Ok(())
+}
+
 fn save_refreshable_tv_access_key_profile(credential_file: &Path) -> anyhow::Result<()> {
     let store = CredentialStore::new(credential_file.to_path_buf());
     let mut profiles = CredentialProfiles::default();
@@ -8053,6 +8073,27 @@ fn save_refreshable_tv_access_key_profile(credential_file: &Path) -> anyhow::Res
     secrets
         .set_tv_access_key(CredentialRefreshSecret::default().with_refresh_token("OLD_TV_REFRESH"));
     profiles.set_profile_secrets("default", secrets)?;
+    store.save_profiles(&profiles)?;
+    Ok(())
+}
+
+fn save_tv_access_key_profile_without_refresh_secret(credential_file: &Path) -> anyhow::Result<()> {
+    let store = CredentialStore::new(credential_file.to_path_buf());
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_profile(
+        "default",
+        Credentials::default().with_tv_access_key("OLD_TV_ACCESS"),
+    )?;
+    let mut metadata = CredentialProfileMetadata::default();
+    metadata.set_credential(
+        CredentialKind::TvAccessKey,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::TvQrLogin)
+            .with_acquired_at_unix_millis(1_000)
+            .with_expires_at_unix_millis(2_000)
+            .with_refresh_token_present(true),
+    );
+    profiles.set_profile_metadata("default", metadata)?;
     store.save_profiles(&profiles)?;
     Ok(())
 }
@@ -8390,6 +8431,44 @@ fn auth_renew_web_marks_checked_when_cookie_refresh_is_not_needed() -> anyhow::R
 }
 
 #[test]
+fn auth_renew_web_fails_when_refresh_secret_is_missing() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    save_cookie_profile_without_refresh_secret(&credential_file)?;
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .args(["auth", "renew-web", "--json"])
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    let events = json_lines(&output)?;
+
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["event"], "decision");
+    assert_eq!(events[0]["kind"], "cookie");
+    assert_eq!(
+        events[0]["decision"]["automatic_refresh_readiness"],
+        "metadata_only_refresh_token"
+    );
+    assert_eq!(events[0]["decision"]["action"], "refresh");
+    assert_eq!(events[1]["event"], "refresh_failed");
+    assert_eq!(events[1]["kind"], "cookie");
+    assert_eq!(
+        events[1]["message"],
+        "automatic refresh secret is unavailable for the selected profile"
+    );
+    let output_text = String::from_utf8(output)?;
+    for secret in ["SESSDATA=old", "OLD_CSRF"] {
+        assert!(!output_text.contains(secret));
+    }
+    Ok(())
+}
+
+#[test]
 fn auth_renew_web_fails_when_cookie_refresh_request_fails() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;
@@ -8534,6 +8613,42 @@ fn auth_renew_tv_refreshes_tv_access_key_secret() -> anyhow::Result<()> {
         Some("NEW_TV_REFRESH")
     );
     refresh_mock.assert_calls(1);
+    Ok(())
+}
+
+#[test]
+fn auth_renew_tv_fails_when_refresh_secret_is_missing() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    save_tv_access_key_profile_without_refresh_secret(&credential_file)?;
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .args(["auth", "renew-tv", "--json"])
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    let events = json_lines(&output)?;
+
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["event"], "decision");
+    assert_eq!(events[0]["kind"], "tv_access_key");
+    assert_eq!(
+        events[0]["decision"]["automatic_refresh_readiness"],
+        "metadata_only_refresh_token"
+    );
+    assert_eq!(events[0]["decision"]["action"], "refresh");
+    assert_eq!(events[1]["event"], "refresh_failed");
+    assert_eq!(events[1]["kind"], "tv_access_key");
+    assert_eq!(
+        events[1]["message"],
+        "automatic refresh secret is unavailable for the selected profile"
+    );
+    let output_text = String::from_utf8(output)?;
+    assert!(!output_text.contains("OLD_TV_ACCESS"));
     Ok(())
 }
 
