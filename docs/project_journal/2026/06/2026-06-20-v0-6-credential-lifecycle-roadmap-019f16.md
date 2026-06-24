@@ -54,6 +54,13 @@ superseded_by:
   credentials.
 - PR 10: release prep for `v0.6.0`, including bilingual docs, public API checks, deterministic CI,
   live-e2e notes, release notes, and protected RC readiness.
+- PR 11: persistent account switching. Add `auth switch <profile>` and an embedding-facing
+  `CredentialStore::set_default_profile` helper so users can change the default account without
+  passing `--credential-profile` on every command.
+- PR 12: WEB cookie and TV `tv_access_key` automatic refresh. Extend the provider-aware renewal
+  model beyond generic `access_key` while keeping refresh failures non-destructive.
+- PR 13: updated release prep for `v0.6.0`, folding the PR 11/12 additions into release notes,
+  public API checks, deterministic CI, and protected RC readiness.
 
 ## Completed Slices
 
@@ -550,9 +557,36 @@ superseded_by:
   - `git diff --check`.
   - `just ci`.
   - `just ci`.
+- PR 11 implements persistent account switching:
+  - `CredentialStore::set_default_profile(profile)` persists an existing profile as the default
+    account using the same cooperative update lock as other profile mutations; selecting the current
+    default profile is accepted as a no-op even before that empty profile has saved credentials.
+  - `bbdown auth switch <profile>` changes the default account for later commands and supports
+    `--json` for UI wrappers; it rejects missing profiles instead of creating empty accounts.
+  - `--credential-profile <name>` remains a per-process override and does not mutate the persistent
+    default.
+  - User-facing and embedding docs now describe the persistent switch versus one-command override.
+  - Independent review follow-up fixed the fresh-store no-op case so `auth switch default` can keep
+    the selected default instead of requiring a profile document to exist first.
+  - Current checkpoint:
+    - `cargo fmt --all -- --check` reported formatting drift before `cargo fmt --all`.
+    - `cargo fmt --all`.
+    - `cargo test -p bbdown-core set_default_profile --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e auth_switch --locked`.
+    - `cargo test -p bbdown-cli --test cli_e2e credential_profile_arg_overrides_persistent_auth_switch --locked`.
+    - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/5f1ab3fa5d9f7d534507216a2d6f765694f9b710/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.
+    - `git diff --check`.
+    - `just ci`.
+    - Review-fix checkpoint:
+      - `cargo fmt --all -- --check`.
+      - `cargo test -p bbdown-core set_default_profile --locked`.
+      - `cargo test -p bbdown-cli --test cli_e2e auth_switch --locked`.
+      - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/5f1ab3fa5d9f7d534507216a2d6f765694f9b710/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.
+      - `just ci`.
 
 ## Next Steps
 
-- Finish PR 9 full validation, review gates, CI, and merge.
-- Continue PR 10 release prep for `v0.6.0` after multi-account lifecycle polish is stable on
+- Finish PR 11 full validation, review gates, CI, and merge.
+- Continue PR 12 for WEB cookie and TV `tv_access_key` automatic refresh after PR 11 lands on
   `master`.
+- Update the `v0.6.0` release-prep PR after PR 12 lands, then run protected RC validation.

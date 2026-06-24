@@ -7411,6 +7411,160 @@ fn auth_status_all_profiles_includes_selected_empty_profile() -> anyhow::Result<
 }
 
 #[test]
+fn auth_switch_persists_default_profile() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_profile(
+        "default",
+        Credentials {
+            cookie: Some("SESSDATA=default".to_owned()),
+            access_key: None,
+            tv_access_key: None,
+        },
+    )?;
+    profiles.set_profile(
+        "intl",
+        Credentials {
+            cookie: None,
+            access_key: Some("ACCESS_TOKEN".to_owned()),
+            tv_access_key: None,
+        },
+    )?;
+    CredentialStore::new(credential_file.clone()).save_profiles(&profiles)?;
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .args(["auth", "switch", "intl", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let switch_report: Value = serde_json::from_slice(&output)?;
+    assert_eq!(switch_report["previous_default_profile"], "default");
+    assert_eq!(switch_report["selected_profile"], "intl");
+
+    let stored = CredentialStore::new(credential_file.clone()).load_profiles()?;
+    assert_eq!(stored.default_profile, "intl");
+    assert_eq!(
+        stored.default_credentials().access_key.as_deref(),
+        Some("ACCESS_TOKEN")
+    );
+
+    let status_output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .args(["auth", "status", "--profiles"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let status: Value = serde_json::from_slice(&status_output)?;
+    assert_eq!(status["selected_profile"], "intl");
+    assert_eq!(status["profiles"][0]["profile"], "intl");
+    assert_eq!(status["profiles"][0]["is_default_profile"], true);
+    assert_eq!(status["profiles"][0]["is_selected_profile"], true);
+    Ok(())
+}
+
+#[test]
+fn auth_switch_rejects_missing_profile() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_profile(
+        "default",
+        Credentials {
+            cookie: Some("SESSDATA=default".to_owned()),
+            access_key: None,
+            tv_access_key: None,
+        },
+    )?;
+    CredentialStore::new(credential_file.clone()).save_profiles(&profiles)?;
+
+    bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .args(["auth", "switch", "missing"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "credential profile \"missing\" does not exist",
+        ));
+
+    let stored = CredentialStore::new(credential_file).load_profiles()?;
+    assert_eq!(stored.default_profile, "default");
+    Ok(())
+}
+
+#[test]
+fn auth_switch_allows_empty_current_default_profile() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .args(["auth", "switch", "default", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let switch_report: Value = serde_json::from_slice(&output)?;
+    assert_eq!(switch_report["previous_default_profile"], "default");
+    assert_eq!(switch_report["selected_profile"], "default");
+    assert!(!credential_file.exists());
+    Ok(())
+}
+
+#[test]
+fn credential_profile_arg_overrides_persistent_auth_switch() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_profile(
+        "default",
+        Credentials {
+            cookie: Some("SESSDATA=default".to_owned()),
+            access_key: None,
+            tv_access_key: None,
+        },
+    )?;
+    profiles.set_profile(
+        "intl",
+        Credentials {
+            cookie: None,
+            access_key: Some("ACCESS_TOKEN".to_owned()),
+            tv_access_key: None,
+        },
+    )?;
+    profiles.set_default_profile("intl")?;
+    CredentialStore::new(credential_file).save_profiles(&profiles)?;
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(temp.path().join("credentials.json"))
+        .arg("--credential-profile")
+        .arg("default")
+        .args(["auth", "status", "--profiles"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let status: Value = serde_json::from_slice(&output)?;
+    assert_eq!(status["selected_profile"], "default");
+    assert_eq!(status["profiles"][0]["profile"], "default");
+    assert_eq!(status["profiles"][0]["is_default_profile"], false);
+    assert_eq!(status["profiles"][0]["is_selected_profile"], true);
+    Ok(())
+}
+
+#[test]
 fn auth_health_all_profiles_reports_profile_summaries_and_guidance() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;

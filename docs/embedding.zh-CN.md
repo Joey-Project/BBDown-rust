@@ -201,6 +201,9 @@ profile API 读取时会表现为 `default` profile；保存命名 profile 时�
 versioned profile document，同时保留默认凭据。
 `CredentialProfileSelection` 和 selected-profile store helper 提供与 CLI 相同的默认
 profile / 命名 profile 路由语义，因此嵌入方可以绑定用户选择的账号，而不必重复实现迁移行为。
+应用需要持久切换账号时，可以使用 `CredentialStore::set_default_profile(profile)`；它接受已存在
+profile，也允许把当前默认 profile 作为 no-op。只想让单次请求覆盖所选账号时，继续使用
+`CredentialProfileSelection::named(profile)`。
 做增量更新时，优先使用 `CredentialStore::update_profile`、
 `CredentialStore::update_selected_profile` 或 `CredentialStore::update_profiles`，不要先
 `load_profiles` 再把整个旧快照 `save_profiles` 回去。这些 helper 会获取每个 store 的协作锁，

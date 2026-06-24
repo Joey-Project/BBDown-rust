@@ -198,6 +198,7 @@ bbdown auth renew-access-key --stdin < balh-callback.txt
 bbdown auth login-web
 bbdown auth login-tv
 bbdown auth status
+bbdown auth switch intl
 bbdown auth health --json
 bbdown auth logout
 ```
@@ -212,7 +213,9 @@ scrollback 中；`--stdin` 必须来自 pipe 或 redirect，并会拒绝 termina
 会拒绝 terminal-backed path。命令不会隐式消费 stdin；pipe 或 redirect 必须显式传
 `--stdin`。如果输入来自浏览器 `postMessage`，请使用 `--message-origin`，这样 CLI 会把
 sender origin 与本次 login ticket 校验；兼容 mock 或部署可以使用 `--auth-base` 和
-`--callback-origin`。`auth renew-access-key` 会评估当前所选 profile 的 access-key lifecycle
+`--callback-origin`。单次命令可以用 `--credential-profile <name>` 选择账号；如果要把某个已
+存在 profile，或当前默认 profile，持久设为后续命令的默认账号，使用 `auth switch <name>`。
+`auth renew-access-key` 会评估当前所选 profile 的 access-key lifecycle
 metadata 并输出结构化 renewal decision。fresh credential 会返回 `no_action`；missing、
 unknown、stale、expiring、expired 或 forced credential 会返回 BiliPlus/BALH 重新授权 ticket。
 同一个命令如果传入 `--stdin` 或 `--file`，就会完成这次重新授权并保存新的通用 access key。
