@@ -195,3 +195,18 @@ superseded_by:
     APP playurl failures that actually used the selected stored TV key. The fix adds an APP gRPC
     path classifier, gates archive retry to APP requests that selected the TV key, and adds CLI e2e
     coverage for APP playurl HTTP `403` followed by forced stored TV-key refresh.
+  - The current-head independent Codex rerun on `aa59b6a` found two P2 issues: archive downloads
+    could make the duplicate/cancel decision before deferred credential refresh, blocking cases
+    where the refreshed plan no longer conflicted, and WEB cookie refresh could save a merged cookie
+    without non-empty `bili_jct`/csrf. The fix moves archive duplicate handling after deferred
+    refresh/replanning, requires refreshed WEB cookies to remain refreshable before confirmation,
+    and adds core plus CLI e2e regression coverage.
+  - Focused validation after that fix:
+    - `cargo test -p bbdown-cli download_archive_refreshes_before_duplicate_preflight_for_stale_plan_conflict --test cli_e2e --locked`
+    - `cargo test -p bbdown-core web_cookie_refresh_requires_refreshable_cookie_after_merge --lib --locked`
+    - `cargo test -p bbdown-cli download_archive_reruns_duplicate_preflight_after_deferred_refresh --test cli_e2e --locked`
+    - `cargo test -p bbdown-cli download_archive_cancel_reports_duplicate_after_deferred_refresh --test cli_e2e --locked`
+    - `cargo test -p bbdown-cli download_archive_cancel_defers_credential_preflight_renewal --test cli_e2e --locked`
+    - `cargo test -p bbdown-cli download_archive_cancel_defers_stored_tv_preflight_renewal --test cli_e2e --locked`
+    - `cargo test -p bbdown-core refreshes_web_cookie_with_correspond_challenge --lib --locked`
+    - `just ci`

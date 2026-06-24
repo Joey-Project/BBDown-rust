@@ -2804,17 +2804,6 @@ async fn handle_archive_download(
     )?;
     let mut preflight =
         inspect_download_preflight_or_report(&plan, &args.options, &archive, progress)?;
-    let mut duplicate_decision = archive_duplicate_decision_or_report(
-        &args,
-        &plan,
-        &preflight,
-        progress,
-        cancellation,
-        duplicate_prompt_active,
-    )?;
-    if duplicate_decision == ArchiveDuplicateDecision::Cancelled {
-        return Ok(None);
-    }
     let refreshed = complete_deferred_archive_preflight_renewal_or_report(
         &runtime,
         &mut prepared,
@@ -2831,19 +2820,18 @@ async fn handle_archive_download(
             &output_dir,
         )
         .await?;
-        let previous_preflight = preflight;
         preflight = inspect_download_preflight_or_report(&plan, &args.options, &archive, progress)?;
-        duplicate_decision = archive_duplicate_decision_after_refresh_or_report(
-            &runtime,
-            &args,
-            &plan,
-            &previous_preflight,
-            &preflight,
-            duplicate_decision,
-        )?;
-        if duplicate_decision == ArchiveDuplicateDecision::Cancelled {
-            return Ok(None);
-        }
+    }
+    let duplicate_decision = archive_duplicate_decision_or_report(
+        &args,
+        &plan,
+        &preflight,
+        progress,
+        cancellation,
+        duplicate_prompt_active,
+    )?;
+    if duplicate_decision == ArchiveDuplicateDecision::Cancelled {
+        return Ok(None);
     }
     let Some(execution_decision) =
         archive_execution_duplicate_decision(&args, &preflight, duplicate_decision)
@@ -2911,28 +2899,6 @@ async fn complete_deferred_archive_preflight_renewal_or_report(
         None,
     )
     .await
-}
-
-fn archive_duplicate_decision_after_refresh_or_report(
-    runtime: &ArchiveDownloadRuntime<'_>,
-    args: &DownloadCommandArgs,
-    plan: &DownloadPlan,
-    previous_preflight: &DownloadPreflight,
-    preflight: &DownloadPreflight,
-    current_decision: ArchiveDuplicateDecision,
-) -> anyhow::Result<ArchiveDuplicateDecision> {
-    if preflight.requires_decision() && preflight != previous_preflight {
-        archive_duplicate_decision_or_report(
-            args,
-            plan,
-            preflight,
-            runtime.progress,
-            runtime.cancellation,
-            runtime.duplicate_prompt_active,
-        )
-    } else {
-        Ok(current_decision)
-    }
 }
 
 fn archive_execution_duplicate_decision(
