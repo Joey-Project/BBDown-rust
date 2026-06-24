@@ -1512,38 +1512,21 @@ async fn complete_deferred_media_preflight_renewal(
         refreshed = true;
     }
 
-    if report.should_attempt_access_key_renewal()
-        && failure.is_none_or(|failure| {
-            media_preflight_report_can_refresh_generic_access_key_for_failure(
-                &deferred.context,
-                &report,
-                failure,
-            )
-        })
-    {
-        let profiles = credential_runtime
-            .store
-            .load_profiles()
-            .context("failed to load credential profiles")?;
-        let access_key_refreshed = try_access_key_auto_refresh_for_preflight(
+    if complete_deferred_access_key_renewal(
+        DeferredAccessKeyRenewalRuntime {
             credential_runtime,
             client_runtime,
-            &profiles,
-            &report.access_key_renewal,
+            credential_preflight,
             emit_diagnostics,
-        )
-        .await?;
-        if access_key_refreshed {
-            report = credential_preflight_report(
-                credential_runtime,
-                client_runtime,
-                credential_preflight,
-                &deferred.context,
-            )?;
-            prepared.credentials = credential_runtime.load()?;
-            prepared.access_key_provider = credential_runtime.selected_access_key_provider()?;
-            refreshed = true;
-        }
+        },
+        prepared,
+        &deferred.context,
+        &mut report,
+        failure,
+    )
+    .await?
+    {
+        refreshed = true;
     }
 
     if emit_diagnostics {
@@ -1560,6 +1543,78 @@ async fn complete_deferred_media_preflight_renewal(
         bail!("credential preflight failed: {messages}");
     }
     Ok(refreshed)
+}
+
+struct DeferredAccessKeyRenewalRuntime<'a> {
+    credential_runtime: &'a CredentialRuntime,
+    client_runtime: &'a ClientRuntimeConfig,
+    credential_preflight: &'a CredentialPreflightRuntimeConfig,
+    emit_diagnostics: bool,
+}
+
+async fn complete_deferred_access_key_renewal(
+    runtime: DeferredAccessKeyRenewalRuntime<'_>,
+    prepared: &mut PreparedMediaRequest,
+    context: &MediaCredentialPreflightContext,
+    report: &mut CredentialPreflightReport,
+    failure: Option<&bbdown_core::Error>,
+) -> anyhow::Result<bool> {
+    let mut access_key_refresh_attempted = false;
+    if report.should_attempt_access_key_renewal()
+        && failure.is_none_or(|failure| {
+            media_preflight_report_can_refresh_generic_access_key_for_failure(
+                context, report, failure,
+            )
+        })
+    {
+        access_key_refresh_attempted = true;
+        let profiles = runtime
+            .credential_runtime
+            .store
+            .load_profiles()
+            .context("failed to load credential profiles")?;
+        if try_access_key_auto_refresh_for_preflight(
+            runtime.credential_runtime,
+            runtime.client_runtime,
+            &profiles,
+            &report.access_key_renewal,
+            runtime.emit_diagnostics,
+        )
+        .await?
+        {
+            *report = credential_preflight_report(
+                runtime.credential_runtime,
+                runtime.client_runtime,
+                runtime.credential_preflight,
+                context,
+            )?;
+            prepared.credentials = runtime.credential_runtime.load()?;
+            prepared.access_key_provider =
+                runtime.credential_runtime.selected_access_key_provider()?;
+            return Ok(true);
+        }
+    }
+    if !access_key_refresh_attempted
+        && let Some(failure) = failure
+        && try_forced_access_key_refresh_for_archive_retry(
+            runtime.credential_runtime,
+            runtime.client_runtime,
+            runtime.credential_preflight,
+            prepared,
+            failure,
+            runtime.emit_diagnostics,
+        )
+        .await?
+    {
+        *report = credential_preflight_report(
+            runtime.credential_runtime,
+            runtime.client_runtime,
+            runtime.credential_preflight,
+            context,
+        )?;
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 async fn try_forced_access_key_refresh_for_archive_retry(
@@ -1690,7 +1745,7 @@ fn media_preflight_context_can_refresh_stored_credential_for_failure(
                 ) && requirement.selected_kind == Some(CredentialKind::TvAccessKey)
                     && requirement.selected_status != CredentialLifecycleStatus::Missing
             }) && ((context.playurl_mode == Some(PlayurlMode::Tv)
-                && plan_failure_may_be_credential_related(failure))
+                && tv_playurl_auth_failure_may_have_used_selected_tv_access_key(failure))
                 || (app_playurl_selected_tv_access_key(report)
                     && app_playurl_auth_failure_may_have_used_selected_tv_access_key(failure)))
         }
@@ -1885,6 +1940,37 @@ fn app_playurl_auth_failure_may_have_used_selected_tv_access_key(
             matches!(*code, 7 | 16)
                 && (auth_like_failure_message(message)
                     || message == "APP playurl gRPC request failed")
+        }
+        bbdown_core::Error::Http(error) => {
+            if error
+                .url()
+                .is_some_and(|url| !tv_access_key_playurl_json_path(url.path()))
+            {
+                return false;
+            }
+            error.status().is_some_and(|status| {
+                http_status_failure_may_be_credential_related(status.as_u16(), &error.to_string())
+            })
+        }
+        bbdown_core::Error::AccessRestricted(_)
+        | bbdown_core::Error::Cancelled { .. }
+        | bbdown_core::Error::InvalidInput(_)
+        | bbdown_core::Error::SelectionRequired { .. }
+        | bbdown_core::Error::Unsupported(_)
+        | bbdown_core::Error::MissingField(_)
+        | bbdown_core::Error::Url(_)
+        | bbdown_core::Error::Json(_)
+        | bbdown_core::Error::Io(_)
+        | bbdown_core::Error::MuxFailed { .. } => false,
+    }
+}
+
+fn tv_playurl_auth_failure_may_have_used_selected_tv_access_key(
+    failure: &bbdown_core::Error,
+) -> bool {
+    match failure {
+        bbdown_core::Error::Api { code, message } => {
+            api_failure_may_be_credential_related(*code, message)
         }
         bbdown_core::Error::Http(error) => {
             if error
@@ -6768,6 +6854,137 @@ mod tests {
             prepared.credentials.tv_access_key.as_deref(),
             Some("NEW_TV_ACCESS")
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn deferred_preflight_forces_generic_access_key_after_auth_failure() -> anyhow::Result<()>
+    {
+        use httpmock::prelude::*;
+
+        let server = MockServer::start();
+        let temp = tempfile::tempdir()?;
+        let store = CredentialStore::new(temp.path().join("credentials.json"));
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "default",
+            Credentials::default()
+                .with_access_key("GENERIC_ACCESS")
+                .with_cookie("SESSDATA=old;bili_jct=OLD_CSRF"),
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::Cookie,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::WebQrLogin)
+                .with_checked_at_unix_millis(1)
+                .with_refresh_token_present(true),
+        );
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_access_key_provider(AccessKeyProvider::BiliIntlOauth2)
+                .with_acquired_at_unix_millis(9_000_000_000_000)
+                .with_expires_at_unix_millis(9_000_000_060_000)
+                .with_refresh_token_present(true),
+        );
+        profiles.set_profile_metadata("default", metadata)?;
+        let mut secrets = CredentialProfileSecrets::default();
+        secrets.set_cookie(CredentialRefreshSecret::default().with_refresh_token("COOKIE_REFRESH"));
+        secrets.set_access_key_provider(
+            AccessKeyProvider::BiliIntlOauth2,
+            AccessKeyProviderSecret::default()
+                .with_refresh_token("GENERIC_REFRESH")
+                .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+                .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+        );
+        profiles.set_profile_secrets("default", secrets)?;
+        store.save_profiles(&profiles)?;
+
+        let generic_refresh = server.mock(|when, then| {
+            when.method(POST)
+                .path("/x/passport-tv-login/oauth2/refresh_token")
+                .form_urlencoded_tuple("access_key", "GENERIC_ACCESS")
+                .form_urlencoded_tuple("refresh_token", "GENERIC_REFRESH");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "token_info": {
+                        "access_token": "AUTO_ACCESS_SECRET",
+                        "refresh_token": "AUTO_REFRESH_SECRET",
+                        "expires_in": 60
+                    }
+                }
+            }));
+        });
+
+        let credential_runtime =
+            CredentialRuntime::new(store.clone(), CredentialProfileSelection::default_profile());
+        let endpoints = EndpointConfig::default()
+            .with_passport_base(server.base_url())
+            .with_tv_passport_base(server.base_url())
+            .with_tv_passport_poll_base(server.base_url());
+        let client_runtime = ClientRuntimeConfig::new(
+            endpoints,
+            RestrictedAreaConfig::default(),
+            PlayurlMode::App,
+            Duration::from_secs(5),
+        );
+        let credential_preflight =
+            CredentialPreflightRuntimeConfig::new(CredentialPreflightMode::Renew, 0, 0);
+        let status = profiles.profile_lifecycle_status(
+            "default",
+            &CredentialLifecyclePolicy::at_unix_millis(10_000),
+        )?;
+        let report = CredentialPreflightReport::evaluate(
+            CredentialPreflightMode::Renew,
+            &status,
+            [
+                CredentialPreflightRequirement::authenticated_web_api_cookie(),
+                CredentialPreflightRequirement::app_playurl_access_key(),
+            ],
+        );
+        assert!(!report.should_attempt_access_key_renewal());
+        let context = MediaCredentialPreflightContext {
+            input: Input::Aid(170_001),
+            playurl_mode: Some(PlayurlMode::App),
+            restricted_area_proxy_may_run: false,
+            intl_access_key_may_run: false,
+            web_cookie_required: true,
+        };
+        let mut prepared = PreparedMediaRequest {
+            credentials: credential_runtime.load()?,
+            access_key_provider: credential_runtime.selected_access_key_provider()?,
+            parsed_input: Some(context.input.clone()),
+            media_preflight_context: Some(context.clone()),
+            deferred_preflight: Some(DeferredMediaCredentialPreflight { context, report }),
+        };
+
+        let refreshed = complete_deferred_media_preflight_renewal(
+            &credential_runtime,
+            &client_runtime,
+            &credential_preflight,
+            &mut prepared,
+            Some(&bbdown_core::Error::Api {
+                code: 16,
+                message: "APP playurl gRPC request failed".to_owned(),
+            }),
+            false,
+        )
+        .await?;
+
+        assert!(refreshed);
+        assert_eq!(
+            prepared.credentials.access_key.as_deref(),
+            Some("AUTO_ACCESS_SECRET")
+        );
+        assert_eq!(
+            prepared.credentials.cookie.as_deref(),
+            Some("SESSDATA=old;bili_jct=OLD_CSRF")
+        );
+        generic_refresh.assert_calls(1);
         Ok(())
     }
 

@@ -61,6 +61,9 @@ superseded_by:
   - `cargo test -p bbdown-cli auth_renew_tv_uses_tv_passport_base_for_refresh --locked`
   - `cargo test -p bbdown-cli auth_renew_tv_fails_when_profile_changes_before_save --locked`
   - `cargo test -p bbdown-cli download_archive_does_not_refresh_tv_key_for_metadata_http_status --test cli_e2e --locked`
+  - `cargo test -p bbdown-cli deferred_preflight_forces_generic_access_key_after_auth_failure --bin bbdown --locked`
+  - `cargo test -p bbdown-cli download_archive_does_not_refresh_tv_key_for_tv_mode_metadata_http_status --test cli_e2e --locked`
+  - `cargo test -p bbdown-cli download_archive_retries_plan_after_auth_failure_with_fresh_refreshable_access_key --test cli_e2e --locked`
   - `cargo check -p bbdown-cli --locked`
   - `cargo fmt --all -- --check`
   - `git diff --check`
@@ -168,3 +171,9 @@ superseded_by:
     unrelated JSON metadata HTTP 401/403 failures, because the TV HTTP branch ignored the preserved
     classification URL. The fix now rejects preserved non-TV-playurl JSON HTTP failures before TV
     refresh and adds archive CLI e2e coverage with a fresh TV refresh secret and metadata `403`.
+  - The GitHub Codex review on `4bc3eea` found two final retry-classification gaps: a deferred
+    stored WEB/TV preflight could suppress the existing forced generic access-key retry after an
+    auth failure, and TV-mode archive retry could still refresh the stored TV key after unrelated
+    metadata HTTP failures. The fix runs the forced generic access-key fallback from the deferred
+    path when the original report did not already attempt access-key renewal, gates TV-mode forced
+    TV refresh to TV playurl failures, and adds focused unit/e2e coverage for both paths.
