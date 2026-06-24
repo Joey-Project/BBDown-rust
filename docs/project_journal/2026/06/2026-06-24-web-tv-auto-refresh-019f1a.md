@@ -49,6 +49,7 @@ superseded_by:
   - `cargo test -p bbdown-core tv_keypair_access_key_refresh_uses_tv_passport_poll_base --locked`
   - `cargo test -p bbdown-cli auth_renew_web_fails_when_cookie_refresh_request_fails --locked`
   - `cargo test -p bbdown-cli auth_renew_tv_uses_tv_passport_base_for_refresh --locked`
+  - `cargo test -p bbdown-cli auth_renew_tv_fails_when_profile_changes_before_save --locked`
   - `cargo check -p bbdown-cli --locked`
   - `cargo fmt --all -- --check`
   - `git diff --check`
@@ -106,3 +107,8 @@ superseded_by:
     configured TV passport poll endpoint. The fix now redacts cookie pairs and values in refresh
     errors, sends BiliTV keypair refresh requests to `tv_passport_poll_base` when overridden while
     preserving legacy `passport_base` compatibility, and documents the endpoint behavior.
+  - The current-head independent Codex rerun on `b37db07` found that direct `auth renew-web` /
+    `auth renew-tv` could emit `refresh_skipped` after a stale-response save guard but still exit
+    successfully. The fix makes direct renewal treat `SkippedStaleRequest` as a failed renewal while
+    preserving the no-overwrite guard, adds a TV direct-renew CLI e2e regression, and documents the
+    direct-command versus media-preflight behavior.

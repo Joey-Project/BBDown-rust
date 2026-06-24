@@ -2012,22 +2012,18 @@ async fn try_stored_credential_auto_refresh(
             match client.refresh_web_cookie(&request).await {
                 Ok(refreshed) => {
                     if refreshed.refreshed {
-                        save_refreshed_web_cookie(
+                        let outcome = save_refreshed_web_cookie(
                             credential_runtime,
                             &refresh,
                             &refreshed,
                             args.json,
                         )?;
-                        Ok(true)
+                        Ok(outcome.status == RefreshedCredentialSaveStatus::Saved)
                     } else {
                         let outcome =
                             save_web_cookie_refresh_checked_silent(credential_runtime, &refresh)?;
                         print_refreshed_credential_save_outcome(args.json, kind, &outcome)?;
-                        Ok(matches!(
-                            outcome.status,
-                            RefreshedCredentialSaveStatus::Noop
-                                | RefreshedCredentialSaveStatus::SkippedStaleRequest
-                        ))
+                        Ok(outcome.status == RefreshedCredentialSaveStatus::Noop)
                     }
                 }
                 Err(error) => {
@@ -2040,13 +2036,13 @@ async fn try_stored_credential_auto_refresh(
             let request = refresh.tv_access_key_request()?;
             match client.refresh_tv_access_key(&request).await {
                 Ok(refreshed) => {
-                    save_refreshed_tv_access_key(
+                    let outcome = save_refreshed_tv_access_key(
                         credential_runtime,
                         &refresh,
                         &refreshed,
                         args.json,
                     )?;
-                    Ok(true)
+                    Ok(outcome.status == RefreshedCredentialSaveStatus::Saved)
                 }
                 Err(error) => {
                     print_credential_refresh_failure(args.json, kind, &refresh, &error)?;
@@ -5066,9 +5062,10 @@ fn save_refreshed_web_cookie(
     refresh: &StoredCredentialRefreshRequest,
     refreshed: &WebCookieRefreshCredentials,
     json: bool,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<RefreshedCredentialSaveOutcome> {
     let outcome = save_refreshed_web_cookie_silent(credential_runtime, refresh, refreshed)?;
-    print_refreshed_credential_save_outcome(json, CredentialKind::Cookie, &outcome)
+    print_refreshed_credential_save_outcome(json, CredentialKind::Cookie, &outcome)?;
+    Ok(outcome)
 }
 
 fn save_refreshed_web_cookie_silent(
@@ -5159,9 +5156,10 @@ fn save_refreshed_tv_access_key(
     refresh: &StoredCredentialRefreshRequest,
     refreshed: &TvAccessKeyLoginCredentials,
     json: bool,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<RefreshedCredentialSaveOutcome> {
     let outcome = save_refreshed_tv_access_key_silent(credential_runtime, refresh, refreshed)?;
-    print_refreshed_credential_save_outcome(json, CredentialKind::TvAccessKey, &outcome)
+    print_refreshed_credential_save_outcome(json, CredentialKind::TvAccessKey, &outcome)?;
+    Ok(outcome)
 }
 
 fn save_refreshed_tv_access_key_silent(

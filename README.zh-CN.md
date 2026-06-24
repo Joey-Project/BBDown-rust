@@ -235,7 +235,8 @@ file 前，校验自己的 lock token 仍然有效；lock 获取和 stale reclai
 store，也不会删掉新 writer 的 lock。如果较慢的自动刷新 response
 已经不再匹配当前选择的 profile name，或不再匹配该 profile 的 credential / refresh-secret
 状态，JSON 输出会发出 `refresh_skipped`，并带上 `reason=profile_changed`，同时保持当前
-credential store 不变。
+credential store 不变。直接运行的 `auth renew-web` / `auth renew-tv` 会把这种 stale save
+视为刷新失败并以非零状态退出；media preflight 会重新评估当前 profile 后再决定是否继续。
 WEB QR 和 TV QR login response 也可能包含 refresh token。出现时，CLI 会把它们作为明文
 profile secret 保存到 `profile_secrets.<profile>.cookie` 或
 `profile_secrets.<profile>.tv_access_key`，lifecycle metadata 只记录 token 是否出现以及时间戳。

@@ -417,7 +417,9 @@ events without printing raw tokens. If refresh fails, the CLI emits `refresh_fai
 to the normal authorization ticket so callers can prompt the user without losing the old credential.
 If another cooperating process changes the current selected profile name, or changes that profile's
 credential or refresh-secret state before the older refresh response is saved, the CLI emits
-`refresh_skipped` with `reason=profile_changed` and leaves the current store untouched.
+`refresh_skipped` with `reason=profile_changed` and leaves the current store untouched. Direct
+`auth renew-web` / `auth renew-tv` commands treat that stale save as a failed renewal and exit
+non-zero; media preflight re-evaluates the current profile before deciding whether to continue.
 WEB QR and TV QR login can also return refresh tokens. The CLI stores those values as plaintext
 selected-profile secrets under `profile_secrets.<profile>.cookie` and
 `profile_secrets.<profile>.tv_access_key`, while lifecycle metadata stores only source, acquisition

@@ -8077,6 +8077,32 @@ fn save_refreshable_tv_access_key_profile(credential_file: &Path) -> anyhow::Res
     Ok(())
 }
 
+fn save_newer_tv_access_key_profile(credential_file: &Path) -> anyhow::Result<()> {
+    let store = CredentialStore::new(credential_file.to_path_buf());
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_profile(
+        "default",
+        Credentials::default().with_tv_access_key("NEWER_TV_ACCESS"),
+    )?;
+    let mut metadata = CredentialProfileMetadata::default();
+    metadata.set_credential(
+        CredentialKind::TvAccessKey,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::TvQrLogin)
+            .with_acquired_at_unix_millis(2_000)
+            .with_expires_at_unix_millis(3_000)
+            .with_refresh_token_present(true),
+    );
+    profiles.set_profile_metadata("default", metadata)?;
+    let mut secrets = CredentialProfileSecrets::default();
+    secrets.set_tv_access_key(
+        CredentialRefreshSecret::default().with_refresh_token("NEWER_TV_REFRESH"),
+    );
+    profiles.set_profile_secrets("default", secrets)?;
+    store.save_profiles(&profiles)?;
+    Ok(())
+}
+
 fn save_tv_access_key_profile_without_refresh_secret(credential_file: &Path) -> anyhow::Result<()> {
     let store = CredentialStore::new(credential_file.to_path_buf());
     let mut profiles = CredentialProfiles::default();
@@ -8669,6 +8695,70 @@ fn auth_renew_tv_uses_tv_passport_base_for_refresh() -> anyhow::Result<()> {
     assert_eq!(events[2]["event"], "saved");
     refresh_mock.assert_calls(1);
     wrong_base_mock.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+fn auth_renew_tv_fails_when_profile_changes_before_save() -> anyhow::Result<()> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let server_url = format!("http://{}", listener.local_addr()?);
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    save_refreshable_tv_access_key_profile(&credential_file)?;
+    let thread_credential_file = credential_file.clone();
+    let server_handle = thread::spawn(move || -> anyhow::Result<()> {
+        let (mut stream, _) = listener.accept()?;
+        let mut buffer = [0_u8; 4096];
+        let request_len = stream.read(&mut buffer)?;
+        let request = String::from_utf8_lossy(&buffer[..request_len]);
+        if !request.starts_with("POST /x/passport-tv-login/oauth2/refresh_token ") {
+            anyhow::bail!("unexpected request: {request}");
+        }
+        save_newer_tv_access_key_profile(&thread_credential_file)?;
+        let body = r#"{"code":0,"data":{"token_info":{"access_token":"NEW_TV_ACCESS","refresh_token":"NEW_TV_REFRESH","expires_in":60}}}"#;
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        )?;
+        Ok(())
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--tv-passport-base")
+        .arg(server_url)
+        .args(["auth", "renew-tv", "--json"])
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    server_handle
+        .join()
+        .map_err(|_| anyhow::anyhow!("refresh mock server thread panicked"))??;
+    let events = json_lines(&output)?;
+
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["event"], "decision");
+    assert_eq!(events[0]["decision"]["action"], "refresh");
+    assert_eq!(events[1]["event"], "refresh_skipped");
+    assert_eq!(events[1]["kind"], "tv_access_key");
+    assert_eq!(events[1]["reason"], "profile_changed");
+    let profiles = CredentialStore::new(credential_file).load_profiles()?;
+    assert_eq!(
+        profiles.profile("default")?.tv_access_key.as_deref(),
+        Some("NEWER_TV_ACCESS")
+    );
+    let secrets = profiles.profile_secrets("default")?;
+    assert_eq!(
+        secrets
+            .tv_access_key()
+            .and_then(|secret| secret.refresh_token.as_deref()),
+        Some("NEWER_TV_REFRESH")
+    );
     Ok(())
 }
 
