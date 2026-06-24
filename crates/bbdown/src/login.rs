@@ -1,8 +1,7 @@
 use crate::{
     AccessKeyProvider, AccessKeyRefreshKeypair, AccessKeyRefreshProvider, BiliClient,
     CredentialKind, CredentialLifecycleCredentialStatus, CredentialLifecycleSource,
-    CredentialLifecycleStatus, CredentialProfileLifecycleStatus, Credentials, EndpointConfig,
-    Error, Result,
+    CredentialLifecycleStatus, CredentialProfileLifecycleStatus, Credentials, Error, Result,
 };
 use md5::Digest;
 use rand::rngs::OsRng;
@@ -1285,13 +1284,7 @@ fn main_access_key_refresh_base<'a>(
         .refresh_keypair
         .ok_or(Error::MissingField("refresh_keypair"))?
     {
-        AccessKeyRefreshKeypair::BiliTv => {
-            if tv_passport_poll_base == EndpointConfig::default().tv_passport_poll_base {
-                Ok(passport_base)
-            } else {
-                Ok(tv_passport_poll_base)
-            }
-        }
+        AccessKeyRefreshKeypair::BiliTv => Ok(tv_passport_poll_base),
         AccessKeyRefreshKeypair::Android | AccessKeyRefreshKeypair::AndroidB => Ok(passport_base),
     }
 }
@@ -1870,10 +1863,11 @@ mod tests {
         AccessKeyRenewalAction, AccessKeyRenewalDecision, AccessKeyRenewalReason,
         QrLoginCredentials, QrLoginCredentialsState, QrLoginState, QrLoginTicket,
         TvAccessKeyRefreshRequest, TvLoginContext, WebCookieRefreshRequest,
-        access_key_credentials_from_refresh_data, cookie_from_set_cookie_headers,
-        cookie_from_success_url, cookie_header_contains_non_empty_cookie, csrf_from_cookie,
-        intl_access_key_refresh_params, main_access_key_refresh_params,
-        main_access_key_refresh_path, merge_cookie_with_set_cookie_headers, qrcode_key_from_url,
+        access_key_credentials_from_refresh_data, access_key_refresh_endpoint_and_params,
+        cookie_from_set_cookie_headers, cookie_from_success_url,
+        cookie_header_contains_non_empty_cookie, csrf_from_cookie, intl_access_key_refresh_params,
+        main_access_key_refresh_params, main_access_key_refresh_path,
+        merge_cookie_with_set_cookie_headers, qrcode_key_from_url,
         refresh_csrf_from_correspond_body, set_cookie_headers_contain_non_empty_cookie,
         tv_login_params, web_cookie_refresh_correspond_path,
     };
@@ -2546,6 +2540,29 @@ mod tests {
             param_value(&tv_params, "sign"),
             param_value(&android_b_params, "sign")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn tv_keypair_refresh_uses_poll_base_when_passport_base_is_customized() -> anyhow::Result<()> {
+        let default_endpoints = EndpointConfig::default();
+        let request = AccessKeyRefreshRequest::new(
+            "OLD_ACCESS",
+            "OLD_REFRESH",
+            AccessKeyRefreshProvider::BilibiliMainOauth2,
+        )?
+        .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv);
+
+        let endpoint = access_key_refresh_endpoint_and_params(
+            &request,
+            1_700_000_000,
+            "https://custom-passport.example",
+            "https://custom-intl-passport.example",
+            &default_endpoints.tv_passport_poll_base,
+        )?;
+
+        assert_eq!(endpoint.base, default_endpoints.tv_passport_poll_base);
+        assert_eq!(endpoint.path, "/x/passport-tv-login/oauth2/refresh_token");
         Ok(())
     }
 

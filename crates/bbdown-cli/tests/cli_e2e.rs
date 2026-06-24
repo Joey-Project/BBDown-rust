@@ -1115,6 +1115,8 @@ fn plan_credential_preflight_renew_refreshes_restricted_access_key() -> anyhow::
         .arg(server.base_url())
         .arg("--passport-base")
         .arg(server.base_url())
+        .arg("--tv-passport-poll-base")
+        .arg(server.base_url())
         .arg("--credential-preflight")
         .arg("renew")
         .arg("--restricted-area")
@@ -1582,6 +1584,8 @@ fn auth_preflight_renews_tv_access_key_for_app_playback() -> anyhow::Result<()> 
         .arg("--app-grpc-base")
         .arg(server.base_url())
         .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--tv-passport-poll-base")
         .arg(server.base_url())
         .arg("--playurl-mode")
         .arg("app")
@@ -3639,6 +3643,8 @@ fn plan_selection_required_input_fails_before_credential_preflight_renewal() -> 
         .arg(server.base_url())
         .arg("--passport-base")
         .arg(server.base_url())
+        .arg("--tv-passport-poll-base")
+        .arg(server.base_url())
         .arg("--playurl-mode")
         .arg("app")
         .arg("--credential-preflight")
@@ -3817,6 +3823,8 @@ fn download_archive_cancel_defers_credential_preflight_renewal() -> anyhow::Resu
         .arg("--app-grpc-base")
         .arg(server.base_url())
         .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--tv-passport-poll-base")
         .arg(server.base_url())
         .arg("--playurl-mode")
         .arg("app")
@@ -4017,6 +4025,8 @@ fn download_archive_retries_plan_after_auth_failure_with_fresh_refreshable_acces
         .arg(server.base_url())
         .arg("--passport-base")
         .arg(server.base_url())
+        .arg("--tv-passport-poll-base")
+        .arg(server.base_url())
         .arg("--playurl-mode")
         .arg("app")
         .arg("--credential-preflight")
@@ -4133,6 +4143,8 @@ fn download_archive_retries_plan_after_app_http_forbidden_with_fresh_refreshable
         .arg("--app-grpc-base")
         .arg(server.base_url())
         .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--tv-passport-poll-base")
         .arg(server.base_url())
         .arg("--playurl-mode")
         .arg("app")
@@ -5024,6 +5036,133 @@ fn download_archive_does_not_complete_deferred_refresh_for_authenticated_feed_co
 
 #[test]
 #[allow(clippy::too_many_lines)]
+fn download_archive_retries_fresh_web_cookie_after_authenticated_feed_failure() -> anyhow::Result<()>
+{
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let archive_file = temp.path().join("archive.json");
+    let store = CredentialStore::new(credential_file.clone());
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_profile(
+        "default",
+        Credentials::default().with_cookie("SESSDATA=old;bili_jct=OLD_CSRF"),
+    )?;
+    let mut metadata = CredentialProfileMetadata::default();
+    metadata.set_credential(
+        CredentialKind::Cookie,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::WebQrLogin)
+            .with_acquired_at_unix_millis(9_000_000_000_000)
+            .with_refresh_token_present(true),
+    );
+    profiles.set_profile_metadata("default", metadata)?;
+    let mut secrets = CredentialProfileSecrets::default();
+    secrets.set_cookie(CredentialRefreshSecret::default().with_refresh_token("OLD_COOKIE_REFRESH"));
+    profiles.set_profile_secrets("default", secrets)?;
+    store.save_profiles(&profiles)?;
+
+    let stale_history = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/history/cursor")
+            .query_param("max", "0")
+            .query_param("view_at", "0")
+            .query_param("business", "")
+            .query_param("type", "archive")
+            .query_param("ps", "20")
+            .header("cookie", "SESSDATA=old;bili_jct=OLD_CSRF");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -101,
+            "message": "账号未登录"
+        }));
+    });
+    let refresh_mocks = mock_web_cookie_refresh(&server);
+    let refreshed_history = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/history/cursor")
+            .query_param("max", "0")
+            .query_param("view_at", "0")
+            .query_param("business", "")
+            .query_param("type", "archive")
+            .query_param("ps", "20")
+            .header("cookie", "SESSDATA=new;bili_jct=NEW_CSRF");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "cursor": {
+                    "max": 170_001,
+                    "view_at": 1_700_000_000_i64,
+                    "business": "archive"
+                },
+                "list": [{
+                    "aid": 170_001,
+                    "bvid": "BV1xx411c7mD",
+                    "title": "History video",
+                    "pic": format!("{}/cover.jpg", server.base_url()),
+                    "duration": 3,
+                    "author_mid": 1,
+                    "author_name": "Tester",
+                    "history": {
+                        "oid": 170_001,
+                        "cid": 9988,
+                        "page": 1,
+                        "business": "archive"
+                    }
+                }]
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET).path("/cover.jpg");
+        then.status(200).body("cover");
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--web-base")
+        .arg(server.base_url())
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("download")
+        .arg("history")
+        .arg("--select")
+        .arg("latest")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--archive-file")
+        .arg(&archive_file)
+        .arg("--only")
+        .arg("cover")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let report: Value = serde_json::from_slice(&output)?;
+
+    assert_eq!(report["entries"][0]["files"][0]["kind"], "cover");
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load()?
+            .cookie
+            .as_deref(),
+        Some("SESSDATA=new;bili_jct=NEW_CSRF")
+    );
+    stale_history.assert_calls(1);
+    refresh_mocks.assert_called_once();
+    refreshed_history.assert_calls(1);
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
 fn download_archive_retries_app_access_key_when_required_cookie_is_stale_but_present()
 -> anyhow::Result<()> {
     let server = MockServer::start();
@@ -5137,6 +5276,8 @@ fn download_archive_retries_app_access_key_when_required_cookie_is_stale_but_pre
         .arg("--app-grpc-base")
         .arg(server.base_url())
         .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--tv-passport-poll-base")
         .arg(server.base_url())
         .arg("--playurl-mode")
         .arg("app")
@@ -5254,6 +5395,8 @@ fn download_archive_retries_app_access_key_after_http_unauthorized_status() -> a
         .arg("--app-grpc-base")
         .arg(server.base_url())
         .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--tv-passport-poll-base")
         .arg(server.base_url())
         .arg("--playurl-mode")
         .arg("app")
@@ -5685,6 +5828,8 @@ fn download_archive_reruns_duplicate_preflight_after_deferred_refresh() -> anyho
         .arg(server.base_url())
         .arg("--passport-base")
         .arg(server.base_url())
+        .arg("--tv-passport-poll-base")
+        .arg(server.base_url())
         .arg("--credential-preflight")
         .arg("renew")
         .arg("download")
@@ -5815,6 +5960,8 @@ fn download_archive_cancel_reports_duplicate_after_deferred_refresh() -> anyhow:
         .arg("--intl-base")
         .arg(server.base_url())
         .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--tv-passport-poll-base")
         .arg(server.base_url())
         .arg("--credential-preflight")
         .arg("renew")
@@ -6023,6 +6170,8 @@ fn download_archive_does_not_refresh_for_pgc_web_failure_before_proxy() -> anyho
         .arg("--pgc-base")
         .arg(server.base_url())
         .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--tv-passport-poll-base")
         .arg(server.base_url())
         .arg("--credential-preflight")
         .arg("renew")
@@ -6304,6 +6453,8 @@ fn download_archive_retries_restricted_proxy_after_deferred_credential_refresh()
         .arg("--pgc-base")
         .arg(server.base_url())
         .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--tv-passport-poll-base")
         .arg(server.base_url())
         .arg("--credential-preflight")
         .arg("renew")
@@ -8855,6 +9006,8 @@ fn auth_renew_tv_refreshes_tv_access_key_secret() -> anyhow::Result<()> {
         .arg(&credential_file)
         .arg("--passport-base")
         .arg(server.base_url())
+        .arg("--tv-passport-poll-base")
+        .arg(server.base_url())
         .args(["auth", "renew-tv", "--json"])
         .assert()
         .success()
@@ -9085,6 +9238,8 @@ fn auth_renew_tv_fails_when_refresh_request_fails() -> anyhow::Result<()> {
         .arg("--credential-file")
         .arg(&credential_file)
         .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--tv-passport-poll-base")
         .arg(server.base_url())
         .args(["auth", "renew-tv", "--json"])
         .assert()
@@ -9458,6 +9613,8 @@ fn auth_renew_access_key_auto_refreshes_ready_provider_secret() -> anyhow::Resul
         .arg("intl")
         .arg("--passport-base")
         .arg(server.base_url())
+        .arg("--tv-passport-poll-base")
+        .arg(server.base_url())
         .args(["auth", "renew-access-key", "--json"])
         .assert()
         .success()
@@ -9523,7 +9680,9 @@ fn auth_renew_access_key_fails_when_profile_changes_before_save() -> anyhow::Res
         .arg("--credential-profile")
         .arg("intl")
         .arg("--passport-base")
-        .arg(server_url)
+        .arg(&server_url)
+        .arg("--tv-passport-poll-base")
+        .arg(&server_url)
         .args(["auth", "renew-access-key", "--json"])
         .assert()
         .failure()
@@ -9701,6 +9860,8 @@ fn auth_renew_access_key_auto_refresh_redacts_echoed_failure() -> anyhow::Result
         .arg("intl")
         .arg("--passport-base")
         .arg(server.base_url())
+        .arg("--tv-passport-poll-base")
+        .arg(server.base_url())
         .args(["auth", "renew-access-key", "--json"])
         .assert()
         .success()
@@ -9846,6 +10007,8 @@ fn auth_renew_access_key_auto_refresh_keeps_old_refresh_token_when_response_omit
         .arg("--credential-profile")
         .arg("intl")
         .arg("--passport-base")
+        .arg(server.base_url())
+        .arg("--tv-passport-poll-base")
         .arg(server.base_url())
         .args(["auth", "renew-access-key", "--json"])
         .assert()

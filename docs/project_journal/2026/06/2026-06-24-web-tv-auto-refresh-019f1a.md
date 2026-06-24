@@ -134,3 +134,10 @@ superseded_by:
     returned `false`, preventing archive downloads from rebuilding the client and plan with the
     refreshed stored credential. The fix preserves the earlier stored-refresh success and adds a
     regression covering stored TV refresh success plus generic access-key refresh failure.
+  - GitHub Codex review on `111e8fe` found two additional credential retry gaps: BiliTV keypair
+    access-key refresh still routed to a customized WEB `passport_base` when TV poll base was left
+    at its default, and archive planning could not force-refresh a saved WEB cookie or TV key after
+    the server rejected a credential that local lifecycle metadata still considered fresh. The fix
+    routes BiliTV keypair refresh through `tv_passport_poll_base` unconditionally, adds forced
+    stored WEB/TV refresh on media retry failures, and covers the fresh WEB cookie history retry
+    path with CLI e2e coverage.

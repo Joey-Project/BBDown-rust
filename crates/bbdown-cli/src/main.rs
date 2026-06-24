@@ -1463,6 +1463,26 @@ async fn complete_deferred_media_preflight_renewal(
         prepared.access_key_provider = credential_runtime.selected_access_key_provider()?;
         refreshed = true;
     }
+    if !refreshed
+        && let Some(failure) = failure
+        && try_forced_stored_credential_refresh_for_media_retry(
+            credential_runtime,
+            client_runtime,
+            credential_preflight,
+            prepared,
+            failure,
+            emit_diagnostics,
+        )
+        .await?
+    {
+        report = credential_preflight_report(
+            credential_runtime,
+            client_runtime,
+            credential_preflight,
+            &deferred.context,
+        )?;
+        refreshed = true;
+    }
 
     if report.should_attempt_access_key_renewal()
         && failure.is_none_or(|failure| {
@@ -1559,6 +1579,91 @@ async fn try_forced_access_key_refresh_for_archive_retry(
         prepared.access_key_provider = credential_runtime.selected_access_key_provider()?;
     }
     Ok(refreshed)
+}
+
+async fn try_forced_stored_credential_refresh_for_media_retry(
+    credential_runtime: &CredentialRuntime,
+    client_runtime: &ClientRuntimeConfig,
+    credential_preflight: &CredentialPreflightRuntimeConfig,
+    prepared: &mut PreparedMediaRequest,
+    failure: &bbdown_core::Error,
+    emit_diagnostics: bool,
+) -> anyhow::Result<bool> {
+    if credential_preflight.mode != CredentialPreflightMode::Renew {
+        return Ok(false);
+    }
+    let Some(context) = prepared.media_preflight_context.as_ref() else {
+        return Ok(false);
+    };
+    let policy = credential_preflight.policy();
+    let (profiles, _selected_profile, mut statuses) =
+        lifecycle_statuses_for_selection(credential_runtime, false, &policy)?;
+    let status = statuses
+        .pop()
+        .context("failed to evaluate selected credential profile")?;
+    let report = CredentialPreflightReport::evaluate(
+        CredentialPreflightMode::Warn,
+        &status,
+        credential_preflight_requirements_for_context(context, client_runtime),
+    );
+    for kind in [CredentialKind::Cookie, CredentialKind::TvAccessKey] {
+        if !media_preflight_context_can_refresh_stored_credential_for_failure(
+            kind, context, &report, failure,
+        ) {
+            continue;
+        }
+        let decision = CredentialRenewalDecision::from_profile_status(&status, kind, true);
+        if decision.automatic_refresh_readiness != CredentialAutomaticRefreshReadiness::Ready {
+            continue;
+        }
+        if try_stored_credential_auto_refresh_for_preflight(
+            kind,
+            credential_runtime,
+            client_runtime,
+            &profiles,
+            &decision,
+            emit_diagnostics,
+        )
+        .await?
+        {
+            prepared.credentials = credential_runtime.load()?;
+            prepared.access_key_provider = credential_runtime.selected_access_key_provider()?;
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn media_preflight_context_can_refresh_stored_credential_for_failure(
+    kind: CredentialKind,
+    context: &MediaCredentialPreflightContext,
+    report: &CredentialPreflightReport,
+    failure: &bbdown_core::Error,
+) -> bool {
+    match kind {
+        CredentialKind::Cookie => {
+            authenticated_web_api_failure_may_have_used_cookie(context, failure)
+                && report.requirements.iter().any(|requirement| {
+                    requirement.request_path == CredentialPreflightRequestPath::AuthenticatedWebApi
+                        && requirement.selected_kind == Some(CredentialKind::Cookie)
+                        && requirement.selected_status != CredentialLifecycleStatus::Missing
+                })
+        }
+        CredentialKind::TvAccessKey => {
+            report.requirements.iter().any(|requirement| {
+                matches!(
+                    requirement.request_path,
+                    CredentialPreflightRequestPath::TvPlayurl
+                        | CredentialPreflightRequestPath::AppPlayurl
+                ) && requirement.selected_kind == Some(CredentialKind::TvAccessKey)
+                    && requirement.selected_status != CredentialLifecycleStatus::Missing
+            }) && ((context.playurl_mode == Some(PlayurlMode::Tv)
+                && plan_failure_may_be_credential_related(failure))
+                || (app_playurl_selected_tv_access_key(report)
+                    && app_playurl_auth_failure_may_have_used_selected_tv_access_key(failure)))
+        }
+        CredentialKind::AccessKey => false,
+    }
 }
 
 fn media_preflight_context_can_refresh_generic_access_key(
@@ -2745,7 +2850,7 @@ async fn plan_archive_download_with_deferred_retry_or_report(
     };
     match plan_download(client, &request).await {
         Ok(plan) => Ok(plan),
-        Err(error) if plan_failure_may_be_credential_related(&error) => {
+        Err(error) if archive_plan_failure_may_be_credential_related(prepared, &error) => {
             let refreshed = if prepared.deferred_preflight.is_some() {
                 complete_deferred_archive_preflight_renewal_for_target(
                     runtime,
@@ -2757,7 +2862,7 @@ async fn plan_archive_download_with_deferred_retry_or_report(
                 )
                 .await?
             } else {
-                match try_forced_access_key_refresh_for_archive_retry(
+                match try_forced_stored_credential_refresh_for_media_retry(
                     runtime.credential_runtime,
                     runtime.client_runtime,
                     runtime.credential_preflight,
@@ -2767,7 +2872,6 @@ async fn plan_archive_download_with_deferred_retry_or_report(
                 )
                 .await
                 {
-                    Ok(refreshed) => refreshed,
                     Err(refresh_error) => {
                         emit_cli_plan_failed(
                             runtime.progress,
@@ -2778,6 +2882,29 @@ async fn plan_archive_download_with_deferred_retry_or_report(
                         );
                         return Err(refresh_error);
                     }
+                    Ok(true) => true,
+                    Ok(false) => match try_forced_access_key_refresh_for_archive_retry(
+                        runtime.credential_runtime,
+                        runtime.client_runtime,
+                        runtime.credential_preflight,
+                        prepared,
+                        &error,
+                        !args.progress_json,
+                    )
+                    .await
+                    {
+                        Ok(refreshed) => refreshed,
+                        Err(refresh_error) => {
+                            emit_cli_plan_failed(
+                                runtime.progress,
+                                input_title,
+                                output_dir,
+                                0,
+                                refresh_error.to_string(),
+                            );
+                            return Err(refresh_error);
+                        }
+                    },
                 }
             };
             if refreshed {
@@ -2799,6 +2926,19 @@ async fn plan_archive_download_with_deferred_retry_or_report(
             Err(error.into())
         }
     }
+}
+
+fn archive_plan_failure_may_be_credential_related(
+    prepared: &PreparedMediaRequest,
+    error: &bbdown_core::Error,
+) -> bool {
+    plan_failure_may_be_credential_related(error)
+        || prepared
+            .media_preflight_context
+            .as_ref()
+            .is_some_and(|context| {
+                authenticated_web_api_failure_may_have_used_cookie(context, error)
+            })
 }
 
 fn plan_failure_may_be_credential_related(error: &bbdown_core::Error) -> bool {
@@ -6519,7 +6659,8 @@ mod tests {
             CredentialRuntime::new(store.clone(), CredentialProfileSelection::default_profile());
         let endpoints = EndpointConfig::default()
             .with_passport_base(server.base_url())
-            .with_tv_passport_base(server.base_url());
+            .with_tv_passport_base(server.base_url())
+            .with_tv_passport_poll_base(server.base_url());
         let client_runtime = ClientRuntimeConfig::new(
             endpoints,
             RestrictedAreaConfig::new(
