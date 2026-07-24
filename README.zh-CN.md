@@ -197,6 +197,8 @@ bbdown auth renew-access-key --json
 bbdown auth renew-access-key --stdin < balh-callback.txt
 bbdown auth login-web
 bbdown auth login-tv
+bbdown auth renew-web --json
+bbdown auth renew-tv --json
 bbdown auth status
 bbdown auth switch intl
 bbdown auth health --json
@@ -230,10 +232,25 @@ owner 进程已退出的 stale lock file，以及旧式没有 owner-pid metadata
 恢复窗口后自动接管；仍在运行或无法确认是否退出的 owner 不会被接管。每次写入都会在临时文件写入完成后、真正替换 credential
 file 前，校验自己的 lock token 仍然有效；lock 获取和 stale reclaim 会用同一个 companion guard
 串行化，释放 lock 前也会校验同一个 token，因此仍在运行的 writer 不会在被接管后覆盖较新的
-store，也不会删掉新 writer 的 lock。如果较慢的自动刷新 response
-已经不再匹配当前选择的 profile name，或不再匹配该 profile 的 credential / refresh-secret
-状态，JSON 输出会发出 `refresh_skipped`，并带上 `reason=profile_changed`，同时保持当前
-credential store 不变。`plan`、
+store，也不会删掉新 writer 的 lock。如果较慢的自动刷新 response 或 access-key 浏览器 handoff
+保存已经不再匹配当前选择的 profile name，或 refresh response 不再匹配该 profile 的
+credential / refresh-secret 状态，JSON 输出会发出 `refresh_skipped`，并带上
+`reason=profile_changed`，同时保持当前
+credential store 不变。直接运行的 `auth renew-access-key` / `auth renew-web` /
+`auth renew-tv` 会把这种 stale save 视为刷新失败并以非零状态退出；media preflight 会重新评估当前
+profile 后再决定是否继续。
+WEB QR 和 TV QR login response 也可能包含 refresh token。出现时，CLI 会把它们作为明文
+profile secret 保存到 `profile_secrets.<profile>.cookie` 或
+`profile_secrets.<profile>.tv_access_key`，lifecycle metadata 只记录 token 是否出现以及时间戳。
+`auth renew-web` 会通过 Bilibili cookie refresh flow 刷新当前选择的 WEB cookie；
+`auth renew-tv` 会通过 TV OAuth refresh endpoint 刷新当前选择的 TV token。两个命令在非交互
+刷新成功时都会输出 `decision`、`refreshed` 和 `saved` JSON event，脱敏原始 cookie/token，
+并使用与 access-key refresh 相同的 stale-response guard。如果 Bilibili 返回当前 WEB cookie
+暂时不需要 refresh，`auth renew-web --json` 会输出 `refresh_not_needed`，并保持已存 cookie、
+refresh token 和 lifecycle 获取时间不变，同时更新 lifecycle 检查时间。
+缺少 WEB/TV refresh secret 或 refresh 服务端失败时，命令会输出 `refresh_failed` 并以非零状态退出，
+因为这两个命令没有交互式回退流程。
+`plan`、
 `playback` 和 `download` 也支持 `--credential-preflight warn|fail|renew`，方便调用方在 media
 request 前检查当前 profile，也会覆盖使用通用 `access_key` 的 intl/Bstar media path；同样可以用
 `BBDOWN_CREDENTIAL_PREFLIGHT`、`BBDOWN_CREDENTIAL_STALE_AFTER_SECONDS` 和
@@ -244,12 +261,18 @@ required-cookie preflight。preflight 对 restricted-area proxy 只有在
 已配置通用 `access_key` 时才检查该 token；缺失 proxy access key 不会阻断自带认证或允许匿名
 fallback 的 proxy URL。diagnostic 会写到 stderr，JSON stdout 仍保持为单个 plan 或 report
 payload；`download --progress-json` 会抑制 preflight 纯文本 diagnostic，但失败时最终 CLI error
-行仍可能写到 stderr，因此 wrapper 应只解析 JSON object line。对 archive 下载，如果初次 plan
-成功，`--credential-preflight renew` 会把自动
-access-key refresh 延后到 duplicate handling 之后，因此 `--on-duplicate cancel` 会停止且不会
-调用 refresh endpoint 或重写已保存 credential。如果初次 archive planning 因类似 auth 的
-credential 错误失败，即使本地 lifecycle metadata 仍认为该 key fresh，CLI 也会刷新 ready
-的通用 access key 并重试一次 planning，然后才报告失败。
+行仍可能写到 stderr，因此 wrapper 应只解析 JSON object line。在 `renew` 模式下，如果缺失的
+required credential 不是当前 refresh 能修复的对象，就会阻止无关 refresh 抢跑。对 archive
+下载，如果初次 plan 成功，`--credential-preflight renew` 会先完成已保存 credential 的 refresh
+和 replanning，再进入 duplicate handling，让重复决策基于刷新后的 plan。`--on-duplicate cancel`
+仍会在媒体下载和 archive 写入前停止，但当 WEB/TV credential 可刷新时，可能调用 refresh endpoint
+并更新已保存 credential。如果初次 archive planning 因类似 auth 的 credential 错误失败，即使
+本地 lifecycle metadata 仍认为该 key fresh，CLI 也会刷新 ready 的通用 access key 并重试一次
+planning，然后才报告失败。
+当当前选择的 WEB cookie 或 TV `tv_access_key` 已存在、lifecycle metadata 不是 fresh，且本地
+保存了 refresh secret 时，`--credential-preflight renew` 会在解析 media request 前先尝试刷新
+该 credential。这覆盖需要 WEB cookie 的账号级 feed 输入，以及选择 TV token 的 APP/TV playurl
+路径。
 二维码登录命令会轮询
 Bilibili 二维码状态机，并只保存最终得到的凭据。WEB 二维码登录保存 cookie；TV 二维码登录保存
 TV 专用 access key，不会覆盖由通用 access-key 命令导入或获取的 intl/Bstar access key。
@@ -257,22 +280,25 @@ TV 专用 access key，不会覆盖由通用 access-key 命令导入或获取的
 `ticket` 事件，再在凭据保存后输出
 `saved` 事件。当前 WEB 和 TV 登录流程会直接使用扫码 URL 作为 QR payload。请把登录 URL
 和 QR payload 当成临时登录密钥；状态输出和 `saved` 事件只暴露脱敏布尔值。
+如果 QR poll response 包含 refresh metadata，这些 secret 会被保存下来，供之后
+`auth renew-web`、`auth renew-tv` 和 preflight renewal 使用。
 `auth health` 会在不打印密钥值的情况下检查已配置凭据：WEB cookie 通过 web nav 端点检查；
 通用 `access_key` 和 TV `tv_access_key` 会通过 OAuth info 端点以 signed `access_key` app
 query 值检查。通用 token probe 当前覆盖 intl/Bstar scope，并使用 `--passport-base`；它不会
-证明同一 token 对所有 APP gRPC 或 proxy 消费者都可用。TV token probe 使用
-`--tv-passport-poll-base`；如果只提供 `--tv-passport-base`，poll base 会跟随该 TV 覆盖。
-JSON 输出会用 `kind` 表示凭据槽位、用 `scope` 表示实际检查的消费场景，并报告
-`missing`、`valid`、`rejected` 或 `request_failed` 状态，便于嵌入调用方和自动化使用。
+证明同一 token 对所有 APP gRPC 或 proxy 消费者都可用。有 TV passport 覆盖时，TV token
+refresh 会跟随 `--tv-passport-poll-base`；否则保留 `--passport-base` 兼容行为。TV token probe
+使用 `--tv-passport-poll-base`；如果只提供 `--tv-passport-base`，poll base 会跟随该 TV 覆盖。
+JSON 输出会用 `kind` 表示凭据槽位、用 `scope` 表示实际检查的消费场景，并报告 `missing`、
+`valid`、`rejected` 或 `request_failed` 状态，便于嵌入调用方和自动化使用。
 
 使用 `--request-timeout-seconds` 或 `BBDOWN_REQUEST_TIMEOUT_SECONDS` 调整 API 请求时限。
 媒体正文读取使用 `--download-idle-timeout-seconds`；传入 `0` 可禁用 idle timeout。使用
 `--comment-base` 或 `BBDOWN_COMMENT_BASE` 可以把弹幕 XML 下载指向 mock 或代理端点。
 使用 `--passport-base` 可配置 WEB 二维码登录和通用 token health mock 或代理；使用
-`--tv-passport-base` / `--tv-passport-poll-base` 可配置 TV 二维码登录和 TV token health
-mock 或代理。只有在提供 TV 专用覆盖时，TV 二维码轮询和 TV token health probe 才会跟随
-`--tv-passport-base`；否则除非显式设置 `--tv-passport-poll-base`，它会使用上游 TV 轮询
-默认值。
+`--tv-passport-base` / `--tv-passport-poll-base` 可配置 TV 二维码登录、TV token refresh 和
+TV token health mock 或代理。提供 TV 专用覆盖时，TV 二维码轮询、TV token refresh 和 TV token
+health probe 会跟随 `--tv-passport-base`；否则 TV token refresh 保留 `--passport-base` 兼容行为，
+TV 轮询/probe 除非显式设置 `--tv-passport-poll-base`，会使用上游 TV 轮询默认值。
 当 `plan`、`playback` 或 `download` 需要使用 TV playurl host 而不是默认 web playurl host
 时，可同时使用 `--playurl-mode tv` 和 `--tv-api-base`。
 当 `plan`、`playback` 或 `download` 需要使用 APP gRPC playurl host 时，可同时使用

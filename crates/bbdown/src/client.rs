@@ -47,6 +47,7 @@ fn request_credential_value(value: Option<&str>) -> Option<&str> {
 pub struct EndpointConfig {
     pub api_base: String,
     pub pgc_base: String,
+    pub web_base: String,
     pub intl_base: String,
     pub intl_passport_base: String,
     pub comment_base: String,
@@ -63,6 +64,7 @@ impl Default for EndpointConfig {
         Self {
             api_base: "https://api.bilibili.com".to_owned(),
             pgc_base: "https://api.bilibili.com".to_owned(),
+            web_base: "https://www.bilibili.com".to_owned(),
             intl_base: "https://api.bilibili.tv".to_owned(),
             intl_passport_base: "https://passport.biliintl.com".to_owned(),
             comment_base: "https://comment.bilibili.com".to_owned(),
@@ -86,6 +88,12 @@ impl EndpointConfig {
     #[must_use]
     pub fn with_pgc_base(mut self, pgc_base: impl Into<String>) -> Self {
         self.pgc_base = pgc_base.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_web_base(mut self, web_base: impl Into<String>) -> Self {
+        self.web_base = web_base.into();
         self
     }
 
@@ -2739,7 +2747,10 @@ impl BiliClient {
             }
         }
         let streams = match source {
-            StreamSource::NormalTv => self.fetch_playurl_stream_set_without_cookie(url).await?,
+            StreamSource::NormalTv => self
+                .fetch_playurl_stream_set_without_cookie(url)
+                .await
+                .map_err(tv_playurl_context_error)?,
             _ => self.fetch_playurl_stream_set(url).await?,
         };
         Ok(ResolvedStreamSet::official(source, streams))
@@ -2845,7 +2856,10 @@ impl BiliClient {
             Some(epid),
             request_credential_value(self.config.credentials.tv_access_key.as_deref()),
         );
-        let streams = self.fetch_playurl_stream_set_without_cookie(url).await?;
+        let streams = self
+            .fetch_playurl_stream_set_without_cookie(url)
+            .await
+            .map_err(tv_playurl_context_error)?;
         Ok(ResolvedStreamSet::official(StreamSource::PgcTv, streams))
     }
 
@@ -4789,6 +4803,22 @@ fn is_restricted_area_fallback_error(source: &StreamSource, error: &Error) -> bo
                     && message.starts_with(app_playurl::APP_PREVIEW_ONLY_RESTRICTION_MESSAGE)
         }
         _ => false,
+    }
+}
+
+fn tv_playurl_context_error(error: Error) -> Error {
+    match error {
+        Error::Api { code, message } => Error::Api {
+            code,
+            message: if message.trim().is_empty() {
+                "TV playurl request failed".to_owned()
+            } else if message.starts_with("TV playurl request failed") {
+                message
+            } else {
+                format!("TV playurl request failed: {message}")
+            },
+        },
+        error => error,
     }
 }
 
@@ -9720,6 +9750,7 @@ mod tests {
             endpoints: EndpointConfig {
                 api_base: server.base_url(),
                 pgc_base: server.base_url(),
+                web_base: server.base_url(),
                 intl_base: server.base_url(),
                 intl_passport_base: server.base_url(),
                 comment_base: server.base_url(),
@@ -9930,6 +9961,7 @@ mod tests {
             endpoints: EndpointConfig {
                 api_base: server.base_url(),
                 pgc_base: server.base_url(),
+                web_base: server.base_url(),
                 intl_base: server.base_url(),
                 intl_passport_base: server.base_url(),
                 comment_base: server.base_url(),
@@ -10652,6 +10684,7 @@ mod tests {
             endpoints: EndpointConfig {
                 api_base: server.base_url(),
                 pgc_base: server.base_url(),
+                web_base: server.base_url(),
                 comment_base: server.base_url(),
                 ..EndpointConfig::default()
             },
@@ -10746,6 +10779,7 @@ mod tests {
             endpoints: EndpointConfig {
                 api_base: server.base_url(),
                 pgc_base: server.base_url(),
+                web_base: server.base_url(),
                 intl_base: server.base_url(),
                 intl_passport_base: server.base_url(),
                 comment_base: server.base_url(),
@@ -10840,6 +10874,7 @@ mod tests {
                 endpoints: EndpointConfig {
                     api_base: server.base_url(),
                     pgc_base: server.base_url(),
+                    web_base: server.base_url(),
                     intl_base: server.base_url(),
                     intl_passport_base: server.base_url(),
                     comment_base: server.base_url(),
@@ -10919,6 +10954,7 @@ mod tests {
             endpoints: EndpointConfig {
                 api_base: server.base_url(),
                 pgc_base: server.base_url(),
+                web_base: server.base_url(),
                 intl_base: server.base_url(),
                 intl_passport_base: server.base_url(),
                 comment_base: server.base_url(),
@@ -11075,6 +11111,7 @@ mod tests {
             endpoints: EndpointConfig {
                 api_base: server.base_url(),
                 pgc_base: server.base_url(),
+                web_base: server.base_url(),
                 intl_base: server.base_url(),
                 intl_passport_base: server.base_url(),
                 comment_base: server.base_url(),
@@ -11198,6 +11235,7 @@ mod tests {
             endpoints: EndpointConfig {
                 api_base: format!("http://{address}"),
                 pgc_base: "http://127.0.0.1:1".to_owned(),
+                web_base: "http://127.0.0.1:1".to_owned(),
                 intl_base: "http://127.0.0.1:1".to_owned(),
                 intl_passport_base: "http://127.0.0.1:1".to_owned(),
                 comment_base: "http://127.0.0.1:1".to_owned(),
@@ -11440,6 +11478,7 @@ mod tests {
             endpoints: EndpointConfig {
                 api_base: server.base_url(),
                 pgc_base: server.base_url(),
+                web_base: server.base_url(),
                 intl_base: server.base_url(),
                 intl_passport_base: server.base_url(),
                 comment_base: server.base_url(),

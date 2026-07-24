@@ -240,7 +240,15 @@ unknown or malformed optional metadata is ignored on load, and automatic refresh
 policy layer.
 For QR login, convert `QrLoginTicket` to `QrLoginTicketOutput` when a downstream application needs a
 stable serialized scan URL and `qr_payload`; current WEB and TV login flows use the scan URL itself
-as the QR payload.
+as the QR payload. The compatibility `poll_web_qr_login` / `poll_tv_qr_login` methods return
+`QrLoginState::Succeeded { credentials: Credentials }`. Call
+`poll_web_qr_login_credentials` / `poll_tv_qr_login_credentials` when storage needs
+`QrLoginCredentials`, which contains the runtime `Credentials` plus optional refresh metadata.
+Embedders that own storage should persist the runtime credential separately from the refresh token:
+store WEB refresh tokens with
+`CredentialProfileSecrets::set_cookie(CredentialRefreshSecret::default().with_refresh_token(...))`
+and TV refresh tokens with `set_tv_access_key(...)`, while lifecycle metadata records only
+`refresh_token_present` and any expiry derived from `expires_in`.
 For generic access-key authorization, `AccessKeyLoginConfig::biliplus(callback_origin)` builds a
 BiliPlus/BALH-compatible browser handoff URL whose `AccessKeyLoginTicketOutput::qr_payload` can be
 rendered directly as a QR code. The parser accepts the historical `balh-login-credentials:` message
@@ -277,6 +285,25 @@ OAuth refresh path. It returns a fresh `AccessKeyLoginCredentials` value so call
 lifecycle/secret persistence path as initial access-key login. Treat
 network or API refresh failures as non-destructive: keep the old credential and fall back to
 reauthorization UI when policy requires user action.
+WEB cookie and TV-token refresh are exposed as separate primitives because they are not
+provider-scoped generic access keys. Build `WebCookieRefreshRequest` from the saved cookie plus its
+saved refresh token, then call `BiliClient::refresh_web_cookie(...)`; the client checks
+`/x/passport-login/web/cookie/info`, derives the RSA-OAEP/SHA-256
+`correspond/1/{path}` challenge, extracts
+`refresh_csrf` from `EndpointConfig::web_base`, calls the cookie refresh endpoint, merges
+`Set-Cookie` headers, and confirms the old refresh token. The returned
+`WebCookieRefreshCredentials::refreshed` flag is `false` when Bilibili says the existing cookie does
+not need refresh; embedders should treat that as a no-op rather than rewriting credentials or
+acquisition metadata, though recording a fresh checked timestamp is useful for later preflight
+decisions. Build `TvAccessKeyRefreshRequest` from
+the saved TV token plus its refresh token, then call `BiliClient::refresh_tv_access_key(...)`; this
+routes through the TV OAuth refresh endpoint using `EndpointConfig::tv_passport_poll_base` and
+returns `TvAccessKeyLoginCredentials` with a runtime `tv_access_key`, optional refresh token, and
+expiry metadata when a TV passport override is configured; otherwise it keeps the main
+`EndpointConfig::passport_base` for compatibility with existing main OAuth refresh deployments.
+These refresh calls do not mutate storage; embedders should save the returned credential, lifecycle
+metadata, and `CredentialRefreshSecret` only after confirming the request still matches the selected
+account.
 Call `BiliClient::check_credential_health()` when an embedding project needs a redacted diagnostic
 report before deciding whether to prompt for login, import a token, or continue with anonymous
 requests. The report includes one probe each for the WEB cookie, generic `access_key`, and TV
@@ -324,6 +351,10 @@ Embedding projects can treat blockers as fail-fast UI, warnings as non-blocking 
 the refreshed credentials through their own storage layer. The renewal predicate requires missing
 non-access-key credentials to be fixed first, but present non-access-key credentials with stale,
 expiring, expired, or unknown lifecycle metadata do not block a ready generic access-key refresh.
+If the selected requirement uses a WEB cookie or TV `tv_access_key`, embedders can make the same
+policy decision from `CredentialLifecycleCredentialStatus`: when the credential is present,
+non-fresh, sourced from WEB/TV QR login, and has `refresh_token_secret_present == Some(true)`, call
+the matching WEB/TV refresh primitive before retrying the media request.
 Whitespace-only stored credential strings are treated as missing when lifecycle status and redacted
 presence booleans are computed. Request builders trim stored credential strings before use and
 omit them when the trimmed value is empty.

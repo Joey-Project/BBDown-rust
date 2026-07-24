@@ -325,6 +325,8 @@ bbdown auth renew-access-key --json
 bbdown auth renew-access-key --stdin < balh-callback.txt
 bbdown auth login-web
 bbdown auth login-tv
+bbdown auth renew-web --json
+bbdown auth renew-tv --json
 bbdown auth status
 bbdown auth status --profiles
 bbdown auth status --profiles --all-profiles
@@ -368,9 +370,23 @@ access key 如果已经 expired、expiring、stale 或 unknown，且状态为 `r
 `--force`、`--stdin` 或 `--file`，CLI 会先尝试 provider-specific automatic refresh。使用
 `--json` 时，自动刷新成功会输出 `decision`、`refreshed` 和 `saved` 事件，仍不会打印原始
 token。如果 refresh 失败，CLI 会输出 `refresh_failed`，然后回退到普通 authorization ticket，
-这样调用方可以提示用户重新授权而不会丢掉旧 credential。如果另一个协作进程在较旧 refresh
-response 保存前改变了当前选择的 profile name，或改变了该 profile 的 credential / refresh-secret
-状态，CLI 会输出 `refresh_skipped`，并带上 `reason=profile_changed`，同时保持当前 store 不变。
+这样调用方可以提示用户重新授权而不会丢掉旧 credential。如果另一个协作进程在 access-key 浏览器
+handoff 保存前改变了当前选择的 profile name，或在较旧 refresh response 保存前改变了该
+profile 的 credential / refresh-secret 状态，CLI 会输出 `refresh_skipped`，并带上
+`reason=profile_changed`，同时保持当前 store 不变。直接运行的 `auth renew-access-key` /
+`auth renew-web` / `auth renew-tv` 会把这种 stale save 视为刷新失败并以非零状态退出；media
+preflight 会重新评估当前 profile 后再决定是否继续。
+WEB QR 和 TV QR login 也可能返回 refresh token。CLI 会把这些值作为明文 selected-profile
+secret 保存到 `profile_secrets.<profile>.cookie` 和
+`profile_secrets.<profile>.tv_access_key`，lifecycle metadata 只保存来源、获取时间、可选过期
+时间以及 refresh token 是否出现。使用 `auth renew-web` 可以刷新已保存的 WEB cookie；
+使用 `auth renew-tv` 可以刷新已保存的 TV token。带 `--json` 时，这两个命令会先输出
+`decision` event，非交互刷新成功后输出 `refreshed` 和 `saved`。如果当前 profile 仍是 fresh，
+只会输出 `no_action`；如果没有保存 refresh secret，则输出脱敏的 `refresh_failed` 并以非零状态退出，
+不会进入交互登录流程。如果 Bilibili 表示当前 WEB cookie 暂时不需要 refresh，`auth renew-web --json`
+会输出 `refresh_not_needed`，并且不会重写已存 credential 或 lifecycle 获取时间戳；它会记录新的
+lifecycle 检查时间，避免后续 preflight 反复把同一个已确认 cookie 判为 stale。已保存 WEB/TV
+refresh 的服务端失败也会输出 `refresh_failed` 并以非零状态退出，因为这两个命令没有交互式回退流程。
 所有 credential import、access-key login
 和 access-key renewal 写入都是 selected-profile update：CLI 会在协作 credential-store lock 内
 重新读取最新 profile document，只 merge 当前选择的 profile，然后写回私有文件。其它 profile、
@@ -400,17 +416,21 @@ preflight，因为它们只需要 metadata 和 sidecar endpoint；如果 profile
 `download --only subtitle|danmaku|cover` 会跳过 TV/APP/restricted-proxy stream preflight，因为这些模式
 不会解析 media stream。`warn` 会把 diagnostic 写到 stderr 并继续；`fail` 会在缺少 required credential 或相关
 credential lifecycle metadata 不是 fresh 时，在网络 stream resolution 前中止；`renew` 会在
-当前 profile refresh-ready 时先尝试 provider-specific generic access-key refresh。preflight
+当前 profile metadata 不是 fresh 且保存了匹配 refresh secret 时，先尝试刷新当前选择的 WEB
+cookie、TV `tv_access_key` 或通用 access-key credential。preflight
 不会写 stdout，因此 `--json` 仍保持单个 JSON plan、playback plan 或 download report。
 `download --progress-json` 会抑制 preflight 纯文本 diagnostic，但失败时最终 CLI error 行仍可能
 写到 stderr；wrapper 应只解析 JSON object line。在 `renew` 模式下，缺失 required 的非
-access-key credential 仍会阻止通用 access-key 自动刷新；但已存在且 lifecycle metadata 为
-stale、expiring、expired 或 unknown 的 credential 不会阻止 refresh-ready 的通用 access key
-刷新，后续实际请求仍会验证这些 credential 是否可用。对 archive 下载，如果初次 plan 成功，
-`renew` 会把自动 access-key refresh 延后到 duplicate handling 之后，因此 `--on-duplicate cancel`
-会停止且不会调用 refresh endpoint 或重写已保存 credential。如果初次 archive planning 因类似
-auth 的 credential 错误失败，即使本地 lifecycle metadata 仍认为该 key fresh，CLI 也会刷新
-ready 的通用 access key 并重试一次 planning，然后才报告失败。可通过全局
+access-key credential 仍会阻止通用 access-key 自动刷新；任何缺失的 required credential
+如果不是当前 refresh 能修复的对象，也会阻止无关 refresh 抢跑。但已存在且 lifecycle metadata
+为 stale、expiring、expired 或 unknown 的 credential 如果有匹配 refresh secret，会先在请求前刷新；
+否则不会阻止 refresh-ready 的通用 access key 刷新，后续实际请求仍会验证这些 credential 是否可用。
+对 archive 下载，如果初次 plan 成功，
+`renew` 会先完成已保存 credential 的 refresh 和 replanning，再进入 duplicate handling，让重复
+决策基于刷新后的 plan。`--on-duplicate cancel` 仍会在媒体下载和 archive 写入前停止，但当
+WEB/TV credential 可刷新时，可能调用 refresh endpoint 并更新已保存 credential。如果初次
+archive planning 因类似 auth 的 credential 错误失败，即使本地 lifecycle metadata 仍认为该
+key fresh，CLI 也会刷新 ready 的通用 access key 并重试一次 planning，然后才报告失败。可通过全局
 `--credential-stale-after-seconds` 和 `--credential-expiring-within-seconds`，或等价的
 `BBDOWN_CREDENTIAL_PREFLIGHT`、`BBDOWN_CREDENTIAL_STALE_AFTER_SECONDS` 和
 `BBDOWN_CREDENTIAL_EXPIRING_WITHIN_SECONDS` 环境变量调整本地 lifecycle policy。
@@ -423,7 +443,9 @@ cookie。`auth login-tv` 使用 TV 二维码流程，保存 TV 专用 access key
 时登录密钥，因为它们包含登录 handoff 状态。状态输出或 `saved` JSON 事件不会打印 token
 值。
 WEB 和 TV 二维码登录会记录 lifecycle source 和获取时间；只有上游响应提供可靠过期字段时
-才会记录 expiry。
+才会记录 expiry。如果 QR polling 返回 refresh metadata，CLI 会把原始 refresh token 保存为
+profile secret，供之后 `auth renew-web`、`auth renew-tv` 或 preflight renewal 使用；status 和
+`saved` JSON output 不会暴露该值。
 
 `auth status` 会保留旧的 selected-profile JSON 形态，只报告脱敏凭据布尔值；只含空白字符的
 已保存 credential 会按 missing 报告。发送请求前会 trim 已保存 credential；trim 后为空的
@@ -442,7 +464,8 @@ signed `access_key` app query 值检查。JSON 输出是 typed report，会用 `
 位、用 `scope` 表示实际检查的消费场景，并按 probe 报告 `missing`、`valid`、`rejected` 或
 `request_failed` 状态，只包含脱敏后的 API code/message。通用 token probe 当前覆盖
 intl/Bstar scope，并使用 `--passport-base`；它不会证明同一 token 对所有 APP gRPC 或 proxy
-消费者都可用。TV token probe 使用 `--tv-passport-poll-base`；如果只提供
+消费者都可用。有 TV passport 覆盖时，TV token refresh 会跟随 `--tv-passport-poll-base`；
+否则保留 `--passport-base` 兼容行为。TV token probe 使用 `--tv-passport-poll-base`；如果只提供
 `--tv-passport-base`，poll base 会跟随该 TV 覆盖。
 在人类可读输出中，如果已配置凭据已经 stale、expired、被上游 rejected，或健康检查请求失
 败，`auth health` 也会打印 lifecycle/health guidance。使用 `auth health --all-profiles`
@@ -471,13 +494,14 @@ bbdown auth login-access-key --auth-base http://127.0.0.1:8080 --callback-origin
 OGV playurl 端点。弹幕 XML 下载使用可配置的 comment 端点。WEB 二维码登录和通用 token
 health probe 使用 `--passport-base`；Bilibili main OAuth2 access-key refresh 也使用
 `--passport-base`。BiliIntl OAuth2 access-key refresh 使用 `--intl-passport-base`。main-provider
-`bili_tv` refresh secret 会使用配置的 `--passport-base` 下的 TV OAuth refresh path。
+`bili_tv` refresh secret 会在提供 TV passport 覆盖时使用配置的 `--tv-passport-poll-base` 下的
+TV OAuth refresh path，否则保留 `--passport-base` 兼容行为。
 TV 二维码生成使用 `--tv-passport-base`；TV 二维码轮询
-和 TV token health probe 使用 `--tv-passport-poll-base`。如果只提供 `--tv-passport-base`，
-CLI 会让 TV poll base 跟随该覆盖；对 split-host mock 或代理，请显式设置
-`--tv-passport-poll-base`。
-TV playurl mode 使用 `--tv-api-base`，它独立于服务 TV 二维码登录和 TV token health 的 TV
-passport host。
+、TV token refresh 和 TV token health probe 使用 `--tv-passport-poll-base`。如果只提供
+`--tv-passport-base`，CLI 会让 TV poll base 跟随该覆盖；没有 TV 覆盖时，TV token refresh 保留
+`--passport-base` 兼容行为。对 split-host mock 或代理，请显式设置 `--tv-passport-poll-base`。
+TV playurl mode 使用 `--tv-api-base`，它独立于服务 TV 二维码登录和 TV token refresh/health
+的 TV passport host。
 APP gRPC playurl mode 使用 `--app-grpc-base` 处理普通视频，使用 `--app-pgc-grpc-base` 处理
 PGC 分集；两个 APP gRPC 默认值都使用 `https://grpc.biliapi.net`，并且独立于 WEB、TV 和
 intl HTTP endpoint 覆盖。

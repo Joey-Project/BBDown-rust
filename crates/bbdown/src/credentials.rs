@@ -467,19 +467,25 @@ impl CredentialProfileMetadata {
 #[non_exhaustive]
 #[derive(Clone, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CredentialProfileSecrets {
+    #[serde(default, skip_serializing_if = "CredentialRefreshSecret::is_empty")]
+    pub cookie: CredentialRefreshSecret,
     #[serde(
         default,
         skip_serializing_if = "BTreeMap::is_empty",
         deserialize_with = "deserialize_access_key_provider_secrets"
     )]
     pub access_key: BTreeMap<AccessKeyProvider, AccessKeyProviderSecret>,
+    #[serde(default, skip_serializing_if = "CredentialRefreshSecret::is_empty")]
+    pub tv_access_key: CredentialRefreshSecret,
 }
 
 impl fmt::Debug for CredentialProfileSecrets {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("CredentialProfileSecrets")
+            .field("cookie", &self.cookie)
             .field("access_key", &self.access_key)
+            .field("tv_access_key", &self.tv_access_key)
             .finish()
     }
 }
@@ -487,9 +493,21 @@ impl fmt::Debug for CredentialProfileSecrets {
 impl CredentialProfileSecrets {
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.access_key
-            .values()
-            .all(AccessKeyProviderSecret::is_empty)
+        self.cookie.is_empty()
+            && self
+                .access_key
+                .values()
+                .all(AccessKeyProviderSecret::is_empty)
+            && self.tv_access_key.is_empty()
+    }
+
+    #[must_use]
+    pub fn cookie(&self) -> Option<&CredentialRefreshSecret> {
+        (!self.cookie.is_empty()).then_some(&self.cookie)
+    }
+
+    pub fn set_cookie(&mut self, secret: CredentialRefreshSecret) {
+        self.cookie = secret;
     }
 
     #[must_use]
@@ -512,21 +530,80 @@ impl CredentialProfileSecrets {
         }
     }
 
+    #[must_use]
+    pub fn tv_access_key(&self) -> Option<&CredentialRefreshSecret> {
+        (!self.tv_access_key.is_empty()).then_some(&self.tv_access_key)
+    }
+
+    pub fn set_tv_access_key(&mut self, secret: CredentialRefreshSecret) {
+        self.tv_access_key = secret;
+    }
+
     fn normalize_for_credentials(mut self, credentials: &Credentials) -> Self {
+        if !CredentialKind::Cookie.is_present_in(credentials) {
+            self.cookie = CredentialRefreshSecret::default();
+        }
         if CredentialKind::AccessKey.is_present_in(credentials) {
             self.access_key
                 .retain(|_, secret| !AccessKeyProviderSecret::is_empty(secret));
         } else {
             self.access_key.clear();
         }
+        if !CredentialKind::TvAccessKey.is_present_in(credentials) {
+            self.tv_access_key = CredentialRefreshSecret::default();
+        }
         self
     }
 
     fn normalize_for_unchanged_credentials(mut self, old: &Credentials, new: &Credentials) -> Self {
+        if !CredentialKind::Cookie.is_unchanged_between(old, new) {
+            self.cookie = CredentialRefreshSecret::default();
+        }
         if !CredentialKind::AccessKey.is_unchanged_between(old, new) {
             self.access_key.clear();
         }
+        if !CredentialKind::TvAccessKey.is_unchanged_between(old, new) {
+            self.tv_access_key = CredentialRefreshSecret::default();
+        }
         self.normalize_for_credentials(new)
+    }
+}
+
+#[non_exhaustive]
+#[derive(Clone, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CredentialRefreshSecret {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh_token: Option<String>,
+}
+
+impl fmt::Debug for CredentialRefreshSecret {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CredentialRefreshSecret")
+            .field("has_refresh_token", &self.has_refresh_token())
+            .finish_non_exhaustive()
+    }
+}
+
+impl CredentialRefreshSecret {
+    #[must_use]
+    pub fn with_refresh_token(mut self, refresh_token: impl Into<String>) -> Self {
+        self.refresh_token = Some(refresh_token.into());
+        self
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.refresh_token
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
+    }
+
+    #[must_use]
+    pub fn has_refresh_token(&self) -> bool {
+        self.refresh_token
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
     }
 }
 
@@ -844,11 +921,11 @@ impl CredentialLifecycleCredentialStatus {
     ) -> Self {
         let present = kind.is_present_in(credentials);
         let metadata = metadata.cloned().unwrap_or_default();
-        let refresh_secret = access_key_refresh_secret(kind, &metadata, secrets);
+        let access_key_refresh_secret = access_key_refresh_secret(kind, &metadata, secrets);
         let refresh_token_secret_present =
-            access_key_refresh_secret_present(kind, &metadata, refresh_secret);
-        let refresh_provider = refresh_secret.and_then(|secret| secret.refresh_provider);
-        let refresh_keypair = refresh_secret.and_then(|secret| secret.refresh_keypair);
+            credential_refresh_token_secret_present(kind, &metadata, secrets);
+        let refresh_provider = access_key_refresh_secret.and_then(|secret| secret.refresh_provider);
+        let refresh_keypair = access_key_refresh_secret.and_then(|secret| secret.refresh_keypair);
         let status = if present {
             CredentialLifecycleStatus::from_metadata(&metadata, policy)
         } else {
@@ -883,15 +960,28 @@ fn access_key_refresh_secret<'a>(
     secrets.access_key_provider(provider)
 }
 
-fn access_key_refresh_secret_present(
+fn credential_refresh_token_secret_present(
     kind: CredentialKind,
     metadata: &CredentialLifecycleMetadata,
-    refresh_secret: Option<&AccessKeyProviderSecret>,
+    secrets: &CredentialProfileSecrets,
 ) -> Option<bool> {
-    if kind != CredentialKind::AccessKey || metadata.access_key_provider.is_none() {
-        return None;
+    match kind {
+        CredentialKind::Cookie => Some(
+            secrets
+                .cookie()
+                .is_some_and(CredentialRefreshSecret::has_refresh_token),
+        ),
+        CredentialKind::AccessKey => {
+            metadata.access_key_provider?;
+            let refresh_secret = access_key_refresh_secret(kind, metadata, secrets);
+            Some(refresh_secret.is_some_and(AccessKeyProviderSecret::has_refresh_token))
+        }
+        CredentialKind::TvAccessKey => Some(
+            secrets
+                .tv_access_key()
+                .is_some_and(CredentialRefreshSecret::has_refresh_token),
+        ),
     }
-    Some(refresh_secret.is_some_and(AccessKeyProviderSecret::has_refresh_token))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -3219,6 +3309,51 @@ mod tests {
             .find(|status| status.kind == CredentialKind::AccessKey)
             .ok_or_else(|| anyhow::anyhow!("access-key status should exist"))?;
         assert_eq!(access_key_status.refresh_token_secret_present, Some(false));
+        Ok(())
+    }
+
+    #[test]
+    fn provider_refresh_secret_reports_ready_without_metadata_presence_flag() -> anyhow::Result<()>
+    {
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "intl",
+            Credentials {
+                cookie: None,
+                access_key: Some("ACCESS_SECRET".to_owned()),
+                tv_access_key: None,
+            },
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_access_key_provider(AccessKeyProvider::BalhBiliplus),
+        );
+        profiles.set_profile_metadata("intl", metadata)?;
+        let mut secrets = CredentialProfileSecrets::default();
+        secrets.set_access_key_provider(
+            AccessKeyProvider::BalhBiliplus,
+            AccessKeyProviderSecret::default()
+                .with_refresh_token("REFRESH_SECRET")
+                .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+                .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+        );
+        profiles.set_profile_secrets("intl", secrets)?;
+
+        let status = profiles.profile_lifecycle_status(
+            "intl",
+            &CredentialLifecyclePolicy::at_unix_millis(1_700_000_000_000),
+        )?;
+        let access_key_status = status
+            .credential_statuses
+            .iter()
+            .find(|status| status.kind == CredentialKind::AccessKey)
+            .ok_or_else(|| anyhow::anyhow!("access-key status should exist"))?;
+
+        assert_eq!(access_key_status.refresh_token_present, None);
+        assert_eq!(access_key_status.refresh_token_secret_present, Some(true));
         Ok(())
     }
 

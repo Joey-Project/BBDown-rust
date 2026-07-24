@@ -209,6 +209,8 @@ bbdown auth renew-access-key --json
 bbdown auth renew-access-key --stdin < balh-callback.txt
 bbdown auth login-web
 bbdown auth login-tv
+bbdown auth renew-web --json
+bbdown auth renew-tv --json
 bbdown auth status
 bbdown auth switch intl
 bbdown auth health --json
@@ -247,9 +249,25 @@ and stale reclaim are serialized by the same companion guard. Each write checks 
 is still current after the temporary file is written and immediately before replacing the credential
 file, and lock release checks the same token before deletion, so a live writer cannot overwrite a
 newer store after being reclaimed or remove a newer writer's lock after recovery.
-If a slower automatic refresh response no longer matches the current selected profile name or that
-profile's credential/refresh-secret state, JSON output emits `refresh_skipped` with
-`reason=profile_changed` and leaves the current credential store untouched.
+If a slower automatic refresh response or access-key browser handoff save no longer matches the
+current selected profile name, or a refresh response no longer matches that profile's
+credential/refresh-secret state, JSON output emits `refresh_skipped` with
+`reason=profile_changed` and leaves the current credential store untouched. Direct
+`auth renew-access-key` / `auth renew-web` / `auth renew-tv` commands treat that stale save as a
+failed renewal and exit non-zero; media preflight re-evaluates the current profile before deciding
+whether to continue.
+WEB QR and TV QR login responses may also include refresh tokens. When present, the CLI stores them
+as plaintext profile secrets under `profile_secrets.<profile>.cookie` or
+`profile_secrets.<profile>.tv_access_key`, while lifecycle metadata records only token presence and
+timestamps. `auth renew-web` refreshes the selected WEB cookie through Bilibili's cookie refresh
+flow, and `auth renew-tv` refreshes the selected TV token through the TV OAuth refresh endpoint.
+Both commands emit `decision`, `refreshed`, and `saved` JSON events on successful non-interactive
+refresh, redact raw cookies/tokens, and use the same stale-response guard as access-key refresh. If
+Bilibili reports that a WEB cookie does not need refresh yet, `auth renew-web --json` emits
+`refresh_not_needed`, leaves the stored cookie, refresh token, and lifecycle acquisition time
+unchanged, and updates lifecycle checked time.
+Missing WEB/TV refresh secrets and refresh server failures emit `refresh_failed` and exit non-zero
+because these commands do not have an interactive fallback flow.
 `plan`, `playback`, and `download` also accept `--credential-preflight warn|fail|renew` so callers
 can check the selected profile before media requests, including intl/Bstar media paths that use the
 generic `access_key`. The same controls are available as `BBDOWN_CREDENTIAL_PREFLIGHT`,
@@ -262,12 +280,19 @@ preflight checks the generic `access_key` only when one is configured; missing p
 not block proxy URLs that authenticate themselves or allow anonymous fallback. Preflight diagnostics
 are written to stderr so JSON stdout remains a single plan or report, and `download --progress-json`
 suppresses plaintext preflight diagnostics; wrappers should still parse only JSON object lines
-because the final CLI error line may also be written to stderr on failure. For archive downloads,
-`--credential-preflight renew` defers automatic access-key refresh until after duplicate handling when
-the initial plan succeeds, so `--on-duplicate cancel` stops without calling refresh endpoints or
-rewriting stored credentials. If initial archive planning fails with an auth-like credential error,
-the CLI refreshes a ready generic access key and retries planning once before reporting the failure,
-including cases where local lifecycle metadata had still considered the key fresh.
+because the final CLI error line may also be written to stderr on failure. In `renew` mode, a
+missing required credential that the current refresh cannot repair stops unrelated refresh attempts.
+For archive downloads, when the initial plan succeeds, `--credential-preflight renew` completes
+stored credential refresh and replanning before duplicate handling so duplicate decisions use the
+fresh plan. `--on-duplicate cancel` still stops before media download and archive writes, but it can
+call refresh endpoints and update saved WEB/TV credentials when they are refreshable. If initial
+archive planning fails with an auth-like credential error, the CLI refreshes a ready generic access
+key and retries planning once before reporting the failure, including cases where local lifecycle
+metadata had still considered the key fresh.
+When a selected WEB cookie or TV `tv_access_key` already exists, has non-fresh lifecycle metadata,
+and has a saved refresh secret, `--credential-preflight renew` attempts that credential's automatic
+refresh before resolving media requests. This covers authenticated feed inputs that require a WEB
+cookie and APP/TV playurl paths that select the TV token.
 QR login commands poll the Bilibili QR state machine and save only the resulting credential. WEB QR
 login saves a cookie; TV QR login saves a TV-specific access
 key without overwriting the generic intl/Bstar access key. With `--json`, login commands emit
@@ -275,23 +300,28 @@ newline-delimited JSON events: a `ticket` event with the login URL and `qr_paylo
 credential handoff or poll, then a `saved` event after credentials are stored. The current WEB and
 TV login flows use the scan URL itself as the QR payload. Treat login URLs and QR payloads as
 temporary login secrets; status output and the `saved` event expose redacted booleans only.
+If QR poll responses include refresh metadata, those secrets are saved for later `auth renew-web`,
+`auth renew-tv`, and preflight renewal.
 `auth health` checks configured credentials without printing secret values: the WEB cookie is
 checked through the web nav endpoint, while the generic `access_key` and TV `tv_access_key` are
 checked through the OAuth info endpoint as signed `access_key` app query values. Generic token probes
 currently cover the intl/Bstar scope and use `--passport-base`; they do not prove the same token is
-usable for every APP gRPC or proxy consumer. TV token probes use `--tv-passport-poll-base`, which
-follows `--tv-passport-base` when only that TV override is supplied. JSON output reports `kind` for
-the credential slot, `scope` for the checked consumer, and `missing`, `valid`, `rejected`, or
-`request_failed` states for embedding callers and automation.
+usable for every APP gRPC or proxy consumer. TV token refresh follows `--tv-passport-poll-base` when
+a TV passport override is supplied, while keeping `--passport-base` compatibility otherwise. TV
+token probes use `--tv-passport-poll-base`, which follows `--tv-passport-base` when only that TV
+override is supplied. JSON output reports `kind` for the credential slot, `scope` for the checked
+consumer, and `missing`, `valid`, `rejected`, or `request_failed` states for embedding callers and
+automation.
 
 Use `--request-timeout-seconds` or `BBDOWN_REQUEST_TIMEOUT_SECONDS` to tune API request bounds.
 Media body reads use `--download-idle-timeout-seconds`; pass `0` to disable the idle timeout.
 Use `--comment-base` or `BBDOWN_COMMENT_BASE` to point danmaku XML downloads at a mock or proxy
 endpoint. Use `--passport-base` for WEB QR login and generic token-health mocks or proxies, and use
-`--tv-passport-base` / `--tv-passport-poll-base` for TV QR login and TV token-health mocks or
-proxies. TV QR polling and TV token-health probes follow
-`--tv-passport-base` only when that TV-specific override is supplied; otherwise it uses the upstream
-TV poll default unless `--tv-passport-poll-base` is set explicitly.
+`--tv-passport-base` / `--tv-passport-poll-base` for TV QR login, TV token refresh, and TV
+token-health mocks or proxies. TV QR polling, TV token refresh, and TV token-health probes follow
+`--tv-passport-base` when that TV-specific override is supplied; TV token refresh keeps
+`--passport-base` compatibility otherwise, while TV polling/probes use the upstream TV poll default
+unless `--tv-passport-poll-base` is set explicitly.
 Use `--playurl-mode tv` with `--tv-api-base` when a plan, playback request, or download should use
 the TV playurl host instead of the default web playurl host.
 Use `--playurl-mode app` with `--app-grpc-base` and `--app-pgc-grpc-base` when a plan, playback

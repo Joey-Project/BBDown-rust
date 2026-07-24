@@ -11,16 +11,19 @@ use bbdown_core::{
     CredentialHealthSummaryStatus, CredentialKind, CredentialLifecycleMetadata,
     CredentialLifecyclePolicy, CredentialLifecycleSource, CredentialLifecycleStatus,
     CredentialPreflightMode, CredentialPreflightReport, CredentialPreflightRequestPath,
-    CredentialPreflightRequirement, CredentialProfileLifecycleStatus, CredentialProfileSelection,
-    CredentialProfiles, CredentialStore, Credentials, DanmakuFormat, DanmakuUpdateOptions,
+    CredentialPreflightRequirement, CredentialPreflightRequirementStatus,
+    CredentialProfileLifecycleStatus, CredentialProfileSelection, CredentialProfiles,
+    CredentialRefreshSecret, CredentialStore, Credentials, DanmakuFormat, DanmakuUpdateOptions,
     DownloadArchive, DownloadCancellationToken, DownloadMode, DownloadOptions,
     DownloadPathTemplates, DownloadPlan, DownloadPreflight, DownloadProgressEvent,
     DownloadProgressSink, DownloadReport, DuplicateDecision, EndpointConfig, Input,
-    MediaHostOptions, MediaStream, MuxOptions, PlaybackPlan, PlayurlMode, QrLoginKind,
-    QrLoginState, QrLoginTicket, QrLoginTicketOutput, ResolvedContent, RestrictedArea,
-    RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection,
-    StreamQuality, StreamSelection, StreamSet, SubtitleAiPolicy,
-    archive_entry_allows_danmaku_update, credential_preflight_requirements_for_media_paths,
+    MediaHostOptions, MediaStream, MuxOptions, PlaybackPlan, PlayurlMode, QrLoginCredentials,
+    QrLoginCredentialsState, QrLoginKind, QrLoginTicket, QrLoginTicketOutput, ResolvedContent,
+    RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind,
+    RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet, SubtitleAiPolicy,
+    TvAccessKeyLoginCredentials, TvAccessKeyRefreshRequest, WebCookieRefreshCredentials,
+    WebCookieRefreshRequest, archive_entry_allows_danmaku_update,
+    credential_preflight_requirements_for_media_paths,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::ffi::{OsStr, OsString};
@@ -55,6 +58,12 @@ struct Cli {
         default_value = "https://api.bilibili.com"
     )]
     pgc_base: String,
+    #[arg(
+        long,
+        env = "BBDOWN_WEB_BASE",
+        default_value = "https://www.bilibili.com"
+    )]
+    web_base: String,
     #[arg(
         long,
         env = "BBDOWN_INTL_BASE",
@@ -288,6 +297,10 @@ enum AuthCommand {
     ImportAccessKey(SecretImportArgs),
     LoginWeb(QrLoginArgs),
     LoginTv(QrLoginArgs),
+    #[command(about = "Refresh saved WEB cookie credentials when refresh secrets are available")]
+    RenewWeb(CredentialRenewalArgs),
+    #[command(about = "Refresh saved TV access-key credentials when refresh secrets are available")]
+    RenewTv(CredentialRenewalArgs),
     #[command(about = "Acquire a generic access key through a BiliPlus/BALH browser handoff")]
     LoginAccessKey(AccessKeyLoginArgs),
     #[command(about = "Plan or complete generic access-key reauthorization")]
@@ -777,6 +790,18 @@ struct AccessKeyRenewalArgs {
     file: Option<PathBuf>,
 }
 
+#[derive(Debug, Args)]
+struct CredentialRenewalArgs {
+    #[arg(long, help = "Emit newline-delimited JSON decision and saved events")]
+    json: bool,
+    #[arg(long, help = "Force refresh even when lifecycle metadata is fresh")]
+    force: bool,
+    #[arg(long, default_value_t = 7 * 24 * 60 * 60)]
+    stale_after_seconds: u64,
+    #[arg(long, default_value_t = 24 * 60 * 60)]
+    expiring_within_seconds: u64,
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     if let Err(error) = run().await {
@@ -1262,7 +1287,18 @@ async fn prepare_credentials_for_media_request(
         &media_preflight_context,
     )?;
     let defer_renewal = request.renewal_timing == CredentialPreflightRenewalTiming::Deferred
-        && report.should_attempt_access_key_renewal();
+        && report_should_attempt_any_credential_renewal(&report);
+    if !defer_renewal {
+        refresh_stored_credentials_for_preflight(
+            credential_runtime,
+            client_runtime,
+            credential_preflight,
+            &media_preflight_context,
+            &mut report,
+            request.emit_diagnostics,
+        )
+        .await?;
+    }
     if report.should_attempt_access_key_renewal() && !defer_renewal {
         let profiles = credential_runtime
             .store
@@ -1310,6 +1346,84 @@ async fn prepare_credentials_for_media_request(
         media_preflight_context: Some(media_preflight_context),
         deferred_preflight,
     })
+}
+
+async fn refresh_stored_credentials_for_preflight(
+    credential_runtime: &CredentialRuntime,
+    client_runtime: &ClientRuntimeConfig,
+    credential_preflight: &CredentialPreflightRuntimeConfig,
+    media_preflight_context: &MediaCredentialPreflightContext,
+    report: &mut CredentialPreflightReport,
+    emit_diagnostics: bool,
+) -> anyhow::Result<StoredCredentialPreflightRefreshOutcome> {
+    if credential_preflight.mode != CredentialPreflightMode::Renew {
+        return Ok(StoredCredentialPreflightRefreshOutcome::default());
+    }
+
+    let mut outcome = StoredCredentialPreflightRefreshOutcome::default();
+    for kind in [CredentialKind::Cookie, CredentialKind::TvAccessKey] {
+        if !report_should_attempt_stored_credential_renewal(report, kind) {
+            continue;
+        }
+        let policy = credential_preflight.policy();
+        let (profiles, _selected_profile, mut statuses) =
+            lifecycle_statuses_for_selection(credential_runtime, false, &policy)?;
+        let status = statuses
+            .pop()
+            .context("failed to evaluate selected credential profile")?;
+        let decision = CredentialRenewalDecision::from_profile_status(&status, kind, false);
+        if decision.automatic_refresh_readiness != CredentialAutomaticRefreshReadiness::Ready {
+            continue;
+        }
+        if try_stored_credential_auto_refresh_for_preflight(
+            kind,
+            credential_runtime,
+            client_runtime,
+            &profiles,
+            &decision,
+            emit_diagnostics,
+        )
+        .await?
+        {
+            *report = credential_preflight_report(
+                credential_runtime,
+                client_runtime,
+                credential_preflight,
+                media_preflight_context,
+            )?;
+            outcome.mark_handled(kind);
+        }
+    }
+
+    Ok(outcome)
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct StoredCredentialPreflightRefreshOutcome {
+    cookie_handled: bool,
+    tv_access_key_handled: bool,
+}
+
+impl StoredCredentialPreflightRefreshOutcome {
+    fn any(self) -> bool {
+        self.cookie_handled || self.tv_access_key_handled
+    }
+
+    fn is_handled(self, kind: CredentialKind) -> bool {
+        match kind {
+            CredentialKind::Cookie => self.cookie_handled,
+            CredentialKind::TvAccessKey => self.tv_access_key_handled,
+            CredentialKind::AccessKey => false,
+        }
+    }
+
+    fn mark_handled(&mut self, kind: CredentialKind) {
+        match kind {
+            CredentialKind::Cookie => self.cookie_handled = true,
+            CredentialKind::TvAccessKey => self.tv_access_key_handled = true,
+            CredentialKind::AccessKey => {}
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1363,37 +1477,56 @@ async fn complete_deferred_media_preflight_renewal(
     };
     let mut refreshed = false;
     let mut report = deferred.report;
-    if report.should_attempt_access_key_renewal()
-        && failure.is_none_or(|failure| {
-            media_preflight_report_can_refresh_generic_access_key_for_failure(
-                &deferred.context,
-                &report,
-                failure,
-            )
-        })
-    {
-        let profiles = credential_runtime
-            .store
-            .load_profiles()
-            .context("failed to load credential profiles")?;
-        refreshed = try_access_key_auto_refresh_for_preflight(
+    let stored_refresh_outcome = refresh_stored_credentials_for_preflight(
+        credential_runtime,
+        client_runtime,
+        credential_preflight,
+        &deferred.context,
+        &mut report,
+        emit_diagnostics,
+    )
+    .await?;
+    if stored_refresh_outcome.any() {
+        prepared.credentials = credential_runtime.load()?;
+        prepared.access_key_provider = credential_runtime.selected_access_key_provider()?;
+        refreshed = true;
+    }
+    if let Some(failure) = failure
+        && try_forced_stored_credential_refresh_for_media_retry(
             credential_runtime,
             client_runtime,
-            &profiles,
-            &report.access_key_renewal,
+            credential_preflight,
+            prepared,
+            failure,
+            stored_refresh_outcome,
             emit_diagnostics,
         )
-        .await?;
-        if refreshed {
-            report = credential_preflight_report(
-                credential_runtime,
-                client_runtime,
-                credential_preflight,
-                &deferred.context,
-            )?;
-            prepared.credentials = credential_runtime.load()?;
-            prepared.access_key_provider = credential_runtime.selected_access_key_provider()?;
-        }
+        .await?
+    {
+        report = credential_preflight_report(
+            credential_runtime,
+            client_runtime,
+            credential_preflight,
+            &deferred.context,
+        )?;
+        refreshed = true;
+    }
+
+    if complete_deferred_access_key_renewal(
+        DeferredAccessKeyRenewalRuntime {
+            credential_runtime,
+            client_runtime,
+            credential_preflight,
+            emit_diagnostics,
+        },
+        prepared,
+        &deferred.context,
+        &mut report,
+        failure,
+    )
+    .await?
+    {
+        refreshed = true;
     }
 
     if emit_diagnostics {
@@ -1410,6 +1543,78 @@ async fn complete_deferred_media_preflight_renewal(
         bail!("credential preflight failed: {messages}");
     }
     Ok(refreshed)
+}
+
+struct DeferredAccessKeyRenewalRuntime<'a> {
+    credential_runtime: &'a CredentialRuntime,
+    client_runtime: &'a ClientRuntimeConfig,
+    credential_preflight: &'a CredentialPreflightRuntimeConfig,
+    emit_diagnostics: bool,
+}
+
+async fn complete_deferred_access_key_renewal(
+    runtime: DeferredAccessKeyRenewalRuntime<'_>,
+    prepared: &mut PreparedMediaRequest,
+    context: &MediaCredentialPreflightContext,
+    report: &mut CredentialPreflightReport,
+    failure: Option<&bbdown_core::Error>,
+) -> anyhow::Result<bool> {
+    let mut access_key_refresh_attempted = false;
+    if report.should_attempt_access_key_renewal()
+        && failure.is_none_or(|failure| {
+            media_preflight_report_can_refresh_generic_access_key_for_failure(
+                context, report, failure,
+            )
+        })
+    {
+        access_key_refresh_attempted = true;
+        let profiles = runtime
+            .credential_runtime
+            .store
+            .load_profiles()
+            .context("failed to load credential profiles")?;
+        if try_access_key_auto_refresh_for_preflight(
+            runtime.credential_runtime,
+            runtime.client_runtime,
+            &profiles,
+            &report.access_key_renewal,
+            runtime.emit_diagnostics,
+        )
+        .await?
+        {
+            *report = credential_preflight_report(
+                runtime.credential_runtime,
+                runtime.client_runtime,
+                runtime.credential_preflight,
+                context,
+            )?;
+            prepared.credentials = runtime.credential_runtime.load()?;
+            prepared.access_key_provider =
+                runtime.credential_runtime.selected_access_key_provider()?;
+            return Ok(true);
+        }
+    }
+    if !access_key_refresh_attempted
+        && let Some(failure) = failure
+        && try_forced_access_key_refresh_for_archive_retry(
+            runtime.credential_runtime,
+            runtime.client_runtime,
+            runtime.credential_preflight,
+            prepared,
+            failure,
+            runtime.emit_diagnostics,
+        )
+        .await?
+    {
+        *report = credential_preflight_report(
+            runtime.credential_runtime,
+            runtime.client_runtime,
+            runtime.credential_preflight,
+            context,
+        )?;
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 async fn try_forced_access_key_refresh_for_archive_retry(
@@ -1457,6 +1662,95 @@ async fn try_forced_access_key_refresh_for_archive_retry(
         prepared.access_key_provider = credential_runtime.selected_access_key_provider()?;
     }
     Ok(refreshed)
+}
+
+async fn try_forced_stored_credential_refresh_for_media_retry(
+    credential_runtime: &CredentialRuntime,
+    client_runtime: &ClientRuntimeConfig,
+    credential_preflight: &CredentialPreflightRuntimeConfig,
+    prepared: &mut PreparedMediaRequest,
+    failure: &bbdown_core::Error,
+    already_handled: StoredCredentialPreflightRefreshOutcome,
+    emit_diagnostics: bool,
+) -> anyhow::Result<bool> {
+    if credential_preflight.mode != CredentialPreflightMode::Renew {
+        return Ok(false);
+    }
+    let Some(context) = prepared.media_preflight_context.as_ref() else {
+        return Ok(false);
+    };
+    let policy = credential_preflight.policy();
+    let (profiles, _selected_profile, mut statuses) =
+        lifecycle_statuses_for_selection(credential_runtime, false, &policy)?;
+    let status = statuses
+        .pop()
+        .context("failed to evaluate selected credential profile")?;
+    let report = CredentialPreflightReport::evaluate(
+        CredentialPreflightMode::Warn,
+        &status,
+        credential_preflight_requirements_for_context(context, client_runtime),
+    );
+    for kind in [CredentialKind::Cookie, CredentialKind::TvAccessKey] {
+        if already_handled.is_handled(kind) {
+            continue;
+        }
+        if !media_preflight_context_can_refresh_stored_credential_for_failure(
+            kind, context, &report, failure,
+        ) {
+            continue;
+        }
+        let decision = CredentialRenewalDecision::from_profile_status(&status, kind, true);
+        if decision.automatic_refresh_readiness != CredentialAutomaticRefreshReadiness::Ready {
+            continue;
+        }
+        if try_stored_credential_auto_refresh_for_preflight(
+            kind,
+            credential_runtime,
+            client_runtime,
+            &profiles,
+            &decision,
+            emit_diagnostics,
+        )
+        .await?
+        {
+            prepared.credentials = credential_runtime.load()?;
+            prepared.access_key_provider = credential_runtime.selected_access_key_provider()?;
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn media_preflight_context_can_refresh_stored_credential_for_failure(
+    kind: CredentialKind,
+    context: &MediaCredentialPreflightContext,
+    report: &CredentialPreflightReport,
+    failure: &bbdown_core::Error,
+) -> bool {
+    match kind {
+        CredentialKind::Cookie => {
+            authenticated_web_api_failure_may_have_used_cookie(context, failure)
+                && report.requirements.iter().any(|requirement| {
+                    requirement.request_path == CredentialPreflightRequestPath::AuthenticatedWebApi
+                        && requirement.selected_kind == Some(CredentialKind::Cookie)
+                        && requirement.selected_status != CredentialLifecycleStatus::Missing
+                })
+        }
+        CredentialKind::TvAccessKey => {
+            report.requirements.iter().any(|requirement| {
+                matches!(
+                    requirement.request_path,
+                    CredentialPreflightRequestPath::TvPlayurl
+                        | CredentialPreflightRequestPath::AppPlayurl
+                ) && requirement.selected_kind == Some(CredentialKind::TvAccessKey)
+                    && requirement.selected_status != CredentialLifecycleStatus::Missing
+            }) && ((context.playurl_mode == Some(PlayurlMode::Tv)
+                && tv_playurl_auth_failure_may_have_used_selected_tv_access_key(failure))
+                || (app_playurl_selected_tv_access_key(report)
+                    && app_playurl_auth_failure_may_have_used_selected_tv_access_key(failure)))
+        }
+        CredentialKind::AccessKey => false,
+    }
 }
 
 fn media_preflight_context_can_refresh_generic_access_key(
@@ -1647,9 +1941,17 @@ fn app_playurl_auth_failure_may_have_used_selected_tv_access_key(
                 && (auth_like_failure_message(message)
                     || message == "APP playurl gRPC request failed")
         }
-        bbdown_core::Error::Http(error) => error.status().is_some_and(|status| {
-            http_status_failure_may_be_credential_related(status.as_u16(), &error.to_string())
-        }),
+        bbdown_core::Error::Http(error) => {
+            if error
+                .url()
+                .is_some_and(|url| !app_playurl_grpc_path(url.path()))
+            {
+                return false;
+            }
+            error.status().is_some_and(|status| {
+                http_status_failure_may_be_credential_related(status.as_u16(), &error.to_string())
+            })
+        }
         bbdown_core::Error::AccessRestricted(_)
         | bbdown_core::Error::Cancelled { .. }
         | bbdown_core::Error::InvalidInput(_)
@@ -1661,6 +1963,60 @@ fn app_playurl_auth_failure_may_have_used_selected_tv_access_key(
         | bbdown_core::Error::Io(_)
         | bbdown_core::Error::MuxFailed { .. } => false,
     }
+}
+
+fn tv_playurl_auth_failure_may_have_used_selected_tv_access_key(
+    failure: &bbdown_core::Error,
+) -> bool {
+    match failure {
+        bbdown_core::Error::Api { code, message } => {
+            api_failure_may_be_credential_related(*code, message)
+                || (*code == -101 && tv_playurl_api_auth_failure_message(message))
+        }
+        bbdown_core::Error::Http(error) => {
+            if error
+                .url()
+                .is_some_and(|url| !tv_access_key_playurl_json_path(url.path()))
+            {
+                return false;
+            }
+            error.status().is_some_and(|status| {
+                http_status_failure_may_be_credential_related(status.as_u16(), &error.to_string())
+            })
+        }
+        bbdown_core::Error::AccessRestricted(_)
+        | bbdown_core::Error::Cancelled { .. }
+        | bbdown_core::Error::InvalidInput(_)
+        | bbdown_core::Error::SelectionRequired { .. }
+        | bbdown_core::Error::Unsupported(_)
+        | bbdown_core::Error::MissingField(_)
+        | bbdown_core::Error::Url(_)
+        | bbdown_core::Error::Json(_)
+        | bbdown_core::Error::Io(_)
+        | bbdown_core::Error::MuxFailed { .. } => false,
+    }
+}
+
+fn tv_playurl_api_auth_failure_message(message: &str) -> bool {
+    let Some(detail) = message.strip_prefix("TV playurl request failed") else {
+        return false;
+    };
+    let detail = detail.trim_start_matches(':').trim();
+    auth_like_failure_message(detail) || bili_account_not_logged_in_message(detail)
+}
+
+fn tv_access_key_playurl_json_path(path: &str) -> bool {
+    const TV_ACCESS_KEY_PLAYURL_ENDPOINT_PATHS: &[&str] =
+        &["/x/tv/playurl", "/pgc/player/api/playurltv"];
+    endpoint_path_matches_any(path, TV_ACCESS_KEY_PLAYURL_ENDPOINT_PATHS)
+}
+
+fn app_playurl_grpc_path(path: &str) -> bool {
+    const APP_PLAYURL_GRPC_ENDPOINT_PATHS: &[&str] = &[
+        "/bilibili.app.playurl.v1.PlayURL/PlayView",
+        "/bilibili.pgc.gateway.player.v2.PlayURL/PlayView",
+    ];
+    endpoint_path_matches_any(path, APP_PLAYURL_GRPC_ENDPOINT_PATHS)
 }
 
 fn credential_preflight_report(
@@ -1842,6 +2198,254 @@ async fn try_access_key_auto_refresh_for_preflight(
             Ok(false)
         }
     }
+}
+
+fn report_should_attempt_stored_credential_renewal(
+    report: &CredentialPreflightReport,
+    kind: CredentialKind,
+) -> bool {
+    report.mode == CredentialPreflightMode::Renew
+        && !report_has_missing_requirement_not_addressed_by_stored_credential_renewal(report, kind)
+        && report.issues.iter().any(|issue| {
+            issue.selected_kind == Some(kind)
+                && !matches!(
+                    issue.status,
+                    CredentialLifecycleStatus::Fresh | CredentialLifecycleStatus::Missing
+                )
+        })
+}
+
+fn report_should_attempt_any_credential_renewal(report: &CredentialPreflightReport) -> bool {
+    report.should_attempt_access_key_renewal()
+        || report_should_attempt_stored_credential_renewal(report, CredentialKind::Cookie)
+        || report_should_attempt_stored_credential_renewal(report, CredentialKind::TvAccessKey)
+}
+
+fn report_has_missing_requirement_not_addressed_by_stored_credential_renewal(
+    report: &CredentialPreflightReport,
+    kind: CredentialKind,
+) -> bool {
+    report.requirements.iter().any(|requirement| {
+        requirement.required
+            && requirement.selected_status == CredentialLifecycleStatus::Missing
+            && !stored_credential_renewal_can_address_requirement(requirement, kind)
+    })
+}
+
+fn stored_credential_renewal_can_address_requirement(
+    requirement: &CredentialPreflightRequirementStatus,
+    kind: CredentialKind,
+) -> bool {
+    requirement.selected_kind == Some(kind)
+        || (requirement.selected_kind.is_none() && requirement.credential_kinds == [kind])
+}
+
+async fn handle_stored_credential_renewal(
+    kind: CredentialKind,
+    args: &CredentialRenewalArgs,
+    credential_runtime: &CredentialRuntime,
+    client_runtime: &ClientRuntimeConfig,
+) -> anyhow::Result<()> {
+    let policy = lifecycle_policy_from_seconds(
+        args.stale_after_seconds,
+        args.expiring_within_seconds,
+        current_unix_millis(),
+    );
+    let (profiles, _selected_profile, mut statuses) =
+        lifecycle_statuses_for_selection(credential_runtime, false, &policy)?;
+    let status = statuses
+        .pop()
+        .context("failed to evaluate selected credential profile")?;
+    let decision = CredentialRenewalDecision::from_profile_status(&status, kind, args.force);
+
+    if args.json {
+        print_credential_renewal_decision_json(&decision)?;
+    } else {
+        print_credential_renewal_decision(&decision)?;
+    }
+
+    if decision.action == CredentialRenewalAction::NoAction {
+        return Ok(());
+    }
+    if decision.automatic_refresh_readiness != CredentialAutomaticRefreshReadiness::Ready {
+        print_credential_refresh_setup_failure(
+            args.json,
+            kind,
+            "automatic refresh secret is unavailable for the selected profile",
+        )?;
+        bail!("automatic {} refresh failed", credential_kind_label(kind));
+    }
+    let refreshed = try_stored_credential_auto_refresh(
+        kind,
+        args,
+        credential_runtime,
+        client_runtime,
+        &profiles,
+        &decision,
+    )
+    .await?;
+    if !refreshed {
+        bail!("automatic {} refresh failed", credential_kind_label(kind));
+    }
+    Ok(())
+}
+
+async fn try_stored_credential_auto_refresh(
+    kind: CredentialKind,
+    args: &CredentialRenewalArgs,
+    credential_runtime: &CredentialRuntime,
+    client_runtime: &ClientRuntimeConfig,
+    profiles: &CredentialProfiles,
+    decision: &CredentialRenewalDecision,
+) -> anyhow::Result<bool> {
+    let refresh =
+        match stored_credential_refresh_request_from_profiles(profiles, &decision.profile, kind) {
+            Ok(refresh) => refresh,
+            Err(error) => {
+                print_credential_refresh_setup_failure(args.json, kind, &error.to_string())?;
+                return Ok(false);
+            }
+        };
+    let client = BiliClient::new(client_runtime.client_config(Credentials::default()));
+    match kind {
+        CredentialKind::Cookie => {
+            let request = refresh.web_cookie_request()?;
+            match client.refresh_web_cookie(&request).await {
+                Ok(refreshed) => {
+                    if refreshed.refreshed {
+                        let outcome = save_refreshed_web_cookie(
+                            credential_runtime,
+                            &refresh,
+                            &refreshed,
+                            args.json,
+                        )?;
+                        Ok(outcome.status == RefreshedCredentialSaveStatus::Saved)
+                    } else {
+                        let outcome =
+                            save_web_cookie_refresh_checked_silent(credential_runtime, &refresh)?;
+                        print_refreshed_credential_save_outcome(args.json, kind, &outcome)?;
+                        Ok(outcome.status == RefreshedCredentialSaveStatus::Noop)
+                    }
+                }
+                Err(error) => {
+                    print_credential_refresh_failure(args.json, kind, &refresh, &error)?;
+                    bail!("automatic {} refresh failed", credential_kind_label(kind))
+                }
+            }
+        }
+        CredentialKind::TvAccessKey => {
+            let request = refresh.tv_access_key_request()?;
+            match client.refresh_tv_access_key(&request).await {
+                Ok(refreshed) => {
+                    let outcome = save_refreshed_tv_access_key(
+                        credential_runtime,
+                        &refresh,
+                        &refreshed,
+                        args.json,
+                    )?;
+                    Ok(outcome.status == RefreshedCredentialSaveStatus::Saved)
+                }
+                Err(error) => {
+                    print_credential_refresh_failure(args.json, kind, &refresh, &error)?;
+                    bail!("automatic {} refresh failed", credential_kind_label(kind))
+                }
+            }
+        }
+        CredentialKind::AccessKey => Ok(false),
+    }
+}
+
+async fn try_stored_credential_auto_refresh_for_preflight(
+    kind: CredentialKind,
+    credential_runtime: &CredentialRuntime,
+    client_runtime: &ClientRuntimeConfig,
+    profiles: &CredentialProfiles,
+    decision: &CredentialRenewalDecision,
+    emit_diagnostics: bool,
+) -> anyhow::Result<bool> {
+    let refresh =
+        match stored_credential_refresh_request_from_profiles(profiles, &decision.profile, kind) {
+            Ok(refresh) => refresh,
+            Err(error) => {
+                if emit_diagnostics {
+                    eprintln!(
+                        "credential preflight warning: automatic {} refresh setup failed: {}",
+                        credential_kind_label(kind),
+                        display_human_text(&error.to_string())
+                    );
+                }
+                return Ok(false);
+            }
+        };
+    let client = BiliClient::new(client_runtime.client_config(Credentials::default()));
+    let result = match kind {
+        CredentialKind::Cookie => {
+            let request = refresh.web_cookie_request()?;
+            match client.refresh_web_cookie(&request).await {
+                Ok(refreshed) => {
+                    if refreshed.refreshed {
+                        save_refreshed_web_cookie_silent(credential_runtime, &refresh, &refreshed)
+                    } else {
+                        save_web_cookie_refresh_checked_silent(credential_runtime, &refresh)
+                    }
+                }
+                Err(error) => {
+                    if emit_diagnostics {
+                        let message = redact_credential_refresh_error(&error, &refresh);
+                        eprintln!(
+                            "credential preflight warning: automatic {} refresh failed: {}",
+                            credential_kind_label(kind),
+                            display_human_text(&message)
+                        );
+                    }
+                    return Ok(false);
+                }
+            }
+        }
+        CredentialKind::TvAccessKey => {
+            let request = refresh.tv_access_key_request()?;
+            match client.refresh_tv_access_key(&request).await {
+                Ok(refreshed) => {
+                    save_refreshed_tv_access_key_silent(credential_runtime, &refresh, &refreshed)
+                }
+                Err(error) => {
+                    if emit_diagnostics {
+                        let message = redact_credential_refresh_error(&error, &refresh);
+                        eprintln!(
+                            "credential preflight warning: automatic {} refresh failed: {}",
+                            credential_kind_label(kind),
+                            display_human_text(&message)
+                        );
+                    }
+                    return Ok(false);
+                }
+            }
+        }
+        CredentialKind::AccessKey => return Ok(false),
+    }?;
+    if emit_diagnostics {
+        match result.status {
+            RefreshedCredentialSaveStatus::Saved => {
+                eprintln!(
+                    "credential preflight: {} refreshed",
+                    credential_kind_label(kind)
+                );
+            }
+            RefreshedCredentialSaveStatus::Noop => {}
+            RefreshedCredentialSaveStatus::SkippedStaleRequest => {
+                eprintln!(
+                    "credential preflight: {} refresh skipped because the selected profile changed",
+                    credential_kind_label(kind)
+                );
+            }
+        }
+    }
+    Ok(matches!(
+        result.status,
+        RefreshedCredentialSaveStatus::Saved
+            | RefreshedCredentialSaveStatus::Noop
+            | RefreshedCredentialSaveStatus::SkippedStaleRequest
+    ))
 }
 
 fn emit_credential_preflight_warnings(report: &CredentialPreflightReport) {
@@ -2200,17 +2804,6 @@ async fn handle_archive_download(
     )?;
     let mut preflight =
         inspect_download_preflight_or_report(&plan, &args.options, &archive, progress)?;
-    let mut duplicate_decision = archive_duplicate_decision_or_report(
-        &args,
-        &plan,
-        &preflight,
-        progress,
-        cancellation,
-        duplicate_prompt_active,
-    )?;
-    if duplicate_decision == ArchiveDuplicateDecision::Cancelled {
-        return Ok(None);
-    }
     let refreshed = complete_deferred_archive_preflight_renewal_or_report(
         &runtime,
         &mut prepared,
@@ -2227,19 +2820,18 @@ async fn handle_archive_download(
             &output_dir,
         )
         .await?;
-        let previous_preflight = preflight;
         preflight = inspect_download_preflight_or_report(&plan, &args.options, &archive, progress)?;
-        duplicate_decision = archive_duplicate_decision_after_refresh_or_report(
-            &runtime,
-            &args,
-            &plan,
-            &previous_preflight,
-            &preflight,
-            duplicate_decision,
-        )?;
-        if duplicate_decision == ArchiveDuplicateDecision::Cancelled {
-            return Ok(None);
-        }
+    }
+    let duplicate_decision = archive_duplicate_decision_or_report(
+        &args,
+        &plan,
+        &preflight,
+        progress,
+        cancellation,
+        duplicate_prompt_active,
+    )?;
+    if duplicate_decision == ArchiveDuplicateDecision::Cancelled {
+        return Ok(None);
     }
     let Some(execution_decision) =
         archive_execution_duplicate_decision(&args, &preflight, duplicate_decision)
@@ -2309,28 +2901,6 @@ async fn complete_deferred_archive_preflight_renewal_or_report(
     .await
 }
 
-fn archive_duplicate_decision_after_refresh_or_report(
-    runtime: &ArchiveDownloadRuntime<'_>,
-    args: &DownloadCommandArgs,
-    plan: &DownloadPlan,
-    previous_preflight: &DownloadPreflight,
-    preflight: &DownloadPreflight,
-    current_decision: ArchiveDuplicateDecision,
-) -> anyhow::Result<ArchiveDuplicateDecision> {
-    if preflight.requires_decision() && preflight != previous_preflight {
-        archive_duplicate_decision_or_report(
-            args,
-            plan,
-            preflight,
-            runtime.progress,
-            runtime.cancellation,
-            runtime.duplicate_prompt_active,
-        )
-    } else {
-        Ok(current_decision)
-    }
-}
-
 fn archive_execution_duplicate_decision(
     args: &DownloadCommandArgs,
     preflight: &DownloadPreflight,
@@ -2395,7 +2965,7 @@ async fn plan_archive_download_with_deferred_retry_or_report(
     };
     match plan_download(client, &request).await {
         Ok(plan) => Ok(plan),
-        Err(error) if plan_failure_may_be_credential_related(&error) => {
+        Err(error) if archive_plan_failure_may_be_credential_related(prepared, &error) => {
             let refreshed = if prepared.deferred_preflight.is_some() {
                 complete_deferred_archive_preflight_renewal_for_target(
                     runtime,
@@ -2407,17 +2977,17 @@ async fn plan_archive_download_with_deferred_retry_or_report(
                 )
                 .await?
             } else {
-                match try_forced_access_key_refresh_for_archive_retry(
+                match try_forced_stored_credential_refresh_for_media_retry(
                     runtime.credential_runtime,
                     runtime.client_runtime,
                     runtime.credential_preflight,
                     prepared,
                     &error,
+                    StoredCredentialPreflightRefreshOutcome::default(),
                     !args.progress_json,
                 )
                 .await
                 {
-                    Ok(refreshed) => refreshed,
                     Err(refresh_error) => {
                         emit_cli_plan_failed(
                             runtime.progress,
@@ -2428,6 +2998,29 @@ async fn plan_archive_download_with_deferred_retry_or_report(
                         );
                         return Err(refresh_error);
                     }
+                    Ok(true) => true,
+                    Ok(false) => match try_forced_access_key_refresh_for_archive_retry(
+                        runtime.credential_runtime,
+                        runtime.client_runtime,
+                        runtime.credential_preflight,
+                        prepared,
+                        &error,
+                        !args.progress_json,
+                    )
+                    .await
+                    {
+                        Ok(refreshed) => refreshed,
+                        Err(refresh_error) => {
+                            emit_cli_plan_failed(
+                                runtime.progress,
+                                input_title,
+                                output_dir,
+                                0,
+                                refresh_error.to_string(),
+                            );
+                            return Err(refresh_error);
+                        }
+                    },
                 }
             };
             if refreshed {
@@ -2448,6 +3041,54 @@ async fn plan_archive_download_with_deferred_retry_or_report(
             emit_plan_error_for_request(&request, &error);
             Err(error.into())
         }
+    }
+}
+
+fn archive_plan_failure_may_be_credential_related(
+    prepared: &PreparedMediaRequest,
+    error: &bbdown_core::Error,
+) -> bool {
+    plan_failure_may_be_credential_related(error)
+        || prepared
+            .media_preflight_context
+            .as_ref()
+            .is_some_and(|context| {
+                authenticated_web_api_failure_may_have_used_cookie(context, error)
+                    || (context.playurl_mode == Some(PlayurlMode::Tv)
+                        && tv_playurl_auth_failure_may_have_used_selected_tv_access_key(error))
+                    || prepared_app_playurl_failure_may_have_used_selected_tv_access_key(
+                        prepared, context, error,
+                    )
+            })
+}
+
+fn prepared_app_playurl_failure_may_have_used_selected_tv_access_key(
+    prepared: &PreparedMediaRequest,
+    context: &MediaCredentialPreflightContext,
+    error: &bbdown_core::Error,
+) -> bool {
+    context.playurl_mode == Some(PlayurlMode::App)
+        && prepared_app_playurl_selected_tv_access_key(prepared)
+        && app_playurl_auth_failure_may_have_used_selected_tv_access_key(error)
+}
+
+fn prepared_app_playurl_selected_tv_access_key(prepared: &PreparedMediaRequest) -> bool {
+    if let Some(deferred) = prepared.deferred_preflight.as_ref() {
+        return app_playurl_selected_tv_access_key(&deferred.report);
+    }
+
+    let has_access_key = trimmed_non_empty(prepared.credentials.access_key.as_deref()).is_some();
+    let has_tv_access_key =
+        trimmed_non_empty(prepared.credentials.tv_access_key.as_deref()).is_some();
+    if !has_tv_access_key {
+        return false;
+    }
+    if !has_access_key {
+        return true;
+    }
+    match prepared.access_key_provider {
+        Some(AccessKeyProvider::BalhBiliplus | AccessKeyProvider::BilibiliMainOauth2) => false,
+        Some(AccessKeyProvider::BiliIntlOauth2) | None => true,
     }
 }
 
@@ -3303,6 +3944,24 @@ async fn handle_auth(
         AuthCommand::LoginTv(args) => {
             handle_qr_login(QrLoginKind::Tv, args, credential_runtime, client_runtime).await?;
         }
+        AuthCommand::RenewWeb(args) => {
+            handle_stored_credential_renewal(
+                CredentialKind::Cookie,
+                &args,
+                credential_runtime,
+                client_runtime,
+            )
+            .await?;
+        }
+        AuthCommand::RenewTv(args) => {
+            handle_stored_credential_renewal(
+                CredentialKind::TvAccessKey,
+                &args,
+                credential_runtime,
+                client_runtime,
+            )
+            .await?;
+        }
         AuthCommand::LoginAccessKey(args) => {
             handle_access_key_login(&args, credential_runtime)?;
         }
@@ -3766,10 +4425,12 @@ async fn handle_qr_login(
         print_human_line(format_args!("scan: {}", output.url))?;
     }
     let credentials = wait_for_qr_login(&client, &ticket, &args).await?;
-    let summary = save_credentials_with_lifecycle(
+    let acquired_at_unix_millis = current_unix_millis();
+    let summary = save_qr_login_credentials(
         credential_runtime,
-        credentials,
-        [qr_login_lifecycle_metadata(kind, current_unix_millis())],
+        kind,
+        &credentials,
+        acquired_at_unix_millis,
     )?;
     if args.json {
         print_json_line(&serde_json::json!({
@@ -3884,23 +4545,42 @@ async fn handle_access_key_renewal(
     let credentials =
         parse_access_key_login_input(&output, args.message_origin.as_deref(), &input)?;
     let acquired_at_unix_millis = current_unix_millis();
-    let summary = save_credentials_with_lifecycle_and_secrets(
+    let outcome = save_access_key_renewal_credentials_for_profile(
         credential_runtime,
-        credentials.credentials(),
-        [(
-            CredentialKind::AccessKey,
-            access_key_lifecycle_metadata(&credentials, acquired_at_unix_millis),
-        )],
-        [access_key_provider_secret(&credentials)],
+        &decision.profile,
+        &credentials,
+        acquired_at_unix_millis,
     )?;
     if args.json {
-        print_json_line(&serde_json::json!({
-            "event": "saved",
-            "kind": "access_key",
-            "saved": summary,
-        }))?;
+        match outcome.status {
+            RefreshedAccessKeySaveStatus::Saved => {
+                print_json_line(&serde_json::json!({
+                    "event": "saved",
+                    "kind": "access_key",
+                    "saved": outcome.summary,
+                }))?;
+            }
+            RefreshedAccessKeySaveStatus::SkippedStaleRequest => {
+                print_json_line(&serde_json::json!({
+                    "event": "refresh_skipped",
+                    "kind": "access_key",
+                    "reason": "profile_changed",
+                    "saved": outcome.summary,
+                }))?;
+            }
+        }
     } else {
-        print_human_line("access key saved")?;
+        match outcome.status {
+            RefreshedAccessKeySaveStatus::Saved => {
+                print_human_line("access key saved")?;
+            }
+            RefreshedAccessKeySaveStatus::SkippedStaleRequest => {
+                print_human_line("access key save skipped: selected profile already changed")?;
+            }
+        }
+    }
+    if outcome.status == RefreshedAccessKeySaveStatus::SkippedStaleRequest {
+        bail!("access_key renewal skipped because the selected profile changed");
     }
     Ok(())
 }
@@ -3926,8 +4606,16 @@ async fn try_access_key_auto_refresh(
     let client = BiliClient::new(client_runtime.client_config(Credentials::default()));
     match client.refresh_access_key(&refresh.request).await {
         Ok(refreshed) => {
-            save_refreshed_access_key(credential_runtime, &refresh, &refreshed, args.json)?;
-            Ok(true)
+            let outcome =
+                save_refreshed_access_key(credential_runtime, &refresh, &refreshed, args.json)?;
+            match outcome.status {
+                RefreshedAccessKeySaveStatus::Saved => Ok(true),
+                RefreshedAccessKeySaveStatus::SkippedStaleRequest => {
+                    bail!(
+                        "automatic access_key refresh skipped because the selected profile changed"
+                    )
+                }
+            }
         }
         Err(error) => {
             print_access_key_auto_refresh_failure(args.json, &refresh.request, &error)?;
@@ -3960,7 +4648,7 @@ fn save_refreshed_access_key(
     refresh: &StoredAccessKeyRefreshRequest,
     refreshed: &AccessKeyLoginCredentials,
     json: bool,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<RefreshedAccessKeySaveOutcome> {
     let outcome = save_refreshed_access_key_silent(credential_runtime, refresh, refreshed)?;
     if json {
         match outcome.status {
@@ -3975,7 +4663,7 @@ fn save_refreshed_access_key(
                     "event": "saved",
                     "kind": "access_key",
                     "saved": outcome.summary,
-                }))
+                }))?;
             }
             RefreshedAccessKeySaveStatus::SkippedStaleRequest => {
                 print_json_line(&serde_json::json!({
@@ -3983,20 +4671,21 @@ fn save_refreshed_access_key(
                     "kind": "access_key",
                     "reason": "profile_changed",
                     "saved": outcome.summary,
-                }))
+                }))?;
             }
         }
     } else {
         match outcome.status {
             RefreshedAccessKeySaveStatus::Saved => {
                 print_human_line("access key refreshed")?;
-                print_human_line("access key saved")
+                print_human_line("access key saved")?;
             }
             RefreshedAccessKeySaveStatus::SkippedStaleRequest => {
-                print_human_line("access key refresh skipped: selected profile already changed")
+                print_human_line("access key refresh skipped: selected profile already changed")?;
             }
         }
     }
+    Ok(outcome)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -4048,6 +4737,44 @@ fn save_refreshed_access_key_silent(
                 refreshed_credentials,
                 lifecycle_metadata,
                 [refreshed_secret],
+            )?;
+            Ok(RefreshedAccessKeySaveOutcome {
+                status: RefreshedAccessKeySaveStatus::Saved,
+                summary,
+            })
+        })
+        .context("failed to save credentials")
+}
+
+fn save_access_key_renewal_credentials_for_profile(
+    credential_runtime: &CredentialRuntime,
+    profile: &str,
+    credentials: &AccessKeyLoginCredentials,
+    acquired_at_unix_millis: u64,
+) -> anyhow::Result<RefreshedAccessKeySaveOutcome> {
+    let profile = profile.to_owned();
+    let saved_credentials = credentials.credentials();
+    let lifecycle_metadata = [(
+        CredentialKind::AccessKey,
+        access_key_lifecycle_metadata(credentials, acquired_at_unix_millis),
+    )];
+    let access_key_secrets = [access_key_provider_secret(credentials)];
+    credential_runtime
+        .store
+        .update_profiles(|profiles| {
+            if credential_runtime.selected_profile_name(profiles) != profile {
+                let summary = profiles.profile(&profile)?.redacted_summary();
+                return Ok(RefreshedAccessKeySaveOutcome {
+                    status: RefreshedAccessKeySaveStatus::SkippedStaleRequest,
+                    summary,
+                });
+            }
+            let summary = merge_credentials_with_lifecycle_and_secrets(
+                profiles,
+                &profile,
+                saved_credentials,
+                lifecycle_metadata,
+                access_key_secrets,
             )?;
             Ok(RefreshedAccessKeySaveOutcome {
                 status: RefreshedAccessKeySaveStatus::Saved,
@@ -4243,19 +4970,6 @@ fn save_credentials(
     Ok(stored.redacted_summary())
 }
 
-fn save_credentials_with_lifecycle(
-    credential_runtime: &CredentialRuntime,
-    credentials: Credentials,
-    lifecycle_metadata: impl IntoIterator<Item = (CredentialKind, CredentialLifecycleMetadata)>,
-) -> anyhow::Result<bbdown_core::CredentialSource> {
-    save_credentials_with_lifecycle_and_secrets(
-        credential_runtime,
-        credentials,
-        lifecycle_metadata,
-        std::iter::empty::<(AccessKeyProvider, AccessKeyProviderSecret)>(),
-    )
-}
-
 fn save_credentials_with_lifecycle_and_secrets(
     credential_runtime: &CredentialRuntime,
     credentials: Credentials,
@@ -4282,12 +4996,91 @@ fn save_credentials_with_lifecycle_and_secrets(
         .context("failed to save credentials")
 }
 
+fn save_qr_login_credentials(
+    credential_runtime: &CredentialRuntime,
+    kind: QrLoginKind,
+    credentials: &QrLoginCredentials,
+    acquired_at_unix_millis: u64,
+) -> anyhow::Result<bbdown_core::CredentialSource> {
+    save_credentials_with_lifecycle_and_refresh_secrets(
+        credential_runtime,
+        credentials.credentials.clone(),
+        [qr_login_lifecycle_metadata(
+            kind,
+            credentials,
+            acquired_at_unix_millis,
+        )],
+        [qr_login_refresh_secret(kind, credentials)],
+    )
+}
+
+fn save_credentials_with_lifecycle_and_refresh_secrets(
+    credential_runtime: &CredentialRuntime,
+    credentials: Credentials,
+    lifecycle_metadata: impl IntoIterator<Item = (CredentialKind, CredentialLifecycleMetadata)>,
+    refresh_secrets: impl IntoIterator<Item = CredentialRefreshSecretUpdate>,
+) -> anyhow::Result<bbdown_core::CredentialSource> {
+    let lifecycle_metadata = lifecycle_metadata.into_iter().collect::<Vec<_>>();
+    let refresh_secrets = refresh_secrets.into_iter().collect::<Vec<_>>();
+    credential_runtime
+        .store
+        .update_profiles(|profiles| {
+            let profile_name = credential_runtime
+                .selection
+                .profile_name()
+                .map_or_else(|| profiles.default_profile.clone(), str::to_owned);
+            merge_credentials_with_lifecycle_refresh_secrets(
+                profiles,
+                &profile_name,
+                credentials,
+                lifecycle_metadata,
+                refresh_secrets,
+            )
+        })
+        .context("failed to save credentials")
+}
+
 fn merge_credentials_with_lifecycle_and_secrets(
     profiles: &mut CredentialProfiles,
     profile_name: &str,
     credentials: Credentials,
     lifecycle_metadata: impl IntoIterator<Item = (CredentialKind, CredentialLifecycleMetadata)>,
     access_key_secrets: impl IntoIterator<Item = (AccessKeyProvider, AccessKeyProviderSecret)>,
+) -> bbdown_core::Result<bbdown_core::CredentialSource> {
+    merge_credentials_with_all_lifecycle_secrets(
+        profiles,
+        profile_name,
+        credentials,
+        lifecycle_metadata,
+        access_key_secrets,
+        std::iter::empty::<CredentialRefreshSecretUpdate>(),
+    )
+}
+
+fn merge_credentials_with_lifecycle_refresh_secrets(
+    profiles: &mut CredentialProfiles,
+    profile_name: &str,
+    credentials: Credentials,
+    lifecycle_metadata: impl IntoIterator<Item = (CredentialKind, CredentialLifecycleMetadata)>,
+    refresh_secrets: impl IntoIterator<Item = CredentialRefreshSecretUpdate>,
+) -> bbdown_core::Result<bbdown_core::CredentialSource> {
+    merge_credentials_with_all_lifecycle_secrets(
+        profiles,
+        profile_name,
+        credentials,
+        lifecycle_metadata,
+        std::iter::empty::<(AccessKeyProvider, AccessKeyProviderSecret)>(),
+        refresh_secrets,
+    )
+}
+
+fn merge_credentials_with_all_lifecycle_secrets(
+    profiles: &mut CredentialProfiles,
+    profile_name: &str,
+    credentials: Credentials,
+    lifecycle_metadata: impl IntoIterator<Item = (CredentialKind, CredentialLifecycleMetadata)>,
+    access_key_secrets: impl IntoIterator<Item = (AccessKeyProvider, AccessKeyProviderSecret)>,
+    refresh_secrets: impl IntoIterator<Item = CredentialRefreshSecretUpdate>,
 ) -> bbdown_core::Result<bbdown_core::CredentialSource> {
     let mut stored = profiles.profile(profile_name)?;
     merge_credentials(&mut stored, credentials);
@@ -4302,6 +5095,14 @@ fn merge_credentials_with_lifecycle_and_secrets(
     let mut profile_secrets = profiles.profile_secrets(profile_name)?;
     for (provider, secret) in access_key_secrets {
         profile_secrets.set_access_key_provider(provider, secret);
+    }
+    for secret in refresh_secrets {
+        match secret {
+            CredentialRefreshSecretUpdate::Cookie(secret) => profile_secrets.set_cookie(secret),
+            CredentialRefreshSecretUpdate::TvAccessKey(secret) => {
+                profile_secrets.set_tv_access_key(secret);
+            }
+        }
     }
     profiles.set_profile_secrets(profile_name, profile_secrets)?;
     Ok(stored.redacted_summary())
@@ -4329,6 +5130,7 @@ fn current_unix_millis() -> u64 {
 
 fn qr_login_lifecycle_metadata(
     kind: QrLoginKind,
+    credentials: &QrLoginCredentials,
     acquired_at_unix_millis: u64,
 ) -> (CredentialKind, CredentialLifecycleMetadata) {
     match kind {
@@ -4336,14 +5138,715 @@ fn qr_login_lifecycle_metadata(
             CredentialKind::Cookie,
             CredentialLifecycleMetadata::default()
                 .with_source(CredentialLifecycleSource::WebQrLogin)
-                .with_acquired_at_unix_millis(acquired_at_unix_millis),
+                .with_acquired_at_unix_millis(acquired_at_unix_millis)
+                .with_refresh_token_present(credentials.refresh_token.is_some()),
         ),
         QrLoginKind::Tv => (
             CredentialKind::TvAccessKey,
-            CredentialLifecycleMetadata::default()
-                .with_source(CredentialLifecycleSource::TvQrLogin)
-                .with_acquired_at_unix_millis(acquired_at_unix_millis),
+            tv_access_key_lifecycle_metadata(
+                credentials.expires_in,
+                acquired_at_unix_millis,
+                credentials.refresh_token.is_some(),
+            ),
         ),
+    }
+}
+
+fn tv_access_key_lifecycle_metadata(
+    expires_in: Option<u64>,
+    acquired_at_unix_millis: u64,
+    refresh_token_present: bool,
+) -> CredentialLifecycleMetadata {
+    tv_access_key_lifecycle_metadata_from_expiry(
+        None,
+        expires_in,
+        acquired_at_unix_millis,
+        refresh_token_present,
+    )
+}
+
+fn tv_access_key_lifecycle_metadata_from_expiry(
+    expires_at_unix_millis: Option<u64>,
+    expires_in: Option<u64>,
+    acquired_at_unix_millis: u64,
+    refresh_token_present: bool,
+) -> CredentialLifecycleMetadata {
+    let mut metadata = CredentialLifecycleMetadata::default()
+        .with_source(CredentialLifecycleSource::TvQrLogin)
+        .with_acquired_at_unix_millis(acquired_at_unix_millis)
+        .with_refresh_token_present(refresh_token_present);
+    let expires_at_unix_millis = expires_at_unix_millis.or_else(|| {
+        expires_in.map(|expires_in| {
+            acquired_at_unix_millis.saturating_add(expires_in.saturating_mul(1_000))
+        })
+    });
+    if let Some(expires_at_unix_millis) = expires_at_unix_millis {
+        metadata = metadata.with_expires_at_unix_millis(expires_at_unix_millis);
+    }
+    metadata
+}
+
+fn qr_login_refresh_secret(
+    kind: QrLoginKind,
+    credentials: &QrLoginCredentials,
+) -> CredentialRefreshSecretUpdate {
+    let secret = credentials
+        .refresh_token
+        .as_ref()
+        .map_or_else(CredentialRefreshSecret::default, |refresh_token| {
+            CredentialRefreshSecret::default().with_refresh_token(refresh_token)
+        });
+    match kind {
+        QrLoginKind::Web => CredentialRefreshSecretUpdate::Cookie(secret),
+        QrLoginKind::Tv => CredentialRefreshSecretUpdate::TvAccessKey(secret),
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum CredentialRefreshSecretUpdate {
+    Cookie(CredentialRefreshSecret),
+    TvAccessKey(CredentialRefreshSecret),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CredentialRenewalAction {
+    NoAction,
+    Refresh,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CredentialRenewalReason {
+    CredentialMissing,
+    LifecycleFresh,
+    LifecycleUnknown,
+    LifecycleStale,
+    LifecycleExpiring,
+    LifecycleExpired,
+    Forced,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CredentialAutomaticRefreshReadiness {
+    Ready,
+    CredentialMissing,
+    UnsupportedSource,
+    MissingRefreshToken,
+    MetadataOnlyRefreshToken,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CredentialRenewalDecision {
+    profile: String,
+    kind: CredentialKind,
+    present: bool,
+    lifecycle_status: CredentialLifecycleStatus,
+    source: Option<CredentialLifecycleSource>,
+    acquired_at_unix_millis: Option<u64>,
+    checked_at_unix_millis: Option<u64>,
+    expires_at_unix_millis: Option<u64>,
+    refresh_token_present: Option<bool>,
+    refresh_token_secret_present: Option<bool>,
+    automatic_refresh_readiness: CredentialAutomaticRefreshReadiness,
+    action: CredentialRenewalAction,
+    reason: CredentialRenewalReason,
+}
+
+impl CredentialRenewalDecision {
+    fn from_profile_status(
+        status: &CredentialProfileLifecycleStatus,
+        kind: CredentialKind,
+        force_refresh: bool,
+    ) -> Self {
+        let credential = status
+            .credential_statuses
+            .iter()
+            .find(|credential| credential.kind == kind);
+        let present = credential.is_some_and(|credential| credential.present);
+        let lifecycle_status = credential
+            .map_or(CredentialLifecycleStatus::Missing, |credential| {
+                credential.status
+            });
+        let reason = credential_renewal_reason(present, lifecycle_status, force_refresh);
+        let action = match reason {
+            CredentialRenewalReason::LifecycleFresh => CredentialRenewalAction::NoAction,
+            CredentialRenewalReason::CredentialMissing
+            | CredentialRenewalReason::LifecycleUnknown
+            | CredentialRenewalReason::LifecycleStale
+            | CredentialRenewalReason::LifecycleExpiring
+            | CredentialRenewalReason::LifecycleExpired
+            | CredentialRenewalReason::Forced => CredentialRenewalAction::Refresh,
+        };
+        let automatic_refresh_readiness = credential.map_or(
+            CredentialAutomaticRefreshReadiness::CredentialMissing,
+            |credential| credential_automatic_refresh_readiness(kind, credential),
+        );
+        Self {
+            profile: status.profile.clone(),
+            kind,
+            present,
+            lifecycle_status,
+            source: credential.and_then(|credential| credential.source),
+            acquired_at_unix_millis: credential
+                .and_then(|credential| credential.acquired_at_unix_millis),
+            checked_at_unix_millis: credential
+                .and_then(|credential| credential.checked_at_unix_millis),
+            expires_at_unix_millis: credential
+                .and_then(|credential| credential.expires_at_unix_millis),
+            refresh_token_present: credential
+                .and_then(|credential| credential.refresh_token_present),
+            refresh_token_secret_present: credential
+                .and_then(|credential| credential.refresh_token_secret_present),
+            automatic_refresh_readiness,
+            action,
+            reason,
+        }
+    }
+}
+
+fn credential_renewal_reason(
+    present: bool,
+    lifecycle_status: CredentialLifecycleStatus,
+    force_refresh: bool,
+) -> CredentialRenewalReason {
+    if force_refresh && present {
+        return CredentialRenewalReason::Forced;
+    }
+    if !present {
+        return CredentialRenewalReason::CredentialMissing;
+    }
+    match lifecycle_status {
+        CredentialLifecycleStatus::Missing => CredentialRenewalReason::CredentialMissing,
+        CredentialLifecycleStatus::Unknown => CredentialRenewalReason::LifecycleUnknown,
+        CredentialLifecycleStatus::Fresh => CredentialRenewalReason::LifecycleFresh,
+        CredentialLifecycleStatus::Stale => CredentialRenewalReason::LifecycleStale,
+        CredentialLifecycleStatus::Expiring => CredentialRenewalReason::LifecycleExpiring,
+        CredentialLifecycleStatus::Expired => CredentialRenewalReason::LifecycleExpired,
+    }
+}
+
+fn credential_automatic_refresh_readiness(
+    kind: CredentialKind,
+    credential: &bbdown_core::CredentialLifecycleCredentialStatus,
+) -> CredentialAutomaticRefreshReadiness {
+    if !credential.present {
+        return CredentialAutomaticRefreshReadiness::CredentialMissing;
+    }
+    let supported_source = match kind {
+        CredentialKind::Cookie => Some(CredentialLifecycleSource::WebQrLogin),
+        CredentialKind::TvAccessKey => Some(CredentialLifecycleSource::TvQrLogin),
+        CredentialKind::AccessKey => None,
+    };
+    if credential.source != supported_source {
+        return CredentialAutomaticRefreshReadiness::UnsupportedSource;
+    }
+    if credential.refresh_token_secret_present == Some(true) {
+        return CredentialAutomaticRefreshReadiness::Ready;
+    }
+    if credential.refresh_token_present == Some(true) {
+        CredentialAutomaticRefreshReadiness::MetadataOnlyRefreshToken
+    } else {
+        CredentialAutomaticRefreshReadiness::MissingRefreshToken
+    }
+}
+
+#[derive(Clone, Eq, PartialEq)]
+struct StoredCredentialRefreshRequest {
+    profile: String,
+    kind: CredentialKind,
+    credential: String,
+    refresh_token: String,
+}
+
+impl std::fmt::Debug for StoredCredentialRefreshRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("StoredCredentialRefreshRequest")
+            .field("profile", &self.profile)
+            .field("kind", &self.kind)
+            .field("has_credential", &!self.credential.is_empty())
+            .field("has_refresh_token", &!self.refresh_token.is_empty())
+            .finish()
+    }
+}
+
+impl StoredCredentialRefreshRequest {
+    fn web_cookie_request(&self) -> anyhow::Result<WebCookieRefreshRequest> {
+        ensure!(
+            self.kind == CredentialKind::Cookie,
+            "stored refresh request is not a cookie request"
+        );
+        Ok(WebCookieRefreshRequest::new(
+            self.credential.clone(),
+            self.refresh_token.clone(),
+        )?)
+    }
+
+    fn tv_access_key_request(&self) -> anyhow::Result<TvAccessKeyRefreshRequest> {
+        ensure!(
+            self.kind == CredentialKind::TvAccessKey,
+            "stored refresh request is not a TV access-key request"
+        );
+        Ok(TvAccessKeyRefreshRequest::new(
+            self.credential.clone(),
+            self.refresh_token.clone(),
+        )?)
+    }
+}
+
+fn stored_credential_refresh_request_from_profiles(
+    profiles: &CredentialProfiles,
+    profile_name: &str,
+    kind: CredentialKind,
+) -> anyhow::Result<StoredCredentialRefreshRequest> {
+    ensure!(
+        matches!(kind, CredentialKind::Cookie | CredentialKind::TvAccessKey),
+        "unsupported credential kind for stored refresh"
+    );
+    let credentials = profiles
+        .profile(profile_name)
+        .context("failed to load credential profile")?;
+    let credential = match kind {
+        CredentialKind::Cookie => credentials.cookie.as_deref(),
+        CredentialKind::TvAccessKey => credentials.tv_access_key.as_deref(),
+        CredentialKind::AccessKey => None,
+    }
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .map(str::to_owned)
+    .with_context(|| format!("selected profile has no {}", credential_kind_label(kind)))?;
+    let secrets = profiles
+        .profile_secrets(profile_name)
+        .context("failed to load credential profile secrets")?;
+    let refresh_secret = match kind {
+        CredentialKind::Cookie => secrets.cookie(),
+        CredentialKind::TvAccessKey => secrets.tv_access_key(),
+        CredentialKind::AccessKey => None,
+    }
+    .with_context(|| {
+        format!(
+            "selected profile has no {} refresh secret",
+            credential_kind_label(kind)
+        )
+    })?;
+    let refresh_token = refresh_secret
+        .refresh_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .with_context(|| {
+            format!(
+                "selected profile has no {} refresh token secret",
+                credential_kind_label(kind)
+            )
+        })?;
+    Ok(StoredCredentialRefreshRequest {
+        profile: profile_name.to_owned(),
+        kind,
+        credential,
+        refresh_token,
+    })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RefreshedCredentialSaveStatus {
+    Saved,
+    Noop,
+    SkippedStaleRequest,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RefreshedCredentialSaveOutcome {
+    status: RefreshedCredentialSaveStatus,
+    summary: bbdown_core::CredentialSource,
+}
+
+fn save_refreshed_web_cookie(
+    credential_runtime: &CredentialRuntime,
+    refresh: &StoredCredentialRefreshRequest,
+    refreshed: &WebCookieRefreshCredentials,
+    json: bool,
+) -> anyhow::Result<RefreshedCredentialSaveOutcome> {
+    let outcome = save_refreshed_web_cookie_silent(credential_runtime, refresh, refreshed)?;
+    print_refreshed_credential_save_outcome(json, CredentialKind::Cookie, &outcome)?;
+    Ok(outcome)
+}
+
+fn save_refreshed_web_cookie_silent(
+    credential_runtime: &CredentialRuntime,
+    refresh: &StoredCredentialRefreshRequest,
+    refreshed: &WebCookieRefreshCredentials,
+) -> anyhow::Result<RefreshedCredentialSaveOutcome> {
+    let acquired_at_unix_millis = current_unix_millis();
+    let refreshed_credentials = refreshed.credentials();
+    let refresh_secret =
+        CredentialRefreshSecret::default().with_refresh_token(refreshed.refresh_token.clone());
+    let lifecycle_metadata = [(
+        CredentialKind::Cookie,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::WebQrLogin)
+            .with_acquired_at_unix_millis(acquired_at_unix_millis)
+            .with_refresh_token_present(refresh_secret.has_refresh_token()),
+    )];
+    credential_runtime
+        .store
+        .update_profiles(|profiles| {
+            if !stored_refresh_request_matches_selected_profile(
+                credential_runtime,
+                profiles,
+                refresh,
+            )? {
+                let summary = profiles.profile(&refresh.profile)?.redacted_summary();
+                return Ok(RefreshedCredentialSaveOutcome {
+                    status: RefreshedCredentialSaveStatus::SkippedStaleRequest,
+                    summary,
+                });
+            }
+            let summary = merge_credentials_with_lifecycle_refresh_secrets(
+                profiles,
+                &refresh.profile,
+                refreshed_credentials,
+                lifecycle_metadata,
+                [CredentialRefreshSecretUpdate::Cookie(refresh_secret)],
+            )?;
+            Ok(RefreshedCredentialSaveOutcome {
+                status: RefreshedCredentialSaveStatus::Saved,
+                summary,
+            })
+        })
+        .context("failed to save credentials")
+}
+
+fn save_web_cookie_refresh_checked_silent(
+    credential_runtime: &CredentialRuntime,
+    refresh: &StoredCredentialRefreshRequest,
+) -> anyhow::Result<RefreshedCredentialSaveOutcome> {
+    let checked_at_unix_millis = current_unix_millis();
+    credential_runtime
+        .store
+        .update_profiles(|profiles| {
+            if !stored_refresh_request_matches_selected_profile(
+                credential_runtime,
+                profiles,
+                refresh,
+            )? {
+                let summary = profiles.profile(&refresh.profile)?.redacted_summary();
+                return Ok(RefreshedCredentialSaveOutcome {
+                    status: RefreshedCredentialSaveStatus::SkippedStaleRequest,
+                    summary,
+                });
+            }
+
+            let mut metadata = profiles.profile_metadata(&refresh.profile)?;
+            let cookie_metadata = metadata
+                .credential(CredentialKind::Cookie)
+                .cloned()
+                .unwrap_or_default()
+                .with_checked_at_unix_millis(checked_at_unix_millis)
+                .with_refresh_token_present(true);
+            metadata.set_credential(CredentialKind::Cookie, cookie_metadata);
+            profiles.set_profile_metadata(&refresh.profile, metadata)?;
+            let summary = profiles.profile(&refresh.profile)?.redacted_summary();
+            Ok(RefreshedCredentialSaveOutcome {
+                status: RefreshedCredentialSaveStatus::Noop,
+                summary,
+            })
+        })
+        .context("failed to save credentials")
+}
+
+fn save_refreshed_tv_access_key(
+    credential_runtime: &CredentialRuntime,
+    refresh: &StoredCredentialRefreshRequest,
+    refreshed: &TvAccessKeyLoginCredentials,
+    json: bool,
+) -> anyhow::Result<RefreshedCredentialSaveOutcome> {
+    let outcome = save_refreshed_tv_access_key_silent(credential_runtime, refresh, refreshed)?;
+    print_refreshed_credential_save_outcome(json, CredentialKind::TvAccessKey, &outcome)?;
+    Ok(outcome)
+}
+
+fn save_refreshed_tv_access_key_silent(
+    credential_runtime: &CredentialRuntime,
+    refresh: &StoredCredentialRefreshRequest,
+    refreshed: &TvAccessKeyLoginCredentials,
+) -> anyhow::Result<RefreshedCredentialSaveOutcome> {
+    let acquired_at_unix_millis = current_unix_millis();
+    let refreshed_credentials = refreshed.credentials();
+    let refresh_token = refreshed
+        .refresh_token
+        .clone()
+        .unwrap_or_else(|| refresh.refresh_token.clone());
+    let refresh_secret = CredentialRefreshSecret::default().with_refresh_token(refresh_token);
+    let lifecycle_metadata = [(
+        CredentialKind::TvAccessKey,
+        tv_access_key_lifecycle_metadata_from_expiry(
+            refreshed.oauth_expires_at,
+            refreshed.expires_in,
+            acquired_at_unix_millis,
+            refresh_secret.has_refresh_token(),
+        ),
+    )];
+    credential_runtime
+        .store
+        .update_profiles(|profiles| {
+            if !stored_refresh_request_matches_selected_profile(
+                credential_runtime,
+                profiles,
+                refresh,
+            )? {
+                let summary = profiles.profile(&refresh.profile)?.redacted_summary();
+                return Ok(RefreshedCredentialSaveOutcome {
+                    status: RefreshedCredentialSaveStatus::SkippedStaleRequest,
+                    summary,
+                });
+            }
+            let summary = merge_credentials_with_lifecycle_refresh_secrets(
+                profiles,
+                &refresh.profile,
+                refreshed_credentials,
+                lifecycle_metadata,
+                [CredentialRefreshSecretUpdate::TvAccessKey(refresh_secret)],
+            )?;
+            Ok(RefreshedCredentialSaveOutcome {
+                status: RefreshedCredentialSaveStatus::Saved,
+                summary,
+            })
+        })
+        .context("failed to save credentials")
+}
+
+fn stored_refresh_request_matches_selected_profile(
+    credential_runtime: &CredentialRuntime,
+    profiles: &CredentialProfiles,
+    refresh: &StoredCredentialRefreshRequest,
+) -> bbdown_core::Result<bool> {
+    if credential_runtime.selected_profile_name(profiles) != refresh.profile {
+        return Ok(false);
+    }
+    stored_refresh_request_matches_profile(profiles, refresh)
+}
+
+fn stored_refresh_request_matches_profile(
+    profiles: &CredentialProfiles,
+    refresh: &StoredCredentialRefreshRequest,
+) -> bbdown_core::Result<bool> {
+    let credentials = profiles.profile(&refresh.profile)?;
+    let current_credential = match refresh.kind {
+        CredentialKind::Cookie => trimmed_non_empty(credentials.cookie.as_deref()),
+        CredentialKind::TvAccessKey => trimmed_non_empty(credentials.tv_access_key.as_deref()),
+        CredentialKind::AccessKey => None,
+    };
+    if current_credential != Some(refresh.credential.as_str()) {
+        return Ok(false);
+    }
+    let secrets = profiles.profile_secrets(&refresh.profile)?;
+    let current_secret = match refresh.kind {
+        CredentialKind::Cookie => secrets.cookie(),
+        CredentialKind::TvAccessKey => secrets.tv_access_key(),
+        CredentialKind::AccessKey => None,
+    };
+    let Some(current_secret) = current_secret else {
+        return Ok(false);
+    };
+    Ok(trimmed_non_empty(current_secret.refresh_token.as_deref())
+        == Some(refresh.refresh_token.as_str()))
+}
+
+fn print_refreshed_credential_save_outcome(
+    json: bool,
+    kind: CredentialKind,
+    outcome: &RefreshedCredentialSaveOutcome,
+) -> anyhow::Result<()> {
+    if json {
+        match outcome.status {
+            RefreshedCredentialSaveStatus::Saved => {
+                print_json_line(&serde_json::json!({
+                    "event": "refreshed",
+                    "kind": credential_kind_label(kind),
+                }))?;
+                print_json_line(&serde_json::json!({
+                    "event": "saved",
+                    "kind": credential_kind_label(kind),
+                    "saved": outcome.summary,
+                }))
+            }
+            RefreshedCredentialSaveStatus::Noop => print_json_line(&serde_json::json!({
+                "event": "refresh_not_needed",
+                "kind": credential_kind_label(kind),
+                "saved": outcome.summary,
+            })),
+            RefreshedCredentialSaveStatus::SkippedStaleRequest => {
+                print_json_line(&serde_json::json!({
+                    "event": "refresh_skipped",
+                    "kind": credential_kind_label(kind),
+                    "reason": "profile_changed",
+                    "saved": outcome.summary,
+                }))
+            }
+        }
+    } else {
+        match outcome.status {
+            RefreshedCredentialSaveStatus::Saved => {
+                print_human_line(format_args!("{} refreshed", credential_kind_label(kind)))?;
+                print_human_line(format_args!("{} saved", credential_kind_label(kind)))
+            }
+            RefreshedCredentialSaveStatus::Noop => print_human_line(format_args!(
+                "{} refresh not needed",
+                credential_kind_label(kind)
+            )),
+            RefreshedCredentialSaveStatus::SkippedStaleRequest => print_human_line(format_args!(
+                "{} refresh skipped: selected profile already changed",
+                credential_kind_label(kind)
+            )),
+        }
+    }
+}
+
+fn print_credential_refresh_setup_failure(
+    json: bool,
+    kind: CredentialKind,
+    message: &str,
+) -> anyhow::Result<()> {
+    if json {
+        print_json_line(&serde_json::json!({
+            "event": "refresh_failed",
+            "kind": credential_kind_label(kind),
+            "message": message,
+        }))
+    } else {
+        print_human_line(format_args!(
+            "automatic {} refresh failed: {}",
+            credential_kind_label(kind),
+            display_human_text(message)
+        ))
+    }
+}
+
+fn print_credential_refresh_failure(
+    json: bool,
+    kind: CredentialKind,
+    refresh: &StoredCredentialRefreshRequest,
+    error: &bbdown_core::Error,
+) -> anyhow::Result<()> {
+    let message = redact_credential_refresh_error(error, refresh);
+    if json {
+        print_json_line(&serde_json::json!({
+            "event": "refresh_failed",
+            "kind": credential_kind_label(kind),
+            "message": message,
+        }))
+    } else {
+        print_human_line(format_args!(
+            "automatic {} refresh failed: {}",
+            credential_kind_label(kind),
+            display_human_text(&message)
+        ))
+    }
+}
+
+fn redact_credential_refresh_error(
+    error: &bbdown_core::Error,
+    refresh: &StoredCredentialRefreshRequest,
+) -> String {
+    let mut message = error.to_string();
+    let mut secrets = credential_refresh_redaction_candidates(refresh);
+    secrets.sort_by_key(|secret| std::cmp::Reverse(secret.trim().len()));
+    secrets.dedup();
+    for secret in secrets {
+        message = redact_exact_secret(&message, &secret);
+    }
+    message
+}
+
+fn credential_refresh_redaction_candidates(
+    refresh: &StoredCredentialRefreshRequest,
+) -> Vec<String> {
+    let mut secrets = vec![refresh.credential.clone(), refresh.refresh_token.clone()];
+    if refresh.kind == CredentialKind::Cookie {
+        for pair in refresh.credential.split(';').map(str::trim) {
+            if pair.is_empty() {
+                continue;
+            }
+            secrets.push(pair.to_owned());
+            if let Some((_name, value)) = pair.split_once('=') {
+                let value = value.trim();
+                if !value.is_empty() {
+                    secrets.push(value.to_owned());
+                }
+            }
+        }
+    }
+    secrets
+}
+
+fn print_credential_renewal_decision_json(
+    decision: &CredentialRenewalDecision,
+) -> anyhow::Result<()> {
+    print_json_line(&serde_json::json!({
+        "event": "decision",
+        "kind": credential_kind_label(decision.kind),
+        "decision": {
+            "profile": decision.profile,
+            "kind": decision.kind,
+            "present": decision.present,
+            "lifecycle_status": decision.lifecycle_status,
+            "source": decision.source,
+            "acquired_at_unix_millis": decision.acquired_at_unix_millis,
+            "checked_at_unix_millis": decision.checked_at_unix_millis,
+            "expires_at_unix_millis": decision.expires_at_unix_millis,
+            "refresh_token_present": decision.refresh_token_present,
+            "refresh_token_secret_present": decision.refresh_token_secret_present,
+            "automatic_refresh_readiness": credential_automatic_refresh_readiness_label(decision.automatic_refresh_readiness),
+            "action": credential_renewal_action_label(decision.action),
+            "reason": credential_renewal_reason_label(decision.reason),
+        },
+    }))
+}
+
+fn print_credential_renewal_decision(decision: &CredentialRenewalDecision) -> anyhow::Result<()> {
+    print_human_line(format_args!(
+        "{} renewal: {} ({})",
+        credential_kind_label(decision.kind),
+        credential_renewal_action_label(decision.action),
+        credential_renewal_reason_label(decision.reason)
+    ))?;
+    print_human_line(format_args!(
+        "automatic_refresh: {}",
+        credential_automatic_refresh_readiness_label(decision.automatic_refresh_readiness)
+    ))
+}
+
+fn credential_renewal_action_label(action: CredentialRenewalAction) -> &'static str {
+    match action {
+        CredentialRenewalAction::NoAction => "no_action",
+        CredentialRenewalAction::Refresh => "refresh",
+    }
+}
+
+fn credential_renewal_reason_label(reason: CredentialRenewalReason) -> &'static str {
+    match reason {
+        CredentialRenewalReason::CredentialMissing => "credential_missing",
+        CredentialRenewalReason::LifecycleFresh => "lifecycle_fresh",
+        CredentialRenewalReason::LifecycleUnknown => "lifecycle_unknown",
+        CredentialRenewalReason::LifecycleStale => "lifecycle_stale",
+        CredentialRenewalReason::LifecycleExpiring => "lifecycle_expiring",
+        CredentialRenewalReason::LifecycleExpired => "lifecycle_expired",
+        CredentialRenewalReason::Forced => "forced",
+    }
+}
+
+fn credential_automatic_refresh_readiness_label(
+    readiness: CredentialAutomaticRefreshReadiness,
+) -> &'static str {
+    match readiness {
+        CredentialAutomaticRefreshReadiness::Ready => "ready",
+        CredentialAutomaticRefreshReadiness::CredentialMissing => "credential_missing",
+        CredentialAutomaticRefreshReadiness::UnsupportedSource => "unsupported_source",
+        CredentialAutomaticRefreshReadiness::MissingRefreshToken => "missing_refresh_token",
+        CredentialAutomaticRefreshReadiness::MetadataOnlyRefreshToken => {
+            "metadata_only_refresh_token"
+        }
     }
 }
 
@@ -4600,7 +6103,7 @@ async fn wait_for_qr_login(
     client: &BiliClient,
     ticket: &QrLoginTicket,
     args: &QrLoginArgs,
-) -> anyhow::Result<Credentials> {
+) -> anyhow::Result<QrLoginCredentials> {
     let interval = Duration::from_secs(args.poll_interval_seconds);
     let deadline = Instant::now()
         .checked_add(Duration::from_secs(args.timeout_seconds))
@@ -4611,20 +6114,20 @@ async fn wait_for_qr_login(
             remaining_until(Instant::now(), deadline).context("QR login timed out")?;
         let state = poll_qr_login(client, ticket, poll_timeout).await?;
         match state {
-            QrLoginState::WaitingForScan => {
+            QrLoginCredentialsState::WaitingForScan => {
                 if !args.json && last_waiting_state != Some("waiting_for_scan") {
                     print_human_line("waiting for scan")?;
                 }
                 last_waiting_state = Some("waiting_for_scan");
             }
-            QrLoginState::WaitingForConfirm => {
+            QrLoginCredentialsState::WaitingForConfirm => {
                 if !args.json && last_waiting_state != Some("waiting_for_confirm") {
                     print_human_line("waiting for confirmation")?;
                 }
                 last_waiting_state = Some("waiting_for_confirm");
             }
-            QrLoginState::Expired => bail!("QR code expired"),
-            QrLoginState::Succeeded { credentials } => return Ok(credentials),
+            QrLoginCredentialsState::Expired => bail!("QR code expired"),
+            QrLoginCredentialsState::Succeeded { credentials } => return Ok(credentials),
         }
         let sleep_duration =
             next_poll_sleep(Instant::now(), deadline, interval).context("QR login timed out")?;
@@ -4636,11 +6139,11 @@ async fn poll_qr_login(
     client: &BiliClient,
     ticket: &QrLoginTicket,
     timeout: Duration,
-) -> anyhow::Result<QrLoginState> {
+) -> anyhow::Result<QrLoginCredentialsState> {
     tokio::time::timeout(timeout, async {
         match ticket.kind {
-            QrLoginKind::Web => client.poll_web_qr_login(&ticket.key).await,
-            QrLoginKind::Tv => client.poll_tv_qr_login(ticket).await,
+            QrLoginKind::Web => client.poll_web_qr_login_credentials(&ticket.key).await,
+            QrLoginKind::Tv => client.poll_tv_qr_login_credentials(ticket).await,
         }
     })
     .await
@@ -4696,12 +6199,13 @@ fn endpoints_from_cli(cli: &Cli) -> EndpointConfig {
         if cli.tv_passport_base.is_some() {
             tv_passport_base.clone()
         } else {
-            default_endpoints.tv_passport_poll_base.clone()
+            cli.passport_base.clone()
         }
     });
     EndpointConfig::default()
         .with_api_base(cli.api_base.clone())
         .with_pgc_base(cli.pgc_base.clone())
+        .with_web_base(cli.web_base.clone())
         .with_intl_base(cli.intl_base.clone())
         .with_intl_passport_base(cli.intl_passport_base.clone())
         .with_comment_base(cli.comment_base.clone())
@@ -5100,23 +6604,27 @@ fn _assert_credentials_send_sync(_: Credentials) {}
 #[cfg(test)]
 mod tests {
     use super::{
-        Cli, CliProgressReporter, CredentialRuntime, DownloadCtrlCAction, DownloadOnlyArg,
+        Cli, CliProgressReporter, ClientRuntimeConfig, CredentialPreflightRuntimeConfig,
+        CredentialRuntime, DeferredMediaCredentialPreflight, DownloadCtrlCAction, DownloadOnlyArg,
         DuplicateDecisionRequest, DuplicatePromptActiveGuard, MediaCredentialPreflightContext,
-        SingleDownloadValidationArgs, SubtitleAiPolicyArg, access_key_lifecycle_metadata,
-        access_key_provider_secret, access_key_refresh_request_from_profiles, archive_sidecar_path,
-        credential_profile_selection, download_ctrl_c_action,
-        download_mode_may_use_intl_access_key, duplicate_decision_or_report, endpoints_from_cli,
-        ensure_access_key_login_file_is_safe, ensure_access_key_login_stdin_is_safe,
-        ensure_archive_file_is_not_output_root, http_status_failure_may_be_credential_related,
-        input_may_use_intl_access_key, input_may_use_restricted_area_proxy,
-        input_media_preflight_playurl_mode, input_requires_web_cookie,
+        PreparedMediaRequest, SingleDownloadValidationArgs, StoredCredentialRefreshRequest,
+        SubtitleAiPolicyArg, access_key_lifecycle_metadata, access_key_provider_secret,
+        access_key_refresh_request_from_profiles, archive_sidecar_path,
+        complete_deferred_media_preflight_renewal, credential_profile_selection,
+        download_ctrl_c_action, download_mode_may_use_intl_access_key,
+        duplicate_decision_or_report, endpoints_from_cli, ensure_access_key_login_file_is_safe,
+        ensure_access_key_login_stdin_is_safe, ensure_archive_file_is_not_output_root,
+        http_status_failure_may_be_credential_related, input_may_use_intl_access_key,
+        input_may_use_restricted_area_proxy, input_media_preflight_playurl_mode,
+        input_requires_web_cookie,
         media_preflight_report_can_refresh_generic_access_key_for_failure, next_poll_sleep,
         non_generic_access_key_json_path, parse_access_key_login_input,
         plan_failure_may_be_credential_related, qr_login_lifecycle_metadata, remaining_until,
         restricted_area_from_cli_with_args, restricted_area_from_cli_with_env_values,
-        save_credentials, save_credentials_with_lifecycle,
-        save_credentials_with_lifecycle_and_secrets, save_refreshed_access_key_silent,
-        should_prompt_duplicate_decision, validate_media_host_spec, validate_single_download_args,
+        save_credentials, save_credentials_with_lifecycle_and_secrets,
+        save_refreshed_access_key_silent, save_web_cookie_refresh_checked_silent,
+        should_prompt_duplicate_decision, stored_credential_refresh_request_from_profiles,
+        validate_media_host_spec, validate_single_download_args,
     };
     use bbdown_core::{
         AccessKeyLoginConfig, AccessKeyLoginCredentials, AccessKeyProvider,
@@ -5124,9 +6632,10 @@ mod tests {
         CredentialLifecycleMetadata, CredentialLifecyclePolicy, CredentialLifecycleSource,
         CredentialPreflightMode, CredentialPreflightReport, CredentialPreflightRequirement,
         CredentialProfileMetadata, CredentialProfileSecrets, CredentialProfileSelection,
-        CredentialProfiles, CredentialStore, Credentials, DownloadCancellationToken, DownloadMode,
-        DownloadOutputConflict, DownloadPreflight, DuplicateDecision, EndpointConfig, Input,
-        PlayurlMode, QrLoginKind,
+        CredentialProfiles, CredentialRefreshSecret, CredentialStore, Credentials,
+        DownloadCancellationToken, DownloadMode, DownloadOutputConflict, DownloadPreflight,
+        DuplicateDecision, EndpointConfig, Input, PlayurlMode, QrLoginCredentials, QrLoginKind,
+        RestrictedAreaConfig, RestrictedAreaProxy,
     };
     use clap::Parser as _;
     use std::fs;
@@ -5201,6 +6710,436 @@ mod tests {
         }));
         assert!(!input_requires_web_cookie(&Input::Aid(170_001)));
         assert!(!input_requires_web_cookie(&Input::IntlEpisode(341_736)));
+    }
+
+    #[test]
+    fn stored_credential_refresh_request_debug_redacts_secrets() {
+        let refresh = StoredCredentialRefreshRequest {
+            profile: "default".to_owned(),
+            kind: CredentialKind::Cookie,
+            credential: "SESSDATA=SECRET;bili_jct=CSRF".to_owned(),
+            refresh_token: "REFRESH_SECRET".to_owned(),
+        };
+
+        let debug = format!("{refresh:?}");
+
+        assert!(debug.contains("has_credential"));
+        assert!(debug.contains("has_refresh_token"));
+        assert!(!debug.contains("SESSDATA=SECRET"));
+        assert!(!debug.contains("CSRF"));
+        assert!(!debug.contains("REFRESH_SECRET"));
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn deferred_preflight_preserves_stored_refresh_when_access_key_refresh_fails()
+    -> anyhow::Result<()> {
+        use httpmock::prelude::*;
+
+        let server = MockServer::start();
+        let temp = tempfile::tempdir()?;
+        let store = CredentialStore::new(temp.path().join("credentials.json"));
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "default",
+            Credentials::default()
+                .with_access_key("GENERIC_ACCESS")
+                .with_tv_access_key("OLD_TV_ACCESS"),
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_access_key_provider(AccessKeyProvider::BiliIntlOauth2)
+                .with_acquired_at_unix_millis(1_000)
+                .with_expires_at_unix_millis(2_000)
+                .with_refresh_token_present(true),
+        );
+        metadata.set_credential(
+            CredentialKind::TvAccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::TvQrLogin)
+                .with_acquired_at_unix_millis(1_000)
+                .with_expires_at_unix_millis(2_000)
+                .with_refresh_token_present(true),
+        );
+        profiles.set_profile_metadata("default", metadata)?;
+        let mut secrets = CredentialProfileSecrets::default();
+        secrets.set_access_key_provider(
+            AccessKeyProvider::BiliIntlOauth2,
+            AccessKeyProviderSecret::default()
+                .with_refresh_token("GENERIC_REFRESH")
+                .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+                .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+        );
+        secrets.set_tv_access_key(
+            CredentialRefreshSecret::default().with_refresh_token("OLD_TV_REFRESH"),
+        );
+        profiles.set_profile_secrets("default", secrets)?;
+        store.save_profiles(&profiles)?;
+
+        let tv_refresh = server.mock(|when, then| {
+            when.method(POST)
+                .path("/x/passport-tv-login/oauth2/refresh_token")
+                .form_urlencoded_tuple("access_key", "OLD_TV_ACCESS")
+                .form_urlencoded_tuple("refresh_token", "OLD_TV_REFRESH");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "token_info": {
+                        "access_token": "NEW_TV_ACCESS",
+                        "refresh_token": "NEW_TV_REFRESH",
+                        "expires_in": 60
+                    }
+                }
+            }));
+        });
+        let generic_refresh = server.mock(|when, then| {
+            when.method(POST)
+                .path("/x/passport-tv-login/oauth2/refresh_token")
+                .form_urlencoded_tuple("access_key", "GENERIC_ACCESS")
+                .form_urlencoded_tuple("refresh_token", "GENERIC_REFRESH");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": -1,
+                "message": "generic refresh failed"
+            }));
+        });
+
+        let credential_runtime =
+            CredentialRuntime::new(store.clone(), CredentialProfileSelection::default_profile());
+        let endpoints = EndpointConfig::default()
+            .with_passport_base(server.base_url())
+            .with_tv_passport_base(server.base_url())
+            .with_tv_passport_poll_base(server.base_url());
+        let client_runtime = ClientRuntimeConfig::new(
+            endpoints,
+            RestrictedAreaConfig::new(
+                None,
+                [RestrictedAreaProxy::playurl(server.base_url(), None)],
+            ),
+            PlayurlMode::App,
+            Duration::from_secs(5),
+        );
+        let credential_preflight =
+            CredentialPreflightRuntimeConfig::new(CredentialPreflightMode::Renew, 0, 0);
+        let status = profiles.profile_lifecycle_status(
+            "default",
+            &CredentialLifecyclePolicy::at_unix_millis(10_000),
+        )?;
+        let report = CredentialPreflightReport::evaluate(
+            CredentialPreflightMode::Renew,
+            &status,
+            [
+                CredentialPreflightRequirement::app_playurl_access_key(),
+                CredentialPreflightRequirement::restricted_area_access_key(),
+            ],
+        );
+        assert!(report.should_attempt_access_key_renewal());
+        let context = MediaCredentialPreflightContext {
+            input: Input::Episode(1000),
+            playurl_mode: Some(PlayurlMode::App),
+            restricted_area_proxy_may_run: true,
+            intl_access_key_may_run: false,
+            web_cookie_required: false,
+        };
+        let mut prepared = PreparedMediaRequest {
+            credentials: credential_runtime.load()?,
+            access_key_provider: credential_runtime.selected_access_key_provider()?,
+            parsed_input: Some(context.input.clone()),
+            media_preflight_context: Some(context.clone()),
+            deferred_preflight: Some(DeferredMediaCredentialPreflight { context, report }),
+        };
+
+        let refreshed = complete_deferred_media_preflight_renewal(
+            &credential_runtime,
+            &client_runtime,
+            &credential_preflight,
+            &mut prepared,
+            None,
+            false,
+        )
+        .await?;
+
+        assert!(refreshed);
+        tv_refresh.assert_calls(1);
+        generic_refresh.assert_calls(1);
+        assert_eq!(
+            prepared.credentials.access_key.as_deref(),
+            Some("GENERIC_ACCESS")
+        );
+        assert_eq!(
+            prepared.credentials.tv_access_key.as_deref(),
+            Some("NEW_TV_ACCESS")
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn deferred_preflight_forces_generic_access_key_after_auth_failure() -> anyhow::Result<()>
+    {
+        use httpmock::prelude::*;
+
+        let server = MockServer::start();
+        let temp = tempfile::tempdir()?;
+        let store = CredentialStore::new(temp.path().join("credentials.json"));
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "default",
+            Credentials::default()
+                .with_access_key("GENERIC_ACCESS")
+                .with_cookie("SESSDATA=old;bili_jct=OLD_CSRF"),
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::Cookie,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::WebQrLogin)
+                .with_checked_at_unix_millis(1)
+                .with_refresh_token_present(true),
+        );
+        metadata.set_credential(
+            CredentialKind::AccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::AccessKeyLogin)
+                .with_access_key_provider(AccessKeyProvider::BiliIntlOauth2)
+                .with_acquired_at_unix_millis(9_000_000_000_000)
+                .with_expires_at_unix_millis(9_000_000_060_000)
+                .with_refresh_token_present(true),
+        );
+        profiles.set_profile_metadata("default", metadata)?;
+        let mut secrets = CredentialProfileSecrets::default();
+        secrets.set_cookie(CredentialRefreshSecret::default().with_refresh_token("COOKIE_REFRESH"));
+        secrets.set_access_key_provider(
+            AccessKeyProvider::BiliIntlOauth2,
+            AccessKeyProviderSecret::default()
+                .with_refresh_token("GENERIC_REFRESH")
+                .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+                .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+        );
+        profiles.set_profile_secrets("default", secrets)?;
+        store.save_profiles(&profiles)?;
+
+        let generic_refresh = server.mock(|when, then| {
+            when.method(POST)
+                .path("/x/passport-tv-login/oauth2/refresh_token")
+                .form_urlencoded_tuple("access_key", "GENERIC_ACCESS")
+                .form_urlencoded_tuple("refresh_token", "GENERIC_REFRESH");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "token_info": {
+                        "access_token": "AUTO_ACCESS_SECRET",
+                        "refresh_token": "AUTO_REFRESH_SECRET",
+                        "expires_in": 60
+                    }
+                }
+            }));
+        });
+
+        let credential_runtime =
+            CredentialRuntime::new(store.clone(), CredentialProfileSelection::default_profile());
+        let endpoints = EndpointConfig::default()
+            .with_passport_base(server.base_url())
+            .with_tv_passport_base(server.base_url())
+            .with_tv_passport_poll_base(server.base_url());
+        let client_runtime = ClientRuntimeConfig::new(
+            endpoints,
+            RestrictedAreaConfig::default(),
+            PlayurlMode::App,
+            Duration::from_secs(5),
+        );
+        let credential_preflight =
+            CredentialPreflightRuntimeConfig::new(CredentialPreflightMode::Renew, 0, 0);
+        let status = profiles.profile_lifecycle_status(
+            "default",
+            &CredentialLifecyclePolicy::at_unix_millis(10_000),
+        )?;
+        let report = CredentialPreflightReport::evaluate(
+            CredentialPreflightMode::Renew,
+            &status,
+            [
+                CredentialPreflightRequirement::authenticated_web_api_cookie(),
+                CredentialPreflightRequirement::app_playurl_access_key(),
+            ],
+        );
+        assert!(!report.should_attempt_access_key_renewal());
+        let context = MediaCredentialPreflightContext {
+            input: Input::Aid(170_001),
+            playurl_mode: Some(PlayurlMode::App),
+            restricted_area_proxy_may_run: false,
+            intl_access_key_may_run: false,
+            web_cookie_required: true,
+        };
+        let mut prepared = PreparedMediaRequest {
+            credentials: credential_runtime.load()?,
+            access_key_provider: credential_runtime.selected_access_key_provider()?,
+            parsed_input: Some(context.input.clone()),
+            media_preflight_context: Some(context.clone()),
+            deferred_preflight: Some(DeferredMediaCredentialPreflight { context, report }),
+        };
+
+        let refreshed = complete_deferred_media_preflight_renewal(
+            &credential_runtime,
+            &client_runtime,
+            &credential_preflight,
+            &mut prepared,
+            Some(&bbdown_core::Error::Api {
+                code: 16,
+                message: "APP playurl gRPC request failed".to_owned(),
+            }),
+            false,
+        )
+        .await?;
+
+        assert!(refreshed);
+        assert_eq!(
+            prepared.credentials.access_key.as_deref(),
+            Some("AUTO_ACCESS_SECRET")
+        );
+        assert_eq!(
+            prepared.credentials.cookie.as_deref(),
+            Some("SESSDATA=old;bili_jct=OLD_CSRF")
+        );
+        generic_refresh.assert_calls(1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn deferred_preflight_forces_failed_kind_after_unrelated_stored_refresh_noop()
+    -> anyhow::Result<()> {
+        use httpmock::prelude::*;
+
+        let server = MockServer::start();
+        let temp = tempfile::tempdir()?;
+        let store = CredentialStore::new(temp.path().join("credentials.json"));
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "default",
+            Credentials::default()
+                .with_cookie("SESSDATA=old;bili_jct=OLD_CSRF")
+                .with_tv_access_key("OLD_TV_ACCESS"),
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::Cookie,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::WebQrLogin)
+                .with_checked_at_unix_millis(1)
+                .with_refresh_token_present(true),
+        );
+        metadata.set_credential(
+            CredentialKind::TvAccessKey,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::TvQrLogin)
+                .with_acquired_at_unix_millis(9_000_000_000_000)
+                .with_expires_at_unix_millis(9_000_000_060_000)
+                .with_refresh_token_present(true),
+        );
+        profiles.set_profile_metadata("default", metadata)?;
+        let mut secrets = CredentialProfileSecrets::default();
+        secrets.set_cookie(CredentialRefreshSecret::default().with_refresh_token("COOKIE_REFRESH"));
+        secrets.set_tv_access_key(
+            CredentialRefreshSecret::default().with_refresh_token("OLD_TV_REFRESH"),
+        );
+        profiles.set_profile_secrets("default", secrets)?;
+        store.save_profiles(&profiles)?;
+
+        let cookie_check = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/passport-login/web/cookie/info")
+                .query_param("csrf", "OLD_CSRF")
+                .header("cookie", "SESSDATA=old;bili_jct=OLD_CSRF");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {"refresh": false, "timestamp": 1_710_000_000_000_u64}
+            }));
+        });
+        let tv_refresh = server.mock(|when, then| {
+            when.method(POST)
+                .path("/x/passport-tv-login/oauth2/refresh_token")
+                .form_urlencoded_tuple("access_key", "OLD_TV_ACCESS")
+                .form_urlencoded_tuple("refresh_token", "OLD_TV_REFRESH");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "token_info": {
+                        "access_token": "NEW_TV_ACCESS",
+                        "refresh_token": "NEW_TV_REFRESH",
+                        "expires_in": 60
+                    }
+                }
+            }));
+        });
+
+        let credential_runtime =
+            CredentialRuntime::new(store.clone(), CredentialProfileSelection::default_profile());
+        let endpoints = EndpointConfig::default()
+            .with_passport_base(server.base_url())
+            .with_tv_passport_base(server.base_url())
+            .with_tv_passport_poll_base(server.base_url());
+        let client_runtime = ClientRuntimeConfig::new(
+            endpoints,
+            RestrictedAreaConfig::default(),
+            PlayurlMode::Tv,
+            Duration::from_secs(5),
+        );
+        let credential_preflight =
+            CredentialPreflightRuntimeConfig::new(CredentialPreflightMode::Renew, 0, 0);
+        let status = profiles.profile_lifecycle_status(
+            "default",
+            &CredentialLifecyclePolicy::at_unix_millis(1_780_000_000_000),
+        )?;
+        let report = CredentialPreflightReport::evaluate(
+            CredentialPreflightMode::Renew,
+            &status,
+            [
+                CredentialPreflightRequirement::authenticated_web_api_cookie(),
+                CredentialPreflightRequirement::tv_playurl_access_key(),
+            ],
+        );
+        let context = MediaCredentialPreflightContext {
+            input: Input::Aid(170_001),
+            playurl_mode: Some(PlayurlMode::Tv),
+            restricted_area_proxy_may_run: false,
+            intl_access_key_may_run: false,
+            web_cookie_required: true,
+        };
+        let mut prepared = PreparedMediaRequest {
+            credentials: credential_runtime.load()?,
+            access_key_provider: credential_runtime.selected_access_key_provider()?,
+            parsed_input: Some(context.input.clone()),
+            media_preflight_context: Some(context.clone()),
+            deferred_preflight: Some(DeferredMediaCredentialPreflight { context, report }),
+        };
+
+        let refreshed = complete_deferred_media_preflight_renewal(
+            &credential_runtime,
+            &client_runtime,
+            &credential_preflight,
+            &mut prepared,
+            Some(&bbdown_core::Error::Api {
+                code: 16,
+                message: "APP playurl gRPC request failed".to_owned(),
+            }),
+            false,
+        )
+        .await?;
+
+        assert!(refreshed);
+        assert_eq!(
+            prepared.credentials.cookie.as_deref(),
+            Some("SESSDATA=old;bili_jct=OLD_CSRF")
+        );
+        assert_eq!(
+            prepared.credentials.tv_access_key.as_deref(),
+            Some("NEW_TV_ACCESS")
+        );
+        cookie_check.assert_calls(1);
+        tv_refresh.assert_calls(1);
+        Ok(())
     }
 
     #[test]
@@ -5435,6 +7374,86 @@ mod tests {
         assert_eq!(
             secret.refresh_token.as_deref(),
             Some("NEWER_REFRESH_SECRET")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn stale_web_cookie_checked_save_skips_when_profile_changed() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let store = CredentialStore::new(temp.path().join("credentials.json"));
+        let mut profiles = CredentialProfiles::default();
+        profiles.set_profile(
+            "default",
+            Credentials::default().with_cookie("SESSDATA=old;bili_jct=OLD_CSRF"),
+        )?;
+        let mut metadata = CredentialProfileMetadata::default();
+        metadata.set_credential(
+            CredentialKind::Cookie,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::WebQrLogin)
+                .with_acquired_at_unix_millis(1_000)
+                .with_refresh_token_present(true),
+        );
+        profiles.set_profile_metadata("default", metadata)?;
+        let mut secrets = CredentialProfileSecrets::default();
+        secrets.set_cookie(
+            CredentialRefreshSecret::default().with_refresh_token("OLD_COOKIE_REFRESH"),
+        );
+        profiles.set_profile_secrets("default", secrets)?;
+        store.save_profiles(&profiles)?;
+        let refresh = stored_credential_refresh_request_from_profiles(
+            &profiles,
+            "default",
+            CredentialKind::Cookie,
+        )?;
+
+        let mut newer_profiles = store.load_profiles()?;
+        newer_profiles.set_profile(
+            "default",
+            Credentials::default().with_cookie("SESSDATA=new;bili_jct=NEW_CSRF"),
+        )?;
+        let mut newer_metadata = CredentialProfileMetadata::default();
+        newer_metadata.set_credential(
+            CredentialKind::Cookie,
+            CredentialLifecycleMetadata::default()
+                .with_source(CredentialLifecycleSource::WebQrLogin)
+                .with_acquired_at_unix_millis(2_000)
+                .with_refresh_token_present(true),
+        );
+        newer_profiles.set_profile_metadata("default", newer_metadata)?;
+        let mut newer_secrets = CredentialProfileSecrets::default();
+        newer_secrets.set_cookie(
+            CredentialRefreshSecret::default().with_refresh_token("NEW_COOKIE_REFRESH"),
+        );
+        newer_profiles.set_profile_secrets("default", newer_secrets)?;
+        store.save_profiles(&newer_profiles)?;
+
+        let runtime =
+            CredentialRuntime::new(store.clone(), CredentialProfileSelection::default_profile());
+        let outcome = save_web_cookie_refresh_checked_silent(&runtime, &refresh)?;
+
+        assert_eq!(
+            outcome.status,
+            super::RefreshedCredentialSaveStatus::SkippedStaleRequest
+        );
+        let saved = store.load_profiles()?;
+        assert_eq!(
+            saved.profile("default")?.cookie.as_deref(),
+            Some("SESSDATA=new;bili_jct=NEW_CSRF")
+        );
+        let saved_metadata = saved.profile_metadata("default")?;
+        let cookie_metadata = saved_metadata
+            .credential(CredentialKind::Cookie)
+            .ok_or_else(|| anyhow::anyhow!("missing cookie lifecycle metadata"))?;
+        assert_eq!(cookie_metadata.acquired_at_unix_millis, Some(2_000));
+        assert_eq!(cookie_metadata.checked_at_unix_millis, None);
+        let saved_secrets = saved.profile_secrets("default")?;
+        assert_eq!(
+            saved_secrets
+                .cookie()
+                .and_then(|secret| secret.refresh_token.as_deref()),
+            Some("NEW_COOKIE_REFRESH")
         );
         Ok(())
     }
@@ -6124,7 +8143,7 @@ mod tests {
     }
 
     #[test]
-    fn passport_base_does_not_override_default_tv_poll_base() {
+    fn passport_base_controls_tv_poll_when_tv_base_is_implicit() {
         let cli = Cli::parse_from([
             "bbdown",
             "--passport-base",
@@ -6137,10 +8156,7 @@ mod tests {
 
         assert_eq!(endpoints.passport_base, "http://127.0.0.1:8080");
         assert_eq!(endpoints.tv_passport_base, defaults.tv_passport_base);
-        assert_eq!(
-            endpoints.tv_passport_poll_base,
-            defaults.tv_passport_poll_base
-        );
+        assert_eq!(endpoints.tv_passport_poll_base, "http://127.0.0.1:8080");
     }
 
     #[test]
@@ -6719,7 +8735,7 @@ mod tests {
             CredentialRuntime::new(store.clone(), CredentialProfileSelection::default_profile());
         let now = 1_700_000_000_000;
 
-        let summary = save_credentials_with_lifecycle(
+        let summary = save_credentials_with_lifecycle_and_secrets(
             &runtime,
             Credentials {
                 cookie: None,
@@ -6734,6 +8750,7 @@ mod tests {
                     .with_expires_at_unix_millis(now + 60_000)
                     .with_refresh_token_present(true),
             )],
+            std::iter::empty::<(AccessKeyProvider, AccessKeyProviderSecret)>(),
         )?;
 
         assert!(summary.has_cookie);
@@ -6850,7 +8867,12 @@ mod tests {
     #[test]
     fn qr_login_lifecycle_metadata_records_source_and_acquisition_time() {
         let now = 1_700_000_000_000;
-        let (web_kind, web_metadata) = qr_login_lifecycle_metadata(QrLoginKind::Web, now);
+        let web_credentials = QrLoginCredentials::new(
+            Credentials::default().with_cookie("SESSDATA=COOKIE;bili_jct=CSRF"),
+        )
+        .with_refresh_token("WEB_REFRESH");
+        let (web_kind, web_metadata) =
+            qr_login_lifecycle_metadata(QrLoginKind::Web, &web_credentials, now);
         assert_eq!(web_kind, CredentialKind::Cookie);
         assert_eq!(
             web_metadata.source,
@@ -6858,14 +8880,21 @@ mod tests {
         );
         assert_eq!(web_metadata.acquired_at_unix_millis, Some(now));
         assert_eq!(web_metadata.expires_at_unix_millis, None);
+        assert_eq!(web_metadata.refresh_token_present, Some(true));
 
-        let (tv_kind, tv_metadata) = qr_login_lifecycle_metadata(QrLoginKind::Tv, now);
+        let tv_credentials =
+            QrLoginCredentials::new(Credentials::default().with_tv_access_key("TV_ACCESS"))
+                .with_refresh_token("TV_REFRESH")
+                .with_expires_in(Some(60));
+        let (tv_kind, tv_metadata) =
+            qr_login_lifecycle_metadata(QrLoginKind::Tv, &tv_credentials, now);
         assert_eq!(tv_kind, CredentialKind::TvAccessKey);
         assert_eq!(
             tv_metadata.source,
             Some(CredentialLifecycleSource::TvQrLogin)
         );
         assert_eq!(tv_metadata.acquired_at_unix_millis, Some(now));
-        assert_eq!(tv_metadata.expires_at_unix_millis, None);
+        assert_eq!(tv_metadata.expires_at_unix_millis, Some(now + 60_000));
+        assert_eq!(tv_metadata.refresh_token_present, Some(true));
     }
 }
