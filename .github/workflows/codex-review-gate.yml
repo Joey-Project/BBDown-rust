@@ -67,8 +67,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Gate on Codex review
-        # v1.2.1 release
-        uses: JoeyTeng/codex-review-gate-action@80c0dbf39a3b0f932c915c139993d7c2527ba000
+        # Owner-approved floating major; automatic upgrades are intentional.
+        uses: JoeyTeng/codex-review-gate-action@v1
         with:
           github-token: ${{ github.token }}
           pull-request: ${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pull_request }}
