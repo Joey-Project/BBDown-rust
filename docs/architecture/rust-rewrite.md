@@ -446,9 +446,10 @@ consumer. The WEB cookie probe uses `/x/web-interface/nav`; the token probes use
 `/x/passport-login/oauth2/info` with the credential sent as a signed `access_key` app query value and
 without sending cookies. Generic token probes currently check the intl/Bstar scope through the
 configured `passport_base`; this does not claim APP gRPC or restricted-area proxy validity for the
-same stored `access_key`. TV token probes use the configured `tv_passport_poll_base`. Probe failures
-are contained per credential as `missing`, `valid`, `rejected`, or `request_failed` rather than
-failing the whole report.
+same stored `access_key`. TV token refresh uses the configured `tv_passport_poll_base` when a TV
+passport override is supplied and keeps `passport_base` compatibility otherwise; TV token probes use
+the configured `tv_passport_poll_base`. Probe failures are contained per credential as `missing`,
+`valid`, `rejected`, or `request_failed` rather than failing the whole report.
 `CredentialHealthReport::summary()` gives downstream UI a compact aggregate status while preserving
 the per-kind probes for exact policy decisions.
 The CLI keeps single-profile `auth health --json` compatible with the raw report schema. Human
@@ -484,6 +485,20 @@ refresh form. Refresh returns
 `AccessKeyLoginCredentials`, letting CLI and embedders reuse the same lifecycle metadata and
 provider-secret persistence path used by initial access-key acquisition. Failed refresh attempts are
 non-destructive; callers keep the old credential and can fall back to a reauthorization ticket.
+WEB cookie and TV `tv_access_key` refresh use separate credential slots rather than the provider
+map used by generic `access_key` values. QR login success may include raw refresh tokens; the CLI
+saves them under `profile_secrets.<profile>.cookie` and
+`profile_secrets.<profile>.tv_access_key` while lifecycle metadata keeps only the
+`refresh_token_present` bit and timestamps. `BiliClient::refresh_web_cookie(...)` performs the WEB
+cookie refresh handshake with `cookie/info`, the encrypted `correspond/1/{path}` step, cookie
+refresh, and confirm-refresh calls, keeping the refresh token in POST form bodies instead of URL
+query strings. `BiliClient::refresh_tv_access_key(...)` reuses the TV OAuth refresh endpoint and
+returns a refreshed runtime `tv_access_key`, optional replacement refresh token, and expiry
+metadata. WEB cookie refresh results carry a `refreshed` flag; when `cookie/info` reports no
+refresh is needed, the CLI treats that result as a no-op, does not rewrite lifecycle acquisition
+metadata, and records a fresh checked timestamp. The CLI saves refreshed WEB/TV credentials only after
+checking, under the credential-store update lock, that the selected profile and original
+credential/refresh secret still match the request that produced the response.
 Media credential preflight is modeled as an explicit policy layer rather than hidden behavior inside
 `BiliClient::plan_download`. `CredentialPreflightReport` evaluates the selected profile lifecycle
 status against request-path requirements and returns serializable requirement statuses, issues, and
@@ -496,9 +511,10 @@ sends that token when it is configured. The CLI normalizes raw inputs through
 `BiliClient::parse_input(...)` first, so short links are classified by their redirect target, while
 fixed-source inputs such as intl/Bstar and PUGV/cheese avoid unrelated global TV/APP credential
 requirements. The CLI applies that report before `plan`, `playback`, and `download`: `warn` writes
-diagnostics to stderr, `fail` blocks before stream resolution, and `renew` attempts
-provider-specific generic access-key refresh only when the report says the selected profile is
-ready. Download modes that do not resolve media streams skip TV/APP/restricted-proxy stream
+diagnostics to stderr, `fail` blocks before stream resolution, and `renew` attempts the matching
+stored refresh flow for WEB cookie, TV `tv_access_key`, or provider-specific generic `access_key`
+requirements only when the report says the selected profile is refresh-ready. Download modes that
+do not resolve media streams skip TV/APP/restricted-proxy stream
 preflight, and `download --progress-json` suppresses plaintext preflight diagnostics while still
 allowing the final CLI error line on stderr after a failure. This keeps embedders in control of
 storage mutation while still sharing the same requirement model as the CLI.

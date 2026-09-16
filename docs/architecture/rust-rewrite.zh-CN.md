@@ -383,8 +383,9 @@ credential health diagnostics 是同一 credential model 上的只读层。crate
 WEB cookie probe 使用 `/x/web-interface/nav`；token probe 使用
 `/x/passport-login/oauth2/info`，把凭据作为 signed `access_key` app query 值发送，且不会发送
 cookie。通用 token probe 当前通过配置的 `passport_base` 检查 intl/Bstar scope；这不代表同一
-个已存储 `access_key` 对 APP gRPC 或 restricted-area proxy 也一定有效。TV token probe 使用
-配置的 `tv_passport_poll_base`。probe failure 会按凭据独立记录为 `missing`、`valid`、
+个已存储 `access_key` 对 APP gRPC 或 restricted-area proxy 也一定有效。提供 TV passport 覆盖时，
+TV token refresh 使用配置的 `tv_passport_poll_base`，否则保留 `passport_base` 兼容行为；TV token
+probe 使用配置的 `tv_passport_poll_base`。probe failure 会按凭据独立记录为 `missing`、`valid`、
 `rejected` 或 `request_failed`，不会让整份报告失败。
 `CredentialHealthReport::summary()` 会给下游 UI 一个紧凑的 aggregate status，同时保留每个
 kind 的 probe，供精确 policy decision 使用。
@@ -419,6 +420,19 @@ refresh form。refresh 成功会返回 `AccessKeyLoginCredentials`，
 CLI 和嵌入方可以复用与首次 access-key 获取相同的 lifecycle metadata 和 provider-secret
 持久化路径。失败的 refresh 尝试是 non-destructive；调用方保留旧 credential，并可回退到
 reauthorization ticket。
+WEB cookie 和 TV `tv_access_key` refresh 使用独立 credential slot，而不是通用 `access_key`
+使用的 provider map。QR 登录成功可能包含原始 refresh token；CLI 会把它们保存到
+`profile_secrets.<profile>.cookie` 和 `profile_secrets.<profile>.tv_access_key`，lifecycle
+metadata 只保留 `refresh_token_present` 布尔值和时间戳。
+`BiliClient::refresh_web_cookie(...)` 会执行 WEB cookie refresh handshake，包括
+`cookie/info`、加密的 `correspond/1/{path}`、cookie refresh 和 confirm-refresh 调用。
+refresh token 会放在 POST form body 中，不进入 URL query string。
+`BiliClient::refresh_tv_access_key(...)` 会复用 TV OAuth refresh endpoint，并返回刷新后的运行时
+`tv_access_key`、可选 replacement refresh token 和过期 metadata。WEB cookie refresh result
+会携带 `refreshed` 标记；当 `cookie/info` 表示暂时不需要 refresh 时，CLI 会把结果视为 no-op，
+不会重写 lifecycle acquisition metadata，并会记录新的 checked timestamp。CLI 只有在 credential store update lock 内
+确认当前所选 profile、原 credential 和 refresh secret 仍与产生 response 的 request 匹配后，
+才会保存刷新后的 WEB/TV credential。
 media credential preflight 被建模为显式 policy layer，而不是隐藏在
 `BiliClient::plan_download` 内部的行为。`CredentialPreflightReport` 会把当前所选 profile 的
 lifecycle status 与 request-path requirement 做评估，并返回可序列化的 requirement status、
@@ -431,8 +445,9 @@ proxy access-key credential。intl/Bstar media input 会额外加入通用 `acce
 会先通过 `BiliClient::parse_input(...)` 规范化 raw input，因此短链会按 redirect target 分类，
 而 intl/Bstar 和 PUGV/cheese 这类固定来源输入会避开无关的全局 TV/APP credential requirement。
 CLI 会在 `plan`、`playback` 和 `download` 前应用这个 report：`warn` 把 diagnostic 写到 stderr，
-`fail` 在 stream resolution 前阻断，`renew` 只在 report 显示当前 profile 已 refresh-ready
-时尝试 provider-specific generic access-key refresh。不解析 media stream 的下载模式会跳过
+`fail` 在 stream resolution 前阻断，`renew` 会在 report 显示当前 profile 已 refresh-ready
+时，对 WEB cookie、TV `tv_access_key` 或 provider-specific generic `access_key` requirement
+执行匹配的已保存 refresh flow。不解析 media stream 的下载模式会跳过
 TV/APP/restricted-proxy stream preflight；`download --progress-json` 会抑制 preflight 纯文本
 diagnostic，但失败后的最终 CLI error 行仍可能写到 stderr。这样嵌入方仍能控制 storage mutation，
 同时和 CLI 共享同一套 requirement model。

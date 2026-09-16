@@ -45,8 +45,9 @@
   archive packaging are now published.
 - The active `0.6.0` credential lifecycle line has landed the original renewal/reauthorization,
   provider-aware access-key refresh, health policy/reporting, profile-level lifecycle status,
-  multi-account lifecycle UX, and persistent default-account switching work. WEB cookie and TV
-  `tv_access_key` automatic refresh remain the last planned pre-release feature add-on.
+  multi-account lifecycle UX, persistent default-account switching, and stored automatic refresh for
+  WEB cookie plus TV `tv_access_key` credentials. The next planned `0.6.0` step is release-prep
+  validation unless new credential findings appear.
 - The release-prep deterministic gate passed. The latest local live e2e rerun is still blocked by
   upstream restricted PGC proxy `502 Bad Gateway` responses in the ignored manifest.
 - Repo-local skill `$bbdown-live-e2e-fixtures` and `live-e2e.samples.example.json` record the current

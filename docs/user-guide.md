@@ -367,6 +367,8 @@ bbdown auth renew-access-key --json
 bbdown auth renew-access-key --stdin < balh-callback.txt
 bbdown auth login-web
 bbdown auth login-tv
+bbdown auth renew-web --json
+bbdown auth renew-tv --json
 bbdown auth status
 bbdown auth status --profiles
 bbdown auth status --profiles --all-profiles
@@ -413,9 +415,27 @@ did not pass `--force`, `--stdin`, or `--file`, the CLI first tries provider-spe
 refresh. With `--json`, successful automatic refresh emits `decision`, `refreshed`, and `saved`
 events without printing raw tokens. If refresh fails, the CLI emits `refresh_failed` and falls back
 to the normal authorization ticket so callers can prompt the user without losing the old credential.
-If another cooperating process changes the current selected profile name, or changes that profile's
-credential or refresh-secret state before the older refresh response is saved, the CLI emits
-`refresh_skipped` with `reason=profile_changed` and leaves the current store untouched.
+If another cooperating process changes the current selected profile name before an access-key
+browser handoff is saved, or changes that profile's credential or refresh-secret state before the
+older refresh response is saved, the CLI emits `refresh_skipped` with `reason=profile_changed` and
+leaves the current store untouched. Direct
+`auth renew-access-key` / `auth renew-web` / `auth renew-tv` commands treat that stale save as a
+failed renewal and exit non-zero; media preflight re-evaluates the current profile before deciding
+whether to continue.
+WEB QR and TV QR login can also return refresh tokens. The CLI stores those values as plaintext
+selected-profile secrets under `profile_secrets.<profile>.cookie` and
+`profile_secrets.<profile>.tv_access_key`, while lifecycle metadata stores only source, acquisition
+time, optional expiry, and refresh-token presence. Use `auth renew-web` to refresh a saved WEB
+cookie and `auth renew-tv` to refresh a saved TV token. With `--json`, both commands emit a
+`decision` event, then `refreshed` and `saved` when non-interactive refresh succeeds. If the selected
+profile is fresh, they emit only `no_action`; if the profile has no stored refresh secret, they emit
+a redacted `refresh_failed` event and exit non-zero instead of prompting for login. If Bilibili says
+the selected WEB cookie does not need refresh yet, `auth renew-web --json` emits
+`refresh_not_needed` and does not rewrite the stored credential or lifecycle acquisition timestamp;
+it records a new lifecycle checked timestamp so later preflight checks do not repeatedly treat the
+same confirmed cookie as stale.
+Stored WEB/TV refresh server failures also emit `refresh_failed` and exit non-zero because these
+commands do not have an interactive fallback flow.
 All credential import, access-key login, and access-key renewal writes are selected-profile updates:
 the CLI reloads the latest profile document under a cooperative credential-store lock, merges only
 the chosen profile, then writes the private file back. Other profiles, unrelated credential kinds,
@@ -450,20 +470,25 @@ requirements.
 `download --only subtitle|danmaku|cover` skips TV/APP/restricted-proxy stream preflight because
 those modes do not resolve media streams. `warn` writes diagnostics to stderr and continues, `fail`
 aborts before network stream resolution when a required credential is missing or has non-fresh
-lifecycle metadata, and `renew` first tries provider-specific generic access-key refresh when the
-selected profile is refresh-ready. Preflight never writes to stdout, so `--json` output remains a
+lifecycle metadata, and `renew` first tries automatic refresh for selected WEB cookie, selected TV
+`tv_access_key`, or generic access-key credentials when their profile metadata is non-fresh and a
+matching refresh secret is stored. Preflight never writes to stdout, so `--json` output remains a
 single JSON plan, playback plan, or download report. `download --progress-json` suppresses plaintext preflight
 diagnostics, but the final CLI error line may still be written to stderr on failure; wrappers should
 parse only JSON object lines. In `renew` mode, missing required non-access-key credentials still stop
-generic access-key auto-refresh, but present credentials with stale, expiring, expired, or unknown
-lifecycle metadata do not prevent refreshing a ready generic access key; the subsequent request still
-proves whether those credentials work. Stored credential values are trimmed before request use, and
-whitespace-only values are treated as missing. For archive downloads, `renew` defers automatic access-key refresh
-until after duplicate handling when the initial plan succeeds, so `--on-duplicate cancel` stops
-without calling refresh endpoints or rewriting stored credentials. If initial archive planning fails
-with an auth-like credential error, the CLI refreshes a ready generic access key and retries planning
-once before reporting the failure, including cases where local lifecycle metadata had still
-considered the key fresh. Tune the local lifecycle policy with global `--credential-stale-after-seconds` and
+generic access-key auto-refresh, and any missing required credential that the current refresh cannot
+repair stops unrelated refresh attempts. Present credentials with stale, expiring, expired, or
+unknown lifecycle metadata can be refreshed before the request when a matching refresh secret is
+available; otherwise they do not prevent refreshing a ready generic access key, and the subsequent
+request still proves whether those credentials work. Stored credential values are trimmed before
+request use, and whitespace-only values are treated as missing. For archive downloads, when the
+initial plan succeeds, `renew` completes stored credential refresh and replanning before duplicate
+handling so duplicate decisions use the fresh plan. `--on-duplicate cancel` still stops before
+media download and archive writes, but it can call refresh endpoints and update saved WEB/TV
+credentials when they are refreshable. If initial archive planning fails with an auth-like
+credential error, the CLI refreshes a ready generic access key and retries planning once before
+reporting the failure, including cases where local lifecycle metadata had still considered the key
+fresh. Tune the local lifecycle policy with global `--credential-stale-after-seconds` and
 `--credential-expiring-within-seconds`, or the equivalent `BBDOWN_CREDENTIAL_PREFLIGHT`,
 `BBDOWN_CREDENTIAL_STALE_AFTER_SECONDS`, and `BBDOWN_CREDENTIAL_EXPIRING_WITHIN_SECONDS`
 environment variables.
@@ -477,7 +502,9 @@ can be rendered directly as a QR code by embedding projects. Treat login URLs an
 temporary login secrets because they contain login handoff state. Token values are not printed by
 status or the `saved` JSON event.
 WEB and TV QR login record lifecycle source and acquisition time, but only record an expiry when the
-upstream response provides a reliable expiry field.
+upstream response provides a reliable expiry field. When QR polling returns refresh metadata, the CLI
+saves the raw refresh token as a profile secret for later `auth renew-web`, `auth renew-tv`, or
+preflight renewal without exposing it through status or saved JSON output.
 
 `auth status` keeps the legacy selected-profile JSON shape and only reports redacted credential
 booleans; whitespace-only stored credential values are reported as missing. Add `--profiles` to
@@ -497,8 +524,9 @@ is a typed report with `kind` for the credential slot, `scope` for the checked c
 per-probe `missing`, `valid`, `rejected`, or `request_failed` statuses plus sanitized API
 codes/messages. Generic token probes currently cover the intl/Bstar scope and use
 `--passport-base`; they do not prove the same token is usable for every APP gRPC or proxy consumer.
-TV token probes use `--tv-passport-poll-base`, which follows `--tv-passport-base` when only that TV
-override is supplied.
+TV token refresh follows `--tv-passport-poll-base` when a TV passport override is supplied, while
+keeping `--passport-base` compatibility otherwise. TV token probes use `--tv-passport-poll-base`,
+which follows `--tv-passport-base` when only that TV override is supplied.
 For human-readable output, `auth health` also prints lifecycle and health guidance when a configured
 credential is stale, expired, rejected, or could not be checked. Use `auth health --all-profiles` to
 run the same network probes for every saved profile. With `--json --all-profiles`, the output wraps
@@ -527,12 +555,14 @@ playurl endpoint with the configured access key when present. Danmaku XML downlo
 configurable comment endpoint. WEB QR login, generic token-health probes, and Bilibili main OAuth2
 access-key refresh use `--passport-base`. BiliIntl OAuth2 access-key refresh uses
 `--intl-passport-base`. Main-provider `bili_tv` refresh secrets use the TV OAuth refresh path under
-the configured `--passport-base`.
-TV QR generation uses `--tv-passport-base`; TV QR polling and TV token-health probes use
-`--tv-passport-poll-base`. The CLI makes the TV poll base follow `--tv-passport-base` when only that
-TV override is supplied; set `--tv-passport-poll-base` explicitly for split-host mocks or proxies.
+the configured `--tv-passport-poll-base` when a TV passport override is supplied, and otherwise keep
+`--passport-base` compatibility.
+TV QR generation uses `--tv-passport-base`; TV QR polling, TV token refresh, and TV token-health
+probes use `--tv-passport-poll-base`. The CLI makes the TV poll base follow `--tv-passport-base`
+when only that TV override is supplied; TV token refresh keeps `--passport-base` compatibility when
+no TV override is supplied. Set `--tv-passport-poll-base` explicitly for split-host mocks or proxies.
 TV playurl mode uses `--tv-api-base`; it is separate from the TV passport hosts used for TV QR login
-and TV token health.
+and TV token refresh/health.
 APP gRPC playurl mode uses `--app-grpc-base` for normal videos and `--app-pgc-grpc-base` for PGC
 episodes; both APP gRPC defaults use `https://grpc.biliapi.net`, and both are separate from WEB,
 TV, and intl HTTP endpoint overrides.
