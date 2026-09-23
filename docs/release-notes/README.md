@@ -8,6 +8,8 @@ embedding-facing shape of each shipped line.
 
 ## Versions
 
+- [v0.6.0](v0.6.0.md): credential lifecycle integration for profile status, provider-aware
+  access-key refresh, credential preflight, and safer multi-account updates.
 - [v0.5.0](v0.5.0.md): downloader and embedding polish for progress callbacks, cancellation,
   chapter metadata, audio language selection, and AI subtitle filtering.
 - [v0.4.0](v0.4.0.md): credential lifecycle groundwork, credential profiles, access-key login, and
@@ -19,4 +21,3 @@ embedding-facing shape of each shipped line.
 - [v0.1.0](v0.1.0.md): first protected release with the crate/CLI foundation, planning, downloads,
   restricted-area proxy fallback, live e2e, archive duplicate handling, bilingual docs, and release
   automation.
-

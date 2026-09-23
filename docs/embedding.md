@@ -9,9 +9,10 @@ projects that need typed Bilibili metadata, download plans, media downloads, sub
 danmaku sidecars, QR login state, batch collection parsing, and restricted-area proxy diagnostics
 without shelling out to the CLI.
 
-The current crate version is `0.5.0`, a post-`0.4.0` development line focused on downloader and
-embedding polish: progress callbacks, cancellation-aware execution, chapter metadata muxing, audio
-language selection, and AI subtitle filtering. Prefer constructors and builder-style APIs for configuration, and treat metadata and plan
+The current crate version is `0.6.0`, a post-`0.5.0` development line focused on credential
+lifecycle integration: profile status, health policy, access-key renewal, provider-aware refresh
+secrets, provider-specific refresh clients, credential preflight, and safer multi-account updates.
+Prefer constructors and builder-style APIs for configuration, and treat metadata and plan
 structs as read-only output surfaces. This keeps
 embedding code resilient when new fields are added while the crate matures.
 

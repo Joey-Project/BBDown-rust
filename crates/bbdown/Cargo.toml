@@ -1,6 +1,6 @@
 [package]
 name = "bbdown-core"
-version = "0.5.0"
+version = "0.6.0"
 description = "Rust library for resolving Bilibili metadata, download plans, media, subtitles, and danmaku."
 edition.workspace = true
 license.workspace = true
