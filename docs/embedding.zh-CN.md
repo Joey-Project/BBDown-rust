@@ -154,6 +154,14 @@ cookie。它支持 `following` shorthand 和动态首页 URL。空间动态输�
 页推荐、观看历史、稍后再看、关注 feed 和空间动态 feed 上使用相同的 index、range、latest
 和空列表语义。
 
+普通视频可以通过显式的
+`BiliClient::resolve_video_collection_membership("BV...")` 查询所属 UGC 合集/系列。视频没有
+`ugc_season` 时返回 `None`，否则返回包含合集/系列类型、稳定 ID、UP 主 MID 和详情元数据的
+`UgcCollectionReference`。这个查询不会改变普通 `Input::Bvid` 的解析或下载规划语义。可以把
+reference 传给 `BiliClient::resolve_video_collection`，复用已有的带 UP 主范围的分页合集解析器，
+得到 `VideoCollectionResolution`；解析器会使用空间合集/系列端点，不会以视频详情中内嵌的
+episode 列表替代分页结果。调用这个 API 前需要先把 B23 短链接展开成最终 BV。
+
 ```rust,no_run
 use bbdown_core::{
     BiliClient, ClientConfig, IndexSelection, IndexSelector, ResolvedContent, Selection,
@@ -203,6 +211,9 @@ profile API 读取时会表现为 `default` profile；保存命名 profile 时�
 versioned profile document，同时保留默认凭据。
 `CredentialProfileSelection` 和 selected-profile store helper 提供与 CLI 相同的默认
 profile / 命名 profile 路由语义，因此嵌入方可以绑定用户选择的账号，而不必重复实现迁移行为。
+应用需要持久切换账号时，可以使用 `CredentialStore::set_default_profile(profile)`；它接受已存在
+profile，也允许把当前默认 profile 作为 no-op。只想让单次请求覆盖所选账号时，继续使用
+`CredentialProfileSelection::named(profile)`。
 做增量更新时，优先使用 `CredentialStore::update_profile`、
 `CredentialStore::update_selected_profile` 或 `CredentialStore::update_profiles`，不要先
 `load_profiles` 再把整个旧快照 `save_profiles` 回去。这些 helper 会获取每个 store 的协作锁，
@@ -222,7 +233,14 @@ refresh token，但不会在 metadata map 中保存原始 refresh token 值。�
 会在加载时被忽略，自动续期仍然属于独立策略层。
 对于二维码登录，如果下游应用需要稳定的可序列化扫码 URL 和 `qr_payload`，可以把
 `QrLoginTicket` 转换成 `QrLoginTicketOutput`；当前 WEB 和 TV 登录流程会直接使用扫码 URL
-作为 QR payload。
+作为 QR payload。兼容方法 `poll_web_qr_login` / `poll_tv_qr_login` 会返回
+`QrLoginState::Succeeded { credentials: Credentials }`。当存储层需要 refresh metadata 时，调用
+`poll_web_qr_login_credentials` / `poll_tv_qr_login_credentials` 获取
+`QrLoginCredentials`，其中包含运行时 `Credentials` 和可选 refresh metadata。自行管理存储的嵌入方应把运行时
+credential 与 refresh token 分开持久化：WEB refresh token 使用
+`CredentialProfileSecrets::set_cookie(CredentialRefreshSecret::default().with_refresh_token(...))`
+保存，TV refresh token 使用 `set_tv_access_key(...)` 保存；lifecycle metadata 只记录
+`refresh_token_present`，以及从 `expires_in` 派生出的过期时间。
 对于通用 access-key 授权，`AccessKeyLoginConfig::biliplus(callback_origin)` 会构造
 BiliPlus/BALH-compatible browser handoff URL；`AccessKeyLoginTicketOutput::qr_payload` 可以
 直接渲染成二维码。parser 接受历史 `balh-login-credentials:` message shape，payload 可以是
@@ -257,6 +275,22 @@ keypair 会路由到 TV OAuth refresh path。成功后会返回新的 `AccessKey
 调用方可以复用与首次 access-key login 相同的 lifecycle/secret
 持久化路径。网络或 API refresh 失败应视为 non-destructive：保留旧 credential，并在策略需要
 用户介入时回退到重新授权 UI。
+WEB cookie 和 TV token refresh 是独立 primitive，因为它们不是 provider-scoped generic access
+key。嵌入方可以用已保存 cookie 和对应 refresh token 构造 `WebCookieRefreshRequest`，再调用
+`BiliClient::refresh_web_cookie(...)`；client 会检查
+`/x/passport-login/web/cookie/info`，派生 RSA-OAEP/SHA-256
+`correspond/1/{path}` challenge，从
+`EndpointConfig::web_base` 提取 `refresh_csrf`，调用 cookie refresh endpoint，合并
+`Set-Cookie` header，并确认旧 refresh token。如果 Bilibili 表示现有 cookie 暂时不需要
+refresh，返回的 `WebCookieRefreshCredentials::refreshed` 会是 `false`；嵌入方应把它当成
+no-op，而不是重写 credential 或 acquisition metadata，但记录新的 checked timestamp 有助于后续
+preflight 决策。用已保存 TV token 和 refresh token 构造
+`TvAccessKeyRefreshRequest` 后调用 `BiliClient::refresh_tv_access_key(...)`；它会走 TV OAuth
+refresh endpoint；配置了 TV passport 覆盖时会使用 `EndpointConfig::tv_passport_poll_base`，
+否则保留 main `EndpointConfig::passport_base` 以兼容现有 main OAuth refresh 部署。它会返回
+带运行时 `tv_access_key`、可选 refresh token 和过期 metadata 的
+`TvAccessKeyLoginCredentials`。这些 refresh 调用不会修改存储；嵌入方应在确认请求仍匹配当前
+选择账号后，再保存返回的 credential、lifecycle metadata 和 `CredentialRefreshSecret`。
 当嵌入项目需要在决定提示登录、导入 token 或继续匿名请求前做脱敏诊断时，可以调用
 `BiliClient::check_credential_health()`。报告会分别包含 WEB cookie、通用 `access_key` 和
 TV `tv_access_key` 的 probe；`kind` 表示凭据槽位，`scope` 表示实际检查的消费场景。通用
@@ -297,7 +331,11 @@ preflight 是否可能运行。嵌入项目可以把 blocker 作为 fail-fast UI
 `should_attempt_access_key_renewal()` 为 true 时调用 `BiliClient::refresh_access_key(...)`，
 并通过自己的存储层保存刷新后的 credential。该 renewal predicate 会要求先补齐缺失的非
 access-key credential；但已存在且 lifecycle metadata 为 stale、expiring、expired 或 unknown
-的非 access-key credential 不会阻止 refresh-ready 的通用 access key 刷新。计算 lifecycle
+的非 access-key credential 不会阻止 refresh-ready 的通用 access key 刷新。
+如果当前 requirement 选择的是 WEB cookie 或 TV `tv_access_key`，嵌入方可以从
+`CredentialLifecycleCredentialStatus` 做同类策略判断：credential 已存在、状态不是 fresh、来源是
+WEB/TV QR login，并且 `refresh_token_secret_present == Some(true)` 时，可先调用匹配的 WEB/TV
+refresh primitive，再重试 media request。计算 lifecycle
 status 和脱敏 presence 布尔值时，只含空白字符的已保存 credential 字符串会按 missing 处理。
 request builder 会在使用前 trim 已保存 credential；trim 后为空的值不会写入请求。
 

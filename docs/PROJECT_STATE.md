@@ -43,10 +43,15 @@
   callbacks, terminal progress events/report summaries, cancellation-aware download execution,
   chapter metadata muxing, audio language selection, AI subtitle filtering, and release-note
   archive packaging are now published.
-- The `0.6.0` credential lifecycle line is ready for protected release candidate validation:
-  renewal/reauthorization orchestration, provider-aware access-key refresh secrets,
-  health policy/reporting, profile-level lifecycle status, credential preflight, and multi-account
-  lifecycle UX have landed, and release-prep docs now describe the public surface.
+- The `0.6.0` credential lifecycle line has landed renewal/reauthorization orchestration,
+  provider-aware access-key refresh secrets, health policy/reporting, profile-level lifecycle
+  status, persistent default-account switching, stored automatic refresh for WEB cookie plus TV
+  `tv_access_key` credentials, credential preflight, and multi-account lifecycle UX. Release-prep
+  docs now describe the public surface and the line is ready for protected release candidate
+  validation.
+- Normal BV videos can now be explicitly queried for UGC collection or series membership, with
+  strict metadata mapping and reuse of the existing paginated collection/series resolution path
+  without changing default single-video download semantics.
 - The release-prep deterministic gate passed. The latest local live e2e rerun is still blocked by
   upstream restricted PGC proxy `502 Bad Gateway` responses in the ignored manifest.
 - Repo-local skill `$bbdown-live-e2e-fixtures` and `live-e2e.samples.example.json` record the current
