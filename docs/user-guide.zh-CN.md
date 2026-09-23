@@ -26,8 +26,8 @@ crates.io 发布目标是可复用的 `bbdown-core` library package。使用 `ju
 干净 CI 门禁。`bbdown-cli` 包标记为 `publish = false`；CLI 应通过 GitHub release 归档安
 装或分发。当前开发线是已发布 `0.5.0` 之后的 `0.6.0`，重点是 credential lifecycle：
 profile status、health policy、显式 access-key renewal、provider-aware refresh secrets、
-有 provider metadata 时的 automatic refresh、credential preflight，以及更安全的 selected-profile
-更新。嵌入调用方仍应优先使用
+在兼容的 provider metadata 和 stored refresh secrets 都可用时的 automatic refresh、credential
+preflight，以及更安全的 selected-profile 更新。嵌入调用方仍应优先使用
 `DownloadOptions::new`、`StreamSelection::new`、`Default` 等构造器，而不是 public struct 字面量，并把公开的 plan
 输出容器视为会随 crate 成熟继续新增字段的被消费数据表面。
 

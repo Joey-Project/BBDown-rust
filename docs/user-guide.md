@@ -28,8 +28,9 @@ The crates.io publish target is the reusable `bbdown-core` library package. Use
 clean CI gate. The `bbdown-cli` package is marked `publish = false`; install or distribute the CLI
 through GitHub release archives instead. The current development line is `0.6.0` after the published
 `0.5.0` release and is focused on credential lifecycle behavior: profile status, health policy,
-explicit access-key renewal, provider-aware refresh secrets, automatic refresh where provider
-metadata is available, credential preflight, and safer selected-profile updates. Embedding callers
+explicit access-key renewal, provider-aware refresh secrets, automatic refresh when compatible
+provider metadata and stored refresh secrets are available, credential preflight, and safer
+selected-profile updates. Embedding callers
 should still prefer
 constructors such as `DownloadOptions::new`, `StreamSelection::new`, and
 `Default` over public struct literals, and treat public plan output containers as consumed data
