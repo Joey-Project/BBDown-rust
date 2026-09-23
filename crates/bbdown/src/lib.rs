@@ -64,8 +64,8 @@ pub use models::{
     FlvSegment, MediaStream, Owner, PageMetadata, ResolvedContent, SeasonMetadata,
     SeasonResolution, StreamDiagnostics, StreamQuality, StreamResolverAttempt,
     StreamResolverOutcome, StreamSet, StreamSource, SubtitleFormat, SubtitleTrack, Tag,
-    VideoCollectionItem, VideoCollectionKind, VideoCollectionMetadata, VideoCollectionResolution,
-    VideoMetadata,
+    UgcCollectionKind, UgcCollectionReference, VideoCollectionItem, VideoCollectionKind,
+    VideoCollectionMetadata, VideoCollectionResolution, VideoMetadata,
 };
 pub use playback::{
     HttpHeaderSpec, MediaCacheKey, MediaRequestKind, MediaRequestSpec, PlaybackAbrGroup,

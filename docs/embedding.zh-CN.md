@@ -152,6 +152,14 @@ cookie。它支持 `following` shorthand 和动态首页 URL。空间动态输�
 页推荐、观看历史、稍后再看、关注 feed 和空间动态 feed 上使用相同的 index、range、latest
 和空列表语义。
 
+普通视频可以通过显式的
+`BiliClient::resolve_video_collection_membership("BV...")` 查询所属 UGC 合集/系列。视频没有
+`ugc_season` 时返回 `None`，否则返回包含合集/系列类型、稳定 ID、UP 主 MID 和详情元数据的
+`UgcCollectionReference`。这个查询不会改变普通 `Input::Bvid` 的解析或下载规划语义。可以把
+reference 传给 `BiliClient::resolve_video_collection`，复用已有的带 UP 主范围的分页合集解析器，
+得到 `VideoCollectionResolution`；解析器会使用空间合集/系列端点，不会以视频详情中内嵌的
+episode 列表替代分页结果。调用这个 API 前需要先把 B23 短链接展开成最终 BV。
+
 ```rust,no_run
 use bbdown_core::{
     BiliClient, ClientConfig, IndexSelection, IndexSelector, ResolvedContent, Selection,

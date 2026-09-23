@@ -9,8 +9,9 @@ use crate::models::{
     ChapterTrack, DanmakuTrack, DownloadEntry, DownloadPlan, EpisodeMetadata, FlvSegment,
     MediaStream, Owner, PageMetadata, ResolvedContent, SeasonMetadata, SeasonResolution,
     StreamDiagnostics, StreamQuality, StreamResolverAttempt, StreamResolverOutcome, StreamSet,
-    StreamSource, SubtitleFormat, SubtitleTrack, Tag, VideoCollectionItem, VideoCollectionKind,
-    VideoCollectionMetadata, VideoCollectionResolution, VideoMetadata,
+    StreamSource, SubtitleFormat, SubtitleTrack, Tag, UgcCollectionKind, UgcCollectionReference,
+    VideoCollectionItem, VideoCollectionKind, VideoCollectionMetadata, VideoCollectionResolution,
+    VideoMetadata,
 };
 use crate::playback::{PlaybackPlan, header_specs_from_map};
 use crate::{
@@ -445,6 +446,42 @@ impl BiliClient {
     ) -> Result<ResolvedContent> {
         let input = self.parse_input(raw).await?;
         self.resolve(input, selection).await
+    }
+
+    /// Queries the explicit UGC collection or series membership of a normal BV video.
+    ///
+    /// This metadata query does not change the default single-video behavior of
+    /// [`Self::resolve`] or any download planning method for [`Input::Bvid`].
+    pub async fn resolve_video_collection_membership(
+        &self,
+        bvid: &str,
+    ) -> Result<Option<UgcCollectionReference>> {
+        let data = self.fetch_view_data_by_bvid(bvid).await?;
+        data.ugc_season
+            .map(ViewUgcSeason::into_reference)
+            .transpose()
+    }
+
+    /// Resolves a returned UGC collection reference through the existing paginated
+    /// owner-scoped collection or series path.
+    pub async fn resolve_video_collection(
+        &self,
+        reference: &UgcCollectionReference,
+        selection: Option<Selection>,
+    ) -> Result<VideoCollectionResolution> {
+        let kind = match reference.kind {
+            UgcCollectionKind::Collection => SpaceListKind::Collection,
+            UgcCollectionKind::Series => SpaceListKind::Series,
+        };
+        let fetch_mode = Self::collection_info_fetch_mode(selection.as_ref())?;
+        self.fetch_space_list_collection(
+            reference.owner_mid,
+            reference.id,
+            kind,
+            selection,
+            fetch_mode,
+        )
+        .await
     }
 
     pub async fn resolve(
@@ -1048,14 +1085,28 @@ impl BiliClient {
         bvid: &str,
         tag_policy: TagPolicy,
     ) -> Result<VideoMetadata> {
-        let mut url = Self::endpoint_url(&self.config.endpoints.api_base, "/x/web-interface/view")?;
-        url.query_pairs_mut().append_pair("bvid", bvid);
-        self.fetch_video(url, tag_policy).await
+        let data = self.fetch_view_data_by_bvid(bvid).await?;
+        self.video_metadata_from_view(data, tag_policy).await
     }
 
     async fn fetch_video(&self, url: Url, tag_policy: TagPolicy) -> Result<VideoMetadata> {
         let response: ApiData<ViewData> = self.get_json(url).await?;
-        let data = response.into_data()?;
+        self.video_metadata_from_view(response.into_data()?, tag_policy)
+            .await
+    }
+
+    async fn fetch_view_data_by_bvid(&self, bvid: &str) -> Result<ViewData> {
+        let mut url = Self::endpoint_url(&self.config.endpoints.api_base, "/x/web-interface/view")?;
+        url.query_pairs_mut().append_pair("bvid", bvid);
+        let response: ApiData<ViewData> = self.get_json(url).await?;
+        response.into_data()
+    }
+
+    async fn video_metadata_from_view(
+        &self,
+        data: ViewData,
+        tag_policy: TagPolicy,
+    ) -> Result<VideoMetadata> {
         let aid = data.aid.ok_or(Error::MissingField("data.aid"))?;
         let tags = match tag_policy {
             TagPolicy::Fetch => self.fetch_tags(aid).await?,
@@ -3427,6 +3478,7 @@ struct ViewData {
     owner: Option<ViewOwner>,
     #[serde(default)]
     pages: Vec<ViewPage>,
+    ugc_season: Option<ViewUgcSeason>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -3441,6 +3493,62 @@ struct ViewPage {
     cid: u64,
     part: Option<String>,
     duration: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ViewUgcSeason {
+    id: Option<u64>,
+    title: Option<String>,
+    cover: Option<String>,
+    mid: Option<u64>,
+    intro: Option<String>,
+    ep_count: Option<usize>,
+    season_type: Option<i64>,
+}
+
+impl ViewUgcSeason {
+    fn into_reference(self) -> Result<UgcCollectionReference> {
+        let id = self
+            .id
+            .filter(|id| *id > 0)
+            .ok_or(Error::MissingField("data.ugc_season.id"))?;
+        let title = self
+            .title
+            .filter(|title| !title.trim().is_empty())
+            .ok_or(Error::MissingField("data.ugc_season.title"))?;
+        let owner_mid = self
+            .mid
+            .filter(|mid| *mid > 0)
+            .ok_or(Error::MissingField("data.ugc_season.mid"))?;
+        let description = self
+            .intro
+            .ok_or(Error::MissingField("data.ugc_season.intro"))?;
+        let item_count = self
+            .ep_count
+            .ok_or(Error::MissingField("data.ugc_season.ep_count"))?;
+        let season_type = self
+            .season_type
+            .ok_or(Error::MissingField("data.ugc_season.season_type"))?;
+        let kind = match season_type {
+            1 => UgcCollectionKind::Collection,
+            2 => UgcCollectionKind::Series,
+            other => {
+                return Err(Error::InvalidInput(format!(
+                    "unsupported data.ugc_season.season_type `{other}`"
+                )));
+            }
+        };
+
+        Ok(UgcCollectionReference {
+            id,
+            kind,
+            owner_mid,
+            title,
+            description,
+            cover_url: self.cover.filter(|cover| !cover.trim().is_empty()),
+            item_count,
+        })
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -5978,8 +6086,8 @@ mod tests {
         AccessKeyProvider, CodecFamily, CredentialHealthScope, CredentialHealthStatus,
         CredentialKind, Credentials, EpisodeMetadata, Error, IndexSelection, IndexSelector, Input,
         PageMetadata, ResolvedContent, SeasonMetadata, Selection, StreamSource, SubtitleFormat,
-        VideoCollectionItem, VideoCollectionKind, VideoCollectionMetadata, VideoMetadata,
-        app_playurl,
+        UgcCollectionKind, VideoCollectionItem, VideoCollectionKind, VideoCollectionMetadata,
+        VideoMetadata, app_playurl,
     };
     use http_body_util::BodyExt as _;
     use httpmock::MockServer;
@@ -6343,6 +6451,330 @@ mod tests {
                 return Err(anyhow::anyhow!("expected video"));
             }
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolves_video_ugc_collection_membership_metadata() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("bvid", "BV1kk4y1T7cd");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "aid": 170_001,
+                    "bvid": "BV1kk4y1T7cd",
+                    "title": "Piano single",
+                    "owner": {"mid": 210_798, "name": "Satori"},
+                    "pages": [{"page": 1, "cid": 9988, "part": "Piano single"}],
+                    "ugc_season": {
+                        "id": 167_822,
+                        "title": "东方钢琴单曲集",
+                        "cover": "https://example.invalid/season.jpg",
+                        "mid": 210_798,
+                        "intro": "收录东方音乐的钢琴曲单曲合集。",
+                        "ep_count": 37,
+                        "season_type": 1,
+                        "sections": [{
+                            "title": "Embedded list is not the source of truth",
+                            "episodes": [{"aid": 999, "bvid": "BVembedded", "cid": 999}]
+                        }]
+                    }
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/tag/archive/tags")
+                .query_param("aid", "170001");
+            then.status(200)
+                .json_body_obj(&serde_json::json!({"code": 0, "data": []}));
+        });
+
+        let client = test_client(&server);
+        let reference = client
+            .resolve_video_collection_membership("BV1kk4y1T7cd")
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("expected UGC collection membership"))?;
+
+        assert_eq!(reference.id, 167_822);
+        assert_eq!(reference.kind, UgcCollectionKind::Collection);
+        assert_eq!(reference.owner_mid, 210_798);
+        assert_eq!(reference.title, "东方钢琴单曲集");
+        assert_eq!(reference.description, "收录东方音乐的钢琴曲单曲合集。");
+        assert_eq!(
+            reference.cover_url.as_deref(),
+            Some("https://example.invalid/season.jpg")
+        );
+        assert_eq!(reference.item_count, 37);
+        assert_eq!(
+            reference.as_input(),
+            Input::SpaceCollectionList {
+                list_id: 167_822,
+                owner_mid: 210_798,
+            }
+        );
+
+        let resolved = client.resolve_input("BV1kk4y1T7cd", None).await?;
+        assert!(matches!(resolved, ResolvedContent::Video(_)));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolves_video_ugc_series_type_and_input_mapping() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("bvid", "BV1series1");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "aid": 170_002,
+                    "bvid": "BV1series1",
+                    "title": "Series video",
+                    "pages": [{"page": 1, "cid": 9989}],
+                    "ugc_season": {
+                        "id": 267_822,
+                        "title": "A series",
+                        "cover": "https://example.invalid/series.jpg",
+                        "mid": 210_799,
+                        "intro": "Series intro",
+                        "ep_count": 3,
+                        "season_type": 2
+                    }
+                }
+            }));
+        });
+
+        let client = test_client(&server);
+        let reference = client
+            .resolve_video_collection_membership("BV1series1")
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("expected UGC series membership"))?;
+
+        assert_eq!(reference.kind, UgcCollectionKind::Series);
+        assert_eq!(
+            reference.as_input(),
+            Input::SpaceSeriesList {
+                list_id: 267_822,
+                owner_mid: 210_799,
+            }
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn missing_ugc_season_returns_none() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("bvid", "BV12TRrBcEP8");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "aid": 170_003,
+                    "bvid": "BV12TRrBcEP8",
+                    "title": "Standalone video",
+                    "pages": [{"page": 1, "cid": 9990}]
+                }
+            }));
+        });
+
+        let client = test_client(&server);
+        assert_eq!(
+            client
+                .resolve_video_collection_membership("BV12TRrBcEP8")
+                .await?,
+            None
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn incomplete_or_unknown_ugc_season_is_rejected_without_panicking() -> anyhow::Result<()>
+    {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("bvid", "BV1missing1");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "aid": 170_004,
+                    "bvid": "BV1missing1",
+                    "title": "Incomplete season",
+                    "pages": [{"page": 1, "cid": 9991}],
+                    "ugc_season": {
+                        "title": "Missing id",
+                        "mid": 210_800,
+                        "intro": "Intro",
+                        "ep_count": 1,
+                        "season_type": 1
+                    }
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("bvid", "BV1unknown1");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "aid": 170_005,
+                    "bvid": "BV1unknown1",
+                    "title": "Unknown season type",
+                    "pages": [{"page": 1, "cid": 9992}],
+                    "ugc_season": {
+                        "id": 267_823,
+                        "title": "Unknown type",
+                        "mid": 210_800,
+                        "intro": "Intro",
+                        "ep_count": 1,
+                        "season_type": 99
+                    }
+                }
+            }));
+        });
+
+        let client = test_client(&server);
+        assert!(matches!(
+            client
+                .resolve_video_collection_membership("BV1missing1")
+                .await,
+            Err(Error::MissingField("data.ugc_season.id"))
+        ));
+        let Err(error) = client
+            .resolve_video_collection_membership("BV1unknown1")
+            .await
+        else {
+            return Err(anyhow::anyhow!("unknown season type must not be guessed"));
+        };
+        assert!(matches!(
+            error,
+            Error::InvalidInput(message) if message.contains("season_type")
+        ));
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_lines)]
+    #[tokio::test]
+    async fn resolves_ugc_reference_through_existing_collection_path_in_order() -> anyhow::Result<()>
+    {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("bvid", "BV1collection1");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "aid": 170_006,
+                    "bvid": "BV1collection1",
+                    "title": "Membership video",
+                    "pages": [{"page": 1, "cid": 9993}],
+                    "ugc_season": {
+                        "id": 167_824,
+                        "title": "Paged collection",
+                        "mid": 210_801,
+                        "intro": "Paged collection intro",
+                        "ep_count": 2,
+                        "season_type": 1,
+                        "sections": [{
+                            "episodes": [{"aid": 999, "cid": 999, "title": "Wrong order"}]
+                        }]
+                    }
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/polymer/web-space/seasons_archives_list")
+                .query_param("mid", "210801")
+                .query_param("season_id", "167824")
+                .query_param("sort_reverse", "false")
+                .query_param("page_num", "1")
+                .query_param("page_size", "30");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "archives": [
+                        {"aid": 170_007, "bvid": "BV1first1", "title": "First", "duration": 4},
+                        {"aid": 170_008, "bvid": "BV1second1", "title": "Second", "duration": 5}
+                    ],
+                    "meta": {
+                        "name": "Paged collection",
+                        "description": "Paged collection intro",
+                        "cover": "https://example.invalid/paged.jpg",
+                        "mid": 210_801,
+                        "total": 2
+                    },
+                    "page": {"total": 2}
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("aid", "170007");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "aid": 170_007,
+                    "bvid": "BV1first1",
+                    "title": "First detail",
+                    "pages": [{"page": 1, "cid": 10001, "part": "First page"}]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("aid", "170008");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "aid": 170_008,
+                    "bvid": "BV1second1",
+                    "title": "Second detail",
+                    "pages": [{"page": 1, "cid": 10002, "part": "Second page"}]
+                }
+            }));
+        });
+
+        let client = test_client(&server);
+        let reference = client
+            .resolve_video_collection_membership("BV1collection1")
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("expected UGC collection membership"))?;
+        let resolved = client.resolve_video_collection(&reference, None).await?;
+
+        assert_eq!(resolved.collection.id, Some(167_824));
+        assert_eq!(resolved.collection.kind, VideoCollectionKind::Collection);
+        assert_eq!(resolved.collection.items.len(), 2);
+        assert_eq!(resolved.selected_items.len(), 2);
+        assert_eq!(
+            resolved
+                .collection
+                .items
+                .iter()
+                .map(|item| (item.index, item.title.as_str(), item.cid))
+                .collect::<Vec<_>>(),
+            [(1, "First", 10001), (2, "Second", 10002)]
+        );
+        assert_eq!(
+            resolved
+                .selected_items
+                .iter()
+                .map(|item| item.title.as_str())
+                .collect::<Vec<_>>(),
+            ["First", "Second"]
+        );
         Ok(())
     }
 

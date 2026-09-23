@@ -163,6 +163,15 @@ surface. Internally they now use the shared feed/list selection layer, so embedd
 index, range, latest, and empty-list semantics across favorites, space uploads, collections, series,
 homepage recommendations, history, watch-later, following feeds, and space dynamic feeds.
 
+Normal videos expose an explicit membership query through
+`BiliClient::resolve_video_collection_membership("BV...")`. It returns an
+`UgcCollectionReference` for a collection or series, or `None` when the video has no `ugc_season`.
+This query does not change normal `Input::Bvid` resolution or download planning. Pass the reference
+to `BiliClient::resolve_video_collection` to use the existing paginated owner-scoped collection
+resolver and obtain a `VideoCollectionResolution`; the resolver uses the space collection/series
+endpoints rather than the embedded episode list in the video detail response. A B23 short link must
+be expanded to its final BV before calling this API.
+
 ```rust,no_run
 use bbdown_core::{
     BiliClient, ClientConfig, IndexSelection, IndexSelector, ResolvedContent, Selection,

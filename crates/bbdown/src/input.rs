@@ -1,4 +1,5 @@
 use crate::bv;
+use crate::models::{UgcCollectionKind, UgcCollectionReference};
 use crate::{Error, Result};
 use url::Url;
 
@@ -129,6 +130,22 @@ impl Input {
             | Self::WatchLater
             | Self::IntlEpisode(_)
             | Self::ShortLink(_) => Ok(None),
+        }
+    }
+}
+
+impl UgcCollectionReference {
+    #[must_use]
+    pub fn as_input(&self) -> Input {
+        match self.kind {
+            UgcCollectionKind::Collection => Input::SpaceCollectionList {
+                list_id: self.id,
+                owner_mid: self.owner_mid,
+            },
+            UgcCollectionKind::Series => Input::SpaceSeriesList {
+                list_id: self.id,
+                owner_mid: self.owner_mid,
+            },
         }
     }
 }
