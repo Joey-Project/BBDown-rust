@@ -3,8 +3,9 @@ use bbdown_core::{
     CredentialLifecycleMetadata, CredentialLifecyclePolicy, CredentialLifecycleSource,
     CredentialLifecycleStatus, CredentialPreflightMode, CredentialPreflightReport,
     CredentialProfileMetadata, CredentialProfiles, DownloadCancellationToken, DownloadOptions,
-    DownloadProgressEvent, DownloadProgressSink, DownloadReportSummary, NoopDownloadProgress,
-    PlayurlMode, RestrictedAreaConfig, StreamSelection, SubtitleAiPolicy,
+    DownloadProgressEvent, DownloadProgressSink, DownloadReportSummary, Input,
+    NoopDownloadProgress, PlayurlMode, RestrictedAreaConfig, StreamSelection, SubtitleAiPolicy,
+    UgcCollectionKind, UgcCollectionReference,
 };
 use std::path::PathBuf;
 
@@ -13,6 +14,22 @@ fn embedding_surface_is_reexported() -> anyhow::Result<()> {
     fn accepts_progress_sink(_sink: &dyn DownloadProgressSink) {}
 
     let _client = BiliClient::new(ClientConfig::default());
+    let collection_reference = UgcCollectionReference {
+        id: 167_822,
+        kind: UgcCollectionKind::Collection,
+        owner_mid: 210_798,
+        title: "Example collection".to_owned(),
+        description: "Example description".to_owned(),
+        cover_url: None,
+        item_count: 1,
+    };
+    assert_eq!(
+        collection_reference.as_input(),
+        Input::SpaceCollectionList {
+            list_id: 167_822,
+            owner_mid: 210_798,
+        }
+    );
     let _options = DownloadOptions::new("downloads")
         .with_stream_selection(StreamSelection::audio_language("Japanese"))
         .with_subtitles(true)

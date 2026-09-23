@@ -20,6 +20,24 @@ pub struct VideoCollectionResolution {
     pub selected_items: Vec<VideoCollectionItem>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UgcCollectionKind {
+    Collection,
+    Series,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct UgcCollectionReference {
+    pub id: u64,
+    pub kind: UgcCollectionKind,
+    pub owner_mid: u64,
+    pub title: String,
+    pub description: String,
+    pub cover_url: Option<String>,
+    pub item_count: usize,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct VideoCollectionMetadata {
     pub id: Option<u64>,
