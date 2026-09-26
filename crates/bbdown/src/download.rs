@@ -2110,6 +2110,7 @@ impl BiliClient {
         (ordered, Some(total_size))
     }
 
+    #[allow(clippy::too_many_lines)]
     async fn try_download_sharded<P>(
         &self,
         urls: &[String],
@@ -2125,6 +2126,9 @@ impl BiliClient {
             return Ok(None);
         };
         if options.cdn_parallelism == 1 || urls.len() < 2 || !request.kind.is_media() {
+            return Ok(None);
+        }
+        if target_is_symlink(request.path).await? {
             return Ok(None);
         }
         if existing_file_len(request.path)
@@ -2176,6 +2180,21 @@ impl BiliClient {
                 if let Err(error) = cancellation.check() {
                     emit_file_failed(progress, request, attempt, &error);
                     return Err(error);
+                }
+                match target_is_symlink(request.path).await {
+                    Ok(true) => {
+                        let error = Error::InvalidInput(
+                            "download target became a symbolic link during sharded download"
+                                .to_owned(),
+                        );
+                        emit_file_failed(progress, request, attempt, &error);
+                        return Ok(None);
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        emit_file_failed(progress, request, attempt, &error);
+                        return Err(error);
+                    }
                 }
                 #[cfg(unix)]
                 if let Err(error) =
@@ -3480,6 +3499,14 @@ async fn existing_file_len(path: &Path) -> Result<u64> {
     match fs::metadata(path).await {
         Ok(metadata) => Ok(metadata.len()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(0),
+        Err(error) => Err(Error::Io(error)),
+    }
+}
+
+async fn target_is_symlink(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path).await {
+        Ok(metadata) => Ok(metadata.file_type().is_symlink()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(Error::Io(error)),
     }
 }
@@ -7093,6 +7120,63 @@ mod tests {
             0o640
         );
         assert_eq!(tokio::fs::read_to_string(&target).await?, "abcdef");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn sharded_download_follows_symlink_to_empty_target() -> anyhow::Result<()> {
+        use std::os::unix::fs::symlink;
+
+        let server_a = MockServer::start();
+        let server_b = MockServer::start();
+        let range_mocks = [&server_a, &server_b].map(|server| {
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/asset.m4s")
+                    .header("range", "bytes=0-5");
+                then.status(206)
+                    .header("Content-Range", "bytes 0-5/6")
+                    .header("Content-Length", "6")
+                    .body("abcdef");
+            })
+        });
+        let ordinary_mock = server_a.mock(|when, then| {
+            when.method(GET).path("/asset.m4s").header_missing("range");
+            then.status(200)
+                .header("Content-Length", "6")
+                .body("abcdef");
+        });
+        let mut plan = single_video_plan(format!("{}/asset.m4s?token=shared", server_a.base_url()));
+        {
+            let stream = &mut plan.entries[0].streams.videos[0];
+            stream.size = Some(6);
+            stream.backup_urls = vec![format!("{}/asset.m4s?token=shared", server_b.base_url())];
+        }
+
+        let temp = tempfile::tempdir()?;
+        let output_dir = test_entry_dir(temp.path(), &plan)?;
+        tokio::fs::create_dir_all(&output_dir).await?;
+        let target = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
+        let referent = output_dir.join("referent.m4s");
+        tokio::fs::write(&referent, "").await?;
+        symlink(&referent, &target)?;
+
+        BiliClient::new(ClientConfig::default())
+            .download_plan(
+                &plan,
+                DownloadOptions::new(temp.path())
+                    .with_retry_policy(RetryPolicy::single_attempt())
+                    .with_download_mode(DownloadMode::VideoOnly)
+                    .with_cdn_parallelism(2)
+                    .with_mux(MuxOptions::Disabled),
+            )
+            .await?;
+
+        assert!(std_fs::symlink_metadata(&target)?.file_type().is_symlink());
+        assert_eq!(tokio::fs::read_to_string(&referent).await?, "abcdef");
+        assert_eq!(ordinary_mock.calls(), 1);
+        assert!(range_mocks.iter().all(|mock| mock.calls() == 1));
         Ok(())
     }
 
