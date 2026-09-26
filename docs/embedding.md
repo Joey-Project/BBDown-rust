@@ -795,6 +795,8 @@ paths and queries; summing its bytes by host shows the actual transfer distribut
 Embedders can call `probe_media_cdns(client, stream, media_hosts)` to inspect the current signed
 representation before downloading. It reads at most 64 KiB from each of up to 8 candidates and
 returns host-only labels, success, elapsed time, throughput, and total size in `CdnProbeResult`.
+When the size is unknown, the 64 KiB budget includes a one-byte size-discovery request; reported
+throughput measures only the subsequent sample request.
 Only call it in response to an explicit user action: every probe makes live requests to CDN hosts.
 
 ## Download Archive And Duplicate Decisions

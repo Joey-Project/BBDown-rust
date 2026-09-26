@@ -496,6 +496,38 @@ mod catalog_tests {
     }
 
     #[test]
+    fn resolver_probe_runtime_uses_only_the_selected_server() {
+        let area_hint = Some(RestrictedArea::Hk);
+        let configured = ClientRuntimeConfig::new(
+            EndpointConfig::default(),
+            RestrictedAreaConfig::new(
+                area_hint,
+                [
+                    RestrictedAreaProxy::playurl("https://cli-playurl.example", area_hint),
+                    RestrictedAreaProxy::bilibili_api("https://env-api.example", area_hint),
+                ],
+            ),
+            PlayurlMode::default(),
+            Duration::from_secs(30),
+        );
+
+        let probe = resolver_probe_runtime(&configured, "atri.ink");
+        assert_eq!(probe.restricted_area.area_hint, area_hint);
+        assert_eq!(
+            probe.restricted_area.proxies,
+            vec![RestrictedAreaProxy::bilibili_api(
+                "https://atri.ink",
+                area_hint
+            )]
+        );
+        assert_eq!(
+            configured.restricted_area.proxies.len(),
+            2,
+            "building a probe runtime must not mutate ordinary client configuration"
+        );
+    }
+
+    #[test]
     fn preset_media_hosts_try_origin_after_one_cdn_while_manual_pool_keeps_default_order()
     -> anyhow::Result<()> {
         let hosts = (0..74)
@@ -548,10 +580,10 @@ mod catalog_tests {
         let sample = server.mock(|when, then| {
             when.method(httpmock::Method::GET)
                 .path("/media")
-                .header("range", "bytes=0-9");
+                .header("range", "bytes=1-9");
             then.status(206)
-                .header("Content-Range", "bytes 0-9/10")
-                .body("0123456789");
+                .header("Content-Range", "bytes 1-9/10")
+                .body("123456789");
         });
         let local_host = format!("127.0.0.1:{}", server.port());
         let stream: MediaStream = serde_json::from_value(serde_json::json!({
@@ -1361,6 +1393,22 @@ async fn probe_media_stream(
     Ok(bbdown_core::probe_media_cdns(client, stream, &options).await?)
 }
 
+fn resolver_probe_runtime(
+    client_runtime: &ClientRuntimeConfig,
+    resolver_host: &str,
+) -> ClientRuntimeConfig {
+    let mut runtime = client_runtime.clone();
+    let area_hint = runtime.restricted_area.area_hint;
+    runtime.restricted_area = RestrictedAreaConfig::new(
+        area_hint,
+        [RestrictedAreaProxy::bilibili_api(
+            format!("https://{resolver_host}"),
+            area_hint,
+        )],
+    );
+    runtime
+}
+
 async fn handle_resolver_catalog(
     command: ResolverCatalogCommand,
     credentials: &CredentialRuntime,
@@ -1385,15 +1433,7 @@ async fn handle_resolver_catalog(
                 .with_context(|| {
                     format!("unknown resolver `{server}`; use `bbdown resolver list`")
                 })?;
-            let mut runtime = client_runtime.clone();
-            let area_hint = runtime.restricted_area.area_hint;
-            runtime.restricted_area =
-                runtime
-                    .restricted_area
-                    .with_proxy(RestrictedAreaProxy::bilibili_api(
-                        format!("https://{}", resolver.host),
-                        area_hint,
-                    ));
+            let runtime = resolver_probe_runtime(client_runtime, &resolver.host);
             let prepared = prepare_credentials_for_media_request(
                 credentials,
                 &runtime,

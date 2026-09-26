@@ -467,9 +467,74 @@ pub struct CdnProbeResult {
     pub error: Option<String>,
 }
 
+async fn probe_candidate_bytes(
+    client: &BiliClient,
+    url: &str,
+    headers: &reqwest::header::HeaderMap,
+    known_size: Option<u64>,
+) -> Result<(u64, u64, u64, Duration)> {
+    if let Some(size) = known_size {
+        if size == 0 {
+            return Err(Error::InvalidInput(
+                "range probe reported an empty file".to_owned(),
+            ));
+        }
+        let end = size.min(CDN_PUBLIC_PROBE_MAX_BYTES) - 1;
+        let sample = crate::range_transfer::fetch_range(
+            &client.http,
+            url,
+            headers.clone(),
+            0,
+            end,
+            Some(size),
+            CDN_PROBE_REQUEST_TIMEOUT,
+            Some(CDN_PROBE_IDLE_TIMEOUT),
+        )
+        .await?;
+        let bytes = sample.bytes.len() as u64;
+        return Ok((sample.total_size, bytes, bytes, sample.elapsed));
+    }
+
+    let discovery = crate::range_transfer::fetch_range(
+        &client.http,
+        url,
+        headers.clone(),
+        0,
+        0,
+        None,
+        CDN_PROBE_REQUEST_TIMEOUT,
+        Some(CDN_PROBE_IDLE_TIMEOUT),
+    )
+    .await?;
+    let total_size = discovery.total_size;
+    let sample_end = total_size.min(CDN_PUBLIC_PROBE_MAX_BYTES) - 1;
+    if sample_end == 0 {
+        return Ok((total_size, 1, 0, discovery.elapsed));
+    }
+    let sample = crate::range_transfer::fetch_range(
+        &client.http,
+        url,
+        headers.clone(),
+        1,
+        sample_end,
+        Some(total_size),
+        CDN_PROBE_REQUEST_TIMEOUT,
+        Some(CDN_PROBE_IDLE_TIMEOUT),
+    )
+    .await?;
+    let measured_bytes = sample.bytes.len() as u64;
+    Ok((
+        total_size,
+        measured_bytes + 1,
+        measured_bytes,
+        sample.elapsed,
+    ))
+}
+
 /// Measures a bounded prefix range from up to eight media URL candidates.
 /// A successful prefix and matching size are useful compatibility signals, but do not prove
-/// that the complete files are identical.
+/// that the complete files are identical. Unknown sizes are discovered with one byte and the
+/// remaining sample range excludes that discovery byte from the throughput measurement.
 pub async fn probe_media_cdns(
     client: &BiliClient,
     stream: &MediaStream,
@@ -485,53 +550,16 @@ pub async fn probe_media_cdns(
             .unwrap_or_else(|| "invalid URL".to_owned());
         let known_size = stream.size.filter(|size| *size > 0);
         let begin = std::time::Instant::now();
-        let probe = async {
-            let total_size = match known_size {
-                Some(size) => size,
-                None => {
-                    crate::range_transfer::fetch_range(
-                        &client.http,
-                        url,
-                        headers.clone(),
-                        0,
-                        0,
-                        None,
-                        CDN_PROBE_REQUEST_TIMEOUT,
-                        Some(CDN_PROBE_IDLE_TIMEOUT),
-                    )
-                    .await?
-                    .total_size
-                }
-            };
-            if total_size == 0 {
-                return Err(Error::InvalidInput(
-                    "range probe reported an empty file".to_owned(),
-                ));
-            }
-            let end = total_size.min(CDN_PUBLIC_PROBE_MAX_BYTES) - 1;
-            let sample = crate::range_transfer::fetch_range(
-                &client.http,
-                url,
-                headers.clone(),
-                0,
-                end,
-                Some(total_size),
-                CDN_PROBE_REQUEST_TIMEOUT,
-                Some(CDN_PROBE_IDLE_TIMEOUT),
-            )
-            .await?;
-            Ok::<_, Error>((sample.bytes.len() as u64, sample.total_size))
-        }
-        .await;
-        let elapsed = begin.elapsed();
+        let probe = probe_candidate_bytes(client, url, &headers, known_size).await;
         match probe {
-            Ok((bytes, total_size)) => results.push(CdnProbeResult {
+            Ok((total_size, bytes, measured_bytes, elapsed)) => results.push(CdnProbeResult {
                 host,
                 ok: true,
                 bytes,
                 elapsed,
-                bytes_per_second: (!elapsed.is_zero()).then_some(
-                    f64::from(u32::try_from(bytes).unwrap_or(u32::MAX)) / elapsed.as_secs_f64(),
+                bytes_per_second: (!elapsed.is_zero() && measured_bytes > 0).then_some(
+                    f64::from(u32::try_from(measured_bytes).unwrap_or(u32::MAX))
+                        / elapsed.as_secs_f64(),
                 ),
                 total_size: Some(total_size),
                 error: None,
@@ -540,7 +568,7 @@ pub async fn probe_media_cdns(
                 host,
                 ok: false,
                 bytes: 0,
-                elapsed,
+                elapsed: begin.elapsed(),
                 bytes_per_second: None,
                 total_size: known_size,
                 error: Some(error.to_string()),
@@ -2201,11 +2229,7 @@ impl BiliClient {
                 }
                 match target_is_symlink(request.path).await {
                     Ok(true) => {
-                        let error = Error::InvalidInput(
-                            "download target became a symbolic link during sharded download"
-                                .to_owned(),
-                        );
-                        emit_file_failed(progress, request, attempt, &error);
+                        // The ordinary downloader will revalidate and report any final failure.
                         return Ok(None);
                     }
                     Ok(false) => {}
@@ -2216,11 +2240,6 @@ impl BiliClient {
                 }
                 match target_has_multiple_hard_links(request.path).await {
                     Ok(true) => {
-                        let error = Error::InvalidInput(
-                            "download target gained a hard link during sharded download; discarding staged file and falling back to ordinary download"
-                                .to_owned(),
-                        );
-                        emit_file_failed(progress, request, attempt, &error);
                         return Ok(None);
                     }
                     Ok(false) => {}
@@ -2230,10 +2249,7 @@ impl BiliClient {
                     }
                 }
                 #[cfg(unix)]
-                if let Err(error) =
-                    apply_sharded_output_permissions(temp_path.as_ref(), request.path)
-                {
-                    emit_file_failed(progress, request, attempt, &error);
+                if apply_sharded_output_permissions(temp_path.as_ref(), request.path).is_err() {
                     return Ok(None);
                 }
                 match replace_file(temp_path.as_ref(), request.path).await {
@@ -2246,20 +2262,14 @@ impl BiliClient {
                             resumed_from: 0,
                         }))
                     }
-                    Err(error) => {
-                        emit_file_failed(progress, request, attempt, &error);
-                        Ok(None)
-                    }
+                    Err(_error) => Ok(None),
                 }
             }
             Err(error) if error.is_cancelled() => {
                 emit_file_failed(progress, request, attempt, &error);
                 Err(error)
             }
-            Err(error) => {
-                emit_file_failed(progress, request, attempt, &error);
-                Ok(None)
-            }
+            Err(_error) => Ok(None),
         }
     }
 
@@ -5725,17 +5735,18 @@ fn subtitle_dedup_key(url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        CDN_SHARD_CHUNK_SIZE, DEFAULT_UPOS_REPLACEMENT_HOST, DanmakuUpdateOptions, DownloadArchive,
-        DownloadArchiveEntryRecord, DownloadArchiveRecord, DownloadFileRequest, DownloadMode,
-        DownloadOptions, DownloadPathTemplates, DownloadPreflight, DownloadReport,
-        DownloadReportSummary, DownloadedFile, DuplicateDecision, EntryDownloadReport,
-        EntryDownloadSummary, MAX_FILE_COMPONENT_BYTES, MAX_FILE_NAME_BYTES,
-        MAX_SUBTITLE_EXTENSION_BYTES, MediaHostOptions, MuxOptions, MuxReport, RetryPolicy,
-        SidecarOptions, StreamSelection, SubtitleAiPolicy, TemplateContext, archive_sidecar_path,
-        candidate_urls, comparable_output_path, cover_file_name, default_plan_output_dir,
-        download_entry_content_key, download_entry_content_key_for_options,
-        download_plan_content_key, download_plan_content_key_for_options, entry_dir_name,
-        media_file_name, mux_file_stem, path_is_occupied, remove_mux_output_if_cancelled,
+        CDN_PUBLIC_PROBE_MAX_BYTES, CDN_SHARD_CHUNK_SIZE, DEFAULT_UPOS_REPLACEMENT_HOST,
+        DanmakuUpdateOptions, DownloadArchive, DownloadArchiveEntryRecord, DownloadArchiveRecord,
+        DownloadFileRequest, DownloadMode, DownloadOptions, DownloadPathTemplates,
+        DownloadPreflight, DownloadReport, DownloadReportSummary, DownloadedFile,
+        DuplicateDecision, EntryDownloadReport, EntryDownloadSummary, MAX_FILE_COMPONENT_BYTES,
+        MAX_FILE_NAME_BYTES, MAX_SUBTITLE_EXTENSION_BYTES, MediaHostOptions, MuxOptions, MuxReport,
+        RetryPolicy, SidecarOptions, StreamSelection, SubtitleAiPolicy, TemplateContext,
+        archive_sidecar_path, candidate_urls, comparable_output_path, cover_file_name,
+        default_plan_output_dir, download_entry_content_key,
+        download_entry_content_key_for_options, download_plan_content_key,
+        download_plan_content_key_for_options, entry_dir_name, media_file_name, mux_file_stem,
+        path_is_occupied, probe_media_cdns, remove_mux_output_if_cancelled,
         render_template_component, safe_file_name, safe_file_name_with_budget, select_audio_stream,
         select_media_stream, selected_subtitles, subtitle_dedup_key, subtitle_extension,
         subtitle_file_name, temporary_download_path, temporary_generated_path, temporary_mux_path,
@@ -6085,6 +6096,33 @@ mod tests {
             .await;
         assert_eq!(ordered, urls);
         assert_eq!(discovered_size, None);
+    }
+
+    #[tokio::test]
+    async fn public_cdn_probe_keeps_unknown_size_within_byte_budget() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        for (range, content_range, length) in [
+            ("bytes=0-0", "bytes 0-0/100000", 1),
+            ("bytes=1-65535", "bytes 1-65535/100000", 65535),
+        ] {
+            server.mock(|when, then| {
+                when.method(GET).path("/asset").header("range", range);
+                then.status(206)
+                    .header("Content-Range", content_range)
+                    .header("Content-Length", length.to_string())
+                    .body(vec![b'x'; length]);
+            });
+        }
+        let client = BiliClient::new(ClientConfig::default());
+        let stream = media_stream(1, &format!("{}/asset", server.base_url()));
+        let results = probe_media_cdns(&client, &stream, &MediaHostOptions::default()).await?;
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].ok);
+        assert_eq!(results[0].bytes, CDN_PUBLIC_PROBE_MAX_BYTES);
+        assert!(results[0].bytes <= CDN_PUBLIC_PROBE_MAX_BYTES);
+        assert!(results[0].bytes_per_second.is_some());
+        Ok(())
     }
 
     #[tokio::test]
@@ -7565,14 +7603,20 @@ mod tests {
         let target = output_dir.join(target_name);
         tokio::fs::write(&target, "").await?;
 
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress_events = Arc::clone(&events);
+        let progress = move |event: &DownloadProgressEvent| {
+            push_progress_event(&progress_events, event.clone());
+        };
         BiliClient::new(ClientConfig::default())
-            .download_plan(
+            .download_plan_with_progress(
                 &plan,
                 DownloadOptions::new(temp.path())
                     .with_retry_policy(RetryPolicy::single_attempt())
                     .with_download_mode(DownloadMode::VideoOnly)
                     .with_cdn_parallelism(2)
                     .with_mux(MuxOptions::Disabled),
+                &progress,
             )
             .await?;
 
@@ -7587,6 +7631,21 @@ mod tests {
             "{prefix_calls:?}"
         );
         assert!(bad_chunk_mocks.iter().any(|mock| mock.calls() >= 1));
+        let events = progress_events_snapshot(&events);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, DownloadProgressEvent::FileFailed { .. }))
+                .count(),
+            0
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, DownloadProgressEvent::FileCompleted { .. }))
+                .count(),
+            1
+        );
         Ok(())
     }
 

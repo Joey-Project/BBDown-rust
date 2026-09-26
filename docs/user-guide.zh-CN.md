@@ -574,7 +574,8 @@ CLI 覆盖环境变量。未知 manifest 字段会被拒绝，因此拼错的 ex
 工具附带一份可选的历史公共解析服务器目录，但默认不会联系其中任何服务器。使用
 `bbdown resolver list` 查看目录，使用 `--resolver <NAME>` 显式选择服务器；
 `bbdown resolver probe <EPISODE> --server <NAME>` 会在运行时测试单个服务器，并报告是否实际
-走过 PGC 代理路径。目录中的服务器可能已不可用，也可能不兼容 API-path 路由。选择第三方服务器
+走过 PGC 代理路径。此命令会忽略其他已配置的代理候选，包括通过环境变量提供的代理。
+目录中的服务器可能已不可用，也可能不兼容 API-path 路由。选择第三方服务器
 后，该服务器可能收到剧集 ID、区域以及已导入的通用 access key。仍可使用已有标志配置自建代理。
 PGC playurl 回退只会在官
 方 PGC playurl 响应报告区域限制，或 APP gRPC mode 报告 permission-denied status /

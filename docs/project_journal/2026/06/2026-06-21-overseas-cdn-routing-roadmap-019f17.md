@@ -44,7 +44,9 @@ superseded_by:
   URL; normal URL candidates and existing fallback policy remain available. This is also exposed
   through `MediaHostOptions::with_cdn_hosts`.
 - `--cdn-probe` opts into bounded, validated range measurements to rank usable candidates for a
-  single resolved representation. Probe failures preserve candidates as fallback routes.
+  single resolved representation. Unknown-size probes include the one-byte discovery request in
+  the 64 KiB per-candidate budget and exclude its RTT from sample throughput. Probe failures
+  preserve candidates as fallback routes.
 - `--cdn-parallel 2..8` opts into bounded multi-CDN range transfer for fresh, known-size media.
   Responses are checked for exact range metadata, size, and body length. Candidate sources are
   grouped by a shared prefix sample and identical URL scheme/path/query. Each chunk is fetched
@@ -58,12 +60,15 @@ superseded_by:
 - `bbdown-core::probe_media_cdns` exposes explicit, bounded per-candidate results to embedding
   applications. The CLI bundles a snapshot of CCB's CDN host data and a historical public resolver
   list. Presets and runtime probes require an explicit user selection; no public resolver is a
-  default. Catalog host availability must be checked at runtime. Preset downloads put the donor's
-  normal media candidate after one configured CDN to bound failures before that route; it remains
+  default. `resolver probe --server` isolates the selected server from configured CLI/environment
+  proxy candidates. Catalog host availability must be checked at runtime. Preset downloads put
+  the donor's normal media candidate after one configured CDN to bound failures before that route; it remains
   subject to the existing host-replacement policy. Manual `--cdn-host` pools retain their prior
   ordering. Probe ranking may reorder at most the first 8 candidates.
 - Successful staged shards emit `CdnShardCompleted` progress events with the actual source host and
-  byte count. No signed media URL path or query is included in the event.
+  byte count. No signed media URL path or query is included in the event. Recoverable sharding
+  failures fall back to ordinary download without a terminal `FileFailed` event; cancellation and
+  fatal target metadata errors still report failure.
 - Mock tests cover candidate ordering/fallback, probe ranking and timeout behavior, compatible and
   incompatible range sources, transfer
   fallback, file progress, and CLI sidecars. A mock PGC test
@@ -91,6 +96,15 @@ superseded_by:
 - The restricted-area `ep664928` probe against the explicitly selected `atri` public resolver
   returned one entry with `proxy_exercised=true`. This confirms that the PGC proxy path was used for
   that request, not that every listed resolver is available.
+- After the resolver-isolation and public-probe budget fixes, an overseas rerun on `BV1uW4y1s7zN`
+  found four hosts with at least one successful 65,536-byte Range response; another preset host
+  failed. A fresh video-only transfer again emitted two successful shard events totaling 1,644,777
+  bytes: 596,201 from `upos-hz-mirrorakam.akamaized.net` and 1,048,576 from
+  `upos-sz-mirroraliov.bilivideo.com`. This matched `file_completed` and the on-disk size, with no
+  `file_failed` event or observed fallback. No same-run single-host control was measured.
+- In the final unauthenticated `ep664928` / HK resolver probes, `atri` returned HTTP 404, and
+  `mahiron` also failed; `bstar` returned one entry with `proxy_exercised=true`. The earlier `atri`
+  success and this later failure show why catalog entries need runtime checks.
 - The older manifest-driven `just live-e2e` suite stopped before any fixture request because its
   ignored local manifest references an absent default credential file. The direct CDN and resolver
   runs above are the live evidence for this PR; the legacy suite has no pass result for this run.

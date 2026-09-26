@@ -642,8 +642,9 @@ failure and must contain the listed diagnostics.
 The tool includes an optional historical public resolver directory, but does not contact any
 resolver by default. Use `bbdown resolver list` to inspect it and explicitly select a named server
 with `--resolver <NAME>`; `bbdown resolver probe <EPISODE> --server <NAME>` checks one selected
-server at runtime and reports whether the PGC proxy path was exercised. These servers may be
-unavailable or incompatible with the API-path route. Selecting a third-party server may send the
+server at runtime and reports whether the PGC proxy path was exercised. The probe ignores other
+configured proxy candidates, including ones supplied through environment variables. These servers
+may be unavailable or incompatible with the API-path route. Selecting a third-party server may send the
 episode ID, requested area, and an imported generic access key to that server. You can continue to
 configure your own proxy with the existing flags.
 PGC playurl fallback is attempted only after the official PGC playurl response reports a
