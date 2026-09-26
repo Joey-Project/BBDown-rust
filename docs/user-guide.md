@@ -308,8 +308,13 @@ bbdown download av170001 --cdn-host edge-a.example --cdn-host edge-b.example --c
 `--cdn-parallel` accepts values from 2 to 8; its default is 1 (disabled). CDN probing and parallel
 media transfer apply only to DASH/FLV media, require valid byte-range responses and a consistent
 total length, and leave cover, subtitle, and danmaku sidecars unchanged. Existing partial files use
-the regular resume path. If probing or a candidate fails, downloads retain the established
-candidate fallback order. Probe diagnostics do not record signed URL query strings.
+the regular resume path. During sharding, every chunk served by a secondary CDN is fetched
+concurrently from the baseline CDN and compared byte-for-byte before the staged file can be
+published. Each shard lane can issue two simultaneous Range requests for verification, so
+parallelism 8 can use up to 16 concurrent Range requests. This duplicates transfer bytes and adds
+network load; a mismatch discards staging and falls back to the regular candidate download. Probing
+and parallel transfer do not guarantee a speedup, and a rewritten host is not proof that another CDN
+accepts the signed URL. Probe diagnostics do not record signed URL query strings.
 
 Downloads resume partial files by default with HTTP range requests and validate `Content-Range`
 plus advertised media sizes when the plan provides them. Use `--no-resume` to force a fresh write;

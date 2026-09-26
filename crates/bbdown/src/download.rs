@@ -6824,8 +6824,11 @@ mod tests {
         for index in [0, 1, 4, 5] {
             assert_eq!(range_mocks[index].calls(), 1);
         }
-        assert_eq!(range_mocks[2].calls() + range_mocks[3].calls(), 1);
-        assert_eq!(range_mocks[6].calls() + range_mocks[7].calls(), 1);
+        let a_chunk_calls = range_mocks[2].calls() + range_mocks[3].calls();
+        let b_chunk_calls = range_mocks[6].calls() + range_mocks[7].calls();
+        assert!(a_chunk_calls > 0, "CDN A must serve a media chunk");
+        assert!(b_chunk_calls > 0, "CDN B must serve a media chunk");
+        assert_eq!(a_chunk_calls + b_chunk_calls, 3);
         let events = progress_events_snapshot(&events);
         assert_eq!(
             events
@@ -7058,6 +7061,106 @@ mod tests {
         assert_eq!(tokio::fs::read(&target).await?, fallback_body);
         assert!(prefix_mocks.iter().all(|mock| mock.calls() == 1));
         assert!(chunk_mocks.iter().all(|mock| mock.calls() == 0));
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(clippy::cast_possible_truncation)]
+    async fn sharded_later_chunk_mismatch_falls_back_and_cleans_staging() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let total_size = 2 * CDN_SHARD_CHUNK_SIZE;
+        let mut canonical_first = vec![b'p'; 64 * 1024];
+        canonical_first.resize(CDN_SHARD_CHUNK_SIZE as usize, b'a');
+        let canonical_second = vec![b'b'; CDN_SHARD_CHUNK_SIZE as usize];
+        let alternate_second = vec![b'c'; CDN_SHARD_CHUNK_SIZE as usize];
+        let mut canonical_body = canonical_first.clone();
+        canonical_body.extend_from_slice(&canonical_second);
+        let mut plan = single_video_plan(format!("{}/a.m4s", server.base_url()));
+        {
+            let stream = &mut plan.entries[0].streams.videos[0];
+            stream.size = Some(total_size);
+            stream.backup_urls = vec![format!("{}/b.m4s", server.base_url())];
+        }
+
+        let prefix = canonical_first[..64 * 1024].to_vec();
+        for (path, second_chunk, delay_probe) in [
+            ("/a.m4s", canonical_second, false),
+            ("/b.m4s", alternate_second, true),
+        ] {
+            let first_chunk = canonical_first.clone();
+            let prefix_16k = prefix[..16 * 1024].to_vec();
+            let prefix_64k = prefix.clone();
+            server.mock(|when, then| {
+                when.method(GET).path(path).header("range", "bytes=0-16383");
+                then.status(206)
+                    .header("Content-Range", "bytes 0-16383/2097152")
+                    .header("Content-Length", prefix_16k.len().to_string())
+                    .body(prefix_16k);
+            });
+            server.mock(|when, then| {
+                when.method(GET).path(path).header("range", "bytes=0-65535");
+                let response = then
+                    .status(206)
+                    .header("Content-Range", "bytes 0-65535/2097152")
+                    .header("Content-Length", prefix_64k.len().to_string())
+                    .body(prefix_64k);
+                if delay_probe {
+                    response.delay(std::time::Duration::from_millis(150));
+                }
+            });
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path(path)
+                    .header("range", "bytes=0-1048575");
+                then.status(206)
+                    .header("Content-Range", "bytes 0-1048575/2097152")
+                    .header("Content-Length", "1048576")
+                    .body(first_chunk);
+            });
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path(path)
+                    .header("range", "bytes=1048576-2097151");
+                then.status(206)
+                    .header("Content-Range", "bytes 1048576-2097151/2097152")
+                    .header("Content-Length", "1048576")
+                    .body(second_chunk);
+            });
+        }
+        server.mock(|when, then| {
+            when.method(GET).path("/a.m4s").header_missing("range");
+            then.status(200).body(canonical_body.clone());
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/b.m4s").header_missing("range");
+            then.status(200).body(canonical_body.clone());
+        });
+
+        let temp = tempfile::tempdir()?;
+        let output_dir = test_entry_dir(temp.path(), &plan)?;
+        tokio::fs::create_dir_all(&output_dir).await?;
+        let target_name = media_file_name("video", &plan.entries[0].streams.videos[0]);
+        let target = output_dir.join(&target_name);
+        tokio::fs::write(&target, "").await?;
+
+        BiliClient::new(ClientConfig::default())
+            .download_plan(
+                &plan,
+                DownloadOptions::new(temp.path())
+                    .with_retry_policy(RetryPolicy::single_attempt())
+                    .with_download_mode(DownloadMode::VideoOnly)
+                    .with_cdn_parallelism(2)
+                    .with_mux(MuxOptions::Disabled),
+            )
+            .await?;
+
+        assert_eq!(tokio::fs::read(&target).await?, canonical_body);
+        let mut entries = tokio::fs::read_dir(&output_dir).await?;
+        let mut file_names = Vec::new();
+        while let Some(entry) = entries.next_entry().await? {
+            file_names.push(entry.file_name());
+        }
+        assert_eq!(file_names, vec![std::ffi::OsString::from(target_name)]);
         Ok(())
     }
 

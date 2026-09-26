@@ -144,7 +144,8 @@ fn invalid(message: &str) -> Error {
 }
 
 /// Downloads a file through bounded, dynamically scheduled Range requests into a temporary file.
-/// Candidate URLs are accepted only when their first probe range is byte-identical.
+/// Candidate URLs must match the probe, and every non-canonical chunk is checked against the
+/// canonical candidate before it is written.
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub(crate) async fn download_sharded_to_temp<F>(
     client: &reqwest::Client,
@@ -230,6 +231,7 @@ where
         .into_iter()
         .map(|(url, _)| url)
         .collect();
+    let canonical_source = 0;
 
     let chunk_count = expected_total.div_ceil(chunk_size);
     let concurrency = u64::try_from(concurrency)
@@ -256,6 +258,7 @@ where
             next_chunk,
             lane,
             preferred_source,
+            canonical_source,
         ));
         next_chunk += 1;
     }
@@ -280,6 +283,7 @@ where
                 next_chunk,
                 lane,
                 lane_sources[lane],
+                canonical_source,
             ));
             next_chunk += 1;
         }
@@ -301,14 +305,15 @@ fn schedule_chunk<'a>(
     chunk_index: u64,
     lane: usize,
     preferred_source: usize,
+    canonical_source: usize,
 ) -> BoxFuture<'a, (u64, usize, usize, Result<RangeFetch>)> {
     async move {
         let start = chunk_index * chunk_size;
         let end = expected_total.min(start.saturating_add(chunk_size)) - 1;
-        for offset in 0..candidates.len() {
-            let candidate_index = (preferred_source + offset) % candidates.len();
-            let candidate = candidates[candidate_index];
-            if let Ok(fetched) = fetch_range(
+        let candidate_index = preferred_source % candidates.len();
+        let candidate = candidates[candidate_index];
+        if candidate_index == canonical_source {
+            let fetched = fetch_range(
                 client,
                 candidate,
                 headers.clone(),
@@ -318,17 +323,48 @@ fn schedule_chunk<'a>(
                 request_timeout,
                 idle_timeout,
             )
-            .await
-            {
-                return (chunk_index, lane, candidate_index, Ok(fetched));
-            }
+            .await;
+            return (chunk_index, lane, candidate_index, fetched);
         }
-        (
-            chunk_index,
-            lane,
-            preferred_source,
-            Err(invalid("all CDN candidates failed for a byte range")),
-        )
+
+        let (fetched, canonical) = tokio::join!(
+            fetch_range(
+                client,
+                candidate,
+                headers.clone(),
+                start,
+                end,
+                Some(expected_total),
+                request_timeout,
+                idle_timeout,
+            ),
+            fetch_range(
+                client,
+                candidates[canonical_source],
+                headers.clone(),
+                start,
+                end,
+                Some(expected_total),
+                request_timeout,
+                idle_timeout,
+            ),
+        );
+        let canonical = match canonical {
+            Ok(canonical) => canonical,
+            Err(error) => return (chunk_index, lane, candidate_index, Err(error)),
+        };
+        let Ok(fetched) = fetched else {
+            return (chunk_index, lane, canonical_source, Ok(canonical));
+        };
+        if canonical.bytes != fetched.bytes {
+            return (
+                chunk_index,
+                lane,
+                candidate_index,
+                Err(invalid("CDN byte range does not match canonical candidate")),
+            );
+        }
+        (chunk_index, lane, candidate_index, Ok(fetched))
     }
     .boxed()
 }
@@ -566,7 +602,7 @@ mod tests {
         assert_eq!(std::fs::read(path)?, body.as_bytes());
         assert_eq!(completed.iter().sum::<u64>(), 20_000);
         assert_eq!(completed.len(), 2);
-        mock_a.assert_calls(2);
+        mock_a.assert_calls(3);
         mock_b.assert_calls(2);
         Ok(())
     }
@@ -591,7 +627,7 @@ mod tests {
 
         assert_eq!(std::fs::read(path)?, expected.as_bytes());
         assert_eq!(outlier_mock.calls(), 1);
-        assert_eq!(second_cdn_mock.calls(), 2);
+        assert_eq!(second_cdn_mock.calls(), 3);
         assert_eq!(third_cdn_mock.calls(), 2);
         Ok(())
     }
@@ -669,18 +705,73 @@ mod tests {
 
     #[tokio::test]
     async fn retries_failed_range_on_another_candidate() -> anyhow::Result<()> {
-        let failed = MockServer::start();
-        let fallback = MockServer::start();
+        let canonical = MockServer::start();
+        let alternate = MockServer::start();
         let body = "z".repeat(20_000);
-        let failed_mock =
-            add_media_server(&failed, body.clone(), vec!["bytes=0-9999".into()], None);
-        let fallback_mock = add_media_server(&fallback, body.clone(), Vec::new(), None);
+        let canonical_mock = add_media_server(&canonical, body.clone(), Vec::new(), None);
+        let alternate_mock = add_media_server(
+            &alternate,
+            body.clone(),
+            vec!["bytes=10000-19999".into()],
+            None,
+        );
         let dir = tempfile::tempdir()?;
-        let urls = vec![failed.url("/media"), fallback.url("/media")];
+        let urls = vec![canonical.url("/media"), alternate.url("/media")];
         let path = sharded(&urls, 20_000, dir.path(), |_| {}).await?;
         assert_eq!(std::fs::read(path)?, body.as_bytes());
-        assert_eq!(failed_mock.calls(), 2);
-        assert_eq!(fallback_mock.calls(), 3);
+        assert_eq!(canonical_mock.calls(), 3);
+        assert_eq!(alternate_mock.calls(), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rejects_later_chunk_mismatch_and_cleans_staging_file() -> anyhow::Result<()> {
+        let canonical = MockServer::start();
+        let alternate = MockServer::start();
+        let canonical_body = format!("{}{}", "p".repeat(16_384), "a".repeat(3_616));
+        let alternate_body = format!("{}{}", "p".repeat(16_384), "b".repeat(3_616));
+        let canonical_mock = add_media_server(&canonical, canonical_body, Vec::new(), None);
+        let alternate_mock = add_media_server(&alternate, alternate_body, Vec::new(), None);
+        let dir = tempfile::tempdir()?;
+        let urls = vec![canonical.url("/media"), alternate.url("/media")];
+
+        let result = sharded(&urls, 20_000, dir.path(), |_| {}).await;
+
+        assert!(
+            matches!(
+                &result,
+                Err(crate::Error::InvalidInput(message))
+                    if message.contains("does not match canonical candidate")
+            ),
+            "unexpected sharded result: {result:?}"
+        );
+        assert_eq!(canonical_mock.calls(), 3);
+        assert_eq!(alternate_mock.calls(), 2);
+        assert_eq!(std::fs::read_dir(dir.path())?.count(), 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rejects_alternate_chunk_when_canonical_verification_fails() -> anyhow::Result<()> {
+        let canonical = MockServer::start();
+        let alternate = MockServer::start();
+        let body = "v".repeat(20_000);
+        let canonical_mock = add_media_server(
+            &canonical,
+            body.clone(),
+            vec!["bytes=10000-19999".into()],
+            None,
+        );
+        let alternate_mock = add_media_server(&alternate, body, Vec::new(), None);
+        let dir = tempfile::tempdir()?;
+        let urls = vec![canonical.url("/media"), alternate.url("/media")];
+
+        let result = sharded(&urls, 20_000, dir.path(), |_| {}).await;
+
+        assert!(matches!(result, Err(crate::Error::InvalidInput(_))));
+        assert_eq!(canonical_mock.calls(), 3);
+        assert_eq!(alternate_mock.calls(), 2);
+        assert_eq!(std::fs::read_dir(dir.path())?.count(), 0);
         Ok(())
     }
 

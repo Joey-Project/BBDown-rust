@@ -43,11 +43,16 @@ superseded_by:
 - `--cdn-probe` opts into bounded, validated range measurements to rank usable candidates for a
   single resolved representation. Probe failures preserve candidates as fallback routes.
 - `--cdn-parallel 2..8` opts into bounded multi-CDN range transfer for fresh, known-size media.
-  Responses are checked for exact range metadata, size, and body length; candidate sources must
-  agree on the initial byte sample. Chunks are assembled in a temporary file, with sequential
-  download fallback on transfer failure. Partial-file resume remains sequential.
+  Responses are checked for exact range metadata, size, and body length. Candidate sources are
+  initially grouped by a shared byte sample; every chunk returned by a secondary source is fetched
+  again from the baseline source concurrently and compared byte-for-byte. Each lane can issue two
+  simultaneous range requests for verification, up to 16 at parallelism 8. This adds duplicate
+  transfer bytes and network load. A mismatch discards the temporary file and
+  falls back to the regular candidate download. Partial-file resume remains sequential, and a
+  speedup is not guaranteed.
 - Mock tests cover candidate ordering/fallback, probe ranking and timeout behavior, compatible and
-  incompatible range sources, transfer fallback, file progress, and CLI sidecars. A mock PGC test
+  incompatible range sources including a later-chunk mismatch with staging cleanup, transfer
+  fallback, file progress, and CLI sidecars. A mock PGC test
   covers a BiliRoaming-compatible `/pgc/player/web/playurl` response; English and Chinese guides
   document self-hosted endpoint configuration.
 - These changes cover resolved-media downloads and optional PGC address lookup. They do not provide
