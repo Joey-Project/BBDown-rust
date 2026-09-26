@@ -45,6 +45,13 @@ pub enum DownloadProgressEvent {
         resumed_from: u64,
         total_bytes: u64,
     },
+    CdnShardCompleted {
+        entry_index: u32,
+        entry_title: String,
+        kind: DownloadFileKind,
+        host: String,
+        bytes: u64,
+    },
     FileFailed {
         entry_index: u32,
         entry_title: String,

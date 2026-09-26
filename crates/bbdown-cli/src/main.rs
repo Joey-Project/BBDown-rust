@@ -495,6 +495,45 @@ mod catalog_tests {
         Ok(())
     }
 
+    #[test]
+    fn preset_media_hosts_try_origin_after_one_cdn_while_manual_pool_keeps_default_order()
+    -> anyhow::Result<()> {
+        let hosts = (0..74)
+            .map(|index| format!("edge-{index}.example"))
+            .collect::<Vec<_>>();
+        let preset_options = media_host_options_from_cli(DownloadMediaHostCliFlags {
+            upos_host: None,
+            cdn_hosts: hosts.clone(),
+            original_after_cdn_hosts: Some(1),
+            force_replace_host: false,
+            allow_pcdn: false,
+        })?;
+        assert_eq!(preset_options.original_after_cdn_hosts, 1);
+        assert_eq!(preset_options.cdn_hosts.len(), 74);
+
+        let manual_options = media_host_options_from_cli(DownloadMediaHostCliFlags {
+            upos_host: None,
+            cdn_hosts: hosts,
+            original_after_cdn_hosts: None,
+            force_replace_host: false,
+            allow_pcdn: false,
+        })?;
+        assert_eq!(manual_options.original_after_cdn_hosts, usize::MAX);
+        assert!(
+            Cli::try_parse_from([
+                "bbdown",
+                "download",
+                "av170001",
+                "--cdn-host",
+                "edge.example",
+                "--cdn-preset",
+                "广东",
+            ])
+            .is_err()
+        );
+        Ok(())
+    }
+
     #[tokio::test]
     async fn catalog_probe_uses_bounded_local_range_requests() -> anyhow::Result<()> {
         let server = httpmock::MockServer::start();
@@ -742,6 +781,7 @@ struct DownloadSidecarCliFlags {
 struct DownloadMediaHostCliFlags {
     upos_host: Option<String>,
     cdn_hosts: Vec<String>,
+    original_after_cdn_hosts: Option<usize>,
     force_replace_host: bool,
     allow_pcdn: bool,
 }
@@ -851,6 +891,11 @@ fn media_host_options_from_cli(
     let options = MediaHostOptions::bbdown_cli_default()
         .with_force_replace_host(flags.force_replace_host)
         .with_allow_pcdn(flags.allow_pcdn);
+    let options = if let Some(count) = flags.original_after_cdn_hosts {
+        options.with_original_after_cdn_hosts(count)
+    } else {
+        options
+    };
     if let Some(upos_host) = flags.upos_host {
         validate_media_host_spec(&upos_host)?;
         return Ok(options.with_upos_host(upos_host));
@@ -1131,6 +1176,7 @@ async fn handle_download_cli(
         "--on-duplicate requires --archive-file"
     );
     let mut selected_cdn_hosts = args.cdn_host.clone();
+    let has_cdn_preset = args.cdn_preset.is_some();
     if let Some(region) = args.cdn_preset.as_deref() {
         selected_cdn_hosts.extend(cdn_hosts_for_region(region)?);
     }
@@ -1153,6 +1199,7 @@ async fn handle_download_cli(
         media_hosts: DownloadMediaHostCliFlags {
             upos_host: args.upos_host,
             cdn_hosts: selected_cdn_hosts,
+            original_after_cdn_hosts: has_cdn_preset.then_some(1),
             force_replace_host: args.force_replace_host,
             allow_pcdn: args.allow_pcdn,
         },

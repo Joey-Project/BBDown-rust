@@ -386,6 +386,8 @@ impl SidecarOptions {
 pub struct MediaHostOptions {
     pub upos_host: Option<String>,
     pub cdn_hosts: Vec<String>,
+    /// Number of configured CDN hosts to try before each donor's normal URL.
+    pub original_after_cdn_hosts: usize,
     pub force_replace_host: bool,
     pub allow_pcdn: bool,
 }
@@ -395,6 +397,7 @@ impl Default for MediaHostOptions {
         Self {
             upos_host: None,
             cdn_hosts: Vec::new(),
+            original_after_cdn_hosts: usize::MAX,
             force_replace_host: false,
             allow_pcdn: true,
         }
@@ -429,6 +432,12 @@ impl MediaHostOptions {
         S: Into<String>,
     {
         self.cdn_hosts = hosts.into_iter().map(Into::into).collect();
+        self
+    }
+
+    #[must_use]
+    pub fn with_original_after_cdn_hosts(mut self, count: usize) -> Self {
+        self.original_after_cdn_hosts = count;
         self
     }
 
@@ -2158,8 +2167,17 @@ impl BiliClient {
             self.config.request_timeout,
             options.download_idle_timeout,
             dest_dir,
-            |bytes_delta| {
+            |bytes_delta, source_url| {
                 bytes_written = bytes_written.saturating_add(bytes_delta);
+                if let Some(host) = cdn_host_label(source_url) {
+                    progress.on_download_progress(&DownloadProgressEvent::CdnShardCompleted {
+                        entry_index: request.entry.index,
+                        entry_title: request.entry.title.clone(),
+                        kind: request.kind.clone(),
+                        host,
+                        bytes: bytes_delta,
+                    });
+                }
                 emit_file_progress(
                     progress,
                     request,
@@ -2732,6 +2750,15 @@ impl BiliClient {
             chapter_count,
         }))
     }
+}
+
+fn cdn_host_label(source_url: &str) -> Option<String> {
+    let url = url::Url::parse(source_url).ok()?;
+    let host = url.host_str()?;
+    Some(match url.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host.to_owned(),
+    })
 }
 
 struct FfmpegChapterMetadata {
@@ -3762,15 +3789,29 @@ fn candidate_urls(
 
 fn push_donor_candidates(urls: &mut Vec<String>, url: &str, media_hosts: &MediaHostOptions) {
     if media_hosts.upos_host.is_none() {
+        let mut inserted_original = media_hosts.original_after_cdn_hosts == 0;
+        if inserted_original {
+            push_candidate_url(urls, url, media_hosts);
+        }
+        let mut cdn_candidates = 0;
         for host in &media_hosts.cdn_hosts {
             if !host.trim().is_empty()
                 && let Some(candidate) = replace_url_host(url, host)
             {
                 push_unique_url(urls, candidate);
+                cdn_candidates += 1;
+            }
+            if !inserted_original && cdn_candidates >= media_hosts.original_after_cdn_hosts {
+                push_candidate_url(urls, url, media_hosts);
+                inserted_original = true;
             }
         }
+        if !inserted_original {
+            push_candidate_url(urls, url, media_hosts);
+        }
+    } else {
+        push_candidate_url(urls, url, media_hosts);
     }
-    push_candidate_url(urls, url, media_hosts);
 }
 
 fn push_candidate_url(urls: &mut Vec<String>, url: &str, media_hosts: &MediaHostOptions) {
@@ -5834,6 +5875,7 @@ mod tests {
             MediaHostOptions {
                 upos_host: Some("upos.example".to_owned()),
                 cdn_hosts: Vec::new(),
+                original_after_cdn_hosts: usize::MAX,
                 force_replace_host: true,
                 allow_pcdn: false,
             }
@@ -5914,6 +5956,26 @@ mod tests {
                 "https://backup.example/video.m4s?token=backup",
             ]
         );
+    }
+
+    #[test]
+    fn candidate_urls_insert_each_original_after_one_cdn_host_when_configured() {
+        let hosts = (0..74).map(|index| format!("edge-{index}.example"));
+        let options = MediaHostOptions::new()
+            .with_cdn_hosts(hosts)
+            .with_original_after_cdn_hosts(1);
+        let urls = candidate_urls(
+            "https://origin.example/video.m4s",
+            &["https://backup.example/backup.m4s".to_owned()],
+            &options,
+        );
+
+        assert_eq!(urls[0], "https://edge-0.example/video.m4s");
+        assert_eq!(urls[1], "https://origin.example/video.m4s");
+        assert_eq!(urls[2], "https://edge-1.example/video.m4s");
+        assert_eq!(urls[75], "https://edge-0.example/backup.m4s");
+        assert_eq!(urls[76], "https://backup.example/backup.m4s");
+        assert_eq!(urls.len(), 150);
     }
 
     #[tokio::test]
@@ -7074,6 +7136,52 @@ mod tests {
                 .count(),
             1
         );
+        let shard_events = events
+            .iter()
+            .filter_map(|event| match event {
+                DownloadProgressEvent::CdnShardCompleted {
+                    kind: DownloadFileKind::Video,
+                    host,
+                    bytes,
+                    ..
+                } => Some((host.clone(), *bytes)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            shard_events.iter().map(|(_, bytes)| bytes).sum::<u64>(),
+            total_size
+        );
+        assert_eq!(shard_events.len(), 2);
+        let hosts = [server_a.base_url(), server_b.base_url()]
+            .into_iter()
+            .map(|base| -> anyhow::Result<String> {
+                let parsed = url::Url::parse(&base)?;
+                let host = parsed
+                    .host_str()
+                    .ok_or_else(|| anyhow::anyhow!("mock server URL has no host"))?;
+                let port = parsed
+                    .port()
+                    .ok_or_else(|| anyhow::anyhow!("mock server URL has no explicit port"))?;
+                Ok(format!("{host}:{port}"))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        assert_eq!(
+            shard_events
+                .iter()
+                .map(|(host, _)| host)
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            2
+        );
+        assert!(hosts.iter().all(|host| {
+            shard_events
+                .iter()
+                .any(|(shard_host, _)| shard_host == host)
+        }));
+        let serialized = serde_json::to_string(&events)?;
+        assert!(serialized.contains("cdn_shard_completed"));
+        assert!(!serialized.contains("token"));
         Ok(())
     }
 

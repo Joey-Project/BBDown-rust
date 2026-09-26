@@ -770,6 +770,12 @@ let options = DownloadOptions::new("downloads")
     .with_cdn_parallelism(4);
 ```
 
+Large host pools can call `MediaHostOptions::with_original_after_cdn_hosts(1)` so the donor's
+normal media candidate follows the first configured CDN before the remaining hosts. It still
+obeys the configured host-replacement policy. The default keeps this candidate after the whole
+explicitly configured pool. Probe ranking can reorder the first eight candidates, including the
+donor, but never probes the entire regional list at once.
+
 CDN probing and parallel transfer affect DASH/FLV media only; sidecar URLs are unchanged. The
 parallelism default is 1 (disabled), and values 2 through 8 enable parallel transfer. Invalid API
 values are rejected when validating or executing a download. Probe and shard requests require
@@ -779,8 +785,11 @@ the regular resume path. Sharding groups candidates only when their sampled pref
 path, and query match. Each shard is fetched once from its selected CDN, with a failed range retried
 on another candidate. Parallelism 8 can use up to 8 simultaneous Range requests. This removes the
 baseline CDN's full-file verification transfer, but the prefix and size checks cannot prove that
-later bytes are identical across hosts. Speedups are not guaranteed, and host rewriting is not proof
-that a signed URL is valid on another CDN. Diagnostics do not record signed URL query strings.
+later bytes are identical across hosts. A differing edge can silently splice chunks from another
+version into the completed file. Speedups are not guaranteed, and host rewriting is not proof
+that a signed URL is valid on another CDN. `DownloadProgressEvent::CdnShardCompleted` reports the
+source host and bytes after a shard has been staged successfully. The event excludes signed URL
+paths and queries; summing its bytes by host shows the actual transfer distribution.
 
 Embedders can call `probe_media_cdns(client, stream, media_hosts)` to inspect the current signed
 representation before downloading. It reads at most 64 KiB from each of up to 8 candidates and

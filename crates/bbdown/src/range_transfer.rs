@@ -163,7 +163,7 @@ pub(crate) async fn download_sharded_to_temp<F>(
     mut on_chunk: F,
 ) -> Result<tempfile::TempPath>
 where
-    F: FnMut(u64),
+    F: FnMut(u64, &str),
 {
     if expected_total == 0 {
         return Err(invalid("expected media size must be nonzero"));
@@ -270,7 +270,8 @@ where
         let offset = chunk_index * chunk_size;
         staging.as_file_mut().seek(SeekFrom::Start(offset))?;
         staging.as_file_mut().write_all(&fetched.bytes)?;
-        on_chunk(fetched.bytes.len() as u64);
+        let source = candidates[successful_source];
+        on_chunk(fetched.bytes.len() as u64, source);
 
         if next_chunk < chunk_count {
             pending.push(schedule_chunk(
@@ -601,7 +602,7 @@ mod tests {
         urls: &[String],
         expected_total: u64,
         dest_dir: &std::path::Path,
-        on_chunk: impl FnMut(u64),
+        on_chunk: impl FnMut(u64, &str),
     ) -> crate::Result<tempfile::TempPath> {
         super::download_sharded_to_temp(
             &reqwest::Client::new(),
@@ -638,7 +639,7 @@ mod tests {
             Duration::from_secs(2),
             Some(Duration::from_secs(2)),
             dir.path(),
-            |bytes| completed.push(bytes),
+            |bytes, _| completed.push(bytes),
         )
         .await?;
         assert_eq!(std::fs::read(path)?, body.as_bytes());
@@ -665,7 +666,7 @@ mod tests {
             compatible_b.url("/media"),
         ];
         let dir = tempfile::tempdir()?;
-        let path = sharded(&urls, 20_000, dir.path(), |_| {}).await?;
+        let path = sharded(&urls, 20_000, dir.path(), |_, _| {}).await?;
 
         assert_eq!(std::fs::read(path)?, expected.as_bytes());
         assert_eq!(outlier_mock.calls(), 1);
@@ -708,7 +709,7 @@ mod tests {
             Duration::from_secs(30),
             Some(Duration::from_secs(2)),
             dir.path(),
-            |_| {},
+            |_, _| {},
         )
         .await?;
 
@@ -733,7 +734,7 @@ mod tests {
             different.url("/media"),
             wrong_total.url("/media"),
         ];
-        let result = sharded(&urls, 20_000, dir.path(), |_| {}).await;
+        let result = sharded(&urls, 20_000, dir.path(), |_, _| {}).await;
         assert!(matches!(
             result,
             Err(crate::Error::InvalidInput(message))
@@ -759,10 +760,20 @@ mod tests {
         );
         let dir = tempfile::tempdir()?;
         let urls = vec![canonical.url("/media"), alternate.url("/media")];
-        let path = sharded(&urls, 20_000, dir.path(), |_| {}).await?;
+        let mut completed = Vec::new();
+        let path = sharded(&urls, 20_000, dir.path(), |bytes, source| {
+            completed.push((bytes, source.to_owned()));
+        })
+        .await?;
         assert_eq!(std::fs::read(path)?, body.as_bytes());
         assert_eq!(canonical_mock.calls(), 3);
         assert_eq!(alternate_mock.calls(), 2);
+        assert_eq!(
+            completed.iter().map(|(bytes, _)| bytes).sum::<u64>(),
+            20_000
+        );
+        assert_eq!(completed.len(), 2);
+        assert!(completed.iter().all(|(_, source)| source == &urls[0]));
         Ok(())
     }
 
@@ -778,7 +789,7 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let urls = vec![canonical.url("/media"), alternate.url("/media")];
 
-        let path = sharded(&urls, 20_000, dir.path(), |_| {}).await?;
+        let path = sharded(&urls, 20_000, dir.path(), |_, _| {}).await?;
         let assembled = std::fs::read(path)?;
         assert_eq!(&assembled[..10_000], &canonical_body.as_bytes()[..10_000]);
         assert_eq!(&assembled[10_000..], &alternate_body.as_bytes()[10_000..]);
@@ -798,7 +809,7 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let urls = vec![server_a.url("/media"), server_b.url("/media")];
         assert!(matches!(
-            sharded(&urls, 20_000, dir.path(), |_| {}).await,
+            sharded(&urls, 20_000, dir.path(), |_, _| {}).await,
             Err(crate::Error::InvalidInput(_))
         ));
         assert_eq!(std::fs::read_dir(dir.path())?.count(), 0);

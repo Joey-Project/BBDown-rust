@@ -312,6 +312,11 @@ particular signed media URL. To inspect
 current Range reachability and sampled throughput without downloading a full file, use a public video
 input with `bbdown cdn probe <VIDEO> --preset overseas`. The probe reports at most eight hosts per
 invocation; use `--offset <N>` to inspect later entries. It never prints signed media URL queries.
+For ordinary sequential downloads, a preset tries one CDN host before the donor's normal media
+candidate; remaining preset hosts stay available if that route fails. The normal candidate still
+obeys `--allow-pcdn` and host-replacement policy. Optional probe ranking may reorder the first
+eight candidates, but does not place the full regional catalog ahead of the donor route.
+
 For example:
 
 ```sh
@@ -327,9 +332,12 @@ the regular resume path. Sharding uses candidates with the same signed path and 
 and initial byte sample, then downloads each chunk once from a selected CDN into a temporary file.
 The downloader checks each Range response and falls back to the regular candidate path on failure.
 An equal sample and size do not prove that later bytes match across CDNs; this faster mode does not
-perform full content comparison. Probing and parallel transfer do not guarantee a speedup, and a
-rewritten host is not proof that another CDN accepts the signed URL. Probe diagnostics do not record
-signed URL query strings.
+perform full content comparison. If an edge differs after the sampled prefix, the completed file
+can silently combine bytes from different versions. Probing and parallel transfer do not guarantee
+a speedup. A rewritten host is not proof that another CDN accepts the signed URL. Probe diagnostics
+do not record signed URL query strings. With `--progress-json`, every successfully staged shard
+emits `cdn_shard_completed` with its source `host` and `bytes`; summing those events by host shows
+the actual transfer distribution. The event excludes signed URL paths and queries.
 
 Downloads resume partial files by default with HTTP range requests and validate `Content-Range`
 plus advertised media sizes when the plan provides them. Use `--no-resume` to force a fresh write;

@@ -50,12 +50,18 @@ superseded_by:
   grouped by a shared prefix sample and identical URL scheme/path/query. Each chunk is fetched
   once from its selected CDN; a failed range is retried on another candidate. Parallelism 8 means
   at most 8 simultaneous Range requests. The baseline CDN no longer transfers the whole file for
-  verification. Prefix and size checks cannot prove complete content identity across hosts;
+  verification. Prefix and size checks cannot prove complete content identity across hosts, so a
+  differing edge can silently splice another version into the completed file;
   partial-file resume remains sequential, and a speedup is not guaranteed.
 - `bbdown-core::probe_media_cdns` exposes explicit, bounded per-candidate results to embedding
   applications. The CLI bundles a snapshot of CCB's CDN host data and a historical public resolver
   list. Presets and runtime probes require an explicit user selection; no public resolver is a
-  default. Catalog host availability must be checked at runtime.
+  default. Catalog host availability must be checked at runtime. Preset downloads put the donor's
+  normal media candidate after one configured CDN to bound failures before that route; it remains
+  subject to the existing host-replacement policy. Manual `--cdn-host` pools retain their prior
+  ordering. Probe ranking may reorder at most the first 8 candidates.
+- Successful staged shards emit `CdnShardCompleted` progress events with the actual source host and
+  byte count. No signed media URL path or query is included in the event.
 - Mock tests cover candidate ordering/fallback, probe ranking and timeout behavior, compatible and
   incompatible range sources, transfer
   fallback, file progress, and CLI sidecars. A mock PGC test
@@ -71,9 +77,15 @@ superseded_by:
   Two overseas hosts succeeded twice; one succeeded only on retry, and one failed twice. Observed
   sample throughput varied substantially between attempts, so these results are a runtime snapshot.
 - An opt-in `--cdn-preset overseas --cdn-parallel 4` video-only transfer completed a 187,672,972
-  byte media stream. Progress advanced in 1 MiB shards, confirming that the sharded transfer path
-  completed. The CLI does not yet expose per-host transferred bytes, so this run does not prove
-  actual host-level byte distribution or a speedup over a single CDN.
+  byte media stream. Its 1 MiB progress deltas do not distinguish the sharded path from ordinary
+  sequential writes. This run alone does not prove actual host-level byte distribution or a speedup
+  over a single CDN.
+- A separate one-shot live `BV1uW4y1s7zN` video-only download with `--cdn-preset overseas
+  --cdn-parallel 4 --progress-json` completed 1,644,777 bytes. Two `cdn_shard_completed` events
+  reported 1,048,576 bytes from `upos-sz-mirroraliov.bilivideo.com` and 596,201 bytes from
+  `upos-hz-mirrorakam.akamaized.net`; their sum matched both `file_completed.total_bytes` and the
+  on-disk media size. No `file_failed` event appeared. This verifies two CDN hosts supplied bytes
+  in this run; it does not establish a speedup over a single-host control.
 - The restricted-area `ep664928` probe against the explicitly selected `atri` public resolver
   returned one entry with `proxy_exercised=true`. This confirms that the PGC proxy path was used for
   that request, not that every listed resolver is available.
@@ -115,6 +127,8 @@ superseded_by:
   restricted-area resolver checks separate from CDN performance validation.
 - Decide whether persistent route health is useful. Keep host-rewriting presets opt-in until live
   compatibility evidence supports a default.
+- Compare measured wall time against a single-host control for representative media sizes and
+  locations; the current progress events prove source distribution, not a speedup.
 
 ## Open Questions
 

@@ -728,14 +728,22 @@ let options = DownloadOptions::new("downloads")
     .with_cdn_parallelism(4);
 ```
 
+较大的 host 池可以调用 `MediaHostOptions::with_original_after_cdn_hosts(1)`，使 donor 的
+常规媒体候选排在第一个指定 CDN 之后、其余 host 之前。它仍遵守已有的 host 替换策略；默认
+行为会把该候选放在整个手动配置池之后。测速可能重排前 8 个候选（包括 donor），但不会一次
+探测完整地区目录。
+
 测速和并行传输只作用于 DASH/FLV 媒体，不会改动旁路文件 URL。并行度默认是 1（关闭），2 到 8
 会启用并行传输；API 配置非法值会在下载计划校验或执行时明确报错。测速和分片请求要求服务端
 返回有效的 HTTP Range 响应且总长度一致。计划未提供大小时，开启测速或并行传输会先用有界的
 `bytes=0-0` 请求发现大小。已有非空 partial 文件仍走常规续传路径。分片只会混用前缀样本相同、
 URL scheme/path/query 相同的候选；每个分片从选定 CDN 获取一次，失败时再向其他候选重试。
 并行度为 8 时最多同时发出 8 个 Range 请求。这样基准 CDN 不必再承担整份文件的验证传输，
-但前缀和大小检查无法证明不同 host 的后续字节完全一致。测速和并行传输不保证一定提速；
-改写 host 也不能证明签名 URL 一定能被另一 CDN 接受。诊断信息不会记录签名 URL 的 query 字符串。
+但前缀和大小检查无法证明不同 host 的后续字节完全一致；若边缘节点提供不同版本，完成的文件可能
+无声地混入不同版本的分片。测速和并行传输不保证一定提速；
+改写 host 也不能证明签名 URL 一定能被另一 CDN 接受。每个分片成功写入暂存文件后，
+`DownloadProgressEvent::CdnShardCompleted` 会报告来源 host 和字节数。事件不含签名 URL 的路径
+与 query；按 host 汇总字节数即可核对实际供数分布。
 
 嵌入应用可以通过 `probe_media_cdns(client, stream, media_hosts)` 探测当前已签名的媒体表示。
 它对最多 8 个候选分别读取不超过 64 KiB，返回只含 host 的标签、成功状态、耗时、吞吐量和

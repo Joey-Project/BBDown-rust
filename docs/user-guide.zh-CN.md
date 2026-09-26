@@ -275,11 +275,17 @@ bbdown download av170001 --cdn-host edge-a.example --cdn-host edge-b.example --c
 ```
 
 `bbdown cdn list` 可查看随程序附带的 CCB 地区和 host 数量，添加 `--region overseas` 可列出
-该地区的具体 host。使用 `--cdn-preset <REGION>`
-明确选择一个地区；`overseas` 是目录中 `海外` 的别名。预置项只是候选列表，不代表每个 host
+该地区的具体 host。使用 `--cdn-preset <REGION>` 明确选择一个地区；`overseas` 是目录中
+`海外` 的别名。预置项只是候选列表，不代表每个 host
 都能接受某条签名媒体 URL。若想在完整下载前查看当前 Range 可用性和样本吞吐量，可用公开视频运行
 `bbdown cdn probe <VIDEO> --preset overseas`。每次最多探测 8 个 host；用 `--offset <N>`
-查看后续条目。输出不会打印签名媒体 URL 的 query。例如：
+查看后续条目。输出不会打印签名媒体 URL 的 query。
+
+普通顺序下载使用预置时，先尝试一个预置 CDN host，再尝试 donor 的常规媒体候选；其他预置 host
+仍可在后续失败时回退使用。常规候选仍遵守 `--allow-pcdn` 和 host 替换策略。可选测速会重新排列
+前 8 个候选，但不会把整个地区目录都排在 donor 路由前。
+
+例如：
 
 ```sh
 bbdown cdn list --region overseas
@@ -292,8 +298,11 @@ DASH/FLV 媒体，要求服务器返回有效字节范围和一致的总长度�
 已有部分文件仍走常规续传路径。分片只混用签名 URL 的路径与 query 相同、总大小及起始样本一致的
 候选；每个分片只从选中的一个 CDN 下载，并先写入临时文件。下载器会校验每个 Range 响应，失败时
 回退到常规候选下载。起始样本与大小一致不能证明后续字节完全相同；这一加速模式不做完整内容逐字节
-对照。测速和并行传输不保证一定提速；改写 host 也不能证明另一 CDN 能接受签名 URL。测速诊断不会
-记录签名 URL 的 query 字符串。
+对照。如果边缘节点在样本之后提供不同版本，完成的文件可能无声地混入不同版本的分片。测速和并行传输
+不保证一定提速；改写 host 也不能证明另一 CDN 能接受签名 URL。测速诊断不会
+记录签名 URL 的 query 字符串。加上 `--progress-json` 后，每个成功写入暂存文件的分片会产生
+`cdn_shard_completed` 事件，包含来源 `host` 和 `bytes`；按 host 汇总即可核对实际供数分布。
+该事件不含签名 URL 的路径或 query。
 
 下载默认通过 HTTP range 请求续传部分文件，并在计划提供信息时校验 `Content-Range` 和声
 明媒体大小。使用 `--no-resume` 可强制重新写入；失败的新写入会保留已有目标。如果服务器
