@@ -433,8 +433,8 @@ async fn main() -> bbdown_core::Result<()> {
             Some(RestrictedArea::Hk),
         ))
         .with_proxy(RestrictedAreaProxy::bilibili_api(
-            "https://api-proxy.example",
-            Some(RestrictedArea::Tw),
+            "https://your-server.example/bili/api",
+            Some(RestrictedArea::Hk),
         ));
 
     let client = BiliClient::new(ClientConfig::default().with_restricted_area(restricted_area));
@@ -447,6 +447,10 @@ async fn main() -> bbdown_core::Result<()> {
 
 回退成功时，条目会报告 `StreamSource::PgcProxy` 并包含解析器诊断。诊断端点会压缩到
 origin，诊断消息会脱敏常见密钥模式。
+上面的 API-path 示例可指向你自建的 BiliRoaming-compatible 服务：客户端请求其
+`/pgc/player/web/playurl` 路由，并发送 `area`、`ep_id` 和可选的通用 `access_key`。crate 不
+内置公共解析服务器，也不保证账号授权或区域可用性；服务返回的签名媒体 URL 会原样进入
+plan，供下游下载器或播放器使用。
 
 ## 下载执行
 

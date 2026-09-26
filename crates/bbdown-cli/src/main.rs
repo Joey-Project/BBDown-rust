@@ -252,6 +252,8 @@ struct DownloadCliArgs {
     on_duplicate: Option<DuplicateDecisionArg>,
     #[arg(long, value_name = "HOST")]
     upos_host: Option<String>,
+    #[arg(long, value_name = "HOST", conflicts_with = "upos_host")]
+    cdn_host: Vec<String>,
     #[arg(long)]
     force_replace_host: bool,
     #[arg(long)]
@@ -551,6 +553,7 @@ struct DownloadSidecarCliFlags {
 
 struct DownloadMediaHostCliFlags {
     upos_host: Option<String>,
+    cdn_hosts: Vec<String>,
     force_replace_host: bool,
     allow_pcdn: bool,
 }
@@ -652,11 +655,14 @@ fn media_host_options_from_cli(
     let options = MediaHostOptions::bbdown_cli_default()
         .with_force_replace_host(flags.force_replace_host)
         .with_allow_pcdn(flags.allow_pcdn);
-    let Some(upos_host) = flags.upos_host else {
-        return Ok(options);
-    };
-    validate_media_host_spec(&upos_host)?;
-    Ok(options.with_upos_host(upos_host))
+    if let Some(upos_host) = flags.upos_host {
+        validate_media_host_spec(&upos_host)?;
+        return Ok(options.with_upos_host(upos_host));
+    }
+    for host in &flags.cdn_hosts {
+        validate_media_host_spec(host).with_context(|| format!("invalid --cdn-host `{host}`"))?;
+    }
+    Ok(options.with_cdn_hosts(flags.cdn_hosts))
 }
 
 fn validate_media_host_spec(host: &str) -> anyhow::Result<()> {
@@ -917,6 +923,7 @@ async fn handle_download_cli(
         },
         media_hosts: DownloadMediaHostCliFlags {
             upos_host: args.upos_host,
+            cdn_hosts: args.cdn_host,
             force_replace_host: args.force_replace_host,
             allow_pcdn: args.allow_pcdn,
         },

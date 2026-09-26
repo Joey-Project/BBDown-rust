@@ -362,6 +362,7 @@ impl SidecarOptions {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MediaHostOptions {
     pub upos_host: Option<String>,
+    pub cdn_hosts: Vec<String>,
     pub force_replace_host: bool,
     pub allow_pcdn: bool,
 }
@@ -370,6 +371,7 @@ impl Default for MediaHostOptions {
     fn default() -> Self {
         Self {
             upos_host: None,
+            cdn_hosts: Vec::new(),
             force_replace_host: false,
             allow_pcdn: true,
         }
@@ -394,6 +396,16 @@ impl MediaHostOptions {
     pub fn with_upos_host(mut self, upos_host: impl Into<String>) -> Self {
         let upos_host = upos_host.into();
         self.upos_host = (!upos_host.trim().is_empty()).then_some(upos_host);
+        self
+    }
+
+    #[must_use]
+    pub fn with_cdn_hosts<I, S>(mut self, hosts: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.cdn_hosts = hosts.into_iter().map(Into::into).collect();
         self
     }
 
@@ -3258,16 +3270,33 @@ fn candidate_urls(
     backups: &[String],
     media_hosts: &MediaHostOptions,
 ) -> Vec<String> {
-    let mut urls = Vec::with_capacity(backups.len() + 1);
-    push_candidate_url(&mut urls, primary, media_hosts);
+    let mut urls = Vec::with_capacity((backups.len() + 1) * (media_hosts.cdn_hosts.len() + 1));
+    push_donor_candidates(&mut urls, primary, media_hosts);
     for url in backups.iter().filter(|url| !url.is_empty()) {
-        push_candidate_url(&mut urls, url, media_hosts);
+        push_donor_candidates(&mut urls, url, media_hosts);
     }
     urls
 }
 
+fn push_donor_candidates(urls: &mut Vec<String>, url: &str, media_hosts: &MediaHostOptions) {
+    if media_hosts.upos_host.is_none() {
+        for host in &media_hosts.cdn_hosts {
+            if !host.trim().is_empty() {
+                if let Some(candidate) = replace_url_host(url, host) {
+                    push_unique_url(urls, candidate);
+                }
+            }
+        }
+    }
+    push_candidate_url(urls, url, media_hosts);
+}
+
 fn push_candidate_url(urls: &mut Vec<String>, url: &str, media_hosts: &MediaHostOptions) {
     let candidate = rewrite_media_url_host(url, media_hosts).unwrap_or_else(|| url.to_owned());
+    push_unique_url(urls, candidate);
+}
+
+fn push_unique_url(urls: &mut Vec<String>, candidate: String) {
     if !urls.iter().any(|existing| existing == &candidate) {
         urls.push(candidate);
     }
@@ -5308,6 +5337,7 @@ mod tests {
             options.media_hosts,
             MediaHostOptions {
                 upos_host: Some("upos.example".to_owned()),
+                cdn_hosts: Vec::new(),
                 force_replace_host: true,
                 allow_pcdn: false,
             }
@@ -5340,6 +5370,32 @@ mod tests {
             vec![
                 "https://video.example:448/video.m4s?token=1",
                 "https://backup.example/video.m4s"
+            ]
+        );
+    }
+
+    #[test]
+    fn candidate_urls_try_ordered_cdn_pool_then_each_original_donor() {
+        let options = MediaHostOptions::new().with_cdn_hosts([
+            "edge-a.example",
+            "edge-b.example",
+            "edge-a.example",
+        ]);
+        let urls = candidate_urls(
+            "https://origin.example/video.m4s?token=signed%2Bvalue",
+            &["https://backup.example/video.m4s?token=backup".to_owned()],
+            &options,
+        );
+
+        assert_eq!(
+            urls,
+            vec![
+                "https://edge-a.example/video.m4s?token=signed%2Bvalue",
+                "https://edge-b.example/video.m4s?token=signed%2Bvalue",
+                "https://origin.example/video.m4s?token=signed%2Bvalue",
+                "https://edge-a.example/video.m4s?token=backup",
+                "https://edge-b.example/video.m4s?token=backup",
+                "https://backup.example/video.m4s?token=backup",
             ]
         );
     }
@@ -5382,6 +5438,26 @@ mod tests {
             vec![
                 "https://upos.example:8443/video.m4s?token=1",
                 "https://upos.example:8443/audio.m4s"
+            ]
+        );
+    }
+
+    #[test]
+    fn candidate_urls_upos_host_keeps_precedence_over_cdn_pool() {
+        let options = MediaHostOptions::new()
+            .with_upos_host("manual-upos.example:8443")
+            .with_cdn_hosts(["pool-edge.example"]);
+        let urls = candidate_urls(
+            "https://primary.example/video.m4s?token=signed",
+            &["https://backup.example/video.m4s?token=backup".to_owned()],
+            &options,
+        );
+
+        assert_eq!(
+            urls,
+            vec![
+                "https://manual-upos.example:8443/video.m4s?token=signed",
+                "https://manual-upos.example:8443/video.m4s?token=backup",
             ]
         );
     }

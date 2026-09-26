@@ -464,8 +464,8 @@ async fn main() -> bbdown_core::Result<()> {
             Some(RestrictedArea::Hk),
         ))
         .with_proxy(RestrictedAreaProxy::bilibili_api(
-            "https://api-proxy.example",
-            Some(RestrictedArea::Tw),
+            "https://your-server.example/bili/api",
+            Some(RestrictedArea::Hk),
         ));
 
     let client = BiliClient::new(ClientConfig::default().with_restricted_area(restricted_area));
@@ -478,6 +478,11 @@ async fn main() -> bbdown_core::Result<()> {
 
 When fallback succeeds, entries report `StreamSource::PgcProxy` and include resolver diagnostics.
 Diagnostic endpoints are reduced to origins and diagnostic messages redact common secret patterns.
+The API-path example can target a self-hosted BiliRoaming-compatible service: the client requests
+its `/pgc/player/web/playurl` route with `area`, `ep_id`, and an optional generic `access_key`. The
+crate includes no public resolver and cannot guarantee account authorization or regional
+availability. Signed media URLs returned by the service are passed unchanged into the plan for the
+downstream downloader or player.
 
 ## Download Execution
 

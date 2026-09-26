@@ -3,7 +3,7 @@ id: 20260621-019f17-overseas-cdn-routing-roadmap
 title: Overseas CDN Routing Roadmap
 status: active
 created: 2026-06-21
-updated: 2026-06-21
+updated: 2026-09-26
 branch: feature/overseas-cdn-routing-roadmap
 pr: 62
 supersedes: []
@@ -27,40 +27,59 @@ superseded_by:
 - CCB's `data/cdn.json` and `data/region.json` expose a region-to-host catalog that currently
   includes regions such as Hong Kong and overseas hosts including Akamai and overseas Bilibili mirror
   candidates.
+- Bilibili-thread-ripper (BTR) is a second research reference for speed-aware CDN selection and
+  concurrent byte-range fetching from an already resolved media representation. It does not resolve
+  BiliRoaming playback addresses.
+- BiliRoaming-style PGC playback address resolution is a separate, opt-in upstream step. The
+  existing `RestrictedAreaProxy::BilibiliApi` path already targets the server's
+  `/pgc/player/web/playurl` route after a qualifying official region error; compatibility needs
+  mock coverage and explicit configuration guidance, not an implicit public resolver.
 
 ## Design Direction
 
-- Treat CCB as a reference and data-source candidate, not as a hard runtime dependency.
+- Treat CCB and BTR as research references, not runtime dependencies. Do not assume that a CDN host
+  accepts a signed path/query merely because another host served it.
 - Keep `bbdown-core` deterministic and embeddable:
-  - expose host-routing policy structs for CLI and API callers;
-  - support explicit host lists and named presets;
+  - expose ordered, explicit host candidates for CLI and API callers before considering a curated
+    named preset;
   - preserve existing manual `upos_host` behavior;
-  - keep region lock/proxy behavior separate from CDN acceleration;
+  - keep PGC region/proxy resolution separate from media CDN selection and transfer;
   - avoid claiming that CDN switching bypasses restricted-area licensing.
-- Prefer opt-in probing and clear fallback semantics:
-  - optionally rank candidate hosts by lightweight HEAD/range probes against selected media URLs;
-  - keep original Bilibili URLs and backup URLs available in reports;
-  - record which host policy rewrote each media request;
-  - fail back to original candidates when a selected host lacks content or returns incompatible
-    responses.
+- Keep each selected representation's primary and backup URLs in one resource group. Never combine
+  byte ranges from different qualities or from separately resolved playurl responses without an
+  explicit same-content contract.
+- Prefer bounded, opt-in probing and clear fallback semantics:
+  - measure actual signed media URLs with small range requests or learn from real download chunks;
+    cap time, bytes, and concurrent probes;
+  - rank recent routes by observed latency, throughput, and failures; expire observations so a
+    transient slow or failed node can be retried;
+  - retain original Bilibili URLs and backups as fallbacks and expose redacted route diagnostics;
+  - reject incompatible status, `Content-Range`, total length, or body length before committing a
+    chunk; retry the same range elsewhere or use the existing sequential path.
+- Introduce concurrent ranges only for a known-size, range-capable, fresh media file. Assemble into
+  temporary storage and publish the completed file after all ranges validate. Keep existing
+  contiguous-prefix resume behavior until a durable per-range resume format is designed.
 
 ## Candidate PR Slices
 
-- PR A: document and expose `MediaHostPolicy`/`MediaHostPreset` as a stable API layer over the
-  existing host rewrite and PCDN filtering controls.
-- PR B: add CLI/API support for named overseas presets and explicit ordered host pools, while
-  keeping existing `--upos-host` as the simplest manual override.
-- PR C: add optional host probing/ranking for embedders and CLI dry-run diagnostics, bounded to
-  small range requests and disabled by default.
-- PR D: add live e2e fixture notes for overseas routing using public normal-video samples, with
-  restricted-area behavior documented as orthogonal to CDN selection.
+- PR A: verify BiliRoaming-compatible PGC API-path proxy behavior with mock responses and document
+  the explicit endpoint configuration; add ordered CDN host candidates without changing defaults.
+- PR B: add opt-in bounded range probing and route measurements to rank candidates for a single
+  resolved representation, with source and redacted diagnostic reporting.
+- PR C: add opt-in multi-CDN range transfer with strict response validation, temporary assembly,
+  route health/backoff, and sequential fallback. Preserve file-level progress and resume contracts.
+- PR D: add optional live e2e fixture notes for public overseas routing; keep restricted-area
+  resolver checks separate from CDN performance validation.
 
 ## Open Questions
 
 - Whether to vendor a curated host catalog, let users provide catalogs, or periodically refresh a
   generated catalog in the release process.
 - Whether overseas presets should default to Hong Kong-first, Akamai-first, or user-location-first.
-- How much probing should be permitted by default without creating unnecessary traffic.
+- Which signed media URL families safely accept host substitution; require a live compatibility
+  check before enabling any built-in preset.
+- Whether active probes should be a CLI diagnostic only or also a download warmup. Real chunk
+  measurements can rank routes without extra probe traffic.
 - Whether downloader archive/cache records should include the selected media host policy as
   diagnostic metadata without changing content identity.
 
@@ -75,6 +94,17 @@ superseded_by:
 - CCB `data/cdn.json` currently contains overseas host candidates such as
   `upos-hz-mirrorakam.akamaized.net`, `upos-sz-mirroraliov.bilivideo.com`, and
   `upos-sz-mirrorcosov.bilivideo.com`.
+- BTR `src/cdn-resolver.js` derives signed host candidates from one representation's playurl URLs,
+  tracks recent route throughput and failures, and periodically explores stale candidates:
+  `https://github.com/MrTangLuyao/Bilibili-thread-ripper/blob/main/src/cdn-resolver.js`.
+- BTR `src/range-core.js` and `src/idm-downloader.js` validate exact range responses, assemble
+  ordered chunks, and use observed transfer speed for scheduling and conditional rescue requests:
+  `https://github.com/MrTangLuyao/Bilibili-thread-ripper/blob/main/src/range-core.js` and
+  `https://github.com/MrTangLuyao/Bilibili-thread-ripper/blob/main/src/idm-downloader.js`.
+- BiliRoaming-Rust-Server registers `/pgc/player/web/playurl` and handles area-aware upstream
+  requests; its implementation is a compatibility reference, not a built-in service dependency:
+  `https://github.com/pchpub/BiliRoaming-Rust-Server/blob/main/src/main.rs` and
+  `https://github.com/pchpub/BiliRoaming-Rust-Server/blob/main/src/mods/upstream_res.rs`.
 
 ## Next Steps
 

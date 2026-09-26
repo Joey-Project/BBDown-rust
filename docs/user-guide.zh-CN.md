@@ -538,6 +538,8 @@ preview-only PGC response-body 信号后尝试。其他官方失败（例如 VIP
 ```bash
 bbdown --restricted-area hk --restricted-area-proxy hk=https://proxy.example/playurl plan ep267851 --json
 bbdown --restricted-api-proxy tw=https://proxy.example/bili/api plan ss26801 --select latest --json
+# 自行部署且兼容 BiliRoaming 的 API-path 服务
+bbdown --restricted-api-proxy hk=https://your-server.example/bili/api plan ep267851 --json
 ```
 
 代理 spec 使用 `area=url` 或裸 URL。支持区域为 `cn`、`th`、`hk` 和 `tw`。裸 URL 是通用候
@@ -555,6 +557,10 @@ query 会在追加 PGC playurl 参数之前保留。代理响应可以包在 `da
 回 helper 风格的顶层 `dash` / `durl`、`timelength` 和质量元数据；legacy 字符串状态字段
 （例如 `result: "suee"`）会被容忍。两个标志都可以重复传入。
 `BBDOWN_RESTRICTED_AREA_PROXY` 和 `BBDOWN_RESTRICTED_API_PROXY` 也接受逗号分隔列表。
+自建 BiliRoaming-compatible 服务可把其 API 根路径配置为 `--restricted-api-proxy`；BBDown
+会请求 `/pgc/player/web/playurl`，并提供 `area`、`ep_id` 和可选的通用 `access_key`。不内置或
+默认信任公共解析服务；区域/账号资格和授权取决于上游及服务端，BBDown 不保证解析可用。
+服务返回的签名媒体 URL 会原样交给下游下载器或播放器。
 
 如果通过 `auth import-access-key` 导入了通用 access key，代理 playurl 请求会以
 `access_key` 包含它。Bilibili cookie 不会转发到受限区域代理主机。解析器诊断会记录官方失

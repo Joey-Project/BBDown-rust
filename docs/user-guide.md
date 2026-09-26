@@ -602,6 +602,8 @@ network errors, keep their original error instead of trying proxy hosts.
 ```bash
 bbdown --restricted-area hk --restricted-area-proxy hk=https://proxy.example/playurl plan ep267851 --json
 bbdown --restricted-api-proxy tw=https://proxy.example/bili/api plan ss26801 --select latest --json
+# A self-hosted BiliRoaming-compatible API-path service
+bbdown --restricted-api-proxy hk=https://your-server.example/bili/api plan ep267851 --json
 ```
 
 Proxy specs use `area=url` or a bare URL. Supported areas are `cn`, `th`, `hk`, and `tw`. Bare URLs
@@ -622,6 +624,11 @@ the PGC playurl parameters are appended. Proxy responses may be wrapped in `data
 return helper-style top-level `dash` / `durl`, `timelength`, and quality metadata; legacy string
 status fields such as `result: "suee"` are tolerated. Both flags may be repeated.
 `BBDOWN_RESTRICTED_AREA_PROXY` and `BBDOWN_RESTRICTED_API_PROXY` also accept comma-separated lists.
+A self-hosted BiliRoaming-compatible service can be configured by its API root with
+`--restricted-api-proxy`. BBDown requests `/pgc/player/web/playurl` with `area`, `ep_id`, and an
+optional generic `access_key`. No public resolver is built in or implicitly trusted; account/region
+eligibility and authorization depend on the upstream and service, so availability is not guaranteed.
+Signed media URLs from the service are passed unchanged to the downstream downloader or player.
 
 If a generic access key was imported with `auth import-access-key`, proxy playurl requests include
 it as `access_key`. Bilibili cookies are not forwarded to restricted-area proxy hosts. Resolver
