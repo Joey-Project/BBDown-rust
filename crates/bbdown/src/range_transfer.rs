@@ -35,7 +35,7 @@ pub(crate) async fn fetch_range(
     end_inclusive: u64,
     expected_total: Option<u64>,
     request_timeout: Duration,
-    idle_timeout: Duration,
+    idle_timeout: Option<Duration>,
 ) -> Result<RangeFetch> {
     let requested_len = end_inclusive
         .checked_sub(start)
@@ -86,9 +86,12 @@ pub(crate) async fn fetch_range(
             .map_err(|_| invalid("requested byte range exceeds platform capacity"))?;
         let mut bytes = Vec::with_capacity(capacity);
         loop {
-            let next = tokio::time::timeout(idle_timeout, stream.next())
-                .await
-                .map_err(|_| invalid("range response stalled"))?;
+            let next = match idle_timeout {
+                Some(timeout) => tokio::time::timeout(timeout, stream.next())
+                    .await
+                    .map_err(|_| invalid("range response stalled"))?,
+                None => stream.next().await,
+            };
             let Some(chunk) = next else { break };
             let chunk = chunk.map_err(|_| invalid("range response body failed"))?;
             let new_len = bytes
@@ -155,7 +158,7 @@ pub(crate) async fn download_sharded_to_temp<F>(
     concurrency: usize,
     chunk_size: u64,
     request_timeout: Duration,
-    idle_timeout: Duration,
+    idle_timeout: Option<Duration>,
     dest_dir: &Path,
     mut on_chunk: F,
 ) -> Result<tempfile::TempPath>
@@ -301,7 +304,7 @@ fn schedule_chunk<'a>(
     expected_total: u64,
     chunk_size: u64,
     request_timeout: Duration,
-    idle_timeout: Duration,
+    idle_timeout: Option<Duration>,
     chunk_index: u64,
     lane: usize,
     preferred_source: usize,
@@ -388,7 +391,7 @@ mod tests {
             4,
             Some(10),
             Duration::from_secs(2),
-            Duration::from_secs(2),
+            Some(Duration::from_secs(2)),
         )
         .await
     }
@@ -501,7 +504,7 @@ mod tests {
             4,
             Some(10),
             Duration::from_millis(10),
-            Duration::from_secs(1),
+            Some(Duration::from_secs(1)),
         )
         .await;
         assert!(matches!(
@@ -509,6 +512,71 @@ mod tests {
             Err(crate::Error::InvalidInput(message))
                 if message.contains("timed out") && !message.contains("secret")
         ));
+    }
+
+    fn delayed_body_server(
+        delay: Duration,
+    ) -> std::io::Result<(String, std::thread::JoinHandle<std::io::Result<()>>)> {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let address = listener.local_addr()?;
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept()?;
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request)?;
+            stream
+                .write_all(
+                    b"HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 2-4/10\r\nContent-Length: 3\r\nConnection: close\r\n\r\na",
+                )?;
+            stream.flush()?;
+            std::thread::sleep(delay);
+            stream.write_all(b"bc")?;
+            Ok(())
+        });
+        Ok((format!("http://{address}/asset"), server))
+    }
+
+    #[tokio::test]
+    async fn optional_idle_timeout_controls_stalled_body_reads() -> anyhow::Result<()> {
+        let (url, server) = delayed_body_server(Duration::from_millis(1_100))?;
+        let timed_out = fetch_range(
+            &reqwest::Client::new(),
+            &url,
+            HeaderMap::new(),
+            2,
+            4,
+            Some(10),
+            Duration::from_secs(3),
+            Some(Duration::from_millis(100)),
+        )
+        .await;
+        server
+            .join()
+            .map_err(|_| anyhow::anyhow!("test server thread panicked"))??;
+        assert!(matches!(
+            timed_out,
+            Err(crate::Error::InvalidInput(message)) if message.contains("stalled")
+        ));
+
+        let (url, server) = delayed_body_server(Duration::from_millis(1_100))?;
+        let completed = fetch_range(
+            &reqwest::Client::new(),
+            &url,
+            HeaderMap::new(),
+            2,
+            4,
+            Some(10),
+            Duration::from_secs(3),
+            None,
+        )
+        .await;
+        server
+            .join()
+            .map_err(|_| anyhow::anyhow!("test server thread panicked"))??;
+        assert_eq!(completed?.bytes, b"abc");
+        Ok(())
     }
 
     fn add_media_server(
@@ -569,7 +637,7 @@ mod tests {
             2,
             10_000,
             Duration::from_secs(2),
-            Duration::from_secs(2),
+            Some(Duration::from_secs(2)),
             dest_dir,
             on_chunk,
         )
@@ -594,7 +662,7 @@ mod tests {
             2,
             10_000,
             Duration::from_secs(2),
-            Duration::from_secs(2),
+            Some(Duration::from_secs(2)),
             dir.path(),
             |bytes| completed.push(bytes),
         )
@@ -664,7 +732,7 @@ mod tests {
             2,
             10_000,
             Duration::from_secs(30),
-            Duration::from_secs(2),
+            Some(Duration::from_secs(2)),
             dir.path(),
             |_| {},
         )

@@ -1916,7 +1916,7 @@ impl BiliClient {
                         0,
                         None,
                         CDN_PROBE_REQUEST_TIMEOUT,
-                        idle_timeout,
+                        Some(idle_timeout),
                     )
                 }))
                 .await;
@@ -1947,7 +1947,7 @@ impl BiliClient {
                         end_inclusive,
                         Some(total_size),
                         CDN_PROBE_REQUEST_TIMEOUT,
-                        idle_timeout,
+                        Some(idle_timeout),
                     )
                     .await,
                 )
@@ -2055,9 +2055,7 @@ impl BiliClient {
             options.cdn_parallelism,
             CDN_SHARD_CHUNK_SIZE,
             self.config.request_timeout,
-            options
-                .download_idle_timeout
-                .unwrap_or(CDN_PROBE_IDLE_TIMEOUT),
+            options.download_idle_timeout,
             dest_dir,
             |bytes_delta| {
                 bytes_written = bytes_written.saturating_add(bytes_delta);
@@ -2078,7 +2076,17 @@ impl BiliClient {
         };
         match result {
             Ok(temp_path) => {
-                cancellation.check()?;
+                if let Err(error) = cancellation.check() {
+                    emit_file_failed(progress, request, attempt, &error);
+                    return Err(error);
+                }
+                #[cfg(unix)]
+                if let Err(error) =
+                    apply_sharded_output_permissions(temp_path.as_ref(), request.path)
+                {
+                    emit_file_failed(progress, request, attempt, &error);
+                    return Ok(None);
+                }
                 match replace_file(temp_path.as_ref(), request.path).await {
                     Ok(()) => {
                         emit_file_completed(progress, request, bytes_written, 0);
@@ -2095,7 +2103,10 @@ impl BiliClient {
                     }
                 }
             }
-            Err(error) if error.is_cancelled() => Err(error),
+            Err(error) if error.is_cancelled() => {
+                emit_file_failed(progress, request, attempt, &error);
+                Err(error)
+            }
             Err(error) => {
                 emit_file_failed(progress, request, attempt, &error);
                 Ok(None)
@@ -3402,6 +3413,68 @@ fn temporary_path_with_suffix(path: &Path, suffix: &str) -> PathBuf {
         "{}{suffix}",
         safe_file_name_with_budget(base, budget)
     ))
+}
+
+#[cfg(unix)]
+fn apply_sharded_output_permissions(staged_path: &Path, target_path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let target_mode = match std::fs::symlink_metadata(target_path) {
+        Ok(metadata) if metadata.file_type().is_file() && metadata.len() == 0 => {
+            Some(metadata.permissions().mode() & 0o777)
+        }
+        Ok(_) => None,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(Error::Io(error)),
+    };
+    let mode = if let Some(mode) = target_mode {
+        mode
+    } else {
+        let mut witness = None;
+        for attempt in 0..8 {
+            let witness_path = staged_path.with_file_name(format!(
+                "{}.mode-witness-{attempt}",
+                staged_path
+                    .file_name()
+                    .and_then(std::ffi::OsStr::to_str)
+                    .unwrap_or("download")
+            ));
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&witness_path)
+            {
+                Ok(file) => {
+                    witness = Some((witness_path, file));
+                    break;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(Error::Io(error)),
+            }
+        }
+        let Some((witness_path, file)) = witness else {
+            return Err(Error::Io(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "could not create output permission witness",
+            )));
+        };
+        let witness_guard = match tempfile::TempPath::try_from_path(&witness_path) {
+            Ok(guard) => guard,
+            Err(error) => {
+                drop(file);
+                let _ = std::fs::remove_file(witness_path);
+                return Err(Error::Io(error));
+            }
+        };
+        let mode_result = file
+            .metadata()
+            .map(|metadata| metadata.permissions().mode() & 0o777);
+        drop(file);
+        let mode = mode_result.map_err(Error::Io)?;
+        witness_guard.close().map_err(Error::Io)?;
+        mode
+    };
+    std::fs::set_permissions(staged_path, std::fs::Permissions::from_mode(mode)).map_err(Error::Io)
 }
 
 fn archive_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
@@ -6821,6 +6894,19 @@ mod tests {
         assert_eq!(content.len(), total_size as usize);
         assert_eq!(&content[..CDN_SHARD_CHUNK_SIZE as usize], first_chunk);
         assert_eq!(&content[CDN_SHARD_CHUNK_SIZE as usize..], second_chunk);
+        #[cfg(unix)]
+        {
+            let permissions = std_fs::metadata(&media_file.path)?.permissions().mode() & 0o7777;
+            let ordinary_path = media_file.path.with_file_name("ordinary-create-mode");
+            let ordinary = std_fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&ordinary_path)?;
+            let ordinary_permissions = ordinary.metadata()?.permissions().mode() & 0o7777;
+            drop(ordinary);
+            std_fs::remove_file(ordinary_path)?;
+            assert_eq!(permissions, ordinary_permissions);
+        }
         for index in [0, 1, 4, 5] {
             assert_eq!(range_mocks[index].calls(), 1);
         }
@@ -6862,6 +6948,117 @@ mod tests {
                 .filter(|event| matches!(event, DownloadProgressEvent::FileCompleted { kind: DownloadFileKind::Video, total_bytes, .. } if *total_bytes == total_size))
                 .count(),
             1
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn sharded_download_preserves_existing_empty_target_permissions() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        for path in ["/a.m4s", "/b.m4s"] {
+            server.mock(|when, then| {
+                when.method(GET).path(path).header("range", "bytes=0-5");
+                then.status(206)
+                    .header("Content-Range", "bytes 0-5/6")
+                    .header("Content-Length", "6")
+                    .body("abcdef");
+            });
+        }
+        let mut plan = single_video_plan(format!("{}/a.m4s", server.base_url()));
+        let stream = &mut plan.entries[0].streams.videos[0];
+        stream.size = Some(6);
+        stream.backup_urls = vec![format!("{}/b.m4s", server.base_url())];
+        let temp = tempfile::tempdir()?;
+        let output_dir = test_entry_dir(temp.path(), &plan)?;
+        tokio::fs::create_dir_all(&output_dir).await?;
+        let target = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
+        tokio::fs::write(&target, "").await?;
+        std_fs::set_permissions(&target, std_fs::Permissions::from_mode(0o640))?;
+
+        BiliClient::new(ClientConfig::default())
+            .download_plan(
+                &plan,
+                DownloadOptions::new(temp.path())
+                    .with_retry_policy(RetryPolicy::single_attempt())
+                    .with_download_mode(DownloadMode::VideoOnly)
+                    .with_cdn_parallelism(2)
+                    .with_mux(MuxOptions::Disabled),
+            )
+            .await?;
+
+        assert_eq!(
+            std_fs::metadata(&target)?.permissions().mode() & 0o7777,
+            0o640
+        );
+        assert_eq!(tokio::fs::read_to_string(&target).await?, "abcdef");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancelled_sharded_download_reports_file_failed_after_start() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        for path in ["/a.m4s", "/b.m4s"] {
+            server.mock(|when, then| {
+                when.method(GET).path(path).header("range", "bytes=0-7");
+                then.status(206)
+                    .header("Content-Range", "bytes 0-7/8")
+                    .header("Content-Length", "8")
+                    .body("abcdefgh");
+            });
+        }
+        let mut plan = single_video_plan(format!("{}/a.m4s", server.base_url()));
+        let stream = &mut plan.entries[0].streams.videos[0];
+        stream.size = Some(8);
+        stream.backup_urls = vec![format!("{}/b.m4s", server.base_url())];
+        let temp = tempfile::tempdir()?;
+        let cancellation = DownloadCancellationToken::new();
+        let cancel_on_start = cancellation.clone();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress_events = Arc::clone(&events);
+        let progress = move |event: &DownloadProgressEvent| {
+            push_progress_event(&progress_events, event.clone());
+            if matches!(event, DownloadProgressEvent::FileStarted { .. }) {
+                cancel_on_start.cancel_with_reason("test cancellation after file start");
+            }
+        };
+
+        let Err(error) = BiliClient::new(ClientConfig::default())
+            .download_plan_with_progress_and_cancellation(
+                &plan,
+                DownloadOptions::new(temp.path())
+                    .with_retry_policy(RetryPolicy::single_attempt())
+                    .with_download_mode(DownloadMode::VideoOnly)
+                    .with_cdn_parallelism(2)
+                    .with_mux(MuxOptions::Disabled),
+                &progress,
+                &cancellation,
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!("cancelled sharded download should fail"));
+        };
+
+        assert!(error.is_cancelled());
+        let events = progress_events_snapshot(&events);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, DownloadProgressEvent::FileStarted { .. }))
+                .count(),
+            1
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, DownloadProgressEvent::FileFailed { .. }))
+                .count(),
+            1
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, DownloadProgressEvent::FileCompleted { .. }))
         );
         Ok(())
     }
