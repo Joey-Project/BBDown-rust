@@ -264,6 +264,21 @@ Akamai host 视为类似 PCDN 的候选，并把这些候选改写到内置 BBDo
 指定 host 或 host:port；使用 `--force-replace-host` 可把全部 DASH/FLV 媒体候选改写到
 fallback host，即使它们并不像 PCDN。存在 `--upos-host` 时，它优先于 PCDN 设置。
 
+可重复指定 `--cdn-host <HOST>`，为每个媒体 URL 按顺序尝试一组 host，再回退到已有策略；
+`--cdn-host` 不能与 `--upos-host` 同时使用。添加 `--cdn-probe` 后，程序会用经过校验的
+HTTP 字节范围请求测速，最多探测 8 个媒体候选，每个最多读取 64 KiB，并按实测吞吐量优先尝试
+测速成功的候选。无法探测的候选仍保留为下载回退地址。如果媒体计划未提供大小，会先用有界的
+`bytes=0-0` 请求发现总长度。示例：
+
+```sh
+bbdown download av170001 --cdn-host edge-a.example --cdn-host edge-b.example --cdn-probe --cdn-parallel 4
+```
+
+`--cdn-parallel` 接受 2 到 8，默认值为 1（关闭并行传输）。测速和并行媒体传输只作用于
+DASH/FLV 媒体，要求服务器返回有效字节范围和一致的总长度；不会改动封面、字幕和弹幕旁路文件。
+已有部分文件仍走常规续传路径。测速或候选失败时，下载会保留既有候选回退顺序。测速诊断不会记录
+带签名 URL 的 query 字符串。
+
 下载默认通过 HTTP range 请求续传部分文件，并在计划提供信息时校验 `Content-Range` 和声
 明媒体大小。使用 `--no-resume` 可强制重新写入；失败的新写入会保留已有目标。如果服务器
 忽略续传 range，旧 partial 会在临时完整重试通过可用长度校验后被替换；没有长度信号时，

@@ -16,6 +16,7 @@ mod login;
 mod models;
 mod playback;
 mod progress;
+mod range_transfer;
 mod selection;
 
 pub use cancellation::DownloadCancellationToken;

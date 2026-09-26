@@ -16,9 +16,9 @@ superseded_by:
 
 - Overseas playback/download experience is a high-priority follow-up after the current credential
   lifecycle line.
-- The current downloader already supports explicit `--upos-host`, `--force-replace-host`, and PCDN
-  filtering controls, but it does not yet provide a first-class overseas routing preset or
-  embeddable host-selection policy.
+- The downloader now has an opt-in ordered CDN host pool, bounded range probing, and multi-CDN
+  range downloads. These are host-selection and download-transfer controls; there is still no
+  first-class overseas playback preset or persistent route-health policy.
 - CCB (`https://github.com/Kanda-Akihito-Kun/ccb`) is a useful research reference. Its README
   describes custom Bilibili playback-source switching for ordinary videos, live rooms, bangumi, and
   watch-later pages. It also documents strong replacement of `baseUrl` and `backupUrl`, PCDN
@@ -30,10 +30,30 @@ superseded_by:
 - Bilibili-thread-ripper (BTR) is a second research reference for speed-aware CDN selection and
   concurrent byte-range fetching from an already resolved media representation. It does not resolve
   BiliRoaming playback addresses.
-- BiliRoaming-style PGC playback address resolution is a separate, opt-in upstream step. The
-  existing `RestrictedAreaProxy::BilibiliApi` path already targets the server's
-  `/pgc/player/web/playurl` route after a qualifying official region error; compatibility needs
-  mock coverage and explicit configuration guidance, not an implicit public resolver.
+- BiliRoaming-style PGC playback address resolution remains a separate, opt-in upstream step. The
+  existing `RestrictedAreaProxy::BilibiliApi` path targets the server's
+  `/pgc/player/web/playurl` route after a qualifying official region error. Compatibility now has
+  mock coverage and self-hosted endpoint guidance; there is no implicit public resolver.
+
+## Current Implementation
+
+- `--cdn-host <HOST>` can be repeated to form an ordered candidate pool for each resolved media
+  URL; normal URL candidates and existing fallback policy remain available. This is also exposed
+  through `MediaHostOptions::with_cdn_hosts`.
+- `--cdn-probe` opts into bounded, validated range measurements to rank usable candidates for a
+  single resolved representation. Probe failures preserve candidates as fallback routes.
+- `--cdn-parallel 2..8` opts into bounded multi-CDN range transfer for fresh, known-size media.
+  Responses are checked for exact range metadata, size, and body length; candidate sources must
+  agree on the initial byte sample. Chunks are assembled in a temporary file, with sequential
+  download fallback on transfer failure. Partial-file resume remains sequential.
+- Mock tests cover candidate ordering/fallback, probe ranking and timeout behavior, compatible and
+  incompatible range sources, transfer fallback, file progress, and CLI sidecars. A mock PGC test
+  covers a BiliRoaming-compatible `/pgc/player/web/playurl` response; English and Chinese guides
+  document self-hosted endpoint configuration.
+- These changes cover resolved-media downloads and optional PGC address lookup. They do not provide
+  a browser/player playback router, built-in region/CDN catalog, persistent throughput history,
+  or live proof that a host-rewritten signed URL is accepted. Live overseas and restricted-area
+  end-to-end validation remains outstanding.
 
 ## Design Direction
 
@@ -60,16 +80,15 @@ superseded_by:
   temporary storage and publish the completed file after all ranges validate. Keep existing
   contiguous-prefix resume behavior until a durable per-range resume format is designed.
 
-## Candidate PR Slices
+## Current Support and Follow-ups
 
-- PR A: verify BiliRoaming-compatible PGC API-path proxy behavior with mock responses and document
-  the explicit endpoint configuration; add ordered CDN host candidates without changing defaults.
-- PR B: add opt-in bounded range probing and route measurements to rank candidates for a single
-  resolved representation, with source and redacted diagnostic reporting.
-- PR C: add opt-in multi-CDN range transfer with strict response validation, temporary assembly,
-  route health/backoff, and sequential fallback. Preserve file-level progress and resume contracts.
-- PR D: add optional live e2e fixture notes for public overseas routing; keep restricted-area
-  resolver checks separate from CDN performance validation.
+- The downloader supports the mock-covered BiliRoaming-compatible PGC API-path proxy,
+  self-hosted endpoint configuration, explicit ordered CDN candidates, opt-in bounded probing,
+  and opt-in concurrent range transfer.
+- Validate actual overseas candidate compatibility and throughput with opt-in live fixtures; keep
+  restricted-area resolver checks separate from CDN performance validation.
+- Decide whether persistent route health and a curated region/host catalog are useful. Keep
+  host-rewriting presets opt-in until live compatibility evidence supports a default.
 
 ## Open Questions
 
@@ -78,8 +97,8 @@ superseded_by:
 - Whether overseas presets should default to Hong Kong-first, Akamai-first, or user-location-first.
 - Which signed media URL families safely accept host substitution; require a live compatibility
   check before enabling any built-in preset.
-- Whether active probes should be a CLI diagnostic only or also a download warmup. Real chunk
-  measurements can rank routes without extra probe traffic.
+- Whether active probes should remain an explicit CLI/download option or whether real chunk
+  measurements should eventually maintain route rankings without extra probe traffic.
 - Whether downloader archive/cache records should include the selected media host policy as
   diagnostic metadata without changing content identity.
 

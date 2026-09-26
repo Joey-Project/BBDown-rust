@@ -255,6 +255,10 @@ struct DownloadCliArgs {
     #[arg(long, value_name = "HOST", conflicts_with = "upos_host")]
     cdn_host: Vec<String>,
     #[arg(long)]
+    cdn_probe: bool,
+    #[arg(long, value_name = "N")]
+    cdn_parallel: Option<usize>,
+    #[arg(long)]
     force_replace_host: bool,
     #[arg(long)]
     allow_pcdn: bool,
@@ -531,6 +535,8 @@ struct DownloadOptionCliArgs {
     execution: DownloadExecutionCliFlags,
     sidecars: DownloadSidecarCliFlags,
     media_hosts: DownloadMediaHostCliFlags,
+    cdn_probe: bool,
+    cdn_parallel: Option<usize>,
     danmaku_formats: Vec<DanmakuFormatArg>,
     video_quality: Option<u32>,
     audio_quality: Option<u32>,
@@ -569,6 +575,12 @@ fn download_options_from_cli(args: DownloadOptionCliArgs) -> anyhow::Result<Down
         args.retry_attempts > 0,
         "--retry-attempts must be greater than 0"
     );
+    if let Some(parallel) = args.cdn_parallel {
+        ensure!(
+            (2..=8).contains(&parallel),
+            "--cdn-parallel must be between 2 and 8"
+        );
+    }
     validate_single_download_args(SingleDownloadValidationArgs {
         only: args.only,
         no_cover: args.sidecars.no_cover,
@@ -611,6 +623,8 @@ fn download_options_from_cli(args: DownloadOptionCliArgs) -> anyhow::Result<Down
         .with_danmaku(!args.sidecars.no_danmaku)
         .with_danmaku_formats(args.danmaku_formats.into_iter().map(Into::into))
         .with_media_hosts(media_hosts)
+        .with_cdn_probe(args.cdn_probe)
+        .with_cdn_parallelism(args.cdn_parallel.unwrap_or(1))
         .with_mux(mux))
 }
 
@@ -927,6 +941,8 @@ async fn handle_download_cli(
             force_replace_host: args.force_replace_host,
             allow_pcdn: args.allow_pcdn,
         },
+        cdn_probe: args.cdn_probe,
+        cdn_parallel: args.cdn_parallel,
         danmaku_formats: args.danmaku_formats,
         video_quality: args.video_quality,
         audio_quality: args.audio_quality,

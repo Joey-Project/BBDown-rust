@@ -294,6 +294,23 @@ or host:port, and `--force-replace-host` to rewrite all DASH/FLV media candidate
 host even when they are not PCDN-like. When `--upos-host` is present, it takes precedence over the
 PCDN setting.
 
+Use repeatable `--cdn-host <HOST>` values to try an ordered host pool for each media URL before
+the configured fallback policy. `--cdn-host` cannot be combined with `--upos-host`. Add
+`--cdn-probe` to measure up to eight media candidates with validated HTTP byte ranges (up to 64 KiB
+per candidate) and try successful candidates in measured throughput order. Candidates that cannot
+be probed remain available as download fallbacks. If the media plan omits a size, probing first
+uses a bounded `bytes=0-0` request to discover the total length. For example:
+
+```sh
+bbdown download av170001 --cdn-host edge-a.example --cdn-host edge-b.example --cdn-probe --cdn-parallel 4
+```
+
+`--cdn-parallel` accepts values from 2 to 8; its default is 1 (disabled). CDN probing and parallel
+media transfer apply only to DASH/FLV media, require valid byte-range responses and a consistent
+total length, and leave cover, subtitle, and danmaku sidecars unchanged. Existing partial files use
+the regular resume path. If probing or a candidate fails, downloads retain the established
+candidate fallback order. Probe diagnostics do not record signed URL query strings.
+
 Downloads resume partial files by default with HTTP range requests and validate `Content-Range`
 plus advertised media sizes when the plan provides them. Use `--no-resume` to force a fresh write;
 failed fresh writes preserve any existing target. If a server ignores a resume range, the old

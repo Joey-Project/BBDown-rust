@@ -715,6 +715,25 @@ let options = DownloadOptions::new("downloads").with_media_hosts(
 );
 ```
 
+可以组合以下 builder 配置有序 CDN host pool、可选 Range 测速和并行媒体传输：
+
+```rust,no_run
+use bbdown_core::{DownloadOptions, MediaHostOptions};
+
+let options = DownloadOptions::new("downloads")
+    .with_media_hosts(
+        MediaHostOptions::new().with_cdn_hosts(["edge-a.example", "edge-b.example"]),
+    )
+    .with_cdn_probe(true)
+    .with_cdn_parallelism(4);
+```
+
+测速和并行传输只作用于 DASH/FLV 媒体，不会改动旁路文件 URL。并行度默认是 1（关闭），2 到 8
+会启用并行传输；API 配置非法值会在下载计划校验或执行时明确报错。测速和分片请求要求服务端
+返回有效的 HTTP Range 响应且总长度一致。计划未提供大小时，开启测速或并行传输会先用有界的
+`bytes=0-0` 请求发现大小。已有非空 partial 文件仍走常规续传路径。测速或分片失败会保留常规候选
+回退路径；诊断信息不会记录签名 URL 的 query 字符串。
+
 ## 下载归档和重复决策
 
 嵌入应用应保持重复处理显式。用 `DownloadPreflight` 检查计划，把已有归档记录或输出冲突

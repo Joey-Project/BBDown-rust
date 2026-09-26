@@ -756,6 +756,28 @@ let options = DownloadOptions::new("downloads").with_media_hosts(
 );
 ```
 
+For an ordered CDN host pool, optional Range probing, and parallel media transfer, combine the
+builders below:
+
+```rust,no_run
+use bbdown_core::{DownloadOptions, MediaHostOptions};
+
+let options = DownloadOptions::new("downloads")
+    .with_media_hosts(
+        MediaHostOptions::new().with_cdn_hosts(["edge-a.example", "edge-b.example"]),
+    )
+    .with_cdn_probe(true)
+    .with_cdn_parallelism(4);
+```
+
+CDN probing and parallel transfer affect DASH/FLV media only; sidecar URLs are unchanged. The
+parallelism default is 1 (disabled), and values 2 through 8 enable parallel transfer. Invalid API
+values are rejected when validating or executing a download. Probe and shard requests require
+valid HTTP Range responses with a consistent total length. When the plan has no size, an opt-in
+probe first uses a bounded `bytes=0-0` request to discover it. Existing non-empty partial files use
+the regular resume path. Probe or shard failures retain the regular candidate fallback path, and
+diagnostics do not record signed URL query strings.
+
 ## Download Archive And Duplicate Decisions
 
 Embedding applications should keep duplicate handling explicit. Inspect a plan with

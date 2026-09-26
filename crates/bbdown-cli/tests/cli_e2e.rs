@@ -3658,6 +3658,26 @@ fn download_cdn_host_conflicts_with_upos_host() -> anyhow::Result<()> {
 }
 
 #[test]
+fn download_cdn_parallel_rejects_values_outside_supported_range() -> anyhow::Result<()> {
+    for parallel in ["1", "9"] {
+        let temp = tempfile::tempdir()?;
+        let credential_file = temp.path().join("credentials.json");
+        let mut command = bbdown_command()?;
+        command
+            .arg("--credential-file")
+            .arg(&credential_file)
+            .arg("download")
+            .arg("av170001")
+            .arg("--cdn-parallel")
+            .arg(parallel);
+        command.assert().failure().stderr(predicates::str::contains(
+            "--cdn-parallel must be between 2 and 8",
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn download_cdn_pool_failure_falls_back_to_origin_and_keeps_sidecars() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;
@@ -3677,6 +3697,9 @@ fn download_cdn_pool_failure_falls_back_to_origin_and_keeps_sidecars() -> anyhow
         .arg(&output_dir)
         .arg("--cdn-host")
         .arg("127.0.0.1:1")
+        .arg("--cdn-probe")
+        .arg("--cdn-parallel")
+        .arg("2")
         .arg("--no-mux")
         .arg("--json");
     let output = command.assert().success().get_output().stdout.clone();
