@@ -1991,8 +1991,7 @@ impl BiliClient {
         let path = entry_dir.join(media_file_name(label, stream));
         let mut urls = candidate_urls(&stream.base_url, &stream.backup_urls, &options.media_hosts);
         let mut shard_expected_size = stream.size;
-        let target_is_fresh = existing_file_len(&path).await.is_ok_and(|size| size == 0);
-        if options.cdn_probe || (options.cdn_parallelism > 1 && target_is_fresh) {
+        if should_probe_media_candidates(&path, options).await? {
             (urls, shard_expected_size) = self
                 .probe_media_candidates(urls, shard_expected_size, options.download_idle_timeout)
                 .await;
@@ -2168,10 +2167,13 @@ impl BiliClient {
         if target_is_symlink(request.path).await? {
             return Ok(None);
         }
+        if target_is_non_regular_file(request.path).await? {
+            return Ok(None);
+        }
         if target_has_multiple_hard_links(request.path).await? {
             return Ok(None);
         }
-        if existing_file_len(request.path).await? > 0 {
+        if options.resume && existing_file_len(request.path).await? > 0 {
             return Ok(None);
         }
         cancellation.check()?;
@@ -2238,6 +2240,14 @@ impl BiliClient {
                         return Err(error);
                     }
                 }
+                match target_is_non_regular_file(request.path).await {
+                    Ok(true) => return Ok(None),
+                    Ok(false) => {}
+                    Err(error) => {
+                        emit_file_failed(progress, request, attempt, &error);
+                        return Err(error);
+                    }
+                }
                 match target_has_multiple_hard_links(request.path).await {
                     Ok(true) => {
                         return Ok(None);
@@ -2287,8 +2297,7 @@ impl BiliClient {
         let path = entry_dir.join(format!("segment-{:03}.flv", segment.order));
         let mut urls = candidate_urls(&segment.url, &segment.backup_urls, &options.media_hosts);
         let mut shard_expected_size = segment.size;
-        let target_is_fresh = existing_file_len(&path).await.is_ok_and(|size| size == 0);
-        if options.cdn_probe || (options.cdn_parallelism > 1 && target_is_fresh) {
+        if should_probe_media_candidates(&path, options).await? {
             (urls, shard_expected_size) = self
                 .probe_media_candidates(urls, shard_expected_size, options.download_idle_timeout)
                 .await;
@@ -3555,9 +3564,30 @@ async fn existing_file_len(path: &Path) -> Result<u64> {
     }
 }
 
+async fn should_probe_media_candidates(path: &Path, options: &DownloadOptions) -> Result<bool> {
+    if target_is_non_regular_file(path).await? {
+        return Ok(false);
+    }
+    let existing_len = existing_file_len(path).await?;
+    if options.resume && existing_len > 0 {
+        return Ok(false);
+    }
+    Ok(options.cdn_probe || options.cdn_parallelism > 1)
+}
+
 async fn target_is_symlink(path: &Path) -> Result<bool> {
     match fs::symlink_metadata(path).await {
         Ok(metadata) => Ok(metadata.file_type().is_symlink()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(Error::Io(error)),
+    }
+}
+
+/// Treat the existing target node's regular-file type as its access-policy signal.
+/// Missing targets are eligible; symlinks and every other special node stay on the ordinary path.
+async fn target_is_non_regular_file(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path).await {
+        Ok(metadata) => Ok(!metadata.file_type().is_file()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(Error::Io(error)),
     }
@@ -7146,6 +7176,7 @@ mod tests {
                     .with_retry_policy(RetryPolicy::single_attempt())
                     .with_download_mode(DownloadMode::VideoOnly)
                     .with_cdn_parallelism(2)
+                    .with_cdn_probe(true)
                     .with_mux(MuxOptions::Disabled),
                 &progress,
             )
@@ -7359,7 +7390,7 @@ mod tests {
         assert!(std_fs::symlink_metadata(&target)?.file_type().is_symlink());
         assert_eq!(tokio::fs::read_to_string(&referent).await?, "abcdef");
         assert_eq!(ordinary_mock.calls(), 1);
-        assert!(range_mocks.iter().all(|mock| mock.calls() == 1));
+        assert!(range_mocks.iter().all(|mock| mock.calls() == 0));
         Ok(())
     }
 
@@ -7553,6 +7584,215 @@ mod tests {
         assert_eq!(resume_mock.calls(), 1);
         assert!(probe_mocks.iter().all(|mock| mock.calls() == 0));
         assert_eq!(backup_resume_mock.calls(), 0);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn existing_socket_target_skips_sharding_and_remains_a_socket() -> anyhow::Result<()> {
+        use std::os::unix::{
+            fs::{FileTypeExt, MetadataExt},
+            net::UnixListener,
+        };
+
+        let server_a = MockServer::start();
+        let server_b = MockServer::start();
+        let mut plan = single_video_plan(format!("{}/asset.m4s", server_a.base_url()));
+        {
+            let stream = &mut plan.entries[0].streams.videos[0];
+            stream.size = Some(8);
+            stream.backup_urls = vec![format!("{}/asset.m4s", server_b.base_url())];
+        }
+        let ordinary_mocks = [&server_a, &server_b].map(|server| {
+            server.mock(|when, then| {
+                when.method(GET).path("/asset.m4s").header_missing("range");
+                then.status(200).body("abcdefgh");
+            })
+        });
+        let range_mocks = [&server_a, &server_b].map(|server| {
+            server.mock(|when, then| {
+                when.method(GET).path("/asset.m4s").header_exists("range");
+                then.status(206)
+                    .header("Content-Range", "bytes 0-7/8")
+                    .header("Content-Length", "8")
+                    .body("abcdefgh");
+            })
+        });
+        let temp = tempfile::Builder::new().prefix("s").tempdir_in("/tmp")?;
+        let output_dir = test_entry_dir(temp.path(), &plan)?;
+        tokio::fs::create_dir_all(&output_dir).await?;
+        let target = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
+        let listener = UnixListener::bind(&target)?;
+        let original_metadata = std_fs::symlink_metadata(&target)?;
+        assert!(original_metadata.file_type().is_socket());
+        let original_inode = original_metadata.ino();
+
+        let result = BiliClient::new(ClientConfig::default())
+            .download_plan(
+                &plan,
+                DownloadOptions::new(temp.path())
+                    .with_retry_policy(RetryPolicy::single_attempt())
+                    .with_download_mode(DownloadMode::VideoOnly)
+                    .with_cdn_parallelism(2)
+                    .with_mux(MuxOptions::Disabled),
+            )
+            .await;
+
+        assert!(result.is_err());
+        assert!(ordinary_mocks.iter().any(|mock| mock.calls() == 1));
+        assert!(range_mocks.iter().all(|mock| mock.calls() == 0));
+        let current_metadata = std_fs::symlink_metadata(&target)?;
+        assert!(current_metadata.file_type().is_socket());
+        assert_eq!(current_metadata.ino(), original_inode);
+        drop(listener);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    #[allow(clippy::collapsible_if)]
+    async fn socket_created_during_sharding_is_preserved_at_publication() -> anyhow::Result<()> {
+        use std::os::unix::{
+            fs::{FileTypeExt, MetadataExt},
+            net::UnixListener,
+        };
+
+        fn bind_replacement_socket(path: &Path) -> Option<(UnixListener, u64)> {
+            let listener = UnixListener::bind(path).ok()?;
+            let inode = std_fs::symlink_metadata(path).ok()?.ino();
+            Some((listener, inode))
+        }
+
+        let server_a = MockServer::start();
+        let server_b = MockServer::start();
+        let mut plan = single_video_plan(format!("{}/asset.m4s", server_a.base_url()));
+        {
+            let stream = &mut plan.entries[0].streams.videos[0];
+            stream.size = Some(8);
+            stream.backup_urls = vec![format!("{}/asset.m4s", server_b.base_url())];
+        }
+        for server in [&server_a, &server_b] {
+            server.mock(|when, then| {
+                when.method(GET).path("/asset.m4s").header_exists("range");
+                then.status(206)
+                    .header("Content-Range", "bytes 0-7/8")
+                    .header("Content-Length", "8")
+                    .body("abcdefgh");
+            });
+            server.mock(|when, then| {
+                when.method(GET).path("/asset.m4s").header_missing("range");
+                then.status(200).body("abcdefgh");
+            });
+        }
+        let temp = tempfile::Builder::new().prefix("s").tempdir_in("/tmp")?;
+        let output_dir = test_entry_dir(temp.path(), &plan)?;
+        tokio::fs::create_dir_all(&output_dir).await?;
+        let target = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
+        let socket = Arc::new(Mutex::new(None::<(UnixListener, u64)>));
+        let callback_socket = Arc::clone(&socket);
+        let callback_target = target.clone();
+        let progress = move |event: &DownloadProgressEvent| {
+            if matches!(event, DownloadProgressEvent::CdnShardCompleted { .. }) {
+                if let Ok(mut socket) = callback_socket.lock() {
+                    if socket.is_none() {
+                        *socket = bind_replacement_socket(&callback_target);
+                    }
+                }
+            }
+        };
+
+        let result = BiliClient::new(ClientConfig::default())
+            .download_plan_with_progress(
+                &plan,
+                DownloadOptions::new(temp.path())
+                    .with_retry_policy(RetryPolicy::single_attempt())
+                    .with_download_mode(DownloadMode::VideoOnly)
+                    .with_cdn_parallelism(2)
+                    .with_mux(MuxOptions::Disabled),
+                &progress,
+            )
+            .await;
+
+        assert!(result.is_err());
+        let metadata = std_fs::symlink_metadata(&target)?;
+        assert!(metadata.file_type().is_socket());
+        let socket_inode = socket
+            .lock()
+            .ok()
+            .and_then(|socket| socket.as_ref().map(|(_, inode)| *inode));
+        assert_eq!(Some(metadata.ino()), socket_inode);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    #[allow(clippy::cast_possible_truncation)]
+    async fn no_resume_shards_existing_file_after_unknown_size_probe() -> anyhow::Result<()> {
+        // Unix reports link counts, so a single-linked existing regular file can be replaced.
+        // Other platforms keep the conservative hard-link identity fallback.
+        let server_a = MockServer::start();
+        let server_b = MockServer::start();
+        let total_size = 2 * CDN_SHARD_CHUNK_SIZE;
+        let body = (0..total_size)
+            .map(|index| (index % 239) as u8)
+            .collect::<Vec<_>>();
+        let mut plan = single_video_plan(format!("{}/asset.m4s", server_a.base_url()));
+        {
+            let stream = &mut plan.entries[0].streams.videos[0];
+            stream.size = None;
+            stream.backup_urls = vec![format!("{}/asset.m4s", server_b.base_url())];
+        }
+        let mut range_mocks = Vec::new();
+        for server in [&server_a, &server_b] {
+            for (start, end) in [
+                (0_u64, 0_u64),
+                (0, 65_535),
+                (0, 16_383),
+                (0, CDN_SHARD_CHUNK_SIZE - 1),
+                (CDN_SHARD_CHUNK_SIZE, total_size - 1),
+            ] {
+                let range = format!("bytes={start}-{end}");
+                let content_range = format!("bytes {start}-{end}/{total_size}");
+                let chunk = body[start as usize..=end as usize].to_vec();
+                range_mocks.push(server.mock(|when, then| {
+                    when.method(GET).path("/asset.m4s").header("range", range);
+                    then.status(206)
+                        .header("Content-Range", content_range)
+                        .header("Content-Length", chunk.len().to_string())
+                        .body(chunk);
+                }));
+            }
+        }
+        let temp = tempfile::tempdir()?;
+        let output_dir = test_entry_dir(temp.path(), &plan)?;
+        tokio::fs::create_dir_all(&output_dir).await?;
+        let target = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
+        tokio::fs::write(&target, "stale partial contents").await?;
+
+        let report = BiliClient::new(ClientConfig::default())
+            .download_plan(
+                &plan,
+                DownloadOptions::new(temp.path())
+                    .with_retry_policy(RetryPolicy::single_attempt())
+                    .with_download_mode(DownloadMode::VideoOnly)
+                    .with_resume(false)
+                    .with_cdn_parallelism(2)
+                    .with_mux(MuxOptions::Disabled),
+            )
+            .await?;
+
+        assert_eq!(tokio::fs::read(&target).await?, body);
+        assert_eq!(report.entries[0].files[0].resumed_from, 0);
+        assert_eq!(report.entries[0].files[0].bytes_written, total_size);
+        for candidate_index in [0, 1, 2] {
+            assert_eq!(range_mocks[candidate_index].calls(), 1);
+            assert_eq!(range_mocks[candidate_index + 5].calls(), 1);
+        }
+        let chunk_calls = [3, 4, 8, 9]
+            .into_iter()
+            .map(|index| range_mocks[index].calls())
+            .sum::<usize>();
+        assert_eq!(chunk_calls, 2);
         Ok(())
     }
 

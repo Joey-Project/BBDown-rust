@@ -54,9 +54,10 @@ superseded_by:
   at most 8 simultaneous Range requests. The baseline CDN no longer transfers the whole file for
   verification. Prefix and size checks cannot prove complete content identity across hosts, so a
   differing edge can silently splice another version into the completed file;
-  partial-file resume remains sequential, and a speedup is not guaranteed. Symlink targets and
-  targets with multiple hard links use the ordinary download path to preserve destination behavior.
-  Non-Unix builds conservatively use that path for any existing regular target.
+  non-empty partial-file resume remains sequential without probe reordering, and a speedup is not
+  guaranteed. Symlink, multiply linked, and special-file targets use the ordinary download path
+  to preserve destination behavior. On Unix, `--no-resume` can shard over an existing single-link
+  regular target; non-Unix builds conservatively use the ordinary path for existing files.
 - `bbdown-core::probe_media_cdns` exposes explicit, bounded per-candidate results to embedding
   applications. The CLI bundles a snapshot of CCB's CDN host data and a historical public resolver
   list. Presets and runtime probes require an explicit user selection; no public resolver is a
@@ -69,9 +70,9 @@ superseded_by:
   byte count. No signed media URL path or query is included in the event. Recoverable sharding
   failures fall back to ordinary download without a terminal `FileFailed` event; cancellation and
   fatal target metadata errors still report failure.
-- Mock tests cover candidate ordering/fallback, probe ranking and timeout behavior, compatible and
-  incompatible range sources, transfer
-  fallback, file progress, and CLI sidecars. A mock PGC test
+- Mock tests cover candidate ordering/fallback, probe ranking and timeout behavior, partial
+  resume ordering, no-resume fresh sharding, special target preservation, compatible and
+  incompatible range sources, transfer fallback, file progress, and CLI sidecars. A mock PGC test
   covers a BiliRoaming-compatible `/pgc/player/web/playurl` response; English and Chinese guides
   document self-hosted endpoint configuration.
 - These changes cover resolved-media downloads and optional PGC address lookup. They do not provide
