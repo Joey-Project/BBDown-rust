@@ -14,11 +14,14 @@ superseded_by:
 
 ## Summary
 
-- Overseas playback/download experience is a high-priority follow-up after the current credential
-  lifecycle line.
+- Overseas playback/download experience is a high-priority follow-up after the completed `v0.6.0`
+  credential lifecycle release.
 - The downloader now has an opt-in ordered CDN host pool, bounded range probing, and multi-CDN
   range downloads. These are host-selection and download-transfer controls; there is still no
   first-class overseas playback preset or persistent route-health policy.
+- Existing `--upos-host`, `--force-replace-host`, and PCDN filtering controls remain available;
+  the new candidate pool and transfer controls extend that foundation without providing a
+  first-class overseas routing preset or embeddable host-selection policy.
 - CCB (`https://github.com/Kanda-Akihito-Kun/ccb`) is a useful research reference. Its README
   describes custom Bilibili playback-source switching for ordinary videos, live rooms, bangumi, and
   watch-later pages. It also documents strong replacement of `baseUrl` and `backupUrl`, PCDN
@@ -132,6 +135,6 @@ superseded_by:
 
 ## Next Steps
 
-- Keep the current `v0.6.0` credential lifecycle sequence as the active release line.
-- Revisit this roadmap before the next downloader/playback polish release and decide whether it
-  becomes `v0.7.0` or a dedicated overseas-experience release.
+- Decide the remaining roadmap scope and release placement; no version has been assigned.
+- Resolve the open host-catalog ownership and preset questions without assuming a bundled,
+  user-provided, or generated catalog.
