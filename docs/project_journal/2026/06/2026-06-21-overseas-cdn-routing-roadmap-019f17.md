@@ -52,7 +52,9 @@ superseded_by:
   at most 8 simultaneous Range requests. The baseline CDN no longer transfers the whole file for
   verification. Prefix and size checks cannot prove complete content identity across hosts, so a
   differing edge can silently splice another version into the completed file;
-  partial-file resume remains sequential, and a speedup is not guaranteed.
+  partial-file resume remains sequential, and a speedup is not guaranteed. Symlink targets and
+  targets with multiple hard links use the ordinary download path to preserve destination behavior.
+  Non-Unix builds conservatively use that path for any existing regular target.
 - `bbdown-core::probe_media_cdns` exposes explicit, bounded per-candidate results to embedding
   applications. The CLI bundles a snapshot of CCB's CDN host data and a historical public resolver
   list. Presets and runtime probes require an explicit user selection; no public resolver is a

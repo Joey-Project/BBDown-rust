@@ -2140,10 +2140,10 @@ impl BiliClient {
         if target_is_symlink(request.path).await? {
             return Ok(None);
         }
-        if existing_file_len(request.path)
-            .await
-            .map_or(true, |size| size > 0)
-        {
+        if target_has_multiple_hard_links(request.path).await? {
+            return Ok(None);
+        }
+        if existing_file_len(request.path).await? > 0 {
             return Ok(None);
         }
         cancellation.check()?;
@@ -2203,6 +2203,21 @@ impl BiliClient {
                     Ok(true) => {
                         let error = Error::InvalidInput(
                             "download target became a symbolic link during sharded download"
+                                .to_owned(),
+                        );
+                        emit_file_failed(progress, request, attempt, &error);
+                        return Ok(None);
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        emit_file_failed(progress, request, attempt, &error);
+                        return Err(error);
+                    }
+                }
+                match target_has_multiple_hard_links(request.path).await {
+                    Ok(true) => {
+                        let error = Error::InvalidInput(
+                            "download target gained a hard link during sharded download; discarding staged file and falling back to ordinary download"
                                 .to_owned(),
                         );
                         emit_file_failed(progress, request, attempt, &error);
@@ -3535,6 +3550,28 @@ async fn target_is_symlink(path: &Path) -> Result<bool> {
         Ok(metadata) => Ok(metadata.file_type().is_symlink()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(Error::Io(error)),
+    }
+}
+
+async fn target_has_multiple_hard_links(path: &Path) -> Result<bool> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+
+        return match fs::symlink_metadata(path).await {
+            Ok(metadata) => Ok(metadata.file_type().is_file() && metadata.nlink() > 1),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(Error::Io(error)),
+        };
+    }
+    #[cfg(not(unix))]
+    {
+        // Preserve the target object's identity when the platform cannot report its link count.
+        match fs::symlink_metadata(path).await {
+            Ok(metadata) => Ok(metadata.file_type().is_file()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(Error::Io(error)),
+        }
     }
 }
 
@@ -7283,6 +7320,71 @@ mod tests {
 
         assert!(std_fs::symlink_metadata(&target)?.file_type().is_symlink());
         assert_eq!(tokio::fs::read_to_string(&referent).await?, "abcdef");
+        assert_eq!(ordinary_mock.calls(), 1);
+        assert!(range_mocks.iter().all(|mock| mock.calls() == 1));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn multiply_linked_empty_target_uses_ordinary_download_in_place() -> anyhow::Result<()> {
+        use std::os::unix::fs::MetadataExt;
+
+        let server_a = MockServer::start();
+        let server_b = MockServer::start();
+        let range_mocks = [&server_a, &server_b].map(|server| {
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/asset.m4s")
+                    .header("range", "bytes=0-5");
+                then.status(206)
+                    .header("Content-Range", "bytes 0-5/6")
+                    .header("Content-Length", "6")
+                    .body("abcdef");
+            })
+        });
+        let ordinary_mock = server_a.mock(|when, then| {
+            when.method(GET).path("/asset.m4s").header_missing("range");
+            then.status(200)
+                .header("Content-Length", "6")
+                .body("abcdef");
+        });
+        let mut plan = single_video_plan(format!("{}/asset.m4s?token=shared", server_a.base_url()));
+        {
+            let stream = &mut plan.entries[0].streams.videos[0];
+            stream.size = Some(6);
+            stream.backup_urls = vec![format!("{}/asset.m4s?token=shared", server_b.base_url())];
+        }
+
+        let temp = tempfile::tempdir()?;
+        let output_dir = test_entry_dir(temp.path(), &plan)?;
+        tokio::fs::create_dir_all(&output_dir).await?;
+        let target = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
+        let linked_target = output_dir.join("linked-consumer.m4s");
+        tokio::fs::write(&target, "").await?;
+        std_fs::hard_link(&target, &linked_target)?;
+        let original_metadata = std_fs::metadata(&target)?;
+        assert_eq!(original_metadata.nlink(), 2);
+
+        BiliClient::new(ClientConfig::default())
+            .download_plan(
+                &plan,
+                DownloadOptions::new(temp.path())
+                    .with_retry_policy(RetryPolicy::single_attempt())
+                    .with_download_mode(DownloadMode::VideoOnly)
+                    .with_cdn_parallelism(2)
+                    .with_mux(MuxOptions::Disabled),
+            )
+            .await?;
+
+        let target_metadata = std_fs::metadata(&target)?;
+        let linked_metadata = std_fs::metadata(&linked_target)?;
+        assert_eq!(target_metadata.dev(), original_metadata.dev());
+        assert_eq!(target_metadata.ino(), original_metadata.ino());
+        assert_eq!(linked_metadata.dev(), original_metadata.dev());
+        assert_eq!(linked_metadata.ino(), original_metadata.ino());
+        assert_eq!(tokio::fs::read_to_string(&target).await?, "abcdef");
+        assert_eq!(tokio::fs::read_to_string(&linked_target).await?, "abcdef");
         assert_eq!(ordinary_mock.calls(), 1);
         assert!(range_mocks.iter().all(|mock| mock.calls() == 1));
         Ok(())

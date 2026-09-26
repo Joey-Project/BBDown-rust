@@ -328,7 +328,8 @@ bbdown download https://www.bilibili.com/video/BV1QtjA6BEB8/ --cdn-preset overse
 `--cdn-parallel` accepts values from 2 to 8; its default is 1 (disabled). CDN probing and parallel
 media transfer apply only to DASH/FLV media, require valid byte-range responses and a consistent
 total length, and leave cover, subtitle, and danmaku sidecars unchanged. Existing partial files use
-the regular resume path. Sharding uses candidates with the same signed path and query, total size,
+the regular resume path; symlink or multiply linked targets use the regular download path. Sharding
+uses candidates with the same signed path and query, total size,
 and initial byte sample, then downloads each chunk once from a selected CDN into a temporary file.
 The downloader checks each Range response and falls back to the regular candidate path on failure.
 An equal sample and size do not prove that later bytes match across CDNs; this faster mode does not

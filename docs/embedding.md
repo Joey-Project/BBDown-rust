@@ -781,7 +781,8 @@ parallelism default is 1 (disabled), and values 2 through 8 enable parallel tran
 values are rejected when validating or executing a download. Probe and shard requests require
 valid HTTP Range responses with a consistent total length. When the plan has no size, an opt-in
 probe first uses a bounded `bytes=0-0` request to discover it. Existing non-empty partial files use
-the regular resume path. Sharding groups candidates only when their sampled prefix, URL scheme,
+the regular resume path; symlink and multiply linked targets use the regular download path.
+Sharding groups candidates only when their sampled prefix, URL scheme,
 path, and query match. Each shard is fetched once from its selected CDN, with a failed range retried
 on another candidate. Parallelism 8 can use up to 8 simultaneous Range requests. This removes the
 baseline CDN's full-file verification transfer, but the prefix and size checks cannot prove that
