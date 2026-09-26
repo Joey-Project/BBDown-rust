@@ -32,6 +32,7 @@ const CDN_PROBE_MAX_BYTES: u64 = 64 * 1024;
 const CDN_PROBE_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 const CDN_PROBE_IDLE_TIMEOUT: Duration = Duration::from_secs(1);
 const CDN_SHARD_CHUNK_SIZE: u64 = 1024 * 1024;
+const CDN_PUBLIC_PROBE_MAX_BYTES: u64 = 64 * 1024;
 #[cfg(any(unix, windows))]
 const MUX_SIGNAL_CANCELLATION_GRACE: Duration = Duration::from_millis(100);
 const DEFAULT_UPOS_REPLACEMENT_HOST: &str = "upos-sz-mirrorcoso1.bilivideo.com";
@@ -442,6 +443,102 @@ impl MediaHostOptions {
         self.allow_pcdn = allow_pcdn;
         self
     }
+}
+
+/// Result for one candidate in an explicit bounded CDN probe.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CdnProbeResult {
+    /// Host label only; signed URL paths and query parameters are never included.
+    pub host: String,
+    pub ok: bool,
+    pub bytes: u64,
+    pub elapsed: Duration,
+    pub bytes_per_second: Option<f64>,
+    pub total_size: Option<u64>,
+    pub error: Option<String>,
+}
+
+/// Measures a bounded prefix range from up to eight media URL candidates.
+/// A successful prefix and matching size are useful compatibility signals, but do not prove
+/// that the complete files are identical.
+pub async fn probe_media_cdns(
+    client: &BiliClient,
+    stream: &MediaStream,
+    media_hosts: &MediaHostOptions,
+) -> Result<Vec<CdnProbeResult>> {
+    let urls = candidate_urls(&stream.base_url, &stream.backup_urls, media_hosts);
+    let headers = client.media_headers()?;
+    let mut results = Vec::with_capacity(urls.len().min(CDN_PROBE_MAX_CANDIDATES));
+    for url in urls.iter().take(CDN_PROBE_MAX_CANDIDATES) {
+        let host = url::Url::parse(url)
+            .ok()
+            .and_then(|parsed| parsed.host_str().map(str::to_owned))
+            .unwrap_or_else(|| "invalid URL".to_owned());
+        let known_size = stream.size.filter(|size| *size > 0);
+        let begin = std::time::Instant::now();
+        let probe = async {
+            let total_size = match known_size {
+                Some(size) => size,
+                None => {
+                    crate::range_transfer::fetch_range(
+                        &client.http,
+                        url,
+                        headers.clone(),
+                        0,
+                        0,
+                        None,
+                        CDN_PROBE_REQUEST_TIMEOUT,
+                        Some(CDN_PROBE_IDLE_TIMEOUT),
+                    )
+                    .await?
+                    .total_size
+                }
+            };
+            if total_size == 0 {
+                return Err(Error::InvalidInput(
+                    "range probe reported an empty file".to_owned(),
+                ));
+            }
+            let end = total_size.min(CDN_PUBLIC_PROBE_MAX_BYTES) - 1;
+            let sample = crate::range_transfer::fetch_range(
+                &client.http,
+                url,
+                headers.clone(),
+                0,
+                end,
+                Some(total_size),
+                CDN_PROBE_REQUEST_TIMEOUT,
+                Some(CDN_PROBE_IDLE_TIMEOUT),
+            )
+            .await?;
+            Ok::<_, Error>((sample.bytes.len() as u64, sample.total_size))
+        }
+        .await;
+        let elapsed = begin.elapsed();
+        match probe {
+            Ok((bytes, total_size)) => results.push(CdnProbeResult {
+                host,
+                ok: true,
+                bytes,
+                elapsed,
+                bytes_per_second: (!elapsed.is_zero()).then_some(
+                    f64::from(u32::try_from(bytes).unwrap_or(u32::MAX)) / elapsed.as_secs_f64(),
+                ),
+                total_size: Some(total_size),
+                error: None,
+            }),
+            Err(error) => results.push(CdnProbeResult {
+                host,
+                ok: false,
+                bytes: 0,
+                elapsed,
+                bytes_per_second: None,
+                total_size: known_size,
+                error: Some(error.to_string()),
+            }),
+        }
+    }
+    Ok(results)
 }
 
 #[non_exhaustive]
@@ -6828,19 +6925,20 @@ mod tests {
     #[allow(clippy::cast_possible_truncation, clippy::too_many_lines)]
     async fn sharded_media_download_uses_two_sources_and_file_level_progress() -> anyhow::Result<()>
     {
-        let server = MockServer::start();
+        let server_a = MockServer::start();
+        let server_b = MockServer::start();
         let total_size = 2 * CDN_SHARD_CHUNK_SIZE;
         let prefix = vec![b'p'; 64 * 1024];
         let mut first_chunk = vec![b'p'; 64 * 1024];
         first_chunk.resize(CDN_SHARD_CHUNK_SIZE as usize, b'a');
         let second_chunk = vec![b'b'; CDN_SHARD_CHUNK_SIZE as usize];
-        let mut plan = single_video_plan(format!("{}/a.m4s", server.base_url()));
+        let mut plan = single_video_plan(format!("{}/asset.m4s?token=shared", server_a.base_url()));
         let stream = &mut plan.entries[0].streams.videos[0];
         stream.size = Some(total_size);
-        stream.backup_urls = vec![format!("{}/b.m4s", server.base_url())];
+        stream.backup_urls = vec![format!("{}/asset.m4s?token=shared", server_b.base_url())];
 
         let mut range_mocks = Vec::new();
-        for path in ["/a.m4s", "/b.m4s"] {
+        for (server, path) in [(&server_a, "/asset.m4s"), (&server_b, "/asset.m4s")] {
             let range_responses = [
                 (
                     "bytes=0-16383",
@@ -6914,7 +7012,7 @@ mod tests {
         let b_chunk_calls = range_mocks[6].calls() + range_mocks[7].calls();
         assert!(a_chunk_calls > 0, "CDN A must serve a media chunk");
         assert!(b_chunk_calls > 0, "CDN B must serve a media chunk");
-        assert_eq!(a_chunk_calls + b_chunk_calls, 3);
+        assert_eq!(a_chunk_calls + b_chunk_calls, 2);
         let events = progress_events_snapshot(&events);
         assert_eq!(
             events
@@ -6955,20 +7053,23 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn sharded_download_preserves_existing_empty_target_permissions() -> anyhow::Result<()> {
-        let server = MockServer::start();
-        for path in ["/a.m4s", "/b.m4s"] {
+        let server_a = MockServer::start();
+        let server_b = MockServer::start();
+        for server in [&server_a, &server_b] {
             server.mock(|when, then| {
-                when.method(GET).path(path).header("range", "bytes=0-5");
+                when.method(GET)
+                    .path("/asset.m4s")
+                    .header("range", "bytes=0-5");
                 then.status(206)
                     .header("Content-Range", "bytes 0-5/6")
                     .header("Content-Length", "6")
                     .body("abcdef");
             });
         }
-        let mut plan = single_video_plan(format!("{}/a.m4s", server.base_url()));
+        let mut plan = single_video_plan(format!("{}/asset.m4s?token=shared", server_a.base_url()));
         let stream = &mut plan.entries[0].streams.videos[0];
         stream.size = Some(6);
-        stream.backup_urls = vec![format!("{}/b.m4s", server.base_url())];
+        stream.backup_urls = vec![format!("{}/asset.m4s?token=shared", server_b.base_url())];
         let temp = tempfile::tempdir()?;
         let output_dir = test_entry_dir(temp.path(), &plan)?;
         tokio::fs::create_dir_all(&output_dir).await?;
@@ -7126,19 +7227,20 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::cast_possible_truncation)]
     async fn sharded_range_failure_falls_back_without_damaging_target() -> anyhow::Result<()> {
-        let server = MockServer::start();
+        let server_a = MockServer::start();
+        let server_b = MockServer::start();
         let total_size = 2 * CDN_SHARD_CHUNK_SIZE;
-        let mut plan = single_video_plan(format!("{}/a.m4s", server.base_url()));
+        let mut plan = single_video_plan(format!("{}/asset.m4s?token=shared", server_a.base_url()));
         {
             let stream = &mut plan.entries[0].streams.videos[0];
             stream.size = Some(total_size);
-            stream.backup_urls = vec![format!("{}/b.m4s", server.base_url())];
+            stream.backup_urls = vec![format!("{}/asset.m4s?token=shared", server_b.base_url())];
         }
         let target_name = media_file_name("video", &plan.entries[0].streams.videos[0]);
         let mut prefix_mocks = Vec::new();
         let fallback_body = vec![b'z'; total_size as usize];
         let mut bad_chunk_mocks = Vec::new();
-        for path in ["/a.m4s", "/b.m4s"] {
+        for (server, path) in [(&server_a, "/asset.m4s"), (&server_b, "/asset.m4s")] {
             for (range, range_end, length) in [
                 ("bytes=0-65535", "65535", 64 * 1024),
                 ("bytes=0-16383", "16383", 16 * 1024),
@@ -7263,7 +7365,8 @@ mod tests {
 
     #[tokio::test]
     #[allow(clippy::cast_possible_truncation)]
-    async fn sharded_later_chunk_mismatch_falls_back_and_cleans_staging() -> anyhow::Result<()> {
+    async fn sharded_different_paths_fall_back_and_clean_staging() -> anyhow::Result<()> {
+        // Equal prefixes cannot make separately signed media paths safe to combine.
         let server = MockServer::start();
         let total_size = 2 * CDN_SHARD_CHUNK_SIZE;
         let mut canonical_first = vec![b'p'; 64 * 1024];

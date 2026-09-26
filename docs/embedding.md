@@ -775,13 +775,17 @@ parallelism default is 1 (disabled), and values 2 through 8 enable parallel tran
 values are rejected when validating or executing a download. Probe and shard requests require
 valid HTTP Range responses with a consistent total length. When the plan has no size, an opt-in
 probe first uses a bounded `bytes=0-0` request to discover it. Existing non-empty partial files use
-the regular resume path. During sharding, every chunk served by a secondary CDN is fetched
-concurrently from the baseline CDN and compared byte-for-byte before the staged file can be
-published. Each shard lane can issue two simultaneous Range requests for verification, so
-parallelism 8 can use up to 16 concurrent Range requests. This duplicates transfer bytes and adds
-network load; a mismatch discards staging and uses the regular candidate fallback path. Speedups are
-not guaranteed, and host rewriting is not proof that a signed URL is valid on another CDN.
-Diagnostics do not record signed URL query strings.
+the regular resume path. Sharding groups candidates only when their sampled prefix, URL scheme,
+path, and query match. Each shard is fetched once from its selected CDN, with a failed range retried
+on another candidate. Parallelism 8 can use up to 8 simultaneous Range requests. This removes the
+baseline CDN's full-file verification transfer, but the prefix and size checks cannot prove that
+later bytes are identical across hosts. Speedups are not guaranteed, and host rewriting is not proof
+that a signed URL is valid on another CDN. Diagnostics do not record signed URL query strings.
+
+Embedders can call `probe_media_cdns(client, stream, media_hosts)` to inspect the current signed
+representation before downloading. It reads at most 64 KiB from each of up to 8 candidates and
+returns host-only labels, success, elapsed time, throughput, and total size in `CdnProbeResult`.
+Only call it in response to an explicit user action: every probe makes live requests to CDN hosts.
 
 ## Download Archive And Duplicate Decisions
 

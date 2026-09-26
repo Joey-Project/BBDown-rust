@@ -20,12 +20,13 @@ use bbdown_core::{
     MediaHostOptions, MediaStream, MuxOptions, PlaybackPlan, PlayurlMode, QrLoginCredentials,
     QrLoginCredentialsState, QrLoginKind, QrLoginTicket, QrLoginTicketOutput, ResolvedContent,
     RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind,
-    RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet, SubtitleAiPolicy,
-    TvAccessKeyLoginCredentials, TvAccessKeyRefreshRequest, WebCookieRefreshCredentials,
-    WebCookieRefreshRequest, archive_entry_allows_danmaku_update,
+    RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet, StreamSource,
+    SubtitleAiPolicy, TvAccessKeyLoginCredentials, TvAccessKeyRefreshRequest,
+    WebCookieRefreshCredentials, WebCookieRefreshRequest, archive_entry_allows_danmaku_update,
     credential_preflight_requirements_for_media_paths,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use serde::Deserialize;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{self, IsTerminal, Read};
@@ -128,6 +129,8 @@ struct Cli {
         value_name = "[AREA=]URL"
     )]
     restricted_api_proxy: Vec<String>,
+    #[arg(long, global = true, value_name = "NAME")]
+    resolver: Option<String>,
     #[arg(long, env = "BBDOWN_CREDENTIAL_FILE")]
     credential_file: Option<PathBuf>,
     #[arg(long, env = "BBDOWN_CREDENTIAL_PROFILE", value_name = "NAME")]
@@ -160,6 +163,14 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    Cdn {
+        #[command(subcommand)]
+        command: CdnCatalogCommand,
+    },
+    Resolver {
+        #[command(subcommand)]
+        command: ResolverCatalogCommand,
+    },
     Info {
         url: String,
         #[arg(long)]
@@ -190,6 +201,40 @@ enum Command {
         #[command(subcommand)]
         command: AuthCommand,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum CdnCatalogCommand {
+    List {
+        #[arg(long, value_name = "REGION")]
+        region: Option<String>,
+    },
+    Probe {
+        url: String,
+        #[arg(long)]
+        preset: String,
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+        #[arg(long)]
+        select: Option<Selection>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ResolverCatalogCommand {
+    List,
+    Probe {
+        url: String,
+        #[arg(long)]
+        server: String,
+    },
+}
+
+#[derive(Deserialize)]
+struct ResolverCatalogEntry {
+    name: String,
+    host: String,
+    regions: Vec<String>,
 }
 
 #[derive(Debug, Args)]
@@ -254,6 +299,8 @@ struct DownloadCliArgs {
     upos_host: Option<String>,
     #[arg(long, value_name = "HOST", conflicts_with = "upos_host")]
     cdn_host: Vec<String>,
+    #[arg(long, value_name = "REGION", conflicts_with_all = ["cdn_host", "upos_host"])]
+    cdn_preset: Option<String>,
     #[arg(long)]
     cdn_probe: bool,
     #[arg(long, value_name = "N")]
@@ -362,6 +409,141 @@ impl From<DuplicateDecisionArg> for DuplicateDecision {
             DuplicateDecisionArg::KeepBoth => Self::KeepBoth,
             DuplicateDecisionArg::Cancel => Self::Cancel,
         }
+    }
+}
+
+#[cfg(test)]
+mod catalog_tests {
+    use super::*;
+
+    #[test]
+    fn bundled_catalogs_load_and_named_selections_resolve() -> anyhow::Result<()> {
+        let regions = cdn_catalog()?;
+        assert!(regions.len() > 20);
+        for hosts in regions.values() {
+            for host in hosts {
+                validate_media_host_spec(host)
+                    .with_context(|| format!("catalog host is not a valid media host: {host}"))?;
+            }
+        }
+        assert!(
+            cdn_hosts_for_region("overseas")?
+                .contains(&"upos-hz-mirrorakam.akamaized.net".to_owned())
+        );
+        let resolvers = resolver_catalog()?;
+        assert!(resolvers.len() >= 40);
+        assert!(
+            resolvers
+                .iter()
+                .any(|entry| entry.name == "atri" && entry.host == "atri.ink")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn catalog_probe_commands_parse_explicit_targets() -> anyhow::Result<()> {
+        let cdn = Cli::try_parse_from([
+            "bbdown",
+            "cdn",
+            "probe",
+            "https://www.bilibili.com/video/BV1xx411c7mD",
+            "--preset",
+            "海外",
+            "--offset",
+            "8",
+        ])?;
+        assert!(matches!(
+            cdn.command,
+            Command::Cdn {
+                command: CdnCatalogCommand::Probe { offset: 8, .. }
+            }
+        ));
+        let resolver = Cli::try_parse_from([
+            "bbdown",
+            "resolver",
+            "probe",
+            "https://www.bilibili.com/bangumi/play/ep1",
+            "--server",
+            "atri",
+        ])?;
+        assert!(
+            matches!(resolver.command, Command::Resolver { command: ResolverCatalogCommand::Probe { server, .. } } if server == "atri")
+        );
+        let download =
+            Cli::try_parse_from(["bbdown", "download", "av170001", "--cdn-preset", "海外"])?;
+        assert!(
+            matches!(download.command, Command::Download(args) if args.cdn_preset.as_deref() == Some("海外"))
+        );
+        assert!(
+            Cli::try_parse_from([
+                "bbdown",
+                "download",
+                "av170001",
+                "--cdn-preset",
+                "海外",
+                "--upos-host",
+                "upos.example",
+            ])
+            .is_err()
+        );
+        let selected = Cli::try_parse_from(["bbdown", "--resolver", "atri", "cdn", "list"])?;
+        assert_eq!(selected.resolver.as_deref(), Some("atri"));
+        let list = Cli::try_parse_from(["bbdown", "cdn", "list", "--region", "overseas"])?;
+        assert!(
+            matches!(list.command, Command::Cdn { command: CdnCatalogCommand::List { region: Some(region) } } if region == "overseas")
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn catalog_probe_uses_bounded_local_range_requests() -> anyhow::Result<()> {
+        let server = httpmock::MockServer::start();
+        let discovery = server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/media")
+                .header("range", "bytes=0-0");
+            then.status(206)
+                .header("Content-Range", "bytes 0-0/10")
+                .body("x");
+        });
+        let sample = server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/media")
+                .header("range", "bytes=0-9");
+            then.status(206)
+                .header("Content-Range", "bytes 0-9/10")
+                .body("0123456789");
+        });
+        let local_host = format!("127.0.0.1:{}", server.port());
+        let stream: MediaStream = serde_json::from_value(serde_json::json!({
+            "id": 80,
+            "base_url": format!("http://{local_host}/media"),
+            "backup_urls": [],
+            "language": null,
+            "language_doc": null,
+            "codecs": null,
+            "codec_family": null,
+            "bandwidth": null,
+            "width": null,
+            "height": null,
+            "frame_rate": null,
+            "mime_type": null,
+            "size": null
+        }))?;
+        let client = BiliClient::new(ClientConfig::new(
+            EndpointConfig::default(),
+            Credentials::default(),
+        ));
+        let result = probe_media_stream(&client, &stream, vec![local_host.clone()]).await?;
+        assert_eq!(result.len(), 1);
+        assert!(result[0].ok);
+        assert_eq!(result[0].bytes, 10);
+        assert_eq!(result[0].total_size, Some(10));
+        assert_eq!(result[0].host, "127.0.0.1");
+        assert!(result[0].error.is_none());
+        discovery.assert();
+        sample.assert();
+        Ok(())
     }
 }
 
@@ -842,7 +1024,18 @@ async fn run() -> anyhow::Result<()> {
         "--request-timeout-seconds must be greater than 0"
     );
     let endpoints = endpoints_from_cli(&cli);
-    let restricted_area = restricted_area_from_cli_with_args(&cli, raw_args)?;
+    let mut restricted_area = restricted_area_from_cli_with_args(&cli, raw_args)?;
+    if let Some(name) = cli.resolver.as_deref() {
+        let resolver = resolver_catalog()?
+            .into_iter()
+            .find(|entry| entry.name == name)
+            .with_context(|| format!("unknown resolver `{name}`; use `bbdown resolver list`"))?;
+        let area_hint = restricted_area.area_hint;
+        restricted_area = restricted_area.with_proxy(RestrictedAreaProxy::bilibili_api(
+            format!("https://{}", resolver.host),
+            area_hint,
+        ));
+    }
     let playurl_mode = cli.playurl_mode.into();
     let request_timeout = Duration::from_secs(cli.request_timeout_seconds);
     let client_runtime =
@@ -857,6 +1050,24 @@ async fn run() -> anyhow::Result<()> {
         credential_profile_selection(cli.credential_profile)?,
     );
     match cli.command {
+        Command::Cdn { command } => {
+            handle_cdn_catalog(
+                command,
+                &credential_runtime,
+                &client_runtime,
+                &credential_preflight,
+            )
+            .await?;
+        }
+        Command::Resolver { command } => {
+            handle_resolver_catalog(
+                command,
+                &credential_runtime,
+                &client_runtime,
+                &credential_preflight,
+            )
+            .await?;
+        }
         Command::Info { url, select, json } => {
             handle_info(&credential_runtime, &client_runtime, url, select, json).await?;
         }
@@ -919,6 +1130,10 @@ async fn handle_download_cli(
         args.archive_file.is_some() || args.on_duplicate.is_none(),
         "--on-duplicate requires --archive-file"
     );
+    let mut selected_cdn_hosts = args.cdn_host.clone();
+    if let Some(region) = args.cdn_preset.as_deref() {
+        selected_cdn_hosts.extend(cdn_hosts_for_region(region)?);
+    }
     let options = download_options_from_cli(DownloadOptionCliArgs {
         output_dir: args.output_dir,
         retry_attempts: args.retry_attempts,
@@ -937,7 +1152,7 @@ async fn handle_download_cli(
         },
         media_hosts: DownloadMediaHostCliFlags {
             upos_host: args.upos_host,
-            cdn_hosts: args.cdn_host,
+            cdn_hosts: selected_cdn_hosts,
             force_replace_host: args.force_replace_host,
             allow_pcdn: args.allow_pcdn,
         },
@@ -970,6 +1185,201 @@ async fn handle_download_cli(
         command_args,
     )
     .await
+}
+
+fn resolver_catalog() -> anyhow::Result<Vec<ResolverCatalogEntry>> {
+    Ok(serde_json::from_str(include_str!("resolver_catalog.json"))?)
+}
+
+fn cdn_catalog() -> anyhow::Result<std::collections::BTreeMap<String, Vec<String>>> {
+    Ok(serde_json::from_str(include_str!("cdn_catalog.json"))?)
+}
+
+fn cdn_hosts_for_region(region: &str) -> anyhow::Result<Vec<String>> {
+    let catalog = cdn_catalog()?;
+    let region = if region.eq_ignore_ascii_case("overseas") {
+        "海外"
+    } else {
+        region
+    };
+    catalog.get(region).cloned().with_context(|| {
+        format!("unknown CDN region `{region}`; use `bbdown cdn list` to see presets")
+    })
+}
+
+async fn handle_cdn_catalog(
+    command: CdnCatalogCommand,
+    credentials: &CredentialRuntime,
+    client_runtime: &ClientRuntimeConfig,
+    credential_preflight: &CredentialPreflightRuntimeConfig,
+) -> anyhow::Result<()> {
+    match command {
+        CdnCatalogCommand::List { region: selected } => {
+            let selected_region = selected.as_deref().map(|value| {
+                if value.eq_ignore_ascii_case("overseas") {
+                    "海外"
+                } else {
+                    value
+                }
+            });
+            if let Some(region) = selected_region {
+                let _ = cdn_hosts_for_region(region)?;
+            }
+            for (region, hosts) in cdn_catalog()? {
+                if selected_region.is_some_and(|selected| selected != region) {
+                    continue;
+                }
+                println!("{region}: {} host(s)", hosts.len());
+                if selected_region.is_some() {
+                    for host in hosts {
+                        println!("  {host}");
+                    }
+                }
+            }
+        }
+        CdnCatalogCommand::Probe {
+            url,
+            preset,
+            offset,
+            select,
+        } => {
+            let hosts = cdn_hosts_for_region(&preset)?;
+            ensure!(
+                offset < hosts.len(),
+                "--offset must be less than the preset host count ({})",
+                hosts.len()
+            );
+            let candidates = hosts.into_iter().skip(offset).take(8).collect::<Vec<_>>();
+            let candidate_count = candidates.len();
+            let prepared = prepare_credentials_for_media_request(
+                credentials,
+                client_runtime,
+                credential_preflight,
+                MediaCredentialPreflightRequest {
+                    raw_input: &url,
+                    selection: select.as_ref(),
+                    requires_media_streams: true,
+                    intl_access_key_may_run: true,
+                    renewal_timing: CredentialPreflightRenewalTiming::Immediate,
+                    emit_diagnostics: true,
+                },
+            )
+            .await?;
+            let client = BiliClient::new(prepared.client_config(client_runtime));
+            let plan = match prepared.parsed_input {
+                Some(input) => client.plan(input, select).await?,
+                None => client.plan_download(&url, select).await?,
+            };
+            let stream = plan
+                .entries
+                .first()
+                .and_then(|entry| entry.streams.videos.first())
+                .context("planned media has no video stream to probe")?;
+            let results = probe_media_stream(&client, stream, candidates).await?;
+            println!("preset={preset} probed={}", results.len());
+            if offset + candidate_count < cdn_hosts_for_region(&preset)?.len() {
+                println!("next_offset={}", offset + candidate_count);
+            }
+            for result in results {
+                println!(
+                    "{} ok={} bytes={} total_size={} elapsed_ms={} bytes_per_second={}{}",
+                    result.host,
+                    result.ok,
+                    result.bytes,
+                    result
+                        .total_size
+                        .map_or_else(|| "unknown".to_owned(), |size| size.to_string()),
+                    result.elapsed.as_millis(),
+                    result
+                        .bytes_per_second
+                        .map_or_else(|| "n/a".to_owned(), |v| format!("{v:.0}")),
+                    if result.ok {
+                        String::new()
+                    } else {
+                        " failure=range-probe-failed".to_owned()
+                    }
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn probe_media_stream(
+    client: &BiliClient,
+    stream: &MediaStream,
+    candidate_hosts: Vec<String>,
+) -> anyhow::Result<Vec<bbdown_core::CdnProbeResult>> {
+    let options = MediaHostOptions::bbdown_cli_default().with_cdn_hosts(candidate_hosts);
+    Ok(bbdown_core::probe_media_cdns(client, stream, &options).await?)
+}
+
+async fn handle_resolver_catalog(
+    command: ResolverCatalogCommand,
+    credentials: &CredentialRuntime,
+    client_runtime: &ClientRuntimeConfig,
+    credential_preflight: &CredentialPreflightRuntimeConfig,
+) -> anyhow::Result<()> {
+    match command {
+        ResolverCatalogCommand::List => {
+            for entry in resolver_catalog()? {
+                println!(
+                    "{}\t{}\t{}",
+                    entry.name,
+                    entry.host,
+                    entry.regions.join(",")
+                );
+            }
+        }
+        ResolverCatalogCommand::Probe { url, server } => {
+            let resolver = resolver_catalog()?
+                .into_iter()
+                .find(|entry| entry.name == server)
+                .with_context(|| {
+                    format!("unknown resolver `{server}`; use `bbdown resolver list`")
+                })?;
+            let mut runtime = client_runtime.clone();
+            let area_hint = runtime.restricted_area.area_hint;
+            runtime.restricted_area =
+                runtime
+                    .restricted_area
+                    .with_proxy(RestrictedAreaProxy::bilibili_api(
+                        format!("https://{}", resolver.host),
+                        area_hint,
+                    ));
+            let prepared = prepare_credentials_for_media_request(
+                credentials,
+                &runtime,
+                credential_preflight,
+                MediaCredentialPreflightRequest {
+                    raw_input: &url,
+                    selection: None,
+                    requires_media_streams: true,
+                    intl_access_key_may_run: true,
+                    renewal_timing: CredentialPreflightRenewalTiming::Immediate,
+                    emit_diagnostics: true,
+                },
+            )
+            .await?;
+            let client = BiliClient::new(prepared.client_config(&runtime));
+            let plan = match prepared.parsed_input {
+                Some(input) => client.plan(input, None).await?,
+                None => client.plan_download(&url, None).await?,
+            };
+            let exercised = plan
+                .entries
+                .iter()
+                .any(|entry| entry.source == StreamSource::PgcProxy);
+            println!(
+                "server={} host={} proxy_exercised={} entries={}",
+                server,
+                resolver.host,
+                exercised,
+                plan.entries.len()
+            );
+        }
+    }
+    Ok(())
 }
 
 struct DownloadCommandArgs {

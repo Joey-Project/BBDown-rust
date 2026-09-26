@@ -274,13 +274,26 @@ HTTP 字节范围请求测速，最多探测 8 个媒体候选，每个最多读
 bbdown download av170001 --cdn-host edge-a.example --cdn-host edge-b.example --cdn-probe --cdn-parallel 4
 ```
 
+`bbdown cdn list` 可查看随程序附带的 CCB 地区和 host 数量，添加 `--region overseas` 可列出
+该地区的具体 host。使用 `--cdn-preset <REGION>`
+明确选择一个地区；`overseas` 是目录中 `海外` 的别名。预置项只是候选列表，不代表每个 host
+都能接受某条签名媒体 URL。若想在完整下载前查看当前 Range 可用性和样本吞吐量，可用公开视频运行
+`bbdown cdn probe <VIDEO> --preset overseas`。每次最多探测 8 个 host；用 `--offset <N>`
+查看后续条目。输出不会打印签名媒体 URL 的 query。例如：
+
+```sh
+bbdown cdn list --region overseas
+bbdown cdn probe https://www.bilibili.com/video/BV1QtjA6BEB8/ --preset overseas
+bbdown download https://www.bilibili.com/video/BV1QtjA6BEB8/ --cdn-preset overseas --cdn-probe --cdn-parallel 4
+```
+
 `--cdn-parallel` 接受 2 到 8，默认值为 1（关闭并行传输）。测速和并行媒体传输只作用于
 DASH/FLV 媒体，要求服务器返回有效字节范围和一致的总长度；不会改动封面、字幕和弹幕旁路文件。
-已有部分文件仍走常规续传路径。分片期间，每个由次级 CDN 提供的分片都会并发从基准 CDN 获取对应
-Range，并在发布临时文件前逐字节比较。每个分片 lane 最多同时发出 2 个 Range 请求，因此并行度为 8
-时最多会有 16 个并发 Range 请求。这会增加重复传输量和网络负载；内容不一致时会丢弃临时文件并按
-既有候选顺序回退到常规下载。测速和并行传输不保证一定提速；改写 host 也不能证明另一 CDN 能接受
-签名 URL。测速诊断不会记录签名 URL 的 query 字符串。
+已有部分文件仍走常规续传路径。分片只混用签名 URL 的路径与 query 相同、总大小及起始样本一致的
+候选；每个分片只从选中的一个 CDN 下载，并先写入临时文件。下载器会校验每个 Range 响应，失败时
+回退到常规候选下载。起始样本与大小一致不能证明后续字节完全相同；这一加速模式不做完整内容逐字节
+对照。测速和并行传输不保证一定提速；改写 host 也不能证明另一 CDN 能接受签名 URL。测速诊断不会
+记录签名 URL 的 query 字符串。
 
 下载默认通过 HTTP range 请求续传部分文件，并在计划提供信息时校验 `Content-Range` 和声
 明媒体大小。使用 `--no-resume` 可强制重新写入；失败的新写入会保留已有目标。如果服务器
@@ -548,7 +561,12 @@ CLI 覆盖环境变量。未知 manifest 字段会被拒绝，因此拼错的 ex
 
 ## 受限区域代理
 
-工具不包含公共代理默认值。只配置你自己运营或信任的代理主机。PGC playurl 回退只会在官
+工具附带一份可选的历史公共解析服务器目录，但默认不会联系其中任何服务器。使用
+`bbdown resolver list` 查看目录，使用 `--resolver <NAME>` 显式选择服务器；
+`bbdown resolver probe <EPISODE> --server <NAME>` 会在运行时测试单个服务器，并报告是否实际
+走过 PGC 代理路径。目录中的服务器可能已不可用，也可能不兼容 API-path 路由。选择第三方服务器
+后，该服务器可能收到剧集 ID、区域以及已导入的通用 access key。仍可使用已有标志配置自建代理。
+PGC playurl 回退只会在官
 方 PGC playurl 响应报告区域限制，或 APP gRPC mode 报告 permission-denied status /
 preview-only PGC response-body 信号后尝试。其他官方失败（例如 VIP/paywall 错误、解析失
 败或网络错误）会保留原错误，而不是尝试代理主机。
@@ -558,6 +576,9 @@ bbdown --restricted-area hk --restricted-area-proxy hk=https://proxy.example/pla
 bbdown --restricted-api-proxy tw=https://proxy.example/bili/api plan ss26801 --select latest --json
 # 自行部署且兼容 BiliRoaming 的 API-path 服务
 bbdown --restricted-api-proxy hk=https://your-server.example/bili/api plan ep267851 --json
+bbdown resolver list
+bbdown --restricted-area hk resolver probe ep664928 --server atri
+bbdown --restricted-area hk --resolver atri plan ep664928 --json
 ```
 
 代理 spec 使用 `area=url` 或裸 URL。支持区域为 `cn`、`th`、`hk` 和 `tw`。裸 URL 是通用候
@@ -576,8 +597,8 @@ query 会在追加 PGC playurl 参数之前保留。代理响应可以包在 `da
 （例如 `result: "suee"`）会被容忍。两个标志都可以重复传入。
 `BBDOWN_RESTRICTED_AREA_PROXY` 和 `BBDOWN_RESTRICTED_API_PROXY` 也接受逗号分隔列表。
 自建 BiliRoaming-compatible 服务可把其 API 根路径配置为 `--restricted-api-proxy`；BBDown
-会请求 `/pgc/player/web/playurl`，并提供 `area`、`ep_id` 和可选的通用 `access_key`。不内置或
-默认信任公共解析服务；区域/账号资格和授权取决于上游及服务端，BBDown 不保证解析可用。
+会请求 `/pgc/player/web/playurl`，并提供 `area`、`ep_id` 和可选的通用 `access_key`。附带的
+公共服务器名称不会被隐式选用；区域/账号资格和授权取决于上游及服务端，BBDown 不保证解析可用。
 服务返回的签名媒体 URL 会原样交给下游下载器或播放器。
 
 如果通过 `auth import-access-key` 导入了通用 access key，代理 playurl 请求会以

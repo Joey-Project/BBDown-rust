@@ -43,12 +43,13 @@ pub use credentials::{
 };
 pub use danmaku::{DanmakuFormat, DanmakuFormats, DanmakuXmlMerge, merge_xml_append_only};
 pub use download::{
-    DanmakuUpdateOptions, DanmakuUpdateReport, DownloadArchive, DownloadArchiveEntryRecord,
-    DownloadArchiveRecord, DownloadFileKind, DownloadMode, DownloadOptions, DownloadOutputConflict,
-    DownloadPathTemplates, DownloadPreflight, DownloadReport, DownloadReportSummary,
-    DownloadedFile, DuplicateDecision, EntryDanmakuUpdateReport, EntryDownloadReport,
-    EntryDownloadSummary, MediaHostOptions, MuxOptions, MuxReport, RetryPolicy, SidecarOptions,
-    StreamSelection, SubtitleAiPolicy, archive_entry_allows_danmaku_update,
+    CdnProbeResult, DanmakuUpdateOptions, DanmakuUpdateReport, DownloadArchive,
+    DownloadArchiveEntryRecord, DownloadArchiveRecord, DownloadFileKind, DownloadMode,
+    DownloadOptions, DownloadOutputConflict, DownloadPathTemplates, DownloadPreflight,
+    DownloadReport, DownloadReportSummary, DownloadedFile, DuplicateDecision,
+    EntryDanmakuUpdateReport, EntryDownloadReport, EntryDownloadSummary, MediaHostOptions,
+    MuxOptions, MuxReport, RetryPolicy, SidecarOptions, StreamSelection, SubtitleAiPolicy,
+    archive_entry_allows_danmaku_update, probe_media_cdns,
 };
 pub use error::{Error, Result};
 pub use input::Input;

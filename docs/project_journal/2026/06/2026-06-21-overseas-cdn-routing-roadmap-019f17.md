@@ -17,11 +17,11 @@ superseded_by:
 - Overseas playback/download experience is a high-priority follow-up after the completed `v0.6.0`
   credential lifecycle release.
 - The downloader now has an opt-in ordered CDN host pool, bounded range probing, and multi-CDN
-  range downloads. These are host-selection and download-transfer controls; there is still no
-  first-class overseas playback preset or persistent route-health policy.
+  range downloads. The CLI bundles opt-in CDN and public resolver catalogs with explicit runtime
+  probe commands. There is still no automatic overseas playback router or persistent route-health
+  policy.
 - Existing `--upos-host`, `--force-replace-host`, and PCDN filtering controls remain available;
-  the new candidate pool and transfer controls extend that foundation without providing a
-  first-class overseas routing preset or embeddable host-selection policy.
+  the new candidate pool and transfer controls extend that foundation.
 - CCB (`https://github.com/Kanda-Akihito-Kun/ccb`) is a useful research reference. Its README
   describes custom Bilibili playback-source switching for ordinary videos, live rooms, bangumi, and
   watch-later pages. It also documents strong replacement of `baseUrl` and `backupUrl`, PCDN
@@ -47,21 +47,39 @@ superseded_by:
   single resolved representation. Probe failures preserve candidates as fallback routes.
 - `--cdn-parallel 2..8` opts into bounded multi-CDN range transfer for fresh, known-size media.
   Responses are checked for exact range metadata, size, and body length. Candidate sources are
-  initially grouped by a shared byte sample; every chunk returned by a secondary source is fetched
-  again from the baseline source concurrently and compared byte-for-byte. Each lane can issue two
-  simultaneous range requests for verification, up to 16 at parallelism 8. This adds duplicate
-  transfer bytes and network load. A mismatch discards the temporary file and
-  falls back to the regular candidate download. Partial-file resume remains sequential, and a
-  speedup is not guaranteed.
+  grouped by a shared prefix sample and identical URL scheme/path/query. Each chunk is fetched
+  once from its selected CDN; a failed range is retried on another candidate. Parallelism 8 means
+  at most 8 simultaneous Range requests. The baseline CDN no longer transfers the whole file for
+  verification. Prefix and size checks cannot prove complete content identity across hosts;
+  partial-file resume remains sequential, and a speedup is not guaranteed.
+- `bbdown-core::probe_media_cdns` exposes explicit, bounded per-candidate results to embedding
+  applications. The CLI bundles a snapshot of CCB's CDN host data and a historical public resolver
+  list. Presets and runtime probes require an explicit user selection; no public resolver is a
+  default. Catalog host availability must be checked at runtime.
 - Mock tests cover candidate ordering/fallback, probe ranking and timeout behavior, compatible and
-  incompatible range sources including a later-chunk mismatch with staging cleanup, transfer
+  incompatible range sources, transfer
   fallback, file progress, and CLI sidecars. A mock PGC test
   covers a BiliRoaming-compatible `/pgc/player/web/playurl` response; English and Chinese guides
   document self-hosted endpoint configuration.
 - These changes cover resolved-media downloads and optional PGC address lookup. They do not provide
-  a browser/player playback router, built-in region/CDN catalog, persistent throughput history,
-  or live proof that a host-rewritten signed URL is accepted. Live overseas and restricted-area
-  end-to-end validation remains outstanding.
+  a browser/player playback router or persistent throughput history. Live compatibility results
+  should be recorded separately from mock coverage.
+
+## Live Validation (2026-09-26)
+
+- With public fixture `BV15hdwBKEMG`, `cdn probe --preset overseas` sampled 64 KiB per host twice.
+  Two overseas hosts succeeded twice; one succeeded only on retry, and one failed twice. Observed
+  sample throughput varied substantially between attempts, so these results are a runtime snapshot.
+- An opt-in `--cdn-preset overseas --cdn-parallel 4` video-only transfer completed a 187,672,972
+  byte media stream. Progress advanced in 1 MiB shards, confirming that the sharded transfer path
+  completed. The CLI does not yet expose per-host transferred bytes, so this run does not prove
+  actual host-level byte distribution or a speedup over a single CDN.
+- The restricted-area `ep664928` probe against the explicitly selected `atri` public resolver
+  returned one entry with `proxy_exercised=true`. This confirms that the PGC proxy path was used for
+  that request, not that every listed resolver is available.
+- The older manifest-driven `just live-e2e` suite stopped before any fixture request because its
+  ignored local manifest references an absent default credential file. The direct CDN and resolver
+  runs above are the live evidence for this PR; the legacy suite has no pass result for this run.
 
 ## Design Direction
 
@@ -92,16 +110,15 @@ superseded_by:
 
 - The downloader supports the mock-covered BiliRoaming-compatible PGC API-path proxy,
   self-hosted endpoint configuration, explicit ordered CDN candidates, opt-in bounded probing,
-  and opt-in concurrent range transfer.
+  opt-in concurrent range transfer, and opt-in catalogs for CDN hosts and public resolvers.
 - Validate actual overseas candidate compatibility and throughput with opt-in live fixtures; keep
   restricted-area resolver checks separate from CDN performance validation.
-- Decide whether persistent route health and a curated region/host catalog are useful. Keep
-  host-rewriting presets opt-in until live compatibility evidence supports a default.
+- Decide whether persistent route health is useful. Keep host-rewriting presets opt-in until live
+  compatibility evidence supports a default.
 
 ## Open Questions
 
-- Whether to vendor a curated host catalog, let users provide catalogs, or periodically refresh a
-  generated catalog in the release process.
+- How to maintain, verify, and periodically refresh the bundled host and public resolver snapshots.
 - Whether overseas presets should default to Hong Kong-first, Akamai-first, or user-location-first.
 - Which signed media URL families safely accept host substitution; require a live compatibility
   check before enabling any built-in preset.
@@ -136,5 +153,8 @@ superseded_by:
 ## Next Steps
 
 - Decide the remaining roadmap scope and release placement; no version has been assigned.
-- Resolve the open host-catalog ownership and preset questions without assuming a bundled,
-  user-provided, or generated catalog.
+- Review live CDN and resolver probe results, then decide whether catalog maintenance or persistent
+  route-health policy warrants another workstream.
+- Add redacted per-host transfer counters if we need to quantify real multi-CDN byte distribution,
+  and compare elapsed time against a single-CDN run on the same representation before claiming a
+  live speedup.
