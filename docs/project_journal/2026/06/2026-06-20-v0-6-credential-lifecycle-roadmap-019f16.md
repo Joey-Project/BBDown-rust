@@ -1,11 +1,11 @@
 ---
 id: 20260620-019f16-v0-6-credential-lifecycle-roadmap
 title: v0.6.0 Credential Lifecycle Roadmap
-status: active
+status: completed
 created: 2026-06-20
-updated: 2026-06-23
+updated: 2026-09-26
 branch: release-prep/v0.6.0
-pr:
+pr: 70
 supersedes: []
 superseded_by:
 ---
@@ -603,9 +603,17 @@ superseded_by:
       - `python3 /Users/joey/.codex/personal-sync/overlays/private/releases/5f1ab3fa5d9f7d534507216a2d6f765694f9b710/personal_codex/skills/project-journal/scripts/project_journal.py validate --repo /Users/joey/Program/Codex-workspace/BBDown-rust`.
       - `just ci`.
 
-## Next Steps
+## Release Outcome
 
-- Finish PR #70 release-prep validation, review gates, CI, and merge with the latest `master`
-  content.
-- Run the protected release candidate workflow for `v0.6.0`.
-- Promote the approved release candidate to GitHub Release and crates.io `bbdown-core`.
+- PR #70, “Prepare v0.6.0 release,” merged on 2026-09-23T22:27Z.
+- The protected RC workflow completed successfully:
+  https://github.com/Joey-Project/BBDown-rust/actions/runs/35928474388
+- The promotion workflow completed successfully, including “Publish GitHub Release” and “Publish
+  bbdown-core to crates.io”:
+  https://github.com/Joey-Project/BBDown-rust/actions/runs/35969513971
+- GitHub Release `v0.6.0` was published on 2026-09-24T11:15Z with eight assets; tag `v0.6.0` targets
+  `0a94b071`: https://github.com/Joey-Project/BBDown-rust/releases/tag/v0.6.0
+- This credential lifecycle roadmap and release workstream are complete. During release preparation,
+  an opt-in restricted PGC live e2e rerun encountered upstream proxy `502 Bad Gateway` responses
+  recorded in the ignored manifest; this historical result did not block the successful release
+  workflows.

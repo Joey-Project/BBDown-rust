@@ -3,7 +3,7 @@ id: 20260621-019f17-overseas-cdn-routing-roadmap
 title: Overseas CDN Routing Roadmap
 status: active
 created: 2026-06-21
-updated: 2026-06-21
+updated: 2026-09-26
 branch: feature/overseas-cdn-routing-roadmap
 pr: 62
 supersedes: []
@@ -14,8 +14,8 @@ superseded_by:
 
 ## Summary
 
-- Overseas playback/download experience is a high-priority follow-up after the current credential
-  lifecycle line.
+- Overseas playback/download experience is a high-priority planning area following the completed
+  `v0.6.0` credential lifecycle release.
 - The current downloader already supports explicit `--upos-host`, `--force-replace-host`, and PCDN
   filtering controls, but it does not yet provide a first-class overseas routing preset or
   embeddable host-selection policy.
@@ -78,6 +78,7 @@ superseded_by:
 
 ## Next Steps
 
-- Keep the current `v0.6.0` credential lifecycle sequence as the active release line.
-- Revisit this roadmap before the next downloader/playback polish release and decide whether it
-  becomes `v0.7.0` or a dedicated overseas-experience release.
+- Begin planning this workstream after the `v0.6.0` release. Decide its scope and release placement
+  during planning; no version has been assigned.
+- Resolve the open host-catalog ownership and preset questions during planning without assuming a
+  bundled, user-provided, or generated catalog.
