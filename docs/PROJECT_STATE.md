@@ -37,6 +37,9 @@
   Release and crates.io.
 - Versions `0.1.0`, `0.2.0`, `0.3.0`, `0.4.0`, and `0.5.0` have shipped through that flow as GitHub
   Releases and crates.io package versions for `bbdown-core`.
+- `0.6.0` has shipped through the protected release candidate and promotion flow as a GitHub Release
+  and crates.io `bbdown-core` package. PR #70 merged on 2026-09-23; both release workflows succeeded,
+  and the published tag targets commit `0a94b071`.
 - The `0.4.0` line shipped credential lifecycle improvements, access-key acquisition, unified login
   QR output, and append-only danmaku update workflows.
 - The completed `0.5.0` development line shipped downloader and embedding polish. Progress
@@ -47,13 +50,13 @@
   provider-aware access-key refresh secrets, health policy/reporting, profile-level lifecycle
   status, persistent default-account switching, stored automatic refresh for WEB cookie plus TV
   `tv_access_key` credentials, credential preflight, and multi-account lifecycle UX. Release-prep
-  docs now describe the public surface and the line is ready for protected release candidate
-  validation.
+  docs describe the public surface, and the line is published.
 - Normal BV videos can now be explicitly queried for UGC collection or series membership, with
   strict metadata mapping and reuse of the existing paginated collection/series resolution path
   without changing default single-video download semantics.
-- The release-prep deterministic gate passed. The latest local live e2e rerun is still blocked by
-  upstream restricted PGC proxy `502 Bad Gateway` responses in the ignored manifest.
+- During `v0.6.0` release preparation, an opt-in restricted PGC live e2e rerun encountered upstream
+  proxy `502 Bad Gateway` responses recorded in the ignored manifest; this historical result did not
+  block the release.
 - Repo-local skill `$bbdown-live-e2e-fixtures` and `live-e2e.samples.example.json` record the current
   real Bilibili fixtures for opt-in normal, multi-page, and restricted-area live e2e validation.
 
@@ -67,9 +70,10 @@
   `docs/project_journal/2026/06/2026-06-18-v0-4-release-prep-019f0a.md`.
 - Completed v0.5.0 roadmap:
   `docs/project_journal/2026/06/2026-06-18-v0-5-downloader-embedding-roadmap-019f0b.md`.
-- v0.6.0 release-prep roadmap:
+- Completed v0.6.0 credential lifecycle and release roadmap:
   `docs/project_journal/2026/06/2026-06-20-v0-6-credential-lifecycle-roadmap-019f16.md`.
-- High-priority overseas playback/CDN routing backlog:
+- Next planning area: overseas playback/CDN routing backlog, with release scope and catalog approach
+  still undecided:
   `docs/project_journal/2026/06/2026-06-21-overseas-cdn-routing-roadmap-019f17.md`.
 - Repo-local live e2e fixture skill:
   `.agents/skills/bbdown-live-e2e-fixtures/SKILL.md`.

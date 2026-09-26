@@ -93,12 +93,12 @@
   credentials.
 - [completed] Add explicit normal-BV UGC collection and series membership resolution through the
   public API while preserving single-video input and download planning semantics.
-- [pending] Publish `v0.6.0` through the protected release candidate and promotion workflow as a
-  GitHub Release and crates.io `bbdown-core` package.
-- [pending] Prioritize an overseas playback/CDN routing workstream after the current credential
-  lifecycle line, using CCB as a research reference for Bilibili CDN regions and overseas host
-  candidates while keeping `bbdown-core` configurable and not dependent on a third-party live data
-  service. See
+- [completed] Publish `v0.6.0` through the protected release candidate and promotion workflow as a
+  GitHub Release and crates.io `bbdown-core` package; both workflows succeeded and the release tag
+  targets `0a94b071`. See
+  `docs/project_journal/2026/06/2026-06-20-v0-6-credential-lifecycle-roadmap-019f16.md`.
+- [pending] Begin planning overseas playback/CDN routing now that `v0.6.0` has shipped, using CCB as
+  a research reference while leaving release scope and host-catalog ownership open. See
   `docs/project_journal/2026/06/2026-06-21-overseas-cdn-routing-roadmap-019f17.md`.
 - [pending] Plan `v0.7.0` or a later feed/page release for per-video related recommendations and
   any additional Bilibili page-family parsing that does not fit the downloader or credential lines.
