@@ -62,8 +62,10 @@ superseded_by:
   applications. The CLI bundles a snapshot of CCB's CDN host data and a historical public resolver
   list. Presets and runtime probes require an explicit user selection; no public resolver is a
   default. `resolver probe --server` isolates the selected server from configured CLI/environment
-  proxy candidates. Catalog host availability must be checked at runtime. Preset downloads put
-  the donor's normal media candidate after one configured CDN to bound failures before that route; it remains
+  proxy candidates. Global `--resolver` tries the selected server before configured proxies and
+  retains those proxies as fallbacks. Catalog host availability must be checked at runtime. Preset
+  downloads put the donor's normal media candidate after one configured CDN to bound failures
+  before that route; it remains
   subject to the existing host-replacement policy. Manual `--cdn-host` pools retain their prior
   ordering. Probe ranking may reorder at most the first 8 candidates.
 - Successful staged shards emit `CdnShardCompleted` progress events with the actual source host and

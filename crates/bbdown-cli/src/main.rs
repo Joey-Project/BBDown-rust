@@ -528,6 +528,25 @@ mod catalog_tests {
     }
 
     #[test]
+    fn global_resolver_precedes_configured_proxy_candidates() {
+        let area_hint = Some(RestrictedArea::Hk);
+        let configured = RestrictedAreaConfig::new(
+            area_hint,
+            [
+                RestrictedAreaProxy::bilibili_api("https://cli-api.example", area_hint),
+                RestrictedAreaProxy::bilibili_api("https://env-api.example", area_hint),
+            ],
+        );
+
+        let preferred = restricted_area_with_preferred_resolver(&configured, "atri.ink");
+        let ordered = preferred.ordered_proxies();
+
+        assert_eq!(ordered[0].base_url, "https://atri.ink");
+        assert_eq!(ordered[1].base_url, "https://cli-api.example");
+        assert_eq!(ordered[2].base_url, "https://env-api.example");
+    }
+
+    #[test]
     fn preset_media_hosts_try_origin_after_one_cdn_while_manual_pool_keeps_default_order()
     -> anyhow::Result<()> {
         let hosts = (0..74)
@@ -1107,11 +1126,7 @@ async fn run() -> anyhow::Result<()> {
             .into_iter()
             .find(|entry| entry.name == name)
             .with_context(|| format!("unknown resolver `{name}`; use `bbdown resolver list`"))?;
-        let area_hint = restricted_area.area_hint;
-        restricted_area = restricted_area.with_proxy(RestrictedAreaProxy::bilibili_api(
-            format!("https://{}", resolver.host),
-            area_hint,
-        ));
+        restricted_area = restricted_area_with_preferred_resolver(&restricted_area, &resolver.host);
     }
     let playurl_mode = cli.playurl_mode.into();
     let request_timeout = Duration::from_secs(cli.request_timeout_seconds);
@@ -1407,6 +1422,19 @@ fn resolver_probe_runtime(
         )],
     );
     runtime
+}
+
+fn restricted_area_with_preferred_resolver(
+    restricted_area: &RestrictedAreaConfig,
+    resolver_host: &str,
+) -> RestrictedAreaConfig {
+    let mut proxies = Vec::with_capacity(restricted_area.proxies.len() + 1);
+    proxies.push(RestrictedAreaProxy::bilibili_api(
+        format!("https://{resolver_host}"),
+        restricted_area.area_hint,
+    ));
+    proxies.extend(restricted_area.proxies.iter().cloned());
+    RestrictedAreaConfig::new(restricted_area.area_hint, proxies)
 }
 
 async fn handle_resolver_catalog(
