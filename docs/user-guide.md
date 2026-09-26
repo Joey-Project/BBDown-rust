@@ -294,6 +294,54 @@ or host:port, and `--force-replace-host` to rewrite all DASH/FLV media candidate
 host even when they are not PCDN-like. When `--upos-host` is present, it takes precedence over the
 PCDN setting.
 
+Use repeatable `--cdn-host <HOST>` values to try an ordered host pool for each media URL before
+the configured fallback policy. `--cdn-host` cannot be combined with `--upos-host`. Add
+`--cdn-probe` to measure up to eight media candidates with validated HTTP byte ranges (up to 64 KiB
+per candidate) and try successful candidates in measured throughput order. Candidates that cannot
+be probed remain available as download fallbacks. If the media plan omits a size, probing first
+uses a bounded `bytes=0-0` request to discover the total length. For example:
+
+```sh
+bbdown download av170001 --cdn-host edge-a.example --cdn-host edge-b.example --cdn-probe --cdn-parallel 4
+```
+
+`bbdown cdn list` shows the bundled CCB regions and host counts; add `--region overseas` to list
+its hosts. Select one region explicitly with `--cdn-preset <REGION>`; `overseas` is an alias for
+the catalog's `海外` region. Presets are candidate lists, not claims that every host accepts a
+particular signed media URL. To inspect
+current Range reachability and sampled throughput without downloading a full file, use a public video
+input with `bbdown cdn probe <VIDEO> --preset overseas`. The probe reports at most eight hosts per
+invocation; use `--offset <N>` to inspect later entries. It never prints signed media URL queries.
+For ordinary sequential downloads, a preset tries one CDN host before the donor's normal media
+candidate; remaining preset hosts stay available if that route fails. The normal candidate still
+obeys `--allow-pcdn` and host-replacement policy. Optional probe ranking may reorder the first
+eight candidates, but does not place the full regional catalog ahead of the donor route.
+
+For example:
+
+```sh
+bbdown cdn list --region overseas
+bbdown cdn probe https://www.bilibili.com/video/BV1QtjA6BEB8/ --preset overseas
+bbdown download https://www.bilibili.com/video/BV1QtjA6BEB8/ --cdn-preset overseas --cdn-probe --cdn-parallel 4
+```
+
+`--cdn-parallel` accepts values from 2 to 8; its default is 1 (disabled). CDN probing and parallel
+media transfer apply only to DASH/FLV media, require valid byte-range responses and a consistent
+total length, and leave cover, subtitle, and danmaku sidecars unchanged. Existing partial files use
+the regular resume path without probe reordering; symlink, multiply linked, or special-file targets
+use the regular download path. On Unix, `--no-resume` can shard a fresh redownload over an existing
+single-link regular file; non-Unix builds conservatively use the regular path for existing files. Sharding
+uses candidates with the same signed path and query, total size,
+and initial byte sample, then downloads each chunk once from a selected CDN into a temporary file.
+The downloader checks each Range response and falls back to the regular candidate path on failure.
+An equal sample and size do not prove that later bytes match across CDNs; this faster mode does not
+perform full content comparison. If an edge differs after the sampled prefix, the completed file
+can silently combine bytes from different versions. Probing and parallel transfer do not guarantee
+a speedup. A rewritten host is not proof that another CDN accepts the signed URL. Probe diagnostics
+do not record signed URL query strings. With `--progress-json`, every successfully staged shard
+emits `cdn_shard_completed` with its source `host` and `bytes`; summing those events by host shows
+the actual transfer distribution. The event excludes signed URL paths and queries.
+
 Downloads resume partial files by default with HTTP range requests and validate `Content-Range`
 plus advertised media sizes when the plan provides them. Use `--no-resume` to force a fresh write;
 failed fresh writes preserve any existing target. If a server ignores a resume range, the old
@@ -593,7 +641,16 @@ failure and must contain the listed diagnostics.
 
 ## Restricted-Area Proxies
 
-The tool does not include public proxy defaults. Configure only proxy hosts you operate or trust.
+The tool includes an optional historical public resolver directory, but does not contact any
+resolver by default. Use `bbdown resolver list` to inspect it and explicitly select a named server
+with `--resolver <NAME>`; `bbdown resolver probe <EPISODE> --server <NAME>` checks one selected
+server at runtime and reports whether the PGC proxy path was exercised. The probe ignores other
+configured proxy candidates, including ones supplied through environment variables. For normal
+commands, global `--resolver` puts the selected server before configured proxies, which remain
+fallbacks. Catalog entries may be unavailable or incompatible with the API-path route. Selecting a
+third-party server may send the
+episode ID, requested area, and an imported generic access key to that server. You can continue to
+configure your own proxy with the existing flags.
 PGC playurl fallback is attempted only after the official PGC playurl response reports a
 region/area restriction, or after APP gRPC mode reports a permission-denied status or preview-only
 PGC response-body signal. Other official failures, such as VIP/paywall errors, parse failures, or
@@ -602,6 +659,11 @@ network errors, keep their original error instead of trying proxy hosts.
 ```bash
 bbdown --restricted-area hk --restricted-area-proxy hk=https://proxy.example/playurl plan ep267851 --json
 bbdown --restricted-api-proxy tw=https://proxy.example/bili/api plan ss26801 --select latest --json
+# A self-hosted BiliRoaming-compatible API-path service
+bbdown --restricted-api-proxy hk=https://your-server.example/bili/api plan ep267851 --json
+bbdown resolver list
+bbdown --restricted-area hk resolver probe ep664928 --server atri
+bbdown --restricted-area hk --resolver atri plan ep664928 --json
 ```
 
 Proxy specs use `area=url` or a bare URL. Supported areas are `cn`, `th`, `hk`, and `tw`. Bare URLs
@@ -622,6 +684,12 @@ the PGC playurl parameters are appended. Proxy responses may be wrapped in `data
 return helper-style top-level `dash` / `durl`, `timelength`, and quality metadata; legacy string
 status fields such as `result: "suee"` are tolerated. Both flags may be repeated.
 `BBDOWN_RESTRICTED_AREA_PROXY` and `BBDOWN_RESTRICTED_API_PROXY` also accept comma-separated lists.
+A self-hosted BiliRoaming-compatible service can be configured by its API root with
+`--restricted-api-proxy`. BBDown requests `/pgc/player/web/playurl` with `area`, `ep_id`, and an
+optional generic `access_key`. The bundled public resolver names are never selected implicitly;
+account/region eligibility and authorization depend on the upstream and service, so availability is
+not guaranteed.
+Signed media URLs from the service are passed unchanged to the downstream downloader or player.
 
 If a generic access key was imported with `auth import-access-key`, proxy playurl requests include
 it as `access_key`. Bilibili cookies are not forwarded to restricted-area proxy hosts. Resolver

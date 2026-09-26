@@ -11576,6 +11576,95 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn pgc_bilibili_api_proxy_accepts_biliroaming_style_web_playurl_without_cookie()
+    -> anyhow::Result<()> {
+        // Synthetic fixture token ID: access-a (active access token).
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/pgc/view/web/season").query_param("ep_id", "1000");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "result": {"season_id": 123, "title": "A Season", "episodes": [
+                    {"aid": 10, "bvid": "BV1aa", "cid": 100, "id": 1000, "ep_id": 1000, "title": "1"}
+                ]}
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/pgc/player/web/v2/playurl")
+                .query_param("ep_id", "1000");
+            then.status(200)
+                .json_body_obj(&serde_json::json!({"code": -40301, "message": "area restricted"}));
+        });
+        let proxy = server.mock(|when, then| {
+            when.method(GET)
+                .path("/proxy/pgc/player/web/playurl")
+                .query_param("area", "hk")
+                .query_param("ep_id", "1000")
+                .query_param("access_key", "codex_synth_v1_access_a")
+                .header_missing("cookie");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "dash": {"duration": 3, "video": [{
+                        "id": 80, "baseUrl": "https://media.example/video.m4s",
+                        "base_url": "https://media.example/video.m4s"
+                    }], "audio": []},
+                    "durl": [{"order": 1, "length": 3000, "size": 1234, "url": "https://media.example/video.flv"}],
+                    "timelength": 3000
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/player/v2")
+                .query_param("aid", "10")
+                .query_param("cid", "100");
+            then.status(200).json_body_obj(
+                &serde_json::json!({"code": 0, "data": {"subtitle": {"subtitles": []}}}),
+            );
+        });
+
+        let client = BiliClient::new(ClientConfig {
+            endpoints: EndpointConfig {
+                api_base: server.base_url(),
+                pgc_base: server.base_url(),
+                web_base: server.base_url(),
+                intl_base: server.base_url(),
+                intl_passport_base: server.base_url(),
+                comment_base: server.base_url(),
+                passport_base: server.base_url(),
+                tv_api_base: server.base_url(),
+                app_grpc_base: server.base_url(),
+                app_pgc_grpc_base: server.base_url(),
+                tv_passport_base: server.base_url(),
+                tv_passport_poll_base: server.base_url(),
+            },
+            credentials: Credentials {
+                cookie: Some("SESSDATA=PRIVATE_COOKIE".to_owned()),
+                access_key: Some("codex_synth_v1_access_a".to_owned()),
+                tv_access_key: None,
+            },
+            restricted_area: RestrictedAreaConfig {
+                area_hint: Some(RestrictedArea::Hk),
+                proxies: vec![RestrictedAreaProxy::bilibili_api(
+                    format!("{}/proxy", server.base_url()),
+                    Some(RestrictedArea::Hk),
+                )],
+            },
+            playurl_mode: PlayurlMode::Web,
+            ..ClientConfig::default()
+        });
+        let plan = client.plan_download("ep1000", None).await?;
+
+        proxy.assert();
+        assert_eq!(plan.entries[0].source, StreamSource::PgcProxy);
+        assert_eq!(plan.entries[0].streams.videos[0].id, 80);
+        assert_eq!(plan.entries[0].streams.flv_segments.len(), 1);
+        Ok(())
+    }
+
     #[test]
     fn resolver_error_message_redacts_sensitive_values() {
         let message = super::resolver_error_message(&Error::Api {

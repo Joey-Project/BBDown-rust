@@ -27,6 +27,12 @@ const MAX_FILE_NAME_BYTES: usize = 80;
 const MAX_FILE_COMPONENT_BYTES: usize = 240;
 const MAX_SUBTITLE_EXTENSION_BYTES: usize = 16;
 const MAX_COVER_EXTENSION_BYTES: usize = 16;
+const CDN_PROBE_MAX_CANDIDATES: usize = 8;
+const CDN_PROBE_MAX_BYTES: u64 = 64 * 1024;
+const CDN_PROBE_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
+const CDN_PROBE_IDLE_TIMEOUT: Duration = Duration::from_secs(1);
+const CDN_SHARD_CHUNK_SIZE: u64 = 1024 * 1024;
+const CDN_PUBLIC_PROBE_MAX_BYTES: u64 = 64 * 1024;
 #[cfg(any(unix, windows))]
 const MUX_SIGNAL_CANCELLATION_GRACE: Duration = Duration::from_millis(100);
 const DEFAULT_UPOS_REPLACEMENT_HOST: &str = "upos-sz-mirrorcoso1.bilivideo.com";
@@ -70,6 +76,7 @@ impl DownloadMode {
 
 #[non_exhaustive]
 #[derive(Clone, Debug)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct DownloadOptions {
     pub output_dir: PathBuf,
     pub retry: RetryPolicy,
@@ -83,6 +90,8 @@ pub struct DownloadOptions {
     pub danmaku_formats: DanmakuFormats,
     pub sidecars: SidecarOptions,
     pub media_hosts: MediaHostOptions,
+    pub cdn_probe: bool,
+    pub cdn_parallelism: usize,
     pub mux: MuxOptions,
     pub download_idle_timeout: Option<Duration>,
 }
@@ -102,6 +111,8 @@ impl Default for DownloadOptions {
             danmaku_formats: DanmakuFormats::default(),
             sidecars: SidecarOptions::default(),
             media_hosts: MediaHostOptions::default(),
+            cdn_probe: false,
+            cdn_parallelism: 1,
             mux: MuxOptions::Disabled,
             download_idle_timeout: Some(Duration::from_secs(30)),
         }
@@ -209,6 +220,18 @@ impl DownloadOptions {
     #[must_use]
     pub fn with_media_hosts(mut self, media_hosts: MediaHostOptions) -> Self {
         self.media_hosts = media_hosts;
+        self
+    }
+
+    #[must_use]
+    pub fn with_cdn_probe(mut self, cdn_probe: bool) -> Self {
+        self.cdn_probe = cdn_probe;
+        self
+    }
+
+    #[must_use]
+    pub fn with_cdn_parallelism(mut self, cdn_parallelism: usize) -> Self {
+        self.cdn_parallelism = cdn_parallelism;
         self
     }
 
@@ -362,6 +385,9 @@ impl SidecarOptions {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MediaHostOptions {
     pub upos_host: Option<String>,
+    pub cdn_hosts: Vec<String>,
+    /// Number of configured CDN hosts to try before each donor's normal URL.
+    pub original_after_cdn_hosts: usize,
     pub force_replace_host: bool,
     pub allow_pcdn: bool,
 }
@@ -370,6 +396,8 @@ impl Default for MediaHostOptions {
     fn default() -> Self {
         Self {
             upos_host: None,
+            cdn_hosts: Vec::new(),
+            original_after_cdn_hosts: usize::MAX,
             force_replace_host: false,
             allow_pcdn: true,
         }
@@ -398,6 +426,22 @@ impl MediaHostOptions {
     }
 
     #[must_use]
+    pub fn with_cdn_hosts<I, S>(mut self, hosts: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.cdn_hosts = hosts.into_iter().map(Into::into).collect();
+        self
+    }
+
+    #[must_use]
+    pub fn with_original_after_cdn_hosts(mut self, count: usize) -> Self {
+        self.original_after_cdn_hosts = count;
+        self
+    }
+
+    #[must_use]
     pub fn with_force_replace_host(mut self, force_replace_host: bool) -> Self {
         self.force_replace_host = force_replace_host;
         self
@@ -408,6 +452,130 @@ impl MediaHostOptions {
         self.allow_pcdn = allow_pcdn;
         self
     }
+}
+
+/// Result for one candidate in an explicit bounded CDN probe.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CdnProbeResult {
+    /// Host label only; signed URL paths and query parameters are never included.
+    pub host: String,
+    pub ok: bool,
+    pub bytes: u64,
+    pub elapsed: Duration,
+    pub bytes_per_second: Option<f64>,
+    pub total_size: Option<u64>,
+    pub error: Option<String>,
+}
+
+async fn probe_candidate_bytes(
+    client: &BiliClient,
+    url: &str,
+    headers: &reqwest::header::HeaderMap,
+    known_size: Option<u64>,
+) -> Result<(u64, u64, u64, Duration)> {
+    if let Some(size) = known_size {
+        if size == 0 {
+            return Err(Error::InvalidInput(
+                "range probe reported an empty file".to_owned(),
+            ));
+        }
+        let end = size.min(CDN_PUBLIC_PROBE_MAX_BYTES) - 1;
+        let sample = crate::range_transfer::fetch_range(
+            &client.http,
+            url,
+            headers.clone(),
+            0,
+            end,
+            Some(size),
+            CDN_PROBE_REQUEST_TIMEOUT,
+            Some(CDN_PROBE_IDLE_TIMEOUT),
+        )
+        .await?;
+        let bytes = sample.bytes.len() as u64;
+        return Ok((sample.total_size, bytes, bytes, sample.elapsed));
+    }
+
+    let discovery = crate::range_transfer::fetch_range(
+        &client.http,
+        url,
+        headers.clone(),
+        0,
+        0,
+        None,
+        CDN_PROBE_REQUEST_TIMEOUT,
+        Some(CDN_PROBE_IDLE_TIMEOUT),
+    )
+    .await?;
+    let total_size = discovery.total_size;
+    let sample_end = total_size.min(CDN_PUBLIC_PROBE_MAX_BYTES) - 1;
+    if sample_end == 0 {
+        return Ok((total_size, 1, 0, discovery.elapsed));
+    }
+    let sample = crate::range_transfer::fetch_range(
+        &client.http,
+        url,
+        headers.clone(),
+        1,
+        sample_end,
+        Some(total_size),
+        CDN_PROBE_REQUEST_TIMEOUT,
+        Some(CDN_PROBE_IDLE_TIMEOUT),
+    )
+    .await?;
+    let measured_bytes = sample.bytes.len() as u64;
+    Ok((
+        total_size,
+        measured_bytes + 1,
+        measured_bytes,
+        sample.elapsed,
+    ))
+}
+
+/// Measures a bounded prefix range from up to eight media URL candidates.
+/// A successful prefix and matching size are useful compatibility signals, but do not prove
+/// that the complete files are identical. Unknown sizes are discovered with one byte and the
+/// remaining sample range excludes that discovery byte from the throughput measurement.
+pub async fn probe_media_cdns(
+    client: &BiliClient,
+    stream: &MediaStream,
+    media_hosts: &MediaHostOptions,
+) -> Result<Vec<CdnProbeResult>> {
+    let urls = candidate_urls(&stream.base_url, &stream.backup_urls, media_hosts);
+    let headers = client.media_headers()?;
+    let mut results = Vec::with_capacity(urls.len().min(CDN_PROBE_MAX_CANDIDATES));
+    for url in urls.iter().take(CDN_PROBE_MAX_CANDIDATES) {
+        let host = url::Url::parse(url)
+            .ok()
+            .and_then(|parsed| parsed.host_str().map(str::to_owned))
+            .unwrap_or_else(|| "invalid URL".to_owned());
+        let known_size = stream.size.filter(|size| *size > 0);
+        let begin = std::time::Instant::now();
+        let probe = probe_candidate_bytes(client, url, &headers, known_size).await;
+        match probe {
+            Ok((total_size, bytes, measured_bytes, elapsed)) => results.push(CdnProbeResult {
+                host,
+                ok: true,
+                bytes,
+                elapsed,
+                bytes_per_second: (!elapsed.is_zero() && measured_bytes > 0).then_some(
+                    f64::from(u32::try_from(measured_bytes).unwrap_or(u32::MAX))
+                        / elapsed.as_secs_f64(),
+                ),
+                total_size: Some(total_size),
+                error: None,
+            }),
+            Err(error) => results.push(CdnProbeResult {
+                host,
+                ok: false,
+                bytes: 0,
+                elapsed: begin.elapsed(),
+                bytes_per_second: None,
+                total_size: known_size,
+                error: Some(error.to_string()),
+            }),
+        }
+    }
+    Ok(results)
 }
 
 #[non_exhaustive]
@@ -1821,15 +1989,298 @@ impl BiliClient {
             | DownloadFileKind::DanmakuAss => "media",
         };
         let path = entry_dir.join(media_file_name(label, stream));
-        let request = DownloadFileRequest::new(entry, &path, kind, stream.size);
+        let mut urls = candidate_urls(&stream.base_url, &stream.backup_urls, &options.media_hosts);
+        let mut shard_expected_size = stream.size;
+        if should_probe_media_candidates(&path, options).await? {
+            (urls, shard_expected_size) = self
+                .probe_media_candidates(urls, shard_expected_size, options.download_idle_timeout)
+                .await;
+        }
+        let request = DownloadFileRequest::new(entry, &path, kind.clone(), stream.size);
+        let shard_request = DownloadFileRequest::new(entry, &path, kind, shard_expected_size);
+        if let Some(file) = self
+            .try_download_sharded(
+                &urls,
+                &shard_request,
+                options,
+                context.progress,
+                context.cancellation,
+            )
+            .await?
+        {
+            return Ok(file);
+        }
         self.download_candidate_urls_to_file(
-            &candidate_urls(&stream.base_url, &stream.backup_urls, &options.media_hosts),
+            &urls,
             &request,
             options,
             context.progress,
             context.cancellation,
         )
         .await
+    }
+
+    #[allow(clippy::too_many_lines)]
+    async fn probe_media_candidates(
+        &self,
+        urls: Vec<String>,
+        expected_size: Option<u64>,
+        idle_timeout: Option<Duration>,
+    ) -> (Vec<String>, Option<u64>) {
+        let probe_count = urls.len().min(CDN_PROBE_MAX_CANDIDATES);
+        if probe_count == 0 {
+            return (urls, expected_size);
+        }
+        let Ok(headers) = self.media_headers() else {
+            return (urls, expected_size);
+        };
+        let idle_timeout = idle_timeout
+            .unwrap_or(CDN_PROBE_IDLE_TIMEOUT)
+            .min(CDN_PROBE_IDLE_TIMEOUT);
+        let mut total_size = expected_size.filter(|size| *size > 0);
+        if total_size.is_none() {
+            let discoveries =
+                futures_util::future::join_all(urls.iter().take(probe_count).map(|url| {
+                    crate::range_transfer::fetch_range(
+                        &self.http,
+                        url,
+                        headers.clone(),
+                        0,
+                        0,
+                        None,
+                        CDN_PROBE_REQUEST_TIMEOUT,
+                        Some(idle_timeout),
+                    )
+                }))
+                .await;
+            total_size = discoveries.into_iter().find_map(|result| match result {
+                Ok(result) if result.total_size > 0 && result.bytes.len() == 1 => {
+                    Some(result.total_size)
+                }
+                _ => None,
+            });
+        }
+        let Some(total_size) = total_size else {
+            return (urls, None);
+        };
+        let requested_bytes = total_size.min(CDN_PROBE_MAX_BYTES);
+        let Some(end_inclusive) = requested_bytes.checked_sub(1) else {
+            return (urls, expected_size);
+        };
+        let mut measured: Vec<(String, f64, Vec<u8>)> = Vec::with_capacity(probe_count);
+        let probes =
+            futures_util::future::join_all(urls.iter().take(probe_count).map(|url| async {
+                (
+                    url.clone(),
+                    crate::range_transfer::fetch_range(
+                        &self.http,
+                        url,
+                        headers.clone(),
+                        0,
+                        end_inclusive,
+                        Some(total_size),
+                        CDN_PROBE_REQUEST_TIMEOUT,
+                        Some(idle_timeout),
+                    )
+                    .await,
+                )
+            }))
+            .await;
+        for (url, result) in probes {
+            match result {
+                Ok(result)
+                    if result.total_size == total_size
+                        && !result.bytes.is_empty()
+                        && !result.elapsed.is_zero() =>
+                {
+                    let throughput =
+                        f64::from(u32::try_from(result.bytes.len()).unwrap_or(u32::MAX))
+                            / result.elapsed.as_secs_f64();
+                    let sample = result.bytes;
+                    measured.push((url, throughput, sample));
+                }
+                _ => {}
+            }
+        }
+        if measured.is_empty() {
+            return (urls, expected_size);
+        }
+        let Some(anchor) = measured
+            .iter()
+            .fold(None, |best, candidate| {
+                let count = measured
+                    .iter()
+                    .filter(|other| other.2 == candidate.2)
+                    .count();
+                match best {
+                    Some((best_count, _)) if best_count >= count => best,
+                    _ => Some((count, candidate.2.clone())),
+                }
+            })
+            .map(|(_, sample)| sample)
+        else {
+            return (urls, expected_size);
+        };
+        let mut compatible = Vec::new();
+        for (url, throughput, sample) in measured {
+            if sample == anchor {
+                compatible.push((url, throughput));
+            }
+        }
+        compatible.sort_by(|left, right| right.1.total_cmp(&left.1));
+        let promoted = compatible
+            .iter()
+            .map(|(url, _)| url.clone())
+            .collect::<std::collections::HashSet<_>>();
+        let mut ordered = compatible
+            .into_iter()
+            .map(|(url, _)| url)
+            .collect::<Vec<_>>();
+        ordered.extend(
+            urls.iter()
+                .take(probe_count)
+                .filter(|url| !promoted.contains(*url))
+                .cloned(),
+        );
+        ordered.extend(urls.into_iter().skip(probe_count));
+        (ordered, Some(total_size))
+    }
+
+    #[allow(clippy::too_many_lines)]
+    async fn try_download_sharded<P>(
+        &self,
+        urls: &[String],
+        request: &DownloadFileRequest<'_>,
+        options: &DownloadOptions,
+        progress: &P,
+        cancellation: &DownloadCancellationToken,
+    ) -> Result<Option<DownloadedFile>>
+    where
+        P: DownloadProgressSink + ?Sized,
+    {
+        let Some(expected_size) = request.expected_size.filter(|size| *size > 0) else {
+            return Ok(None);
+        };
+        if options.cdn_parallelism == 1 || urls.len() < 2 || !request.kind.is_media() {
+            return Ok(None);
+        }
+        if target_is_symlink(request.path).await? {
+            return Ok(None);
+        }
+        if target_is_non_regular_file(request.path).await? {
+            return Ok(None);
+        }
+        if target_has_multiple_hard_links(request.path).await? {
+            return Ok(None);
+        }
+        if options.resume && existing_file_len(request.path).await? > 0 {
+            return Ok(None);
+        }
+        cancellation.check()?;
+        let dest_dir = request.path.parent().unwrap_or_else(|| Path::new("."));
+        if fs::create_dir_all(dest_dir).await.is_err() {
+            return Ok(None);
+        }
+        let Ok(headers) = self.media_headers() else {
+            return Ok(None);
+        };
+        let attempt = DownloadAttempt { current: 1, max: 1 };
+        emit_file_started(progress, request, 0, Some(expected_size), attempt);
+        let mut bytes_written = 0_u64;
+        let shard_future = crate::range_transfer::download_sharded_to_temp(
+            &self.http,
+            urls,
+            headers,
+            expected_size,
+            options.cdn_parallelism,
+            CDN_SHARD_CHUNK_SIZE,
+            self.config.request_timeout,
+            options.download_idle_timeout,
+            dest_dir,
+            |bytes_delta, source_url| {
+                bytes_written = bytes_written.saturating_add(bytes_delta);
+                if let Some(host) = cdn_host_label(source_url) {
+                    progress.on_download_progress(&DownloadProgressEvent::CdnShardCompleted {
+                        entry_index: request.entry.index,
+                        entry_title: request.entry.title.clone(),
+                        kind: request.kind.clone(),
+                        host,
+                        bytes: bytes_delta,
+                    });
+                }
+                emit_file_progress(
+                    progress,
+                    request,
+                    bytes_delta,
+                    bytes_written,
+                    0,
+                    Some(expected_size),
+                );
+            },
+        );
+        let result = tokio::select! {
+            biased;
+            () = cancellation.cancelled() => Err(cancellation.cancelled_error()),
+            result = shard_future => result,
+        };
+        match result {
+            Ok(temp_path) => {
+                if let Err(error) = cancellation.check() {
+                    emit_file_failed(progress, request, attempt, &error);
+                    return Err(error);
+                }
+                match target_is_symlink(request.path).await {
+                    Ok(true) => {
+                        // The ordinary downloader will revalidate and report any final failure.
+                        return Ok(None);
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        emit_file_failed(progress, request, attempt, &error);
+                        return Err(error);
+                    }
+                }
+                match target_is_non_regular_file(request.path).await {
+                    Ok(true) => return Ok(None),
+                    Ok(false) => {}
+                    Err(error) => {
+                        emit_file_failed(progress, request, attempt, &error);
+                        return Err(error);
+                    }
+                }
+                match target_has_multiple_hard_links(request.path).await {
+                    Ok(true) => {
+                        return Ok(None);
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        emit_file_failed(progress, request, attempt, &error);
+                        return Err(error);
+                    }
+                }
+                #[cfg(unix)]
+                if apply_sharded_output_permissions(temp_path.as_ref(), request.path).is_err() {
+                    return Ok(None);
+                }
+                match replace_file(temp_path.as_ref(), request.path).await {
+                    Ok(()) => {
+                        emit_file_completed(progress, request, bytes_written, 0);
+                        Ok(Some(DownloadedFile {
+                            kind: request.kind.clone(),
+                            path: request.path.to_path_buf(),
+                            bytes_written,
+                            resumed_from: 0,
+                        }))
+                    }
+                    Err(_error) => Ok(None),
+                }
+            }
+            Err(error) if error.is_cancelled() => {
+                emit_file_failed(progress, request, attempt, &error);
+                Err(error)
+            }
+            Err(_error) => Ok(None),
+        }
     }
 
     async fn download_flv_segment<P>(
@@ -1844,10 +2295,35 @@ impl BiliClient {
     {
         let options = context.options;
         let path = entry_dir.join(format!("segment-{:03}.flv", segment.order));
+        let mut urls = candidate_urls(&segment.url, &segment.backup_urls, &options.media_hosts);
+        let mut shard_expected_size = segment.size;
+        if should_probe_media_candidates(&path, options).await? {
+            (urls, shard_expected_size) = self
+                .probe_media_candidates(urls, shard_expected_size, options.download_idle_timeout)
+                .await;
+        }
         let request =
             DownloadFileRequest::new(entry, &path, DownloadFileKind::FlvSegment, segment.size);
+        let shard_request = DownloadFileRequest::new(
+            entry,
+            &path,
+            DownloadFileKind::FlvSegment,
+            shard_expected_size,
+        );
+        if let Some(file) = self
+            .try_download_sharded(
+                &urls,
+                &shard_request,
+                options,
+                context.progress,
+                context.cancellation,
+            )
+            .await?
+        {
+            return Ok(file);
+        }
         self.download_candidate_urls_to_file(
-            &candidate_urls(&segment.url, &segment.backup_urls, &options.media_hosts),
+            &urls,
             &request,
             options,
             context.progress,
@@ -2308,6 +2784,15 @@ impl BiliClient {
             chapter_count,
         }))
     }
+}
+
+fn cdn_host_label(source_url: &str) -> Option<String> {
+    let url = url::Url::parse(source_url).ok()?;
+    let host = url.host_str()?;
+    Some(match url.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host.to_owned(),
+    })
 }
 
 struct FfmpegChapterMetadata {
@@ -3079,6 +3564,57 @@ async fn existing_file_len(path: &Path) -> Result<u64> {
     }
 }
 
+async fn should_probe_media_candidates(path: &Path, options: &DownloadOptions) -> Result<bool> {
+    if target_is_non_regular_file(path).await? {
+        return Ok(false);
+    }
+    let existing_len = existing_file_len(path).await?;
+    if options.resume && existing_len > 0 {
+        return Ok(false);
+    }
+    Ok(options.cdn_probe || options.cdn_parallelism > 1)
+}
+
+async fn target_is_symlink(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path).await {
+        Ok(metadata) => Ok(metadata.file_type().is_symlink()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(Error::Io(error)),
+    }
+}
+
+/// Treat the existing target node's regular-file type as its access-policy signal.
+/// Missing targets are eligible; symlinks and every other special node stay on the ordinary path.
+async fn target_is_non_regular_file(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path).await {
+        Ok(metadata) => Ok(!metadata.file_type().is_file()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(Error::Io(error)),
+    }
+}
+
+async fn target_has_multiple_hard_links(path: &Path) -> Result<bool> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+
+        return match fs::symlink_metadata(path).await {
+            Ok(metadata) => Ok(metadata.file_type().is_file() && metadata.nlink() > 1),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(Error::Io(error)),
+        };
+    }
+    #[cfg(not(unix))]
+    {
+        // Preserve the target object's identity when the platform cannot report its link count.
+        match fs::symlink_metadata(path).await {
+            Ok(metadata) => Ok(metadata.file_type().is_file()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(Error::Io(error)),
+        }
+    }
+}
+
 fn temporary_download_path(path: &Path) -> PathBuf {
     temporary_path_with_suffix(path, ".bbdown-download")
 }
@@ -3105,6 +3641,68 @@ fn temporary_path_with_suffix(path: &Path, suffix: &str) -> PathBuf {
         "{}{suffix}",
         safe_file_name_with_budget(base, budget)
     ))
+}
+
+#[cfg(unix)]
+fn apply_sharded_output_permissions(staged_path: &Path, target_path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let target_mode = match std::fs::symlink_metadata(target_path) {
+        Ok(metadata) if metadata.file_type().is_file() && metadata.len() == 0 => {
+            Some(metadata.permissions().mode() & 0o777)
+        }
+        Ok(_) => None,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(Error::Io(error)),
+    };
+    let mode = if let Some(mode) = target_mode {
+        mode
+    } else {
+        let mut witness = None;
+        for attempt in 0..8 {
+            let witness_path = staged_path.with_file_name(format!(
+                "{}.mode-witness-{attempt}",
+                staged_path
+                    .file_name()
+                    .and_then(std::ffi::OsStr::to_str)
+                    .unwrap_or("download")
+            ));
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&witness_path)
+            {
+                Ok(file) => {
+                    witness = Some((witness_path, file));
+                    break;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(Error::Io(error)),
+            }
+        }
+        let Some((witness_path, file)) = witness else {
+            return Err(Error::Io(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "could not create output permission witness",
+            )));
+        };
+        let witness_guard = match tempfile::TempPath::try_from_path(&witness_path) {
+            Ok(guard) => guard,
+            Err(error) => {
+                drop(file);
+                let _ = std::fs::remove_file(witness_path);
+                return Err(Error::Io(error));
+            }
+        };
+        let mode_result = file
+            .metadata()
+            .map(|metadata| metadata.permissions().mode() & 0o777);
+        drop(file);
+        let mode = mode_result.map_err(Error::Io)?;
+        witness_guard.close().map_err(Error::Io)?;
+        mode
+    };
+    std::fs::set_permissions(staged_path, std::fs::Permissions::from_mode(mode)).map_err(Error::Io)
 }
 
 fn archive_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
@@ -3258,16 +3856,47 @@ fn candidate_urls(
     backups: &[String],
     media_hosts: &MediaHostOptions,
 ) -> Vec<String> {
-    let mut urls = Vec::with_capacity(backups.len() + 1);
-    push_candidate_url(&mut urls, primary, media_hosts);
+    let mut urls = Vec::with_capacity((backups.len() + 1) * (media_hosts.cdn_hosts.len() + 1));
+    push_donor_candidates(&mut urls, primary, media_hosts);
     for url in backups.iter().filter(|url| !url.is_empty()) {
-        push_candidate_url(&mut urls, url, media_hosts);
+        push_donor_candidates(&mut urls, url, media_hosts);
     }
     urls
 }
 
+fn push_donor_candidates(urls: &mut Vec<String>, url: &str, media_hosts: &MediaHostOptions) {
+    if media_hosts.upos_host.is_none() {
+        let mut inserted_original = media_hosts.original_after_cdn_hosts == 0;
+        if inserted_original {
+            push_candidate_url(urls, url, media_hosts);
+        }
+        let mut cdn_candidates = 0;
+        for host in &media_hosts.cdn_hosts {
+            if !host.trim().is_empty()
+                && let Some(candidate) = replace_url_host(url, host)
+            {
+                push_unique_url(urls, candidate);
+                cdn_candidates += 1;
+            }
+            if !inserted_original && cdn_candidates >= media_hosts.original_after_cdn_hosts {
+                push_candidate_url(urls, url, media_hosts);
+                inserted_original = true;
+            }
+        }
+        if !inserted_original {
+            push_candidate_url(urls, url, media_hosts);
+        }
+    } else {
+        push_candidate_url(urls, url, media_hosts);
+    }
+}
+
 fn push_candidate_url(urls: &mut Vec<String>, url: &str, media_hosts: &MediaHostOptions) {
     let candidate = rewrite_media_url_host(url, media_hosts).unwrap_or_else(|| url.to_owned());
+    push_unique_url(urls, candidate);
+}
+
+fn push_unique_url(urls: &mut Vec<String>, candidate: String) {
     if !urls.iter().any(|existing| existing == &candidate) {
         urls.push(candidate);
     }
@@ -4862,6 +5491,15 @@ fn validate_download_plan_options(plan: &DownloadPlan, options: &DownloadOptions
     validate_download_path_templates(plan, options)
 }
 
+fn validate_cdn_parallelism(options: &DownloadOptions) -> Result<()> {
+    if !(1..=8).contains(&options.cdn_parallelism) {
+        return Err(Error::InvalidInput(
+            "CDN parallelism must be 1 (disabled) or between 2 and 8".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 fn validate_plan_stream_selection(plan: &DownloadPlan, options: &DownloadOptions) -> Result<()> {
     let selection = &options.stream_selection;
     if !selection.has_selection() {
@@ -4875,6 +5513,7 @@ fn validate_plan_stream_selection(plan: &DownloadPlan, options: &DownloadOptions
 }
 
 fn validate_download_path_templates(plan: &DownloadPlan, options: &DownloadOptions) -> Result<()> {
+    validate_cdn_parallelism(options)?;
     let _ = default_plan_output_dir(plan, options)?;
     let mut rendered_entry_dirs = HashSet::new();
     for entry in &plan.entries {
@@ -5126,17 +5765,18 @@ fn subtitle_dedup_key(url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_UPOS_REPLACEMENT_HOST, DanmakuUpdateOptions, DownloadArchive,
-        DownloadArchiveEntryRecord, DownloadArchiveRecord, DownloadFileRequest, DownloadMode,
-        DownloadOptions, DownloadPathTemplates, DownloadPreflight, DownloadReport,
-        DownloadReportSummary, DownloadedFile, DuplicateDecision, EntryDownloadReport,
-        EntryDownloadSummary, MAX_FILE_COMPONENT_BYTES, MAX_FILE_NAME_BYTES,
-        MAX_SUBTITLE_EXTENSION_BYTES, MediaHostOptions, MuxOptions, MuxReport, RetryPolicy,
-        SidecarOptions, StreamSelection, SubtitleAiPolicy, TemplateContext, archive_sidecar_path,
-        candidate_urls, comparable_output_path, cover_file_name, default_plan_output_dir,
-        download_entry_content_key, download_entry_content_key_for_options,
-        download_plan_content_key, download_plan_content_key_for_options, entry_dir_name,
-        media_file_name, mux_file_stem, path_is_occupied, remove_mux_output_if_cancelled,
+        CDN_PUBLIC_PROBE_MAX_BYTES, CDN_SHARD_CHUNK_SIZE, DEFAULT_UPOS_REPLACEMENT_HOST,
+        DanmakuUpdateOptions, DownloadArchive, DownloadArchiveEntryRecord, DownloadArchiveRecord,
+        DownloadFileRequest, DownloadMode, DownloadOptions, DownloadPathTemplates,
+        DownloadPreflight, DownloadReport, DownloadReportSummary, DownloadedFile,
+        DuplicateDecision, EntryDownloadReport, EntryDownloadSummary, MAX_FILE_COMPONENT_BYTES,
+        MAX_FILE_NAME_BYTES, MAX_SUBTITLE_EXTENSION_BYTES, MediaHostOptions, MuxOptions, MuxReport,
+        RetryPolicy, SidecarOptions, StreamSelection, SubtitleAiPolicy, TemplateContext,
+        archive_sidecar_path, candidate_urls, comparable_output_path, cover_file_name,
+        default_plan_output_dir, download_entry_content_key,
+        download_entry_content_key_for_options, download_plan_content_key,
+        download_plan_content_key_for_options, entry_dir_name, media_file_name, mux_file_stem,
+        path_is_occupied, probe_media_cdns, remove_mux_output_if_cancelled,
         render_template_component, safe_file_name, safe_file_name_with_budget, select_audio_stream,
         select_media_stream, selected_subtitles, subtitle_dedup_key, subtitle_extension,
         subtitle_file_name, temporary_download_path, temporary_generated_path, temporary_mux_path,
@@ -5278,6 +5918,8 @@ mod tests {
             .with_cover(true)
             .with_subtitles(false)
             .with_danmaku(false)
+            .with_cdn_probe(true)
+            .with_cdn_parallelism(4)
             .with_danmaku_formats([DanmakuFormat::Xml, DanmakuFormat::Ass])
             .with_media_hosts(
                 MediaHostOptions::new()
@@ -5300,6 +5942,8 @@ mod tests {
         assert!(!options.resume);
         assert!(!options.include_subtitles);
         assert!(!options.include_danmaku);
+        assert!(options.cdn_probe);
+        assert_eq!(options.cdn_parallelism, 4);
         assert_eq!(
             options.danmaku_formats,
             DanmakuFormats::new([DanmakuFormat::Xml, DanmakuFormat::Ass])
@@ -5308,6 +5952,8 @@ mod tests {
             options.media_hosts,
             MediaHostOptions {
                 upos_host: Some("upos.example".to_owned()),
+                cdn_hosts: Vec::new(),
+                original_after_cdn_hosts: usize::MAX,
                 force_replace_host: true,
                 allow_pcdn: false,
             }
@@ -5327,6 +5973,26 @@ mod tests {
     }
 
     #[test]
+    fn cdn_parallelism_validation_accepts_disabled_or_supported_values() {
+        for parallelism in [1, 2, 4, 8] {
+            assert!(
+                super::validate_cdn_parallelism(
+                    &DownloadOptions::default().with_cdn_parallelism(parallelism)
+                )
+                .is_ok()
+            );
+        }
+        for parallelism in [0, 9, usize::MAX] {
+            assert!(
+                super::validate_cdn_parallelism(
+                    &DownloadOptions::default().with_cdn_parallelism(parallelism),
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
     fn candidate_urls_preserve_media_hosts_by_default() {
         let options = MediaHostOptions::default();
         let urls = candidate_urls(
@@ -5342,6 +6008,296 @@ mod tests {
                 "https://backup.example/video.m4s"
             ]
         );
+    }
+
+    #[test]
+    fn candidate_urls_try_ordered_cdn_pool_then_each_original_donor() {
+        let options = MediaHostOptions::new().with_cdn_hosts([
+            "edge-a.example",
+            "edge-b.example",
+            "edge-a.example",
+        ]);
+        let urls = candidate_urls(
+            "https://origin.example/video.m4s?token=signed%2Bvalue",
+            &["https://backup.example/video.m4s?token=backup".to_owned()],
+            &options,
+        );
+
+        assert_eq!(
+            urls,
+            vec![
+                "https://edge-a.example/video.m4s?token=signed%2Bvalue",
+                "https://edge-b.example/video.m4s?token=signed%2Bvalue",
+                "https://origin.example/video.m4s?token=signed%2Bvalue",
+                "https://edge-a.example/video.m4s?token=backup",
+                "https://edge-b.example/video.m4s?token=backup",
+                "https://backup.example/video.m4s?token=backup",
+            ]
+        );
+    }
+
+    #[test]
+    fn candidate_urls_insert_each_original_after_one_cdn_host_when_configured() {
+        let hosts = (0..74).map(|index| format!("edge-{index}.example"));
+        let options = MediaHostOptions::new()
+            .with_cdn_hosts(hosts)
+            .with_original_after_cdn_hosts(1);
+        let urls = candidate_urls(
+            "https://origin.example/video.m4s",
+            &["https://backup.example/backup.m4s".to_owned()],
+            &options,
+        );
+
+        assert_eq!(urls[0], "https://edge-0.example/video.m4s");
+        assert_eq!(urls[1], "https://origin.example/video.m4s");
+        assert_eq!(urls[2], "https://edge-1.example/video.m4s");
+        assert_eq!(urls[75], "https://edge-0.example/backup.m4s");
+        assert_eq!(urls[76], "https://backup.example/backup.m4s");
+        assert_eq!(urls.len(), 150);
+    }
+
+    #[tokio::test]
+    async fn cdn_probe_ranks_valid_ranges_and_keeps_failures_for_fallback() {
+        let server = MockServer::start();
+        let range_body = "x".repeat(64 * 1024);
+        for (path, delay_ms) in [("/slow", 100), ("/fast", 0)] {
+            server.mock(|when, then| {
+                when.method(GET).path(path).header("range", "bytes=0-65535");
+                then.status(206)
+                    .header("Content-Range", "bytes 0-65535/100000")
+                    .header("Content-Length", "65536")
+                    .delay(std::time::Duration::from_millis(delay_ms))
+                    .body(range_body.clone());
+            });
+        }
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/different")
+                .header("range", "bytes=0-65535");
+            then.status(206)
+                .header("Content-Range", "bytes 0-65535/100000")
+                .header("Content-Length", "65536")
+                .body("y".repeat(64 * 1024));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/invalid")
+                .header("range", "bytes=0-65535");
+            then.status(200).body("range unsupported");
+        });
+        let client = BiliClient::new(ClientConfig::default());
+        let (urls, discovered_size) = client
+            .probe_media_candidates(
+                ["different", "slow", "invalid", "fast"]
+                    .into_iter()
+                    .map(|path| format!("{}/{path}", server.base_url()))
+                    .collect(),
+                Some(100_000),
+                None,
+            )
+            .await;
+
+        assert_eq!(discovered_size, Some(100_000));
+        assert_eq!(
+            urls,
+            ["fast", "slow", "different", "invalid"]
+                .into_iter()
+                .map(|path| format!("{}/{path}", server.base_url()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn cdn_probe_keeps_original_order_without_advertised_size() {
+        let server = MockServer::start();
+        for path in ["/first", "/second"] {
+            server.mock(|when, then| {
+                when.method(GET).path(path).header("range", "bytes=0-0");
+                then.status(200).body("range unsupported");
+            });
+        }
+        let client = BiliClient::new(ClientConfig::default());
+        let urls = vec![
+            format!("{}/first", server.base_url()),
+            format!("{}/second", server.base_url()),
+        ];
+        let (ordered, discovered_size) = client
+            .probe_media_candidates(urls.clone(), None, None)
+            .await;
+        assert_eq!(ordered, urls);
+        assert_eq!(discovered_size, None);
+    }
+
+    #[tokio::test]
+    async fn public_cdn_probe_keeps_unknown_size_within_byte_budget() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        for (range, content_range, length) in [
+            ("bytes=0-0", "bytes 0-0/100000", 1),
+            ("bytes=1-65535", "bytes 1-65535/100000", 65535),
+        ] {
+            server.mock(|when, then| {
+                when.method(GET).path("/asset").header("range", range);
+                then.status(206)
+                    .header("Content-Range", content_range)
+                    .header("Content-Length", length.to_string())
+                    .body(vec![b'x'; length]);
+            });
+        }
+        let client = BiliClient::new(ClientConfig::default());
+        let stream = media_stream(1, &format!("{}/asset", server.base_url()));
+        let results = probe_media_cdns(&client, &stream, &MediaHostOptions::default()).await?;
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].ok);
+        assert_eq!(results[0].bytes, CDN_PUBLIC_PROBE_MAX_BYTES);
+        assert!(results[0].bytes <= CDN_PUBLIC_PROBE_MAX_BYTES);
+        assert!(results[0].bytes_per_second.is_some());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cdn_probe_keeps_first_content_group_on_a_tie() {
+        let server = MockServer::start();
+        for (path, body, delay_ms) in [
+            ("/first", "aaaa", 50),
+            ("/second", "bbbb", 0),
+            ("/third", "aaaa", 50),
+            ("/fourth", "bbbb", 0),
+        ] {
+            server.mock(|when, then| {
+                when.method(GET).path(path).header("range", "bytes=0-3");
+                then.status(206)
+                    .header("Content-Range", "bytes 0-3/4")
+                    .header("Content-Length", "4")
+                    .delay(std::time::Duration::from_millis(delay_ms))
+                    .body(body);
+            });
+        }
+        let client = BiliClient::new(ClientConfig::default());
+        let (urls, _) = client
+            .probe_media_candidates(
+                ["first", "second", "third", "fourth"]
+                    .into_iter()
+                    .map(|path| format!("{}/{path}", server.base_url()))
+                    .collect(),
+                Some(4),
+                None,
+            )
+            .await;
+
+        assert!(
+            urls[..2]
+                .iter()
+                .all(|url| { url.ends_with("/first") || url.ends_with("/third") })
+        );
+        assert_eq!(
+            &urls[2..],
+            ["second", "fourth"]
+                .into_iter()
+                .map(|path| format!("{}/{path}", server.base_url()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn cdn_probe_does_not_promote_discovered_size_without_a_valid_sample() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/candidate")
+                .header("range", "bytes=0-0");
+            then.status(206)
+                .header("Content-Range", "bytes 0-0/100")
+                .header("Content-Length", "1")
+                .body("x");
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/candidate")
+                .header("range", "bytes=0-99");
+            then.status(200).body("range unsupported");
+        });
+        let client = BiliClient::new(ClientConfig::default());
+        let urls = vec![format!("{}/candidate", server.base_url())];
+        let (ordered, discovered_size) = client
+            .probe_media_candidates(urls.clone(), None, None)
+            .await;
+        assert_eq!(ordered, urls);
+        assert_eq!(discovered_size, None);
+    }
+
+    #[tokio::test]
+    async fn cdn_probe_discovers_missing_size_and_rejects_mismatched_totals() {
+        let server = MockServer::start();
+        let body = "x".repeat(64 * 1024);
+        server.mock(|when, then| {
+            when.method(GET).path("/bad").header("range", "bytes=0-0");
+            then.status(200).body("range unsupported");
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/good").header("range", "bytes=0-0");
+            then.status(206)
+                .header("Content-Range", "bytes 0-0/100000")
+                .header("Content-Length", "1")
+                .body("x");
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/good")
+                .header("range", "bytes=0-65535");
+            then.status(206)
+                .header("Content-Range", "bytes 0-65535/100000")
+                .header("Content-Length", "65536")
+                .body(body);
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/mismatch")
+                .header("range", "bytes=0-0");
+            then.status(206)
+                .header("Content-Range", "bytes 0-0/200000")
+                .header("Content-Length", "1")
+                .body("x");
+        });
+        let client = BiliClient::new(ClientConfig::default());
+        let (urls, discovered_size) = client
+            .probe_media_candidates(
+                ["bad", "good", "mismatch"]
+                    .into_iter()
+                    .map(|path| format!("{}/{path}", server.base_url()))
+                    .collect(),
+                None,
+                None,
+            )
+            .await;
+
+        assert_eq!(discovered_size, Some(100_000));
+        assert_eq!(
+            urls,
+            ["good", "bad", "mismatch"]
+                .into_iter()
+                .map(|path| format!("{}/{path}", server.base_url()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn cdn_probe_request_timeout_keeps_original_candidates() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/slow").header("range", "bytes=0-0");
+            then.status(206)
+                .header("Content-Range", "bytes 0-0/100000")
+                .delay(std::time::Duration::from_secs(3))
+                .body("x");
+        });
+        let client = BiliClient::new(ClientConfig::default());
+        let urls = vec![format!("{}/slow", server.base_url())];
+        let (ordered, discovered_size) = client
+            .probe_media_candidates(urls.clone(), None, None)
+            .await;
+        assert_eq!(ordered, urls);
+        assert_eq!(discovered_size, None);
     }
 
     #[test]
@@ -5382,6 +6338,26 @@ mod tests {
             vec![
                 "https://upos.example:8443/video.m4s?token=1",
                 "https://upos.example:8443/audio.m4s"
+            ]
+        );
+    }
+
+    #[test]
+    fn candidate_urls_upos_host_keeps_precedence_over_cdn_pool() {
+        let options = MediaHostOptions::new()
+            .with_upos_host("manual-upos.example:8443")
+            .with_cdn_hosts(["pool-edge.example"]);
+        let urls = candidate_urls(
+            "https://primary.example/video.m4s?token=signed",
+            &["https://backup.example/video.m4s?token=backup".to_owned()],
+            &options,
+        );
+
+        assert_eq!(
+            urls,
+            vec![
+                "https://manual-upos.example:8443/video.m4s?token=signed",
+                "https://manual-upos.example:8443/video.m4s?token=backup",
             ]
         );
     }
@@ -6136,6 +7112,948 @@ mod tests {
                 ..
             }) if title == "Mock video"
         ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(clippy::cast_possible_truncation, clippy::too_many_lines)]
+    async fn sharded_media_download_uses_two_sources_and_file_level_progress() -> anyhow::Result<()>
+    {
+        let server_a = MockServer::start();
+        let server_b = MockServer::start();
+        let total_size = 2 * CDN_SHARD_CHUNK_SIZE;
+        let prefix = vec![b'p'; 64 * 1024];
+        let mut first_chunk = vec![b'p'; 64 * 1024];
+        first_chunk.resize(CDN_SHARD_CHUNK_SIZE as usize, b'a');
+        let second_chunk = vec![b'b'; CDN_SHARD_CHUNK_SIZE as usize];
+        let mut plan = single_video_plan(format!("{}/asset.m4s?token=shared", server_a.base_url()));
+        let stream = &mut plan.entries[0].streams.videos[0];
+        stream.size = Some(total_size);
+        stream.backup_urls = vec![format!("{}/asset.m4s?token=shared", server_b.base_url())];
+
+        let mut range_mocks = Vec::new();
+        for (server, path) in [(&server_a, "/asset.m4s"), (&server_b, "/asset.m4s")] {
+            let range_responses = [
+                (
+                    "bytes=0-16383",
+                    "bytes 0-16383/2097152",
+                    prefix[..16 * 1024].to_vec(),
+                ),
+                ("bytes=0-65535", "bytes 0-65535/2097152", prefix.clone()),
+                (
+                    "bytes=0-1048575",
+                    "bytes 0-1048575/2097152",
+                    first_chunk.clone(),
+                ),
+                (
+                    "bytes=1048576-2097151",
+                    "bytes 1048576-2097151/2097152",
+                    second_chunk.clone(),
+                ),
+            ];
+            for (range, content_range, body) in range_responses {
+                range_mocks.push(server.mock(|when, then| {
+                    when.method(GET).path(path).header("range", range);
+                    then.status(206)
+                        .header("Content-Range", content_range)
+                        .header("Content-Length", body.len().to_string())
+                        .body(body);
+                }));
+            }
+        }
+
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress_events = Arc::clone(&events);
+        let progress = move |event: &DownloadProgressEvent| {
+            push_progress_event(&progress_events, event.clone());
+        };
+        let report = client
+            .download_plan_with_progress(
+                &plan,
+                DownloadOptions::new(temp.path())
+                    .with_retry_policy(RetryPolicy::single_attempt())
+                    .with_download_mode(DownloadMode::VideoOnly)
+                    .with_cdn_parallelism(2)
+                    .with_cdn_probe(true)
+                    .with_mux(MuxOptions::Disabled),
+                &progress,
+            )
+            .await?;
+
+        let media_file = &report.entries[0].files[0];
+        let content = tokio::fs::read(&media_file.path).await?;
+        assert_eq!(content.len(), total_size as usize);
+        assert_eq!(&content[..CDN_SHARD_CHUNK_SIZE as usize], first_chunk);
+        assert_eq!(&content[CDN_SHARD_CHUNK_SIZE as usize..], second_chunk);
+        #[cfg(unix)]
+        {
+            let permissions = std_fs::metadata(&media_file.path)?.permissions().mode() & 0o7777;
+            let ordinary_path = media_file.path.with_file_name("ordinary-create-mode");
+            let ordinary = std_fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&ordinary_path)?;
+            let ordinary_permissions = ordinary.metadata()?.permissions().mode() & 0o7777;
+            drop(ordinary);
+            std_fs::remove_file(ordinary_path)?;
+            assert_eq!(permissions, ordinary_permissions);
+        }
+        for index in [0, 1, 4, 5] {
+            assert_eq!(range_mocks[index].calls(), 1);
+        }
+        let a_chunk_calls = range_mocks[2].calls() + range_mocks[3].calls();
+        let b_chunk_calls = range_mocks[6].calls() + range_mocks[7].calls();
+        assert!(a_chunk_calls > 0, "CDN A must serve a media chunk");
+        assert!(b_chunk_calls > 0, "CDN B must serve a media chunk");
+        assert_eq!(a_chunk_calls + b_chunk_calls, 2);
+        let events = progress_events_snapshot(&events);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    DownloadProgressEvent::FileStarted {
+                        kind: DownloadFileKind::Video,
+                        ..
+                    }
+                ))
+                .count(),
+            1
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    DownloadProgressEvent::FileProgress {
+                        kind: DownloadFileKind::Video,
+                        ..
+                    }
+                ))
+                .count(),
+            2
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, DownloadProgressEvent::FileCompleted { kind: DownloadFileKind::Video, total_bytes, .. } if *total_bytes == total_size))
+                .count(),
+            1
+        );
+        let shard_events = events
+            .iter()
+            .filter_map(|event| match event {
+                DownloadProgressEvent::CdnShardCompleted {
+                    kind: DownloadFileKind::Video,
+                    host,
+                    bytes,
+                    ..
+                } => Some((host.clone(), *bytes)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            shard_events.iter().map(|(_, bytes)| bytes).sum::<u64>(),
+            total_size
+        );
+        assert_eq!(shard_events.len(), 2);
+        let hosts = [server_a.base_url(), server_b.base_url()]
+            .into_iter()
+            .map(|base| -> anyhow::Result<String> {
+                let parsed = url::Url::parse(&base)?;
+                let host = parsed
+                    .host_str()
+                    .ok_or_else(|| anyhow::anyhow!("mock server URL has no host"))?;
+                let port = parsed
+                    .port()
+                    .ok_or_else(|| anyhow::anyhow!("mock server URL has no explicit port"))?;
+                Ok(format!("{host}:{port}"))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        assert_eq!(
+            shard_events
+                .iter()
+                .map(|(host, _)| host)
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            2
+        );
+        assert!(hosts.iter().all(|host| {
+            shard_events
+                .iter()
+                .any(|(shard_host, _)| shard_host == host)
+        }));
+        let serialized = serde_json::to_string(&events)?;
+        assert!(serialized.contains("cdn_shard_completed"));
+        assert!(!serialized.contains("token"));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn sharded_download_preserves_existing_empty_target_permissions() -> anyhow::Result<()> {
+        let server_a = MockServer::start();
+        let server_b = MockServer::start();
+        for server in [&server_a, &server_b] {
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/asset.m4s")
+                    .header("range", "bytes=0-5");
+                then.status(206)
+                    .header("Content-Range", "bytes 0-5/6")
+                    .header("Content-Length", "6")
+                    .body("abcdef");
+            });
+        }
+        let mut plan = single_video_plan(format!("{}/asset.m4s?token=shared", server_a.base_url()));
+        let stream = &mut plan.entries[0].streams.videos[0];
+        stream.size = Some(6);
+        stream.backup_urls = vec![format!("{}/asset.m4s?token=shared", server_b.base_url())];
+        let temp = tempfile::tempdir()?;
+        let output_dir = test_entry_dir(temp.path(), &plan)?;
+        tokio::fs::create_dir_all(&output_dir).await?;
+        let target = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
+        tokio::fs::write(&target, "").await?;
+        std_fs::set_permissions(&target, std_fs::Permissions::from_mode(0o640))?;
+
+        BiliClient::new(ClientConfig::default())
+            .download_plan(
+                &plan,
+                DownloadOptions::new(temp.path())
+                    .with_retry_policy(RetryPolicy::single_attempt())
+                    .with_download_mode(DownloadMode::VideoOnly)
+                    .with_cdn_parallelism(2)
+                    .with_mux(MuxOptions::Disabled),
+            )
+            .await?;
+
+        assert_eq!(
+            std_fs::metadata(&target)?.permissions().mode() & 0o7777,
+            0o640
+        );
+        assert_eq!(tokio::fs::read_to_string(&target).await?, "abcdef");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn sharded_download_follows_symlink_to_empty_target() -> anyhow::Result<()> {
+        use std::os::unix::fs::symlink;
+
+        let server_a = MockServer::start();
+        let server_b = MockServer::start();
+        let range_mocks = [&server_a, &server_b].map(|server| {
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/asset.m4s")
+                    .header("range", "bytes=0-5");
+                then.status(206)
+                    .header("Content-Range", "bytes 0-5/6")
+                    .header("Content-Length", "6")
+                    .body("abcdef");
+            })
+        });
+        let ordinary_mock = server_a.mock(|when, then| {
+            when.method(GET).path("/asset.m4s").header_missing("range");
+            then.status(200)
+                .header("Content-Length", "6")
+                .body("abcdef");
+        });
+        let mut plan = single_video_plan(format!("{}/asset.m4s?token=shared", server_a.base_url()));
+        {
+            let stream = &mut plan.entries[0].streams.videos[0];
+            stream.size = Some(6);
+            stream.backup_urls = vec![format!("{}/asset.m4s?token=shared", server_b.base_url())];
+        }
+
+        let temp = tempfile::tempdir()?;
+        let output_dir = test_entry_dir(temp.path(), &plan)?;
+        tokio::fs::create_dir_all(&output_dir).await?;
+        let target = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
+        let referent = output_dir.join("referent.m4s");
+        tokio::fs::write(&referent, "").await?;
+        symlink(&referent, &target)?;
+
+        BiliClient::new(ClientConfig::default())
+            .download_plan(
+                &plan,
+                DownloadOptions::new(temp.path())
+                    .with_retry_policy(RetryPolicy::single_attempt())
+                    .with_download_mode(DownloadMode::VideoOnly)
+                    .with_cdn_parallelism(2)
+                    .with_mux(MuxOptions::Disabled),
+            )
+            .await?;
+
+        assert!(std_fs::symlink_metadata(&target)?.file_type().is_symlink());
+        assert_eq!(tokio::fs::read_to_string(&referent).await?, "abcdef");
+        assert_eq!(ordinary_mock.calls(), 1);
+        assert!(range_mocks.iter().all(|mock| mock.calls() == 0));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn multiply_linked_empty_target_uses_ordinary_download_in_place() -> anyhow::Result<()> {
+        use std::os::unix::fs::MetadataExt;
+
+        let server_a = MockServer::start();
+        let server_b = MockServer::start();
+        let range_mocks = [&server_a, &server_b].map(|server| {
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/asset.m4s")
+                    .header("range", "bytes=0-5");
+                then.status(206)
+                    .header("Content-Range", "bytes 0-5/6")
+                    .header("Content-Length", "6")
+                    .body("abcdef");
+            })
+        });
+        let ordinary_mock = server_a.mock(|when, then| {
+            when.method(GET).path("/asset.m4s").header_missing("range");
+            then.status(200)
+                .header("Content-Length", "6")
+                .body("abcdef");
+        });
+        let mut plan = single_video_plan(format!("{}/asset.m4s?token=shared", server_a.base_url()));
+        {
+            let stream = &mut plan.entries[0].streams.videos[0];
+            stream.size = Some(6);
+            stream.backup_urls = vec![format!("{}/asset.m4s?token=shared", server_b.base_url())];
+        }
+
+        let temp = tempfile::tempdir()?;
+        let output_dir = test_entry_dir(temp.path(), &plan)?;
+        tokio::fs::create_dir_all(&output_dir).await?;
+        let target = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
+        let linked_target = output_dir.join("linked-consumer.m4s");
+        tokio::fs::write(&target, "").await?;
+        std_fs::hard_link(&target, &linked_target)?;
+        let original_metadata = std_fs::metadata(&target)?;
+        assert_eq!(original_metadata.nlink(), 2);
+
+        BiliClient::new(ClientConfig::default())
+            .download_plan(
+                &plan,
+                DownloadOptions::new(temp.path())
+                    .with_retry_policy(RetryPolicy::single_attempt())
+                    .with_download_mode(DownloadMode::VideoOnly)
+                    .with_cdn_parallelism(2)
+                    .with_mux(MuxOptions::Disabled),
+            )
+            .await?;
+
+        let target_metadata = std_fs::metadata(&target)?;
+        let linked_metadata = std_fs::metadata(&linked_target)?;
+        assert_eq!(target_metadata.dev(), original_metadata.dev());
+        assert_eq!(target_metadata.ino(), original_metadata.ino());
+        assert_eq!(linked_metadata.dev(), original_metadata.dev());
+        assert_eq!(linked_metadata.ino(), original_metadata.ino());
+        assert_eq!(tokio::fs::read_to_string(&target).await?, "abcdef");
+        assert_eq!(tokio::fs::read_to_string(&linked_target).await?, "abcdef");
+        assert_eq!(ordinary_mock.calls(), 1);
+        assert!(range_mocks.iter().all(|mock| mock.calls() == 1));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancelled_sharded_download_reports_file_failed_after_start() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        for path in ["/a.m4s", "/b.m4s"] {
+            server.mock(|when, then| {
+                when.method(GET).path(path).header("range", "bytes=0-7");
+                then.status(206)
+                    .header("Content-Range", "bytes 0-7/8")
+                    .header("Content-Length", "8")
+                    .body("abcdefgh");
+            });
+        }
+        let mut plan = single_video_plan(format!("{}/a.m4s", server.base_url()));
+        let stream = &mut plan.entries[0].streams.videos[0];
+        stream.size = Some(8);
+        stream.backup_urls = vec![format!("{}/b.m4s", server.base_url())];
+        let temp = tempfile::tempdir()?;
+        let cancellation = DownloadCancellationToken::new();
+        let cancel_on_start = cancellation.clone();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress_events = Arc::clone(&events);
+        let progress = move |event: &DownloadProgressEvent| {
+            push_progress_event(&progress_events, event.clone());
+            if matches!(event, DownloadProgressEvent::FileStarted { .. }) {
+                cancel_on_start.cancel_with_reason("test cancellation after file start");
+            }
+        };
+
+        let Err(error) = BiliClient::new(ClientConfig::default())
+            .download_plan_with_progress_and_cancellation(
+                &plan,
+                DownloadOptions::new(temp.path())
+                    .with_retry_policy(RetryPolicy::single_attempt())
+                    .with_download_mode(DownloadMode::VideoOnly)
+                    .with_cdn_parallelism(2)
+                    .with_mux(MuxOptions::Disabled),
+                &progress,
+                &cancellation,
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!("cancelled sharded download should fail"));
+        };
+
+        assert!(error.is_cancelled());
+        let events = progress_events_snapshot(&events);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, DownloadProgressEvent::FileStarted { .. }))
+                .count(),
+            1
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, DownloadProgressEvent::FileFailed { .. }))
+                .count(),
+            1
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, DownloadProgressEvent::FileCompleted { .. }))
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn existing_partial_media_uses_regular_resume_with_parallelism_enabled()
+    -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let total_size = 6;
+        let probe_mocks = ["/a.m4s", "/b.m4s"].map(|path| {
+            server.mock(|when, then| {
+                when.method(GET).path(path).header("range", "bytes=0-5");
+                then.status(206)
+                    .header("Content-Range", "bytes 0-5/6")
+                    .header("Content-Length", "6")
+                    .body("abcdef");
+            })
+        });
+        let resume_mock = server.mock(|when, then| {
+            when.method(GET).path("/a.m4s").header("range", "bytes=3-");
+            then.status(206)
+                .header("Content-Range", "bytes 3-5/6")
+                .header("Content-Length", "3")
+                .body("def");
+        });
+        let backup_resume_mock = server.mock(|when, then| {
+            when.method(GET).path("/b.m4s").header("range", "bytes=3-");
+            then.status(206)
+                .header("Content-Range", "bytes 3-5/6")
+                .header("Content-Length", "3")
+                .body("BAD");
+        });
+        let mut plan = single_video_plan(format!("{}/a.m4s", server.base_url()));
+        {
+            let stream = &mut plan.entries[0].streams.videos[0];
+            stream.size = Some(total_size);
+            stream.backup_urls = vec![format!("{}/b.m4s", server.base_url())];
+        }
+        let target_name = media_file_name("video", &plan.entries[0].streams.videos[0]);
+        let temp = tempfile::tempdir()?;
+        let output_dir = test_entry_dir(temp.path(), &plan)?;
+        tokio::fs::create_dir_all(&output_dir).await?;
+        let target = output_dir.join(target_name);
+        tokio::fs::write(&target, "abc").await?;
+
+        let report = BiliClient::new(ClientConfig::default())
+            .download_plan(
+                &plan,
+                DownloadOptions::new(temp.path())
+                    .with_retry_policy(RetryPolicy::single_attempt())
+                    .with_download_mode(DownloadMode::VideoOnly)
+                    .with_cdn_parallelism(2)
+                    .with_mux(MuxOptions::Disabled),
+            )
+            .await?;
+
+        assert_eq!(tokio::fs::read_to_string(&target).await?, "abcdef");
+        assert_eq!(report.entries[0].files[0].resumed_from, 3);
+        assert_eq!(resume_mock.calls(), 1);
+        assert!(probe_mocks.iter().all(|mock| mock.calls() == 0));
+        assert_eq!(backup_resume_mock.calls(), 0);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn existing_socket_target_skips_sharding_and_remains_a_socket() -> anyhow::Result<()> {
+        use std::os::unix::{
+            fs::{FileTypeExt, MetadataExt},
+            net::UnixListener,
+        };
+
+        let server_a = MockServer::start();
+        let server_b = MockServer::start();
+        let mut plan = single_video_plan(format!("{}/asset.m4s", server_a.base_url()));
+        {
+            let stream = &mut plan.entries[0].streams.videos[0];
+            stream.size = Some(8);
+            stream.backup_urls = vec![format!("{}/asset.m4s", server_b.base_url())];
+        }
+        let ordinary_mocks = [&server_a, &server_b].map(|server| {
+            server.mock(|when, then| {
+                when.method(GET).path("/asset.m4s").header_missing("range");
+                then.status(200).body("abcdefgh");
+            })
+        });
+        let range_mocks = [&server_a, &server_b].map(|server| {
+            server.mock(|when, then| {
+                when.method(GET).path("/asset.m4s").header_exists("range");
+                then.status(206)
+                    .header("Content-Range", "bytes 0-7/8")
+                    .header("Content-Length", "8")
+                    .body("abcdefgh");
+            })
+        });
+        let temp = tempfile::Builder::new().prefix("s").tempdir_in("/tmp")?;
+        let output_dir = test_entry_dir(temp.path(), &plan)?;
+        tokio::fs::create_dir_all(&output_dir).await?;
+        let target = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
+        let listener = UnixListener::bind(&target)?;
+        let original_metadata = std_fs::symlink_metadata(&target)?;
+        assert!(original_metadata.file_type().is_socket());
+        let original_inode = original_metadata.ino();
+
+        let result = BiliClient::new(ClientConfig::default())
+            .download_plan(
+                &plan,
+                DownloadOptions::new(temp.path())
+                    .with_retry_policy(RetryPolicy::single_attempt())
+                    .with_download_mode(DownloadMode::VideoOnly)
+                    .with_cdn_parallelism(2)
+                    .with_mux(MuxOptions::Disabled),
+            )
+            .await;
+
+        assert!(result.is_err());
+        assert!(ordinary_mocks.iter().any(|mock| mock.calls() == 1));
+        assert!(range_mocks.iter().all(|mock| mock.calls() == 0));
+        let current_metadata = std_fs::symlink_metadata(&target)?;
+        assert!(current_metadata.file_type().is_socket());
+        assert_eq!(current_metadata.ino(), original_inode);
+        drop(listener);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    #[allow(clippy::collapsible_if)]
+    async fn socket_created_during_sharding_is_preserved_at_publication() -> anyhow::Result<()> {
+        use std::os::unix::{
+            fs::{FileTypeExt, MetadataExt},
+            net::UnixListener,
+        };
+
+        fn bind_replacement_socket(path: &Path) -> Option<(UnixListener, u64)> {
+            let listener = UnixListener::bind(path).ok()?;
+            let inode = std_fs::symlink_metadata(path).ok()?.ino();
+            Some((listener, inode))
+        }
+
+        let server_a = MockServer::start();
+        let server_b = MockServer::start();
+        let mut plan = single_video_plan(format!("{}/asset.m4s", server_a.base_url()));
+        {
+            let stream = &mut plan.entries[0].streams.videos[0];
+            stream.size = Some(8);
+            stream.backup_urls = vec![format!("{}/asset.m4s", server_b.base_url())];
+        }
+        for server in [&server_a, &server_b] {
+            server.mock(|when, then| {
+                when.method(GET).path("/asset.m4s").header_exists("range");
+                then.status(206)
+                    .header("Content-Range", "bytes 0-7/8")
+                    .header("Content-Length", "8")
+                    .body("abcdefgh");
+            });
+            server.mock(|when, then| {
+                when.method(GET).path("/asset.m4s").header_missing("range");
+                then.status(200).body("abcdefgh");
+            });
+        }
+        let temp = tempfile::Builder::new().prefix("s").tempdir_in("/tmp")?;
+        let output_dir = test_entry_dir(temp.path(), &plan)?;
+        tokio::fs::create_dir_all(&output_dir).await?;
+        let target = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
+        let socket = Arc::new(Mutex::new(None::<(UnixListener, u64)>));
+        let callback_socket = Arc::clone(&socket);
+        let callback_target = target.clone();
+        let progress = move |event: &DownloadProgressEvent| {
+            if matches!(event, DownloadProgressEvent::CdnShardCompleted { .. }) {
+                if let Ok(mut socket) = callback_socket.lock() {
+                    if socket.is_none() {
+                        *socket = bind_replacement_socket(&callback_target);
+                    }
+                }
+            }
+        };
+
+        let result = BiliClient::new(ClientConfig::default())
+            .download_plan_with_progress(
+                &plan,
+                DownloadOptions::new(temp.path())
+                    .with_retry_policy(RetryPolicy::single_attempt())
+                    .with_download_mode(DownloadMode::VideoOnly)
+                    .with_cdn_parallelism(2)
+                    .with_mux(MuxOptions::Disabled),
+                &progress,
+            )
+            .await;
+
+        assert!(result.is_err());
+        let metadata = std_fs::symlink_metadata(&target)?;
+        assert!(metadata.file_type().is_socket());
+        let socket_inode = socket
+            .lock()
+            .ok()
+            .and_then(|socket| socket.as_ref().map(|(_, inode)| *inode));
+        assert_eq!(Some(metadata.ino()), socket_inode);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    #[allow(clippy::cast_possible_truncation)]
+    async fn no_resume_shards_existing_file_after_unknown_size_probe() -> anyhow::Result<()> {
+        // Unix reports link counts, so a single-linked existing regular file can be replaced.
+        // Other platforms keep the conservative hard-link identity fallback.
+        let server_a = MockServer::start();
+        let server_b = MockServer::start();
+        let total_size = 2 * CDN_SHARD_CHUNK_SIZE;
+        let body = (0..total_size)
+            .map(|index| (index % 239) as u8)
+            .collect::<Vec<_>>();
+        let mut plan = single_video_plan(format!("{}/asset.m4s", server_a.base_url()));
+        {
+            let stream = &mut plan.entries[0].streams.videos[0];
+            stream.size = None;
+            stream.backup_urls = vec![format!("{}/asset.m4s", server_b.base_url())];
+        }
+        let mut range_mocks = Vec::new();
+        for server in [&server_a, &server_b] {
+            for (start, end) in [
+                (0_u64, 0_u64),
+                (0, 65_535),
+                (0, 16_383),
+                (0, CDN_SHARD_CHUNK_SIZE - 1),
+                (CDN_SHARD_CHUNK_SIZE, total_size - 1),
+            ] {
+                let range = format!("bytes={start}-{end}");
+                let content_range = format!("bytes {start}-{end}/{total_size}");
+                let chunk = body[start as usize..=end as usize].to_vec();
+                range_mocks.push(server.mock(|when, then| {
+                    when.method(GET).path("/asset.m4s").header("range", range);
+                    then.status(206)
+                        .header("Content-Range", content_range)
+                        .header("Content-Length", chunk.len().to_string())
+                        .body(chunk);
+                }));
+            }
+        }
+        let temp = tempfile::tempdir()?;
+        let output_dir = test_entry_dir(temp.path(), &plan)?;
+        tokio::fs::create_dir_all(&output_dir).await?;
+        let target = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
+        tokio::fs::write(&target, "stale partial contents").await?;
+
+        let report = BiliClient::new(ClientConfig::default())
+            .download_plan(
+                &plan,
+                DownloadOptions::new(temp.path())
+                    .with_retry_policy(RetryPolicy::single_attempt())
+                    .with_download_mode(DownloadMode::VideoOnly)
+                    .with_resume(false)
+                    .with_cdn_parallelism(2)
+                    .with_mux(MuxOptions::Disabled),
+            )
+            .await?;
+
+        assert_eq!(tokio::fs::read(&target).await?, body);
+        assert_eq!(report.entries[0].files[0].resumed_from, 0);
+        assert_eq!(report.entries[0].files[0].bytes_written, total_size);
+        for candidate_index in [0, 1, 2] {
+            assert_eq!(range_mocks[candidate_index].calls(), 1);
+            assert_eq!(range_mocks[candidate_index + 5].calls(), 1);
+        }
+        let chunk_calls = [3, 4, 8, 9]
+            .into_iter()
+            .map(|index| range_mocks[index].calls())
+            .sum::<usize>();
+        assert_eq!(chunk_calls, 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(clippy::cast_possible_truncation)]
+    async fn sharded_range_failure_falls_back_without_damaging_target() -> anyhow::Result<()> {
+        let server_a = MockServer::start();
+        let server_b = MockServer::start();
+        let total_size = 2 * CDN_SHARD_CHUNK_SIZE;
+        let mut plan = single_video_plan(format!("{}/asset.m4s?token=shared", server_a.base_url()));
+        {
+            let stream = &mut plan.entries[0].streams.videos[0];
+            stream.size = Some(total_size);
+            stream.backup_urls = vec![format!("{}/asset.m4s?token=shared", server_b.base_url())];
+        }
+        let target_name = media_file_name("video", &plan.entries[0].streams.videos[0]);
+        let mut prefix_mocks = Vec::new();
+        let fallback_body = vec![b'z'; total_size as usize];
+        let mut bad_chunk_mocks = Vec::new();
+        for (server, path) in [(&server_a, "/asset.m4s"), (&server_b, "/asset.m4s")] {
+            for (range, range_end, length) in [
+                ("bytes=0-65535", "65535", 64 * 1024),
+                ("bytes=0-16383", "16383", 16 * 1024),
+            ] {
+                let body = vec![b'p'; length];
+                prefix_mocks.push(server.mock(|when, then| {
+                    when.method(GET).path(path).header("range", range);
+                    then.status(206)
+                        .header("Content-Range", format!("bytes 0-{range_end}/2097152"))
+                        .header("Content-Length", body.len().to_string())
+                        .body(body);
+                }));
+            }
+            bad_chunk_mocks.push(server.mock(|when, then| {
+                when.method(GET)
+                    .path(path)
+                    .header("range", "bytes=0-1048575");
+                then.status(200).body("range ignored");
+            }));
+            server.mock(|when, then| {
+                when.method(GET).path(path).header_missing("range");
+                then.status(200).body(fallback_body.clone());
+            });
+        }
+        let temp = tempfile::tempdir()?;
+        let output_dir = test_entry_dir(temp.path(), &plan)?;
+        tokio::fs::create_dir_all(&output_dir).await?;
+        let target = output_dir.join(target_name);
+        tokio::fs::write(&target, "").await?;
+
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress_events = Arc::clone(&events);
+        let progress = move |event: &DownloadProgressEvent| {
+            push_progress_event(&progress_events, event.clone());
+        };
+        BiliClient::new(ClientConfig::default())
+            .download_plan_with_progress(
+                &plan,
+                DownloadOptions::new(temp.path())
+                    .with_retry_policy(RetryPolicy::single_attempt())
+                    .with_download_mode(DownloadMode::VideoOnly)
+                    .with_cdn_parallelism(2)
+                    .with_mux(MuxOptions::Disabled),
+                &progress,
+            )
+            .await?;
+
+        let downloaded = tokio::fs::read(&target).await?;
+        assert_eq!(downloaded, fallback_body);
+        let prefix_calls = prefix_mocks
+            .iter()
+            .map(httpmock::Mock::calls)
+            .collect::<Vec<_>>();
+        assert!(
+            prefix_calls.iter().all(|calls| *calls == 1),
+            "{prefix_calls:?}"
+        );
+        assert!(bad_chunk_mocks.iter().any(|mock| mock.calls() >= 1));
+        let events = progress_events_snapshot(&events);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, DownloadProgressEvent::FileFailed { .. }))
+                .count(),
+            0
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, DownloadProgressEvent::FileCompleted { .. }))
+                .count(),
+            1
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(clippy::cast_possible_truncation)]
+    async fn sharded_prefix_mismatch_falls_back_without_replacing_target_with_partial_data()
+    -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let total_size = 2 * CDN_SHARD_CHUNK_SIZE;
+        let fallback_body = vec![b'z'; total_size as usize];
+        let mut plan = single_video_plan(format!("{}/a.m4s", server.base_url()));
+        {
+            let stream = &mut plan.entries[0].streams.videos[0];
+            stream.size = Some(total_size);
+            stream.backup_urls = vec![format!("{}/b.m4s", server.base_url())];
+        }
+        let mut prefix_mocks = Vec::new();
+        let mut chunk_mocks = Vec::new();
+        for (path, byte) in [("/a.m4s", b'a'), ("/b.m4s", b'b')] {
+            for (range, range_end, length) in [
+                ("bytes=0-65535", "65535", 64 * 1024),
+                ("bytes=0-16383", "16383", 16 * 1024),
+            ] {
+                let body = vec![byte; length];
+                prefix_mocks.push(server.mock(|when, then| {
+                    when.method(GET).path(path).header("range", range);
+                    then.status(206)
+                        .header("Content-Range", format!("bytes 0-{range_end}/2097152"))
+                        .header("Content-Length", body.len().to_string())
+                        .body(body);
+                }));
+            }
+            chunk_mocks.push(server.mock(|when, then| {
+                when.method(GET)
+                    .path(path)
+                    .header("range", "bytes=0-1048575");
+                then.status(206)
+                    .header("Content-Range", "bytes 0-1048575/2097152")
+                    .header("Content-Length", "1048576")
+                    .body(vec![byte; 1024 * 1024]);
+            }));
+            server.mock(|when, then| {
+                when.method(GET).path(path).header_missing("range");
+                then.status(200).body(fallback_body.clone());
+            });
+        }
+        let temp = tempfile::tempdir()?;
+        let output_dir = test_entry_dir(temp.path(), &plan)?;
+        tokio::fs::create_dir_all(&output_dir).await?;
+        let target_name = media_file_name("video", &plan.entries[0].streams.videos[0]);
+        let target = output_dir.join(target_name);
+        tokio::fs::write(&target, "").await?;
+
+        BiliClient::new(ClientConfig::default())
+            .download_plan(
+                &plan,
+                DownloadOptions::new(temp.path())
+                    .with_retry_policy(RetryPolicy::single_attempt())
+                    .with_download_mode(DownloadMode::VideoOnly)
+                    .with_cdn_parallelism(2)
+                    .with_mux(MuxOptions::Disabled),
+            )
+            .await?;
+
+        assert_eq!(tokio::fs::read(&target).await?, fallback_body);
+        assert!(prefix_mocks.iter().all(|mock| mock.calls() == 1));
+        assert!(chunk_mocks.iter().all(|mock| mock.calls() == 0));
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(clippy::cast_possible_truncation)]
+    async fn sharded_different_paths_fall_back_and_clean_staging() -> anyhow::Result<()> {
+        // Equal prefixes cannot make separately signed media paths safe to combine.
+        let server = MockServer::start();
+        let total_size = 2 * CDN_SHARD_CHUNK_SIZE;
+        let mut canonical_first = vec![b'p'; 64 * 1024];
+        canonical_first.resize(CDN_SHARD_CHUNK_SIZE as usize, b'a');
+        let canonical_second = vec![b'b'; CDN_SHARD_CHUNK_SIZE as usize];
+        let alternate_second = vec![b'c'; CDN_SHARD_CHUNK_SIZE as usize];
+        let mut canonical_body = canonical_first.clone();
+        canonical_body.extend_from_slice(&canonical_second);
+        let mut plan = single_video_plan(format!("{}/a.m4s", server.base_url()));
+        {
+            let stream = &mut plan.entries[0].streams.videos[0];
+            stream.size = Some(total_size);
+            stream.backup_urls = vec![format!("{}/b.m4s", server.base_url())];
+        }
+
+        let prefix = canonical_first[..64 * 1024].to_vec();
+        for (path, second_chunk, delay_probe) in [
+            ("/a.m4s", canonical_second, false),
+            ("/b.m4s", alternate_second, true),
+        ] {
+            let first_chunk = canonical_first.clone();
+            let prefix_16k = prefix[..16 * 1024].to_vec();
+            let prefix_64k = prefix.clone();
+            server.mock(|when, then| {
+                when.method(GET).path(path).header("range", "bytes=0-16383");
+                then.status(206)
+                    .header("Content-Range", "bytes 0-16383/2097152")
+                    .header("Content-Length", prefix_16k.len().to_string())
+                    .body(prefix_16k);
+            });
+            server.mock(|when, then| {
+                when.method(GET).path(path).header("range", "bytes=0-65535");
+                let response = then
+                    .status(206)
+                    .header("Content-Range", "bytes 0-65535/2097152")
+                    .header("Content-Length", prefix_64k.len().to_string())
+                    .body(prefix_64k);
+                if delay_probe {
+                    response.delay(std::time::Duration::from_millis(150));
+                }
+            });
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path(path)
+                    .header("range", "bytes=0-1048575");
+                then.status(206)
+                    .header("Content-Range", "bytes 0-1048575/2097152")
+                    .header("Content-Length", "1048576")
+                    .body(first_chunk);
+            });
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path(path)
+                    .header("range", "bytes=1048576-2097151");
+                then.status(206)
+                    .header("Content-Range", "bytes 1048576-2097151/2097152")
+                    .header("Content-Length", "1048576")
+                    .body(second_chunk);
+            });
+        }
+        server.mock(|when, then| {
+            when.method(GET).path("/a.m4s").header_missing("range");
+            then.status(200).body(canonical_body.clone());
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/b.m4s").header_missing("range");
+            then.status(200).body(canonical_body.clone());
+        });
+
+        let temp = tempfile::tempdir()?;
+        let output_dir = test_entry_dir(temp.path(), &plan)?;
+        tokio::fs::create_dir_all(&output_dir).await?;
+        let target_name = media_file_name("video", &plan.entries[0].streams.videos[0]);
+        let target = output_dir.join(&target_name);
+        tokio::fs::write(&target, "").await?;
+
+        BiliClient::new(ClientConfig::default())
+            .download_plan(
+                &plan,
+                DownloadOptions::new(temp.path())
+                    .with_retry_policy(RetryPolicy::single_attempt())
+                    .with_download_mode(DownloadMode::VideoOnly)
+                    .with_cdn_parallelism(2)
+                    .with_mux(MuxOptions::Disabled),
+            )
+            .await?;
+
+        assert_eq!(tokio::fs::read(&target).await?, canonical_body);
+        let mut entries = tokio::fs::read_dir(&output_dir).await?;
+        let mut file_names = Vec::new();
+        while let Some(entry) = entries.next_entry().await? {
+            file_names.push(entry.file_name());
+        }
+        assert_eq!(file_names, vec![std::ffi::OsString::from(target_name)]);
         Ok(())
     }
 

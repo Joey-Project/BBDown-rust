@@ -3596,7 +3596,7 @@ fn download_only_danmaku_can_write_xml_and_ass_formats() -> anyhow::Result<()> {
 }
 
 #[test]
-fn download_upos_host_rewrites_media_url_candidates() -> anyhow::Result<()> {
+fn download_cdn_host_pool_rewrites_media_url_candidates() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;
     let credential_file = temp.path().join("credentials.json");
@@ -3615,7 +3615,9 @@ fn download_upos_host_rewrites_media_url_candidates() -> anyhow::Result<()> {
         .arg(&output_dir)
         .arg("--only")
         .arg("video")
-        .arg("--upos-host")
+        .arg("--cdn-host")
+        .arg(server_authority(&server)?)
+        .arg("--cdn-host")
         .arg(server_authority(&server)?)
         .arg("--no-mux")
         .arg("--json");
@@ -3630,6 +3632,90 @@ fn download_upos_host_rewrites_media_url_candidates() -> anyhow::Result<()> {
         fs::read_to_string(downloaded_file_path(&json, "video")?)?,
         "rewritten-video"
     );
+    Ok(())
+}
+
+#[test]
+fn download_cdn_host_conflicts_with_upos_host() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("download")
+        .arg("av170001")
+        .arg("--upos-host")
+        .arg("upos.example")
+        .arg("--cdn-host")
+        .arg("edge.example");
+
+    command
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("cannot be used with"));
+    Ok(())
+}
+
+#[test]
+fn download_cdn_parallel_rejects_values_outside_supported_range() -> anyhow::Result<()> {
+    for parallel in ["1", "9"] {
+        let temp = tempfile::tempdir()?;
+        let credential_file = temp.path().join("credentials.json");
+        let mut command = bbdown_command()?;
+        command
+            .arg("--credential-file")
+            .arg(&credential_file)
+            .arg("download")
+            .arg("av170001")
+            .arg("--cdn-parallel")
+            .arg(parallel);
+        command.assert().failure().stderr(predicates::str::contains(
+            "--cdn-parallel must be between 2 and 8",
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn download_cdn_pool_failure_falls_back_to_origin_and_keeps_sidecars() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    mock_minimal_download_with_sidecars(&server);
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("download")
+        .arg("av170001")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--cdn-host")
+        .arg("127.0.0.1:1")
+        .arg("--cdn-probe")
+        .arg("--cdn-parallel")
+        .arg("2")
+        .arg("--no-mux")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+
+    assert_eq!(
+        json["entries"][0]["files"].as_array().map(Vec::len),
+        Some(5)
+    );
+    assert_eq!(
+        fs::read_to_string(downloaded_file_path(&json, "video")?)?,
+        "video"
+    );
+    assert!(!fs::read(downloaded_file_path(&json, "cover")?)?.is_empty());
+    assert!(!fs::read(downloaded_file_path(&json, "subtitle")?)?.is_empty());
+    assert!(!fs::read(downloaded_file_path(&json, "danmaku")?)?.is_empty());
     Ok(())
 }
 

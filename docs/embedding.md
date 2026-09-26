@@ -464,8 +464,8 @@ async fn main() -> bbdown_core::Result<()> {
             Some(RestrictedArea::Hk),
         ))
         .with_proxy(RestrictedAreaProxy::bilibili_api(
-            "https://api-proxy.example",
-            Some(RestrictedArea::Tw),
+            "https://your-server.example/bili/api",
+            Some(RestrictedArea::Hk),
         ));
 
     let client = BiliClient::new(ClientConfig::default().with_restricted_area(restricted_area));
@@ -478,6 +478,11 @@ async fn main() -> bbdown_core::Result<()> {
 
 When fallback succeeds, entries report `StreamSource::PgcProxy` and include resolver diagnostics.
 Diagnostic endpoints are reduced to origins and diagnostic messages redact common secret patterns.
+The API-path example can target a self-hosted BiliRoaming-compatible service: the client requests
+its `/pgc/player/web/playurl` route with `area`, `ep_id`, and an optional generic `access_key`. The
+crate includes no public resolver and cannot guarantee account authorization or regional
+availability. Signed media URLs returned by the service are passed unchanged into the plan for the
+downstream downloader or player.
 
 ## Download Execution
 
@@ -750,6 +755,52 @@ let options = DownloadOptions::new("downloads").with_media_hosts(
         .with_upos_host("upos-sz-mirrorcoso1.bilivideo.com"),
 );
 ```
+
+For an ordered CDN host pool, optional Range probing, and parallel media transfer, combine the
+builders below:
+
+```rust,no_run
+use bbdown_core::{DownloadOptions, MediaHostOptions};
+
+let options = DownloadOptions::new("downloads")
+    .with_media_hosts(
+        MediaHostOptions::new().with_cdn_hosts(["edge-a.example", "edge-b.example"]),
+    )
+    .with_cdn_probe(true)
+    .with_cdn_parallelism(4);
+```
+
+Large host pools can call `MediaHostOptions::with_original_after_cdn_hosts(1)` so the donor's
+normal media candidate follows the first configured CDN before the remaining hosts. It still
+obeys the configured host-replacement policy. The default keeps this candidate after the whole
+explicitly configured pool. Probe ranking can reorder the first eight candidates, including the
+donor, but never probes the entire regional list at once.
+
+CDN probing and parallel transfer affect DASH/FLV media only; sidecar URLs are unchanged. The
+parallelism default is 1 (disabled), and values 2 through 8 enable parallel transfer. Invalid API
+values are rejected when validating or executing a download. Probe and shard requests require
+valid HTTP Range responses with a consistent total length. When the plan has no size, an opt-in
+probe first uses a bounded `bytes=0-0` request to discover it. Existing non-empty partial files use
+the regular resume path without probe reordering; symlink, multiply linked, and special-file
+targets use the regular download path. On Unix, a no-resume fresh download can shard over an
+existing single-link regular file; non-Unix builds conservatively use the regular path for
+existing files.
+Sharding groups candidates only when their sampled prefix, URL scheme,
+path, and query match. Each shard is fetched once from its selected CDN, with a failed range retried
+on another candidate. Parallelism 8 can use up to 8 simultaneous Range requests. This removes the
+baseline CDN's full-file verification transfer, but the prefix and size checks cannot prove that
+later bytes are identical across hosts. A differing edge can silently splice chunks from another
+version into the completed file. Speedups are not guaranteed, and host rewriting is not proof
+that a signed URL is valid on another CDN. `DownloadProgressEvent::CdnShardCompleted` reports the
+source host and bytes after a shard has been staged successfully. The event excludes signed URL
+paths and queries; summing its bytes by host shows the actual transfer distribution.
+
+Embedders can call `probe_media_cdns(client, stream, media_hosts)` to inspect the current signed
+representation before downloading. It reads at most 64 KiB from each of up to 8 candidates and
+returns host-only labels, success, elapsed time, throughput, and total size in `CdnProbeResult`.
+When the size is unknown, the 64 KiB budget includes a one-byte size-discovery request; reported
+throughput measures only the subsequent sample request.
+Only call it in response to an explicit user action: every probe makes live requests to CDN hosts.
 
 ## Download Archive And Duplicate Decisions
 
