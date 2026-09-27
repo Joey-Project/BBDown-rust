@@ -2038,6 +2038,8 @@ impl BiliClient {
             .unwrap_or(CDN_PROBE_IDLE_TIMEOUT)
             .min(CDN_PROBE_IDLE_TIMEOUT);
         let mut total_size = expected_size.filter(|size| *size > 0);
+        let discovering_size = total_size.is_none();
+        let mut discoveries_by_candidate = vec![None; probe_count];
         if total_size.is_none() {
             let discoveries =
                 futures_util::future::join_all(urls.iter().take(probe_count).map(|url| {
@@ -2053,12 +2055,16 @@ impl BiliClient {
                     )
                 }))
                 .await;
-            total_size = discoveries.into_iter().find_map(|result| match result {
-                Ok(result) if result.total_size > 0 && result.bytes.len() == 1 => {
-                    Some(result.total_size)
+            for (index, result) in discoveries.into_iter().enumerate() {
+                if let Ok(result) = result
+                    && result.total_size > 0
+                    && result.bytes.len() == 1
+                {
+                    total_size.get_or_insert(result.total_size);
+                    discoveries_by_candidate[index] =
+                        Some((result.total_size, result.bytes, result.elapsed));
                 }
-                _ => None,
-            });
+            }
         }
         let Some(total_size) = total_size else {
             return (urls, None);
@@ -2068,27 +2074,69 @@ impl BiliClient {
             return (urls, expected_size);
         };
         let mut measured: Vec<(String, f64, Vec<u8>)> = Vec::with_capacity(probe_count);
-        let probes =
-            futures_util::future::join_all(urls.iter().take(probe_count).map(|url| async {
-                (
-                    url.clone(),
-                    crate::range_transfer::fetch_range(
-                        &self.http,
-                        url,
-                        headers.clone(),
-                        0,
-                        end_inclusive,
-                        Some(total_size),
-                        CDN_PROBE_REQUEST_TIMEOUT,
-                        Some(idle_timeout),
-                    )
-                    .await,
-                )
-            }))
-            .await;
+        let probes = futures_util::future::join_all(
+            urls.iter()
+                .take(probe_count)
+                .zip(discoveries_by_candidate)
+                .map(|(url, discovery)| {
+                    let headers = headers.clone();
+                    async move {
+                        let discovery = discovery
+                            .filter(|(discovered_total, _, _)| *discovered_total == total_size);
+                        let result = if let Some((_, first_byte, discovery_elapsed)) = discovery {
+                            if requested_bytes == 1 {
+                                Some(Ok(crate::range_transfer::RangeFetch {
+                                    bytes: first_byte,
+                                    total_size,
+                                    elapsed: discovery_elapsed,
+                                }))
+                            } else {
+                                crate::range_transfer::fetch_range(
+                                    &self.http,
+                                    url,
+                                    headers.clone(),
+                                    1,
+                                    end_inclusive,
+                                    Some(total_size),
+                                    CDN_PROBE_REQUEST_TIMEOUT,
+                                    Some(idle_timeout),
+                                )
+                                .await
+                                .map(|mut result| {
+                                    let mut bytes = first_byte;
+                                    bytes.append(&mut result.bytes);
+                                    crate::range_transfer::RangeFetch {
+                                        bytes,
+                                        total_size,
+                                        elapsed: discovery_elapsed + result.elapsed,
+                                    }
+                                })
+                                .into()
+                            }
+                        } else if discovering_size {
+                            None
+                        } else {
+                            crate::range_transfer::fetch_range(
+                                &self.http,
+                                url,
+                                headers.clone(),
+                                0,
+                                end_inclusive,
+                                Some(total_size),
+                                CDN_PROBE_REQUEST_TIMEOUT,
+                                Some(idle_timeout),
+                            )
+                            .await
+                            .into()
+                        };
+                        (url.clone(), result)
+                    }
+                }),
+        )
+        .await;
         for (url, result) in probes {
             match result {
-                Ok(result)
+                Some(Ok(result))
                     if result.total_size == total_size
                         && !result.bytes.is_empty()
                         && !result.elapsed.is_zero() =>
@@ -6220,7 +6268,7 @@ mod tests {
         server.mock(|when, then| {
             when.method(GET)
                 .path("/candidate")
-                .header("range", "bytes=0-99");
+                .header("range", "bytes=1-99");
             then.status(200).body("range unsupported");
         });
         let client = BiliClient::new(ClientConfig::default());
@@ -6236,27 +6284,36 @@ mod tests {
     async fn cdn_probe_discovers_missing_size_and_rejects_mismatched_totals() {
         let server = MockServer::start();
         let body = "x".repeat(64 * 1024);
-        server.mock(|when, then| {
+        let bad_discovery = server.mock(|when, then| {
             when.method(GET).path("/bad").header("range", "bytes=0-0");
             then.status(200).body("range unsupported");
         });
-        server.mock(|when, then| {
+        let bad_full_sample = server.mock(|when, then| {
+            when.method(GET)
+                .path("/bad")
+                .header("range", "bytes=0-65535");
+            then.status(206)
+                .header("Content-Range", "bytes 0-65535/100000")
+                .header("Content-Length", "65536")
+                .body("x".repeat(64 * 1024));
+        });
+        let good_discovery = server.mock(|when, then| {
             when.method(GET).path("/good").header("range", "bytes=0-0");
             then.status(206)
                 .header("Content-Range", "bytes 0-0/100000")
                 .header("Content-Length", "1")
                 .body("x");
         });
-        server.mock(|when, then| {
+        let good_sample = server.mock(|when, then| {
             when.method(GET)
                 .path("/good")
-                .header("range", "bytes=0-65535");
+                .header("range", "bytes=1-65535");
             then.status(206)
-                .header("Content-Range", "bytes 0-65535/100000")
-                .header("Content-Length", "65536")
-                .body(body);
+                .header("Content-Range", "bytes 1-65535/100000")
+                .header("Content-Length", "65535")
+                .body(&body[1..]);
         });
-        server.mock(|when, then| {
+        let mismatch_discovery = server.mock(|when, then| {
             when.method(GET)
                 .path("/mismatch")
                 .header("range", "bytes=0-0");
@@ -6264,6 +6321,15 @@ mod tests {
                 .header("Content-Range", "bytes 0-0/200000")
                 .header("Content-Length", "1")
                 .body("x");
+        });
+        let mismatch_full_sample = server.mock(|when, then| {
+            when.method(GET)
+                .path("/mismatch")
+                .header("range", "bytes=0-65535");
+            then.status(206)
+                .header("Content-Range", "bytes 0-65535/200000")
+                .header("Content-Length", "65536")
+                .body("x".repeat(64 * 1024));
         });
         let client = BiliClient::new(ClientConfig::default());
         let (urls, discovered_size) = client
@@ -6285,6 +6351,34 @@ mod tests {
                 .map(|path| format!("{}/{path}", server.base_url()))
                 .collect::<Vec<_>>()
         );
+        bad_discovery.assert_calls(1);
+        bad_full_sample.assert_calls(0);
+        good_discovery.assert_calls(1);
+        good_sample.assert_calls(1);
+        mismatch_discovery.assert_calls(1);
+        mismatch_full_sample.assert_calls(0);
+    }
+
+    #[tokio::test]
+    async fn cdn_probe_uses_single_byte_discovery_for_one_byte_media() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/single-byte")
+                .header("range", "bytes=0-0");
+            then.status(206)
+                .header("Content-Range", "bytes 0-0/1")
+                .header("Content-Length", "1")
+                .body("x");
+        });
+        let client = BiliClient::new(ClientConfig::default());
+        let urls = vec![format!("{}/single-byte", server.base_url())];
+        let (ordered, discovered_size) = client
+            .probe_media_candidates(urls.clone(), None, None)
+            .await;
+
+        assert_eq!(ordered, urls);
+        assert_eq!(discovered_size, Some(1));
     }
 
     #[tokio::test]
@@ -7753,7 +7847,7 @@ mod tests {
         for server in [&server_a, &server_b] {
             for (start, end) in [
                 (0_u64, 0_u64),
-                (0, 65_535),
+                (1, 65_535),
                 (0, 16_383),
                 (0, CDN_SHARD_CHUNK_SIZE - 1),
                 (CDN_SHARD_CHUNK_SIZE, total_size - 1),

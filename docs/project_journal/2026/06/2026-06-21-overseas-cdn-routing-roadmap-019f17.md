@@ -3,7 +3,7 @@ id: 20260621-019f17-overseas-cdn-routing-roadmap
 title: Overseas CDN Routing Roadmap
 status: active
 created: 2026-06-21
-updated: 2026-09-26
+updated: 2026-09-27
 branch: feature/overseas-cdn-routing-roadmap
 pr: 62
 supersedes: []
@@ -45,8 +45,8 @@ superseded_by:
   through `MediaHostOptions::with_cdn_hosts`.
 - `--cdn-probe` opts into bounded, validated range measurements to rank usable candidates for a
   single resolved representation. Unknown-size probes include the one-byte discovery request in
-  the 64 KiB per-candidate budget and exclude its RTT from sample throughput. Probe failures
-  preserve candidates as fallback routes.
+  the 64 KiB per-candidate budget. Automatic ranking reuses that discovery byte in its prefix
+  comparison; probe failures preserve candidates as fallback routes.
 - `--cdn-parallel 2..8` opts into bounded multi-CDN range transfer for fresh, known-size media.
   Responses are checked for exact range metadata, size, and body length. Candidate sources are
   grouped by a shared prefix sample and identical URL scheme/path/query. Each chunk is fetched
@@ -116,6 +116,12 @@ superseded_by:
   `upos-hz-mirrorakam.akamaized.net`. The 1,644,777-byte sum matched the completed event and
   on-disk file size; no `file_failed` or fallback was observed. A sandboxed attempt could not
   resolve the public video domain, while a narrowly authorized HTTPS preflight returned 200.
+- After bounding the automatic unknown-size probe to 64 KiB per candidate, a final plan for
+  `BV1uW4y1s7zN` reported 15 null size fields. The rebuilt CLI completed a video-only overseas
+  transfer with two published shards: 1,048,576 bytes from
+  `upos-hz-mirrorakam.akamaized.net` and 596,201 from
+  `upos-sz-mirroraliov.bilivideo.com`. Their 1,644,777-byte sum matched the completed event and
+  on-disk file size, with no `file_failed` event or observed fallback.
 - The older manifest-driven `just live-e2e` suite stopped before any fixture request because its
   ignored local manifest references an absent default credential file. The direct CDN and resolver
   runs above are the live evidence for this PR; the legacy suite has no pass result for this run.
@@ -196,6 +202,5 @@ superseded_by:
 - Decide the remaining roadmap scope and release placement; no version has been assigned.
 - Review live CDN and resolver probe results, then decide whether catalog maintenance or persistent
   route-health policy warrants another workstream.
-- Add redacted per-host transfer counters if we need to quantify real multi-CDN byte distribution,
-  and compare elapsed time against a single-CDN run on the same representation before claiming a
-  live speedup.
+- Compare elapsed time against a single-CDN run on the same representation before claiming a live
+  speedup; published per-host shard events already quantify the multi-CDN byte distribution.
