@@ -68,13 +68,15 @@ superseded_by:
   before that route; it remains
   subject to the existing host-replacement policy. Manual `--cdn-host` pools retain their prior
   ordering. Probe ranking may reorder at most the first 8 candidates.
-- Successful staged shards emit `CdnShardCompleted` progress events with the actual source host and
-  byte count. No signed media URL path or query is included in the event. Recoverable sharding
+- After complete sharded output is published, `CdnShardCompleted` events report each shard's actual
+  source host and byte count; discarded staging bytes are not reported as progress. No signed media
+  URL path or query is included in the event. Recoverable sharding
   failures fall back to ordinary download without a terminal `FileFailed` event; cancellation and
   fatal target metadata errors still report failure.
 - Mock tests cover candidate ordering/fallback, probe ranking and timeout behavior, partial
   resume ordering, no-resume fresh sharding, special target preservation, compatible and
-  incompatible range sources, transfer fallback, file progress, and CLI sidecars. A mock PGC test
+  incompatible range sources, transfer fallback, published-only shard progress, and CLI sidecars.
+  A mock PGC test
   covers a BiliRoaming-compatible `/pgc/player/web/playurl` response; English and Chinese guides
   document self-hosted endpoint configuration.
 - These changes cover resolved-media downloads and optional PGC address lookup. They do not provide
@@ -108,6 +110,12 @@ superseded_by:
 - In the final unauthenticated `ep664928` / HK resolver probes, `atri` returned HTTP 404, and
   `mahiron` also failed; `bstar` returned one entry with `proxy_exercised=true`. The earlier `atri`
   success and this later failure show why catalog entries need runtime checks.
+- After deferring shard progress until publication, an authorized-network rerun of the same small
+  video completed with two `cdn_shard_completed` events between `file_started` and
+  `file_completed`: 1,048,576 bytes from `upos-sz-mirroraliov.bilivideo.com` and 596,201 from
+  `upos-hz-mirrorakam.akamaized.net`. The 1,644,777-byte sum matched the completed event and
+  on-disk file size; no `file_failed` or fallback was observed. A sandboxed attempt could not
+  resolve the public video domain, while a narrowly authorized HTTPS preflight returned 200.
 - The older manifest-driven `just live-e2e` suite stopped before any fixture request because its
   ignored local manifest references an absent default credential file. The direct CDN and resolver
   runs above are the live evidence for this PR; the legacy suite has no pass result for this run.

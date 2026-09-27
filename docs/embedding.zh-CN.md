@@ -744,9 +744,9 @@ URL scheme/path/query 相同的候选；每个分片从选定 CDN 获取一次�
 并行度为 8 时最多同时发出 8 个 Range 请求。这样基准 CDN 不必再承担整份文件的验证传输，
 但前缀和大小检查无法证明不同 host 的后续字节完全一致；若边缘节点提供不同版本，完成的文件可能
 无声地混入不同版本的分片。测速和并行传输不保证一定提速；
-改写 host 也不能证明签名 URL 一定能被另一 CDN 接受。每个分片成功写入暂存文件后，
-`DownloadProgressEvent::CdnShardCompleted` 会报告来源 host 和字节数。事件不含签名 URL 的路径
-与 query；按 host 汇总字节数即可核对实际供数分布。
+改写 host 也不能证明签名 URL 一定能被另一 CDN 接受。完整分片文件成功发布后，
+`DownloadProgressEvent::CdnShardCompleted` 才会报告各分片的来源 host 和字节数；被丢弃的暂存
+字节不会报告为进度。事件不含签名 URL 的路径与 query；按 host 汇总即可核对最终文件的供数分布。
 
 嵌入应用可以通过 `probe_media_cdns(client, stream, media_hosts)` 探测当前已签名的媒体表示。
 它对最多 8 个候选分别读取不超过 64 KiB，返回只含 host 的标签、成功状态、耗时、吞吐量和

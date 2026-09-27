@@ -2186,7 +2186,7 @@ impl BiliClient {
         };
         let attempt = DownloadAttempt { current: 1, max: 1 };
         emit_file_started(progress, request, 0, Some(expected_size), attempt);
-        let mut bytes_written = 0_u64;
+        let mut staged_progress = Vec::new();
         let shard_future = crate::range_transfer::download_sharded_to_temp(
             &self.http,
             urls,
@@ -2198,24 +2198,7 @@ impl BiliClient {
             options.download_idle_timeout,
             dest_dir,
             |bytes_delta, source_url| {
-                bytes_written = bytes_written.saturating_add(bytes_delta);
-                if let Some(host) = cdn_host_label(source_url) {
-                    progress.on_download_progress(&DownloadProgressEvent::CdnShardCompleted {
-                        entry_index: request.entry.index,
-                        entry_title: request.entry.title.clone(),
-                        kind: request.kind.clone(),
-                        host,
-                        bytes: bytes_delta,
-                    });
-                }
-                emit_file_progress(
-                    progress,
-                    request,
-                    bytes_delta,
-                    bytes_written,
-                    0,
-                    Some(expected_size),
-                );
+                staged_progress.push((bytes_delta, cdn_host_label(source_url)));
             },
         );
         let result = tokio::select! {
@@ -2264,6 +2247,29 @@ impl BiliClient {
                 }
                 match replace_file(temp_path.as_ref(), request.path).await {
                     Ok(()) => {
+                        let mut bytes_written = 0_u64;
+                        for (bytes_delta, host) in staged_progress {
+                            bytes_written = bytes_written.saturating_add(bytes_delta);
+                            if let Some(host) = host {
+                                progress.on_download_progress(
+                                    &DownloadProgressEvent::CdnShardCompleted {
+                                        entry_index: request.entry.index,
+                                        entry_title: request.entry.title.clone(),
+                                        kind: request.kind.clone(),
+                                        host,
+                                        bytes: bytes_delta,
+                                    },
+                                );
+                            }
+                            emit_file_progress(
+                                progress,
+                                request,
+                                bytes_delta,
+                                bytes_written,
+                                0,
+                                Some(expected_size),
+                            );
+                        }
                         emit_file_completed(progress, request, bytes_written, 0);
                         Ok(Some(DownloadedFile {
                             kind: request.kind.clone(),
@@ -7651,7 +7657,8 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     #[allow(clippy::collapsible_if)]
-    async fn socket_created_during_sharding_is_preserved_at_publication() -> anyhow::Result<()> {
+    async fn socket_created_after_sharding_preflight_is_preserved_at_publication()
+    -> anyhow::Result<()> {
         use std::os::unix::{
             fs::{FileTypeExt, MetadataExt},
             net::UnixListener,
@@ -7692,7 +7699,7 @@ mod tests {
         let callback_socket = Arc::clone(&socket);
         let callback_target = target.clone();
         let progress = move |event: &DownloadProgressEvent| {
-            if matches!(event, DownloadProgressEvent::CdnShardCompleted { .. }) {
+            if matches!(event, DownloadProgressEvent::FileStarted { .. }) {
                 if let Ok(mut socket) = callback_socket.lock() {
                     if socket.is_none() {
                         *socket = bind_replacement_socket(&callback_target);
@@ -7797,7 +7804,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_possible_truncation, clippy::too_many_lines)]
     async fn sharded_range_failure_falls_back_without_damaging_target() -> anyhow::Result<()> {
         let server_a = MockServer::start();
         let server_b = MockServer::start();
@@ -7885,6 +7892,22 @@ mod tests {
                 .filter(|event| matches!(event, DownloadProgressEvent::FileCompleted { .. }))
                 .count(),
             1
+        );
+        assert!(
+            events
+                .iter()
+                .all(|event| !matches!(event, DownloadProgressEvent::CdnShardCompleted { .. }))
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter_map(|event| match event {
+                    DownloadProgressEvent::FileProgress { bytes_delta, .. } => Some(*bytes_delta),
+                    _ => None,
+                })
+                .sum::<u64>(),
+            total_size,
+            "only the published ordinary fallback bytes should be reported"
         );
         Ok(())
     }

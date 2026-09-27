@@ -791,9 +791,10 @@ on another candidate. Parallelism 8 can use up to 8 simultaneous Range requests.
 baseline CDN's full-file verification transfer, but the prefix and size checks cannot prove that
 later bytes are identical across hosts. A differing edge can silently splice chunks from another
 version into the completed file. Speedups are not guaranteed, and host rewriting is not proof
-that a signed URL is valid on another CDN. `DownloadProgressEvent::CdnShardCompleted` reports the
-source host and bytes after a shard has been staged successfully. The event excludes signed URL
-paths and queries; summing its bytes by host shows the actual transfer distribution.
+that a signed URL is valid on another CDN. After the complete sharded file is published,
+`DownloadProgressEvent::CdnShardCompleted` reports each shard's source host and bytes. Discarded
+staging bytes are not reported as progress. The event excludes signed URL paths and queries;
+summing its bytes by host shows the published file's transfer distribution.
 
 Embedders can call `probe_media_cdns(client, stream, media_hosts)` to inspect the current signed
 representation before downloading. It reads at most 64 KiB from each of up to 8 candidates and

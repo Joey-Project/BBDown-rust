@@ -338,9 +338,10 @@ An equal sample and size do not prove that later bytes match across CDNs; this f
 perform full content comparison. If an edge differs after the sampled prefix, the completed file
 can silently combine bytes from different versions. Probing and parallel transfer do not guarantee
 a speedup. A rewritten host is not proof that another CDN accepts the signed URL. Probe diagnostics
-do not record signed URL query strings. With `--progress-json`, every successfully staged shard
-emits `cdn_shard_completed` with its source `host` and `bytes`; summing those events by host shows
-the actual transfer distribution. The event excludes signed URL paths and queries.
+do not record signed URL query strings. After a complete sharded file is published,
+`--progress-json` emits `cdn_shard_completed` with each shard's source `host` and `bytes`;
+summing those events by host shows the published file's transfer distribution. A failed sharded
+attempt emits no progress for discarded staging bytes. The event excludes signed URL paths and queries.
 
 Downloads resume partial files by default with HTTP range requests and validate `Content-Range`
 plus advertised media sizes when the plan provides them. Use `--no-resume` to force a fresh write;
