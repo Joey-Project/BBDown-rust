@@ -343,6 +343,37 @@ do not record signed URL query strings. After a complete sharded file is publish
 summing those events by host shows the published file's transfer distribution. A failed sharded
 attempt emits no progress for discarded staging bytes. The event excludes signed URL paths and queries.
 
+The following is BBDown's download flow; it does not describe browser playback. It combines the
+optional restricted-area PGC resolution fallback with CDN selection, transfer, and optional muxing:
+
+```mermaid
+flowchart TD
+    A[Video or episode input] --> B[Resolve media URLs through an official media API]
+    B -->|PGC area restriction and proxy configured| C[Try selected BiliRoaming-compatible resolver]
+    B -->|Resolved| D[Use selected representation URLs]
+    C --> D
+    D --> E[Add original and fallback URLs plus selected CDN hosts]
+    E --> F{--cdn-probe enabled or --cdn-parallel greater than 1?}
+    F -->|Yes| G[Probe up to eight candidates: up to 64 KiB each]
+    F -->|No| H[Keep configured candidate order]
+    G --> I{Parallel enabled, media eligible, and at least two compatible CDNs?}
+    H --> J[Regular download or resume]
+    I -->|Yes| K[Download 1 MiB shards over 2–8 lanes after 16 KiB compatibility samples]
+    I -->|No| J
+    K -->|Recoverable failure| J
+    K -->|Cancelled or fatal target error| X[Stop with error]
+    J --> L[Media download complete]
+    K --> L
+    L --> M{Mux requested?}
+    M -->|Yes| N[Optional audio/video mux]
+    M -->|No| O[Downloaded media]
+```
+
+If size is unknown, candidate probing first uses `bytes=0-0` to discover the total length, then
+samples `bytes=1-65535`; together these requests read at most 64 KiB, or less for shorter media.
+Sharding has separate 16 KiB compatibility samples and falls back to regular download when its
+eligibility checks fail or a shard failure is recoverable.
+
 Downloads resume partial files by default with HTTP range requests and validate `Content-Range`
 plus advertised media sizes when the plan provides them. Use `--no-resume` to force a fresh write;
 failed fresh writes preserve any existing target. If a server ignores a resume range, the old

@@ -19,7 +19,8 @@ use std::path::Path;
 use std::process::Stdio;
 #[cfg(unix)]
 use std::process::{Command as StdCommand, Output};
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -2848,6 +2849,193 @@ fn plan_json_uses_restricted_area_proxy_after_official_pgc_failure() -> anyhow::
     assert!(!output_text.contains("COOKIE_SECRET"));
     assert!(!output_text.contains("access_key"));
     assert!(!output_text.contains("proxy_token"));
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn download_restricted_pgc_uses_signed_urls_and_mocked_cdn_shards() -> anyhow::Result<()> {
+    let api = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let media_bytes: Vec<u8> = (0_u8..=250)
+        .cycle()
+        .take(2 * 1024 * 1024 + 512 * 1024)
+        .collect();
+    let origin = RangeMediaServer::start(media_bytes.clone())?;
+    let cdn_a = RangeMediaServer::start(media_bytes.clone())?;
+    let cdn_b = RangeMediaServer::start(media_bytes.clone())?;
+    let media_url = format!(
+        "http://{}/signed/video.m4s?deadline=123&asset=media",
+        origin.host
+    );
+
+    api.mock(|when, then| {
+        when.method(GET).path("/pgc/view/web/season").query_param("ep_id", "1000");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "result": {
+                "season_id": 123,
+                "title": "Mock Restricted Season",
+                "episodes": [{"aid": 10, "bvid": "BV1aa", "cid": 100, "id": 1000, "ep_id": 1000, "title": "1", "long_title": "Start"}]
+            }
+        }));
+    });
+    let official = api.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/player/web/v2/playurl")
+            .query_param("ep_id", "1000");
+        then.status(200)
+            .json_body_obj(&serde_json::json!({"code": -40301, "message": "area restricted"}));
+    });
+    let proxy = api.mock(|when, then| {
+        when.method(GET)
+            .path("/base/pgc/player/web/playurl")
+            .query_param("ep_id", "1000")
+            .query_param("area", "hk");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "timelength": 3000,
+            "accept_quality": [80],
+            "accept_description": ["1080P"],
+            "dash": {"duration": 3, "video": [{"id": 80, "baseUrl": media_url, "base_url": media_url}], "audio": []}
+        }));
+    });
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(api.base_url())
+        .arg("--pgc-base")
+        .arg(api.base_url())
+        .arg("--restricted-area")
+        .arg("hk")
+        .arg("--restricted-api-proxy")
+        .arg(format!("hk={}/base?route=pgc", api.base_url()))
+        .arg("download")
+        .arg("ep1000")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--only")
+        .arg("video")
+        .arg("--no-mux")
+        .arg("--no-subtitles")
+        .arg("--no-danmaku")
+        .arg("--no-cover")
+        .arg("--cdn-host")
+        .arg(&cdn_a.host)
+        .arg("--cdn-host")
+        .arg(&cdn_b.host)
+        .arg("--cdn-parallel")
+        .arg("2")
+        .arg("--json")
+        .arg("--progress-json");
+    let output = command.output()?;
+    if !output.status.success() {
+        let range_summaries = [&origin, &cdn_a, &cdn_b].map(|server| {
+            server
+                .request_snapshot()
+                .iter()
+                .flat_map(|request| request.lines())
+                .filter(|line| line.to_ascii_lowercase().starts_with("range:"))
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        });
+        anyhow::bail!(
+            "mock download failed with subprocess status {:?}; range requests by host: {range_summaries:#?}\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let report: Value = serde_json::from_slice(&output.stdout)?;
+    if let Some(source) = report["entries"][0]["source"].as_str() {
+        assert_eq!(source, "pgc_proxy");
+    }
+    let downloaded = downloaded_file_path(&report, "video")?;
+    assert_eq!(fs::read(downloaded)?, media_bytes);
+
+    official.assert_calls(1);
+    proxy.assert_calls(1);
+    let server_requests = [&origin, &cdn_a, &cdn_b].map(RangeMediaServer::request_snapshot);
+    let requests = server_requests
+        .iter()
+        .flatten()
+        .cloned()
+        .collect::<Vec<_>>();
+    let requests_lower = requests
+        .iter()
+        .map(|request| request.to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    assert!(
+        requests_lower
+            .iter()
+            .any(|request| request.contains("range: bytes=0-0")),
+        "{requests:#?}"
+    );
+    assert!(
+        requests_lower
+            .iter()
+            .any(|request| request.contains("range: bytes=1-65535")),
+        "{requests:#?}"
+    );
+    assert!(
+        requests_lower
+            .iter()
+            .any(|request| request.contains("deadline=123&asset=media"))
+    );
+    assert!(
+        requests_lower
+            .iter()
+            .any(|request| request.contains("range: bytes=0-16383")),
+        "{requests:#?}"
+    );
+    let sharding_hosts = server_requests
+        .iter()
+        .filter(|host_requests| {
+            host_requests.iter().any(|request| {
+                let request = request.to_ascii_lowercase();
+                request.contains("range: bytes=0-1048575")
+                    || request.contains("range: bytes=1048576-2097151")
+            })
+        })
+        .count();
+    assert!(
+        sharding_hosts >= 2,
+        "expected shard requests to use two hosts: {server_requests:#?}"
+    );
+    let events = json_object_lines(&output.stderr)?;
+    assert!(events.iter().any(|event| {
+        event["type"] == "file_progress"
+            && event["kind"] == "video"
+            && event["bytes_written"] == media_bytes.len()
+    }));
+    assert!(
+        events
+            .iter()
+            .any(|event| event["type"] == "file_completed" && event["kind"] == "video")
+    );
+    let shard_events = events
+        .iter()
+        .filter(|event| event["type"] == "cdn_shard_completed" && event["kind"] == "video")
+        .collect::<Vec<_>>();
+    let shard_bytes = shard_events
+        .iter()
+        .filter_map(|event| event["bytes"].as_u64())
+        .sum::<u64>();
+    let mut shard_hosts = shard_events
+        .iter()
+        .filter_map(|event| event["host"].as_str())
+        .collect::<Vec<_>>();
+    shard_hosts.sort_unstable();
+    shard_hosts.dedup();
+    assert_eq!(shard_bytes, media_bytes.len() as u64);
+    assert!(
+        shard_hosts.len() >= 2,
+        "shards should complete on two hosts: {shard_events:#?}"
+    );
     Ok(())
 }
 
@@ -11211,6 +11399,117 @@ fn mock_minimal_download(server: &MockServer) {
         when.method(GET).path("/audio.m4s");
         then.status(200).body("audio");
     });
+}
+
+struct RangeMediaServer {
+    host: String,
+    requests: Arc<Mutex<Vec<String>>>,
+    stop: Arc<AtomicBool>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl RangeMediaServer {
+    fn start(bytes: Vec<u8>) -> anyhow::Result<Self> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        listener.set_nonblocking(true)?;
+        let host = listener.local_addr()?.to_string();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let thread_requests = Arc::clone(&requests);
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread_stop = Arc::clone(&stop);
+        let thread = thread::spawn(move || {
+            while !thread_stop.load(Ordering::Relaxed) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let _ = stream.set_nonblocking(false);
+                        let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                        let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
+                        let mut request_bytes = Vec::with_capacity(1024);
+                        let mut chunk = [0_u8; 1024];
+                        while let Ok(count) = stream.read(&mut chunk) {
+                            if count == 0 {
+                                break;
+                            }
+                            request_bytes.extend_from_slice(&chunk[..count]);
+                            if request_bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+                                break;
+                            }
+                        }
+                        if request_bytes.is_empty() {
+                            continue;
+                        }
+                        let request = String::from_utf8_lossy(&request_bytes).into_owned();
+                        thread_requests
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .push(request.clone());
+                        let range = request.lines().find_map(|line| {
+                            line.strip_prefix("Range: bytes=")
+                                .or_else(|| line.strip_prefix("range: bytes="))
+                                .and_then(|range| range.trim().split_once('-'))
+                                .and_then(|(start, end)| {
+                                    Some((start.parse::<usize>().ok()?, end.parse::<usize>().ok()?))
+                                })
+                        });
+                        let (status, body, range_header) =
+                            if let Some((start, requested_end)) = range {
+                                if start >= bytes.len() {
+                                    (
+                                        "416 Range Not Satisfiable",
+                                        Vec::new(),
+                                        format!("Content-Range: bytes */{}\r\n", bytes.len()),
+                                    )
+                                } else {
+                                    let end = requested_end.min(bytes.len() - 1);
+                                    (
+                                        "206 Partial Content",
+                                        bytes[start..=end].to_vec(),
+                                        format!(
+                                            "Content-Range: bytes {start}-{end}/{}\r\n",
+                                            bytes.len()
+                                        ),
+                                    )
+                                }
+                            } else {
+                                ("200 OK", bytes.clone(), String::new())
+                            };
+                        let headers = format!(
+                            "HTTP/1.1 {status}\r\nAccept-Ranges: bytes\r\n{range_header}Content-Length: {}\r\nConnection: close\r\n\r\n",
+                            body.len()
+                        );
+                        let _ = stream.write_all(headers.as_bytes());
+                        let _ = stream.write_all(&body);
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        Ok(Self {
+            host,
+            requests,
+            stop,
+            thread: Some(thread),
+        })
+    }
+
+    fn request_snapshot(&self) -> Vec<String> {
+        self.requests
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+}
+
+impl Drop for RangeMediaServer {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
 }
 
 fn mock_minimal_download_with_remote_media_host(server: &MockServer) {

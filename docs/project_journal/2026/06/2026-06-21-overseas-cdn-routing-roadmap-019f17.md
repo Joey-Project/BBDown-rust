@@ -3,7 +3,7 @@ id: 20260621-019f17-overseas-cdn-routing-roadmap
 title: Overseas CDN Routing Roadmap
 status: active
 created: 2026-06-21
-updated: 2026-09-27
+updated: 2026-09-28
 branch: feature/overseas-cdn-routing-roadmap
 pr: 62
 supersedes: []
@@ -79,6 +79,11 @@ superseded_by:
   A mock PGC test
   covers a BiliRoaming-compatible `/pgc/player/web/playurl` response; English and Chinese guides
   document self-hosted endpoint configuration.
+- An unignored CLI e2e test uses local HTTP mocks for the complete restricted PGC fallback,
+  BiliRoaming-compatible API-path response, unknown-size CDN probe, and two-host sharded download.
+  It verifies exact downloaded bytes, preserved media query parameters, and per-host published
+  shard events. The existing workspace test command includes this e2e in CI without public API
+  or CDN dependencies. Both user guides include the three-feature download flow diagram.
 - These changes cover resolved-media downloads and optional PGC address lookup. They do not provide
   a browser/player playback router or persistent throughput history. Live compatibility results
   should be recorded separately from mock coverage.
