@@ -3702,7 +3702,7 @@ fn apply_sharded_output_permissions(staged_path: &Path, target_path: &Path) -> R
     use std::os::unix::fs::PermissionsExt;
 
     let target_mode = match std::fs::symlink_metadata(target_path) {
-        Ok(metadata) if metadata.file_type().is_file() && metadata.len() == 0 => {
+        Ok(metadata) if metadata.file_type().is_file() => {
             Some(metadata.permissions().mode() & 0o777)
         }
         Ok(_) => None,
@@ -7869,6 +7869,7 @@ mod tests {
         tokio::fs::create_dir_all(&output_dir).await?;
         let target = output_dir.join(media_file_name("video", &plan.entries[0].streams.videos[0]));
         tokio::fs::write(&target, "stale partial contents").await?;
+        std_fs::set_permissions(&target, std_fs::Permissions::from_mode(0o600))?;
 
         let report = BiliClient::new(ClientConfig::default())
             .download_plan(
@@ -7883,6 +7884,10 @@ mod tests {
             .await?;
 
         assert_eq!(tokio::fs::read(&target).await?, body);
+        assert_eq!(
+            std_fs::metadata(&target)?.permissions().mode() & 0o777,
+            0o600
+        );
         assert_eq!(report.entries[0].files[0].resumed_from, 0);
         assert_eq!(report.entries[0].files[0].bytes_written, total_size);
         for candidate_index in [0, 1, 2] {
