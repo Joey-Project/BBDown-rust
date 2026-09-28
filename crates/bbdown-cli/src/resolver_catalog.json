@@ -1,0 +1,320 @@
+[
+  {
+    "name": "哔哩.plus",
+    "host": "api.bili.plus",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "name": "mahiron",
+    "host": "api.mahiron.moe",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "name": "网盘.top",
+    "host": "bili.网盘.top",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "name": "mahiro-kawaii",
+    "host": "api.mahiro-kawaii.me",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "name": "cherry",
+    "host": "cherry.icu.cnmobile.link",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "name": "rnmmihoyo",
+    "host": "api.rnmmihoyo.cc",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "name": "mihoyo",
+    "host": "api.mihoyo.buzz",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "name": "obdo",
+    "host": "bili.obdo.cc",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "name": "xn--3bs5b681glo2bpsat27a",
+    "host": "api.xn--3bs5b681glo2bpsat27a.com",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "name": "qiu",
+    "host": "api.qiu.moe",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "name": "哔哩.icu",
+    "host": "哔哩.icu",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "name": "bstar",
+    "host": "bstar.kirara-fantasia.moe",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "name": "伊蕾娜",
+    "host": "伊蕾娜.我爱你",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "name": "atri",
+    "host": "atri.ink",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "name": "嘉然批发超市",
+    "host": "嘉然批.发超市.icu",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "name": "万人骑",
+    "host": "万人骑.pch.pub",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "name": "melusine",
+    "host": "melusine.moe",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "name": "suysker",
+    "host": "bilibili.suysker.xyz",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "name": "xcnya",
+    "host": "bili.xcnya.cn",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "name": "ayo",
+    "host": "bili.ayo.moe",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "name": "xifeng",
+    "host": "hk.xifeng.cf",
+    "regions": [
+      "hk",
+      "tw",
+      "th"
+    ]
+  },
+  {
+    "name": "sea-bili33",
+    "host": "sea.biliroaming.bili33.top",
+    "regions": [
+      "th"
+    ]
+  },
+  {
+    "name": "hk-bili33",
+    "host": "hk.biliroaming.bili33.top",
+    "regions": [
+      "hk"
+    ]
+  },
+  {
+    "name": "etocs",
+    "host": "api.etocs.tk",
+    "regions": [
+      "hk",
+      "th"
+    ]
+  },
+  {
+    "name": "hmountainln",
+    "host": "cc.hmountainln.cn",
+    "regions": [
+      "hk",
+      "tw",
+      "cn"
+    ]
+  },
+  {
+    "name": "bilibili-cz",
+    "host": "api.bilibili.cz",
+    "regions": [
+      "hk",
+      "tw"
+    ]
+  },
+  {
+    "name": "lingft",
+    "host": "biliproxy.lingft.tk",
+    "regions": [
+      "hk",
+      "tw"
+    ]
+  },
+  {
+    "name": "出差",
+    "host": "出差.xyz",
+    "regions": [
+      "tw",
+      "cn"
+    ]
+  },
+  {
+    "name": "lli",
+    "host": "bili.lli.cx",
+    "regions": [
+      "hk",
+      "tw",
+      "cn"
+    ]
+  },
+  {
+    "name": "work-host",
+    "host": "xn--6iq3kpqgx685at9rw0i59xsk7d.work",
+    "regions": [
+      "hk",
+      "tw",
+      "cn"
+    ]
+  },
+  {
+    "name": "漩涡猫猫",
+    "host": "漩涡.猫猫.top",
+    "regions": [
+      "hk",
+      "tw"
+    ]
+  },
+  {
+    "name": "宣传就跑",
+    "host": "宣传就跑.top",
+    "regions": [
+      "hk"
+    ]
+  },
+  {
+    "name": "jixiejidiguan",
+    "host": "bili.jixiejidiguan.eu.org",
+    "regions": [
+      "hk",
+      "tw"
+    ]
+  },
+  {
+    "name": "hybgzs",
+    "host": "bili.hybgzs.com",
+    "regions": [
+      "hk",
+      "tw"
+    ]
+  },
+  {
+    "name": "yetw86k",
+    "host": "xn--yetw86k.xn--6iq3kpqgxt31fvs6c4pp.icu",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "name": "deep-dark-fantasy",
+    "host": "deep-dark-fantasy.chiya.club",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "name": "bilibili-sb",
+    "host": "api.bilibili.sb",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "name": "baba-plus",
+    "host": "bili.baba.plus",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "name": "acfun-win",
+    "host": "bili.api.acfun.win",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "name": "lianju",
+    "host": "bilibili.lianju.ren",
+    "regions": [
+      "all"
+    ]
+  },
+  {
+    "name": "姬坂乃爱",
+    "host": "姬坂乃爱.我爱你",
+    "regions": [
+      "tw",
+      "th"
+    ]
+  },
+  {
+    "name": "bilibili-page",
+    "host": "bilibili.page",
+    "regions": [
+      "hk",
+      "tw"
+    ]
+  },
+  {
+    "name": "ltmsc",
+    "host": "bilisb.ltmsc.top",
+    "regions": [
+      "hk"
+    ]
+  }
+]
