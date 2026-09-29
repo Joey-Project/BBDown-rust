@@ -59,6 +59,11 @@
   block the release.
 - Repo-local skill `$bbdown-live-e2e-fixtures` and `live-e2e.samples.example.json` record the current
   real Bilibili fixtures for opt-in normal, multi-page, and restricted-area live e2e validation.
+- The overseas CDN workstream has landed opt-in host selection, bounded probing, multi-CDN range
+  downloads, and bundled public resolver/CDN catalogs. A first same-representation live A/B run
+  found faster 4- and 8-lane downloads, but only two repeats and a variable 2-lane result. The
+  current release remains `v0.6.0`; broader validation and `v0.7.0` scope are next. See the
+  workstream journal.
 
 ## Recovery Pointers
 
@@ -72,8 +77,7 @@
   `docs/project_journal/2026/06/2026-06-18-v0-5-downloader-embedding-roadmap-019f0b.md`.
 - Completed v0.6.0 credential lifecycle and release roadmap:
   `docs/project_journal/2026/06/2026-06-20-v0-6-credential-lifecycle-roadmap-019f16.md`.
-- Next planning area: overseas playback/CDN routing backlog, with release scope and catalog approach
-  still undecided:
+- Overseas CDN implementation, validation history, and initial performance benchmark:
   `docs/project_journal/2026/06/2026-06-21-overseas-cdn-routing-roadmap-019f17.md`.
 - Repo-local live e2e fixture skill:
   `.agents/skills/bbdown-live-e2e-fixtures/SKILL.md`.

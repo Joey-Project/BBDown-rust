@@ -97,8 +97,17 @@
   GitHub Release and crates.io `bbdown-core` package; both workflows succeeded and the release tag
   targets `0a94b071`. See
   `docs/project_journal/2026/06/2026-06-20-v0-6-credential-lifecycle-roadmap-019f16.md`.
-- [pending] Begin planning overseas playback/CDN routing now that `v0.6.0` has shipped, using CCB as
-  a research reference while leaving release scope and host-catalog ownership open. See
+- [completed] Implement opt-in overseas CDN host selection, probing, multi-CDN range downloads,
+  and bundled CDN/public resolver catalogs. See
+  `docs/project_journal/2026/06/2026-06-21-overseas-cdn-routing-roadmap-019f17.md`.
+- [completed] Run an initial same-representation single-CDN versus 2-, 4-, and 8-lane live A/B
+  measurement with two repeats, recording elapsed time, preflight cost, published per-CDN bytes,
+  and whole-file fallback observations. See
+  `docs/project_journal/2026/06/2026-06-21-overseas-cdn-routing-roadmap-019f17.md`.
+- [pending] Repeat the CDN benchmark across times and media sizes, with a same-host concurrent
+  range control to isolate CDN diversity from parallelism; add visibility into candidate
+  exclusion, per-chunk retries, and actual probe/wire byte overhead if tuning is needed. Decide
+  the overseas routing scope and release placement for `v0.7.0`. See
   `docs/project_journal/2026/06/2026-06-21-overseas-cdn-routing-roadmap-019f17.md`.
 - [pending] Plan `v0.7.0` or a later feed/page release for per-video related recommendations and
   any additional Bilibili page-family parsing that does not fit the downloader or credential lines.

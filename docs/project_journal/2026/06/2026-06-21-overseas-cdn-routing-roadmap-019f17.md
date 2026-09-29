@@ -131,6 +131,49 @@ superseded_by:
   ignored local manifest references an absent default credential file. The direct CDN and resolver
   runs above are the live evidence for this PR; the legacy suite has no pass result for this run.
 
+## Controlled Live A/B Benchmark (2026-09-28)
+
+- The public `normal-playlist-video` fixture `BV1QtjA6BEB8` supplied one 106,436,100-byte
+  quality-80 AVC video stream. A temporary API harness resolved one `DownloadPlan` and reused its
+  exact signed representation for all eight video-only downloads. Each run used a fresh private
+  output directory, no resume, and a single download attempt. The order was baseline, 2, 4, 8
+  lanes, then 8, 4, 2, baseline to reduce simple time-order bias. A lane is one concurrent Range
+  request, not a distinct CDN host.
+- The single-lane baseline forced `upos-sz-mirror08h.bilivideo.com` for every donor URL. Parallel
+  runs configured that host plus `upos-hz-mirrorakam.akamaized.net` and
+  `upos-sz-mirroraliov.bilivideo.com`; the ordinary original donor remained eligible and appeared
+  as `upos-sz-mirrorcoso1.bilivideo.com` in some published shards. The separate preflight took
+  8.725 seconds, read 262,144 observed bytes, and found four usable candidates. Internal candidate
+  checks are included in each download time but cannot be timed separately through the public API.
+
+| Run | Mode | Download (s) | Published source bytes |
+| --- | --- | ---: | --- |
+| 1 | Baseline | 190.145 | Fixed mirror08h; 106,436,100 output bytes, no shard event |
+| 2 | 2 lanes | 295.841 | aliov 105,387,524; akamai 1,048,576 |
+| 3 | 4 lanes | 53.550 | aliov 93,853,188; akamai 12,582,912 |
+| 4 | 8 lanes | 44.086 | aliov 76,027,396; akamai 15,728,640; original 13,631,488; mirror08h 1,048,576 |
+| 5 | 8 lanes | 49.607 | aliov 61,865,984; akamai 22,020,096; original 18,355,716; mirror08h 4,194,304 |
+| 6 | 4 lanes | 34.923 | aliov 82,318,852; akamai 15,728,640; original 6,291,456; mirror08h 2,097,152 |
+| 7 | 2 lanes | 39.693 | aliov 91,756,036; akamai 13,631,488; mirror08h 1,048,576 |
+| 8 | Baseline | 119.075 | Fixed mirror08h; 106,436,100 output bytes, no shard event |
+
+- Every run produced exactly 106,436,100 bytes and the same SHA-256 digest,
+  `a5e36c30dac68f70bdcb0c6a63040e11d7e49410f269ab464def09c19d6df404`. All six
+  parallel runs emitted published shard events summing to the output size; no whole-file fallback
+  was observed. The eight outputs totaled 851,488,800 bytes and were deleted after hashing.
+- Mean elapsed times were 154.610 seconds for baseline, 167.767 for 2 lanes, 44.237 for 4 lanes,
+  and 46.847 for 8 lanes. The 4- and 8-lane modes were about 3.49 and 3.30 times faster than the
+  baseline mean on this host and fixture. The 2-lane runs varied from 295.841 to 39.693 seconds,
+  while baseline varied from 190.145 to 119.075 seconds; two repeats are directional evidence,
+  not a stable throughput distribution. The baseline is a single long transfer, whereas parallel
+  modes change both concurrency and host set, so this run cannot isolate the benefit of CDN
+  diversity from concurrent Range requests.
+- Published shard events omit failed/retried transfers and probe traffic. The API does not expose
+  internal probe duration, accepted/excluded host reasons, per-chunk retry counts, or total wire
+  bytes. The exact network traffic and retry overhead therefore remain unknown; output bytes and
+  the separate preflight sample are not a wire-byte total. A same-host concurrent Range control,
+  more repetitions, and other media sizes/times are needed before choosing a default policy.
+
 ## Design Direction
 
 - Treat CCB and BTR as research references, not runtime dependencies. Do not assume that a CDN host
@@ -165,8 +208,8 @@ superseded_by:
   restricted-area resolver checks separate from CDN performance validation.
 - Decide whether persistent route health is useful. Keep host-rewriting presets opt-in until live
   compatibility evidence supports a default.
-- Compare measured wall time against a single-host control for representative media sizes and
-  locations; the current progress events prove source distribution, not a speedup.
+- Repeat the initial A/B benchmark across media sizes and times. Add a same-host concurrent Range
+  control and route diagnostics before attributing observed 4-/8-lane speed gains to CDN diversity.
 
 ## Open Questions
 
@@ -207,5 +250,5 @@ superseded_by:
 - Decide the remaining roadmap scope and release placement; no version has been assigned.
 - Review live CDN and resolver probe results, then decide whether catalog maintenance or persistent
   route-health policy warrants another workstream.
-- Compare elapsed time against a single-CDN run on the same representation before claiming a live
-  speedup; published per-host shard events already quantify the multi-CDN byte distribution.
+- Use the initial same-representation A/B result to choose the next validation: isolate the effect
+  of concurrency from host diversity, then decide whether to tune the scheduler or route policy.
