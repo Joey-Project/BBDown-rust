@@ -484,6 +484,38 @@ crate includes no public resolver and cannot guarantee account authorization or 
 availability. Signed media URLs returned by the service are passed unchanged into the plan for the
 downstream downloader or player.
 
+Embedding apps that race official and proxy PGC **Web playurl** routes can create separate clients
+from the same configuration. `PgcWebPlayurlRoute::OfficialOnly` never attempts a proxy;
+`ProxyOnly(proxy)` requests only the selected server (an API-style proxy may try both its Web and
+Web v2 paths). The default `OfficialThenProxy` retains the existing region-error fallback chain.
+These modes do not change PGC metadata lookup or TV/APP playurl routing.
+
+```rust,no_run
+use bbdown_core::{BiliClient, ClientConfig, PgcWebPlayurlRoute, RestrictedAreaConfig, RestrictedAreaProxy};
+
+# async fn example() -> bbdown_core::Result<()> {
+let selected = RestrictedAreaProxy::playurl("https://proxy.example/playurl", None);
+let config = ClientConfig::default()
+    .with_restricted_area(RestrictedAreaConfig::default().with_proxy(selected.clone()));
+let official = BiliClient::new(config.clone()
+    .with_pgc_web_playurl_route(PgcWebPlayurlRoute::OfficialOnly));
+let proxy = BiliClient::new(config
+    .with_pgc_web_playurl_route(PgcWebPlayurlRoute::ProxyOnly(selected)));
+let (official_result, proxy_result) = tokio::join!(
+    official.plan_playback("ep664928", None),
+    proxy.plan_playback("ep664928", None),
+);
+# let _ = (official_result, proxy_result);
+# Ok(())
+# }
+```
+
+The caller chooses the winner, checks `PlaybackEntry` identity and `source`, and can inspect its
+redacted `diagnostics` to identify the selected proxy origin and area. A proxy-only failure cannot
+silently use the official playurl route. The selected proxy receives the shared
+`Credentials::access_key` when present, never the Bilibili Web cookie. Dropping a planning future
+cancels its in-flight requests; the core does not spawn background resolver races.
+
 ## Download Execution
 
 Downloads are explicit. The library default keeps muxing disabled so embedding applications do not

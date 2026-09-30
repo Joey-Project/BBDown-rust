@@ -1,6 +1,6 @@
 use crate::{
     CodecFamily, DownloadEntry, DownloadPlan, Error, FlvSegment, MediaStream, Result,
-    StreamQuality, StreamSource,
+    StreamDiagnostics, StreamQuality, StreamSource,
 };
 use md5::{Digest, Md5};
 use reqwest::header::HeaderMap;
@@ -40,6 +40,8 @@ pub struct PlaybackEntry {
     pub title: String,
     pub cover_url: Option<String>,
     pub source: StreamSource,
+    #[serde(default, skip_serializing_if = "StreamDiagnostics::is_empty")]
+    pub diagnostics: StreamDiagnostics,
     pub cache_key: PlaybackEntryCacheKey,
     pub qualities: Vec<StreamQuality>,
     pub duration_seconds: Option<u32>,
@@ -67,6 +69,7 @@ impl<'de> Deserialize<'de> for PlaybackEntry {
             title: wire.title,
             cover_url: wire.cover_url,
             source: wire.source,
+            diagnostics: wire.diagnostics,
             cache_key,
             qualities: wire.qualities,
             duration_seconds: wire.duration_seconds,
@@ -86,6 +89,8 @@ struct PlaybackEntryWire {
     title: String,
     cover_url: Option<String>,
     source: StreamSource,
+    #[serde(default)]
+    diagnostics: StreamDiagnostics,
     cache_key: Option<PlaybackEntryCacheKey>,
     qualities: Vec<StreamQuality>,
     duration_seconds: Option<u32>,
@@ -107,6 +112,7 @@ impl PlaybackEntry {
             title: entry.title.clone(),
             cover_url: entry.cover_url.clone(),
             source: entry.source.clone(),
+            diagnostics: entry.diagnostics.clone(),
             cache_key: playback_entry_cache_key(entry),
             qualities: entry.streams.qualities.clone(),
             duration_seconds: entry.streams.duration_seconds,
@@ -1557,6 +1563,7 @@ mod tests {
         }))?;
 
         assert_eq!(entry.cache_key.content_id, "BV1xx411c7mD-cid2");
+        assert!(entry.diagnostics.is_empty());
         assert_eq!(entry.abr.groups.len(), 2);
         assert!(entry.abr.groups.iter().all(|group| group.level_count == 1));
         assert_eq!(entry.variants[0].cache_key.media_keys.len(), 2);
