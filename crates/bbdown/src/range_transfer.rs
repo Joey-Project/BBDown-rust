@@ -1,8 +1,6 @@
 use std::{
-    future::Future,
     io::{Seek, SeekFrom, Write},
     path::Path,
-    pin::Pin,
     time::{Duration, Instant},
 };
 
@@ -15,7 +13,7 @@ const MAX_RANGE_BYTES: u64 = 8 * 1024 * 1024;
 const CANDIDATE_PROBE_BYTES: u64 = 16 * 1024;
 const MAX_CDN_CANDIDATES: usize = 8;
 
-type ChunkFuture<'a> = Pin<Box<dyn Future<Output = (u64, usize, usize, Result<RangeFetch>)> + 'a>>;
+type ChunkFuture<'a> = BoxFuture<'a, (u64, usize, usize, Result<RangeFetch>)>;
 
 #[derive(Debug)]
 pub(crate) struct RangeFetch {
@@ -647,6 +645,37 @@ mod tests {
         assert_eq!(completed.len(), 2);
         mock_a.assert_calls(2);
         mock_b.assert_calls(2);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sharded_download_future_is_send_for_multithreaded_embedding() -> anyhow::Result<()> {
+        let server_a = MockServer::start();
+        let server_b = MockServer::start();
+        add_media_server(&server_a, "x".to_owned(), Vec::new(), None);
+        add_media_server(&server_b, "x".to_owned(), Vec::new(), None);
+        let urls = vec![server_a.url("/media"), server_b.url("/media")];
+        let dir = tempfile::tempdir()?;
+        let dest_dir = dir.path().to_path_buf();
+
+        let downloaded = tokio::spawn(async move {
+            super::download_sharded_to_temp(
+                &reqwest::Client::new(),
+                &urls,
+                HeaderMap::new(),
+                1,
+                2,
+                1,
+                Duration::from_secs(2),
+                Some(Duration::from_secs(2)),
+                &dest_dir,
+                |_, _| {},
+            )
+            .await
+        })
+        .await??;
+
+        assert_eq!(std::fs::read(downloaded)?, b"x");
         Ok(())
     }
 

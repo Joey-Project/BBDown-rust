@@ -3999,7 +3999,32 @@ struct DynamicModules {
 struct DynamicAuthor {
     mid: Option<u64>,
     name: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_i64_from_number_or_string"
+    )]
     pub_ts: Option<i64>,
+}
+
+fn deserialize_optional_i64_from_number_or_string<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum NumberOrString {
+        Number(i64),
+        String(String),
+    }
+
+    Option::<NumberOrString>::deserialize(deserializer)?
+        .map(|value| match value {
+            NumberOrString::Number(value) => Ok(value),
+            NumberOrString::String(value) => value.parse().map_err(serde::de::Error::custom),
+        })
+        .transpose()
 }
 
 impl DynamicAuthor {
@@ -8797,7 +8822,7 @@ mod tests {
                             "module_author": {
                                 "mid": 1,
                                 "name": "Tester",
-                                "pub_ts": 1_700_000_001_i64
+                                "pub_ts": "1700000001"
                             },
                             "module_dynamic": {
                                 "major": {
@@ -8848,6 +8873,7 @@ mod tests {
                 assert_eq!(collection.collection.kind, VideoCollectionKind::Following);
                 assert_eq!(collection.collection.title, "Following videos");
                 assert_eq!(collection.collection.items.len(), 1);
+                assert_eq!(collection.collection.items[0].pub_time, Some(1_700_000_001));
                 assert_eq!(collection.selected_items[0].title, "Following video");
                 let owner = collection.selected_items[0]
                     .owner
@@ -8859,6 +8885,24 @@ mod tests {
                 return Err(anyhow::anyhow!("expected collection"));
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn dynamic_author_pub_ts_accepts_integer_and_numeric_string_only() -> anyhow::Result<()> {
+        let integer: super::DynamicAuthor =
+            serde_json::from_value(serde_json::json!({"pub_ts": 1_700_000_001}))?;
+        let string: super::DynamicAuthor =
+            serde_json::from_value(serde_json::json!({"pub_ts": "1700000001"}))?;
+
+        assert_eq!(integer.pub_ts, Some(1_700_000_001));
+        assert_eq!(string.pub_ts, Some(1_700_000_001));
+        assert!(
+            serde_json::from_value::<super::DynamicAuthor>(
+                serde_json::json!({"pub_ts": "not-a-timestamp"})
+            )
+            .is_err()
+        );
         Ok(())
     }
 
