@@ -3,9 +3,9 @@ id: 20260930-pgc-web-playurl-routes
 title: Independent PGC Web Playurl Routes For Embedding Clients
 status: completed
 created: 2026-09-30
-updated: 2026-09-30
+updated: 2026-10-01
 branch: codex/pgc-web-route-modes
-pr:
+pr: https://github.com/Joey-Project/BBDown-rust/pull/79
 supersedes: []
 superseded_by:
 ---
@@ -34,6 +34,8 @@ superseded_by:
   反代 Web/v2 路径；既有默认回退测试继续保留。
 - 完整 `cargo test --workspace --locked`、严格 Clippy、Rust 1.95 检查、CLI mock e2e、
   格式检查及 core 打包 dry-run 均通过。
+- CI 使用最新 stable；Rust 1.99 新增的 `assert_is_empty` 检查要求既有测试采用长度
+  断言。保留严格 lint 门槛和相同测试语义，仅将 29 处集合空/非空断言改为显式长度比较。
 - 真实站点 live e2e 需要读取本机 Web cookie 与 access key，向 Bilibili 官方接口及
   `atri.ink` 发请求。本次执行被本机审批拦截；未绕过，也未将凭证复制或提交到 worktree。
 

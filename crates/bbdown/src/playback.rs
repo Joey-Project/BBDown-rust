@@ -1427,7 +1427,7 @@ mod tests {
 
         let playback = PlaybackPlan::from_download_plan(&plan, &[]);
 
-        assert!(playback.entries[0].abr.groups.is_empty());
+        assert_eq!(playback.entries[0].abr.groups.len(), 0);
         assert_eq!(playback.entries[0].variants.len(), 1);
         let variant = &playback.entries[0].variants[0];
         assert_eq!(variant.kind, PlaybackVariantKind::Flv);

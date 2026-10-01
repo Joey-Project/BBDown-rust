@@ -475,7 +475,7 @@ fn plan_credential_preflight_fail_blocks_missing_cookie_for_history() -> anyhow:
         .clone();
     let stderr = String::from_utf8(output.stderr)?;
 
-    assert!(output.stdout.is_empty());
+    assert_eq!(output.stdout.len(), 0);
     assert!(stderr.contains("credential preflight failed"));
     assert!(stderr.contains("authenticated WEB API requires cookie"));
     Ok(())
@@ -792,7 +792,7 @@ fn plan_credential_preflight_fail_blocks_stale_intl_access_key() -> anyhow::Resu
         .clone();
     let stderr = String::from_utf8(output.stderr)?;
 
-    assert!(output.stdout.is_empty());
+    assert_eq!(output.stdout.len(), 0);
     assert!(stderr.contains("credential preflight failed"));
     assert!(stderr.contains("access_key for intl playurl has stale lifecycle metadata"));
     Ok(())
@@ -3384,7 +3384,7 @@ fn download_progress_json_reports_credential_preflight_failure() -> anyhow::Resu
         .get_output()
         .clone();
 
-    assert!(output.stdout.is_empty());
+    assert_eq!(output.stdout.len(), 0);
     let events = json_object_lines(&output.stderr)?;
     assert!(events.iter().any(|event| {
         event["type"] == "plan_failed"
@@ -3901,9 +3901,9 @@ fn download_cdn_pool_failure_falls_back_to_origin_and_keeps_sidecars() -> anyhow
         fs::read_to_string(downloaded_file_path(&json, "video")?)?,
         "video"
     );
-    assert!(!fs::read(downloaded_file_path(&json, "cover")?)?.is_empty());
-    assert!(!fs::read(downloaded_file_path(&json, "subtitle")?)?.is_empty());
-    assert!(!fs::read(downloaded_file_path(&json, "danmaku")?)?.is_empty());
+    assert_ne!(fs::read(downloaded_file_path(&json, "cover")?)?.len(), 0);
+    assert_ne!(fs::read(downloaded_file_path(&json, "subtitle")?)?.len(), 0);
+    assert_ne!(fs::read(downloaded_file_path(&json, "danmaku")?)?.len(), 0);
     Ok(())
 }
 

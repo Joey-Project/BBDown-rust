@@ -12268,7 +12268,7 @@ mod tests {
                 .contains("output directory appeared after duplicate preflight")
         );
         assert_eq!(std::fs::read_to_string(marker)?, "external");
-        assert!(archive.records.is_empty());
+        assert_eq!(archive.records.len(), 0);
         Ok(())
     }
 
@@ -12424,10 +12424,11 @@ mod tests {
                 .len(),
             1
         );
-        assert!(
+        assert_eq!(
             archive
                 .records_for_plan_with_mode(&plan, DownloadMode::All)
-                .is_empty()
+                .len(),
+            0
         );
     }
 
@@ -12467,15 +12468,16 @@ mod tests {
                 .len(),
             1
         );
-        assert!(
+        assert_eq!(
             archive
                 .records_for_plan_with_mode(&plan, DownloadMode::AudioOnly)
-                .is_empty()
+                .len(),
+            0
         );
         let temp = tempfile::tempdir()?;
         let default_preflight =
             DownloadPreflight::inspect(&plan, &DownloadOptions::new(temp.path()), Some(&archive))?;
-        assert!(default_preflight.archived_records.is_empty());
+        assert_eq!(default_preflight.archived_records.len(), 0);
         let language_preflight = DownloadPreflight::inspect(
             &plan,
             &DownloadOptions::new(temp.path())
@@ -12649,7 +12651,7 @@ mod tests {
             &DownloadOptions::new(temp.path()).with_download_mode(DownloadMode::DanmakuOnly),
             Some(&archive),
         )?;
-        assert!(xml_preflight.archived_records.is_empty());
+        assert_eq!(xml_preflight.archived_records.len(), 0);
         let ass_preflight = DownloadPreflight::inspect(
             &plan,
             &DownloadOptions::new(temp.path())
@@ -12746,7 +12748,7 @@ mod tests {
             &DownloadOptions::new(temp.path().join("xml-only")),
             Some(&archive),
         )?;
-        assert!(xml_preflight.archived_records.is_empty());
+        assert_eq!(xml_preflight.archived_records.len(), 0);
         Ok(())
     }
 

@@ -7051,8 +7051,8 @@ mod tests {
 
         let streams = response.into_stream_set()?;
 
-        assert!(streams.videos.is_empty());
-        assert!(streams.audios.is_empty());
+        assert_eq!(streams.videos.len(), 0);
+        assert_eq!(streams.audios.len(), 0);
         assert_eq!(
             streams.flv_segments[0].url,
             "https://flv.example/segment.flv"
@@ -7084,7 +7084,7 @@ mod tests {
 
         assert_eq!(streams.videos[0].id, 80);
         assert_eq!(streams.audios[0].id, 30280);
-        assert!(streams.flv_segments.is_empty());
+        assert_eq!(streams.flv_segments.len(), 0);
         Ok(())
     }
 
@@ -7103,8 +7103,8 @@ mod tests {
 
         let streams = response.into_stream_set()?;
 
-        assert!(streams.videos.is_empty());
-        assert!(streams.audios.is_empty());
+        assert_eq!(streams.videos.len(), 0);
+        assert_eq!(streams.audios.len(), 0);
         assert_eq!(streams.duration_seconds, Some(42));
         assert_eq!(
             streams.flv_segments[0].url,
@@ -8326,8 +8326,8 @@ mod tests {
         match resolved {
             ResolvedContent::Collection(collection) => {
                 assert_eq!(collection.collection.title, "Empty Favorite");
-                assert!(collection.collection.items.is_empty());
-                assert!(collection.selected_items.is_empty());
+                assert_eq!(collection.collection.items.len(), 0);
+                assert_eq!(collection.selected_items.len(), 0);
             }
             ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
                 return Err(anyhow::anyhow!("expected collection"));
@@ -10187,10 +10187,10 @@ mod tests {
         };
 
         let default_resolved = BiliClient::resolve_collection_selection(collection.clone(), None)?;
-        assert!(default_resolved.selected_items.is_empty());
+        assert_eq!(default_resolved.selected_items.len(), 0);
         let all_resolved =
             BiliClient::resolve_collection_selection(collection, Some(&Selection::All))?;
-        assert!(all_resolved.selected_items.is_empty());
+        assert_eq!(all_resolved.selected_items.len(), 0);
         Ok(())
     }
 
