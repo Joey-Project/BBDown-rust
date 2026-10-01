@@ -8950,7 +8950,7 @@ mod tests {
             Some(" , "),
         )?;
 
-        assert!(config.proxies.is_empty());
+        assert_eq!(config.proxies.len(), 0);
         Ok(())
     }
 
@@ -8993,7 +8993,7 @@ mod tests {
         ];
         let config = restricted_area_from_cli_with_env_values(&cli, raw_args, None, None)?;
 
-        assert!(config.proxies.is_empty());
+        assert_eq!(config.proxies.len(), 0);
         Ok(())
     }
 

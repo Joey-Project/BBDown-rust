@@ -452,6 +452,37 @@ origin，诊断消息会脱敏常见密钥模式。
 内置公共解析服务器，也不保证账号授权或区域可用性；服务返回的签名媒体 URL 会原样进入
 plan，供下游下载器或播放器使用。
 
+嵌入式应用若要并发尝试官方与反代的 PGC **Web playurl**，可用同一份配置创建两个 client。
+`PgcWebPlayurlRoute::OfficialOnly` 只请求官方 playurl；`ProxyOnly(proxy)` 只请求指定反代
+服务器（API 风格反代可能依次尝试该服务器的 Web 与 Web v2 路径）。默认的
+`OfficialThenProxy` 保持现有的区域错误回退链。这些模式不改变 PGC metadata 获取，也不
+影响 TV/APP playurl。
+
+```rust,no_run
+use bbdown_core::{BiliClient, ClientConfig, PgcWebPlayurlRoute, RestrictedAreaConfig, RestrictedAreaProxy};
+
+# async fn example() -> bbdown_core::Result<()> {
+let selected = RestrictedAreaProxy::playurl("https://proxy.example/playurl", None);
+let config = ClientConfig::default()
+    .with_restricted_area(RestrictedAreaConfig::default().with_proxy(selected.clone()));
+let official = BiliClient::new(config.clone()
+    .with_pgc_web_playurl_route(PgcWebPlayurlRoute::OfficialOnly));
+let proxy = BiliClient::new(config
+    .with_pgc_web_playurl_route(PgcWebPlayurlRoute::ProxyOnly(selected)));
+let (official_result, proxy_result) = tokio::join!(
+    official.plan_playback("ep664928", None),
+    proxy.plan_playback("ep664928", None),
+);
+# let _ = (official_result, proxy_result);
+# Ok(())
+# }
+```
+
+调用方负责选取胜出结果，核对 `PlaybackEntry` 的内容标识和 `source`，并通过脱敏后的
+`diagnostics` 识别反代 origin 和区域。proxy-only 失败时不会悄悄切换到官方 playurl。
+指定反代可使用通用 `Credentials::access_key`，但不会收到 Bilibili Web cookie。丢弃规划
+future 即可取消进行中的请求；core 不会在后台继续启动解析竞速任务。
+
 ## 下载执行
 
 下载是显式动作。library 默认禁用 mux，因此嵌入应用不会在未选择的情况下启动 `ffmpeg`。

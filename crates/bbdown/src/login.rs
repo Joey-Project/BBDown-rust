@@ -3570,6 +3570,7 @@ mod tests {
             },
             restricted_area: RestrictedAreaConfig::default(),
             playurl_mode: PlayurlMode::Web,
+            pgc_web_playurl_route: crate::PgcWebPlayurlRoute::default(),
             user_agent: "test".to_owned(),
             request_timeout: std::time::Duration::from_secs(30),
         })

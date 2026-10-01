@@ -219,8 +219,8 @@ mod tests {
             "selected feed item",
         )?;
 
-        assert!(default_selected.is_empty());
-        assert!(all_selected.is_empty());
+        assert_eq!(default_selected.len(), 0);
+        assert_eq!(all_selected.len(), 0);
         Ok(())
     }
 

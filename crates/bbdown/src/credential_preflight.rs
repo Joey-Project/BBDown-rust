@@ -561,7 +561,7 @@ mod tests {
         );
 
         assert!(!report.has_blocking_issues());
-        assert!(report.issues.is_empty());
+        assert_eq!(report.issues.len(), 0);
         assert!(report.requirements[0].satisfied);
         assert!(!report.requirements[0].required);
         assert_eq!(
@@ -673,7 +673,7 @@ mod tests {
         );
 
         assert!(!report.has_blocking_issues());
-        assert!(report.issues.is_empty());
+        assert_eq!(report.issues.len(), 0);
         assert_eq!(
             report.requirements[0].selected_status,
             CredentialLifecycleStatus::Missing

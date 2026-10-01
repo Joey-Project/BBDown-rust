@@ -339,7 +339,7 @@ mod tests {
         }))?;
 
         assert_eq!(entry.cover_url, None);
-        assert!(entry.chapters.is_empty());
+        assert_eq!(entry.chapters.len(), 0);
         assert_eq!(entry.source, StreamSource::NormalWeb);
         Ok(())
     }
