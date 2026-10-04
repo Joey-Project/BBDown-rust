@@ -3,7 +3,7 @@ id: 20260930-pgc-web-playurl-routes
 title: Independent PGC Web Playurl Routes For Embedding Clients
 status: completed
 created: 2026-09-30
-updated: 2026-10-01
+updated: 2026-10-04
 branch: codex/pgc-web-route-modes
 pr: https://github.com/Joey-Project/BBDown-rust/pull/79
 supersedes: []
@@ -36,10 +36,18 @@ superseded_by:
   格式检查及 core 打包 dry-run 均通过。
 - CI 使用最新 stable；Rust 1.99 新增的 `assert_is_empty` 检查要求既有测试采用长度
   断言。保留严格 lint 门槛和相同测试语义，仅将 29 处集合空/非空断言改为显式长度比较。
-- 真实站点 live e2e 需要读取本机 Web cookie 与 access key，向 Bilibili 官方接口及
-  `atri.ink` 发请求。本次执行被本机审批拦截；未绕过，也未将凭证复制或提交到 worktree。
+- 新增显式忽略的嵌入 API live e2e，使用 `restricted-bangumi-episode ep664928`，从本机
+  BBDown 默认 profile 读取 Web cookie 与通用 access key，并选取本机忽略的 manifest 中唯一
+  的香港 API 反代。只执行 `plan_playback`，不下载媒体；错误输出仅包含安全分类，不输出凭据或
+  原始反代 URL。
+- 2026-10-04 在明确授权向 Bilibili 官方接口发送 Web cookie、向 manifest 所选 `atri.ink`
+  反代发送通用 access key 后运行：
+  `BBDOWN_PGC_LIVE_CREDENTIAL_FILE=<local-profile-store> cargo test -p bbdown-cli --test live_e2e live_pgc_web_playurl_routes_for_restricted_episode --locked --offline -- --ignored --exact`
+  通过。`OfficialOnly` 收到区域限制码 `-10403`；`ProxyOnly` 返回可播放的 `PgcProxy`
+  条目，且诊断中没有 `PgcWeb` 尝试。最初 manifest 指向的旧凭据路径已不存在，因此本次通过
+  仅用于该测试的环境变量覆盖凭据文件。
 
 ## Follow-up
 
 - LAN server 使用独立 client 并发规划，按内容标识、来源和脱敏诊断验证结果后选择。
-- 在得到明确凭证发送授权后执行 restricted Bangumi live e2e；发布新 crate 版本须另行决定。
+- 发布新 crate 版本须另行决定。

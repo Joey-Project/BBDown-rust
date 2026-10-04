@@ -671,6 +671,22 @@ eligibility, a case may set `allow_plan_error: true` with `plan_error_contains`:
 must still match the stream assertions, while a restricted failure must be an access-restricted
 failure and must contain the listed diagnostics.
 
+To check the independent PGC Web playurl routes against the curated restricted episode
+`ep664928`, run the opt-in API test below. It reads the selected restricted PGC case from the
+ignored manifest and requires one HK API proxy, a Web cookie, and a generic access key. Set
+`BBDOWN_PGC_LIVE_CREDENTIAL_FILE` if the manifest's credential path is stale; the override reads
+the default profile from a BBDown credential store. `OfficialOnly` must either produce playable
+`PgcWeb` entries or report an explicit area restriction. `ProxyOnly` must produce playable
+`PgcProxy` entries without an official playurl attempt. The test plans playback only and does not
+download media. The cookie is sent to Bilibili's official endpoints; the generic access key may be
+sent to the selected proxy.
+
+```bash
+BBDOWN_PGC_LIVE_CREDENTIAL_FILE='/path/to/credentials.json' \
+  cargo test -p bbdown-cli --test live_e2e live_pgc_web_playurl_routes_for_restricted_episode \
+  --locked --offline -- --ignored --exact
+```
+
 ## Restricted-Area Proxies
 
 The tool includes an optional historical public resolver directory, but does not contact any

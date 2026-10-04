@@ -1,12 +1,16 @@
 use anyhow::{Context, bail, ensure};
 use assert_cmd::Command;
-use bbdown_core::{CredentialStore, Credentials};
+use bbdown_core::{
+    BiliClient, ClientConfig, CredentialStore, Credentials, Error, PgcWebPlayurlRoute, PlayurlMode,
+    RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy, Selection, StreamSource,
+};
 use serde::Deserialize;
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 const LIVE_SAMPLES_FILE: &str = "live-e2e.samples.json";
+const PGC_LIVE_CREDENTIAL_FILE_ENV: &str = "BBDOWN_PGC_LIVE_CREDENTIAL_FILE";
 const RESTRICTED_AREAS: &[&str] = &["cn", "th", "hk", "tw"];
 const CLI_OVERRIDE_ENV_VARS: &[&str] = &[
     "BBDOWN_API_BASE",
@@ -152,6 +156,221 @@ fn live_manifest_cases() -> anyhow::Result<()> {
         }
     }
 
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires local live-e2e.samples.json with credentials and an HK API proxy"]
+async fn live_pgc_web_playurl_routes_for_restricted_episode() -> anyhow::Result<()> {
+    const FIXTURE: &str = "restricted-bangumi-episode ep664928";
+    const URL: &str = "https://www.bilibili.com/bangumi/play/ep664928";
+
+    let manifest_path = find_live_manifest_path()?;
+    let manifest = LiveManifest::load(&manifest_path)?;
+    let case = manifest
+        .cases
+        .iter()
+        .find(|case| case.kind == LiveCaseKind::RestrictedPgc && is_ep664928_fixture(&case.url))
+        .context("live manifest is missing the curated ep664928 restricted PGC case")?;
+    let api_proxy_url = configured_hk_api_proxy(&manifest, case)?;
+    let temp = tempfile::tempdir()?;
+    let credentials = load_pgc_live_credentials(&manifest, case, &manifest_path, temp.path())?;
+
+    let official_client = BiliClient::new(
+        ClientConfig::default()
+            .with_credentials(credentials.clone())
+            .with_playurl_mode(PlayurlMode::Web)
+            .with_pgc_web_playurl_route(PgcWebPlayurlRoute::OfficialOnly)
+            .with_restricted_area(
+                RestrictedAreaConfig::default().with_area_hint(RestrictedArea::Hk),
+            ),
+    );
+    let official_failure = official_route_failure(
+        official_client
+            .plan_playback(URL, Some(Selection::Current))
+            .await,
+    );
+
+    let proxy_client = BiliClient::new(
+        ClientConfig::default()
+            .with_credentials(credentials)
+            .with_playurl_mode(PlayurlMode::Web)
+            .with_pgc_web_playurl_route(PgcWebPlayurlRoute::ProxyOnly(
+                RestrictedAreaProxy::bilibili_api(api_proxy_url, Some(RestrictedArea::Hk)),
+            ))
+            .with_restricted_area(
+                RestrictedAreaConfig::default().with_area_hint(RestrictedArea::Hk),
+            ),
+    );
+    let proxy_failure = proxy_route_failure(
+        proxy_client
+            .plan_playback(URL, Some(Selection::Current))
+            .await,
+    );
+
+    let any_failure = official_failure.is_some() || proxy_failure.is_some();
+    let official_status = official_failure.as_deref().map_or_else(
+        || "passed".to_owned(),
+        |failure| format!("failed ({failure})"),
+    );
+    let proxy_status = proxy_failure.as_deref().map_or_else(
+        || "passed".to_owned(),
+        |failure| format!("failed ({failure})"),
+    );
+    if any_failure {
+        bail!("{FIXTURE}: OfficialOnly {official_status}; ProxyOnly {proxy_status}");
+    }
+    Ok(())
+}
+
+fn load_pgc_live_credentials(
+    manifest: &LiveManifest,
+    case: &LiveCase,
+    manifest_path: &Path,
+    temp_dir: &Path,
+) -> anyhow::Result<Credentials> {
+    let credentials = if let Some(path) = std::env::var_os(PGC_LIVE_CREDENTIAL_FILE_ENV) {
+        CredentialStore::new(PathBuf::from(path))
+            .load()
+            .map_err(|_| {
+                anyhow::anyhow!("restricted episode: credential override could not be loaded")
+            })?
+    } else {
+        let credential_file = temp_dir.join("credentials.json");
+        write_case_credentials(manifest, case, manifest_path, &credential_file)?;
+        CredentialStore::new(credential_file).load()?
+    };
+    ensure!(
+        credentials
+            .cookie
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty()),
+        "restricted episode: live case requires a Web cookie"
+    );
+    ensure!(
+        credentials
+            .access_key
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty()),
+        "restricted episode: live case requires a generic access key"
+    );
+    Ok(credentials)
+}
+
+fn official_route_failure(
+    result: std::result::Result<bbdown_core::PlaybackPlan, Error>,
+) -> Option<String> {
+    match result {
+        Ok(plan) => assert_live_route_plan(&plan, &StreamSource::PgcWeb, "restricted episode")
+            .err()
+            .map(|_| "playback plan assertion failed".to_owned()),
+        Err(Error::AccessRestricted(_) | Error::Api { code: -10403, .. }) => None,
+        Err(Error::Api {
+            code: -40301,
+            message,
+        }) if message.trim().eq_ignore_ascii_case("area restricted") => None,
+        Err(error) => Some(safe_live_error_summary(&error)),
+    }
+}
+
+fn proxy_route_failure(
+    result: std::result::Result<bbdown_core::PlaybackPlan, Error>,
+) -> Option<String> {
+    match result {
+        Ok(plan) => {
+            if assert_live_route_plan(&plan, &StreamSource::PgcProxy, "restricted episode").is_err()
+            {
+                Some("playback plan assertion failed".to_owned())
+            } else if plan.entries.iter().any(|entry| {
+                entry
+                    .diagnostics
+                    .attempts
+                    .iter()
+                    .any(|attempt| attempt.source == StreamSource::PgcWeb)
+            }) {
+                Some("ProxyOnly diagnostics reported an official attempt".to_owned())
+            } else {
+                None
+            }
+        }
+        Err(error) => Some(safe_live_error_summary(&error)),
+    }
+}
+
+fn safe_live_error_summary(error: &Error) -> String {
+    match error {
+        Error::Api { code, .. } => format!("API code {code}"),
+        Error::Http(error) => {
+            let status = error
+                .status()
+                .map_or_else(|| "none".to_owned(), |status| status.as_u16().to_string());
+            format!(
+                "HTTP status={status}, timeout={}, connect={}",
+                error.is_timeout(),
+                error.is_connect()
+            )
+        }
+        Error::InvalidInput(_) => "InvalidInput".to_owned(),
+        Error::SelectionRequired { .. } => "SelectionRequired".to_owned(),
+        Error::Unsupported(_) => "Unsupported".to_owned(),
+        Error::AccessRestricted(_) => "AccessRestricted".to_owned(),
+        Error::MissingField(_) => "MissingField".to_owned(),
+        Error::Url(_) => "Url".to_owned(),
+        Error::Json(_) => "Json".to_owned(),
+        Error::Io(_) => "Io".to_owned(),
+        Error::MuxFailed { .. } => "MuxFailed".to_owned(),
+        Error::Cancelled { .. } => "Cancelled".to_owned(),
+    }
+}
+
+fn is_ep664928_fixture(url: &str) -> bool {
+    let without_query = url.split(['?', '#']).next().unwrap_or_default();
+    without_query.trim_end_matches('/').ends_with("ep664928") || without_query.trim() == "ep664928"
+}
+
+fn configured_hk_api_proxy(manifest: &LiveManifest, case: &LiveCase) -> anyhow::Result<String> {
+    let mut proxies = manifest
+        .restricted_api_proxy_all_areas
+        .iter()
+        .chain(case.restricted_api_proxy_all_areas.iter())
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    proxies.extend(
+        manifest
+            .restricted_api_proxy
+            .iter()
+            .chain(case.restricted_api_proxy.iter())
+            .filter_map(|spec| spec.strip_prefix("hk=")),
+    );
+    ensure!(
+        proxies.len() == 1,
+        "live PGC route test requires exactly one HK API proxy"
+    );
+    Ok(proxies[0].to_owned())
+}
+
+fn assert_live_route_plan(
+    plan: &bbdown_core::PlaybackPlan,
+    expected_source: &StreamSource,
+    fixture: &str,
+) -> anyhow::Result<()> {
+    ensure!(
+        !plan.entries.is_empty(),
+        "{fixture}: playback plan is empty"
+    );
+    for entry in &plan.entries {
+        ensure!(
+            &entry.source == expected_source,
+            "{fixture}: playback source did not match requested route"
+        );
+        ensure!(
+            entry
+                .variants
+                .iter()
+                .any(|variant| { variant.video.is_some() || !variant.flv_segments.is_empty() }),
+            "{fixture}: playback plan has no playable video streams"
+        );
+    }
     Ok(())
 }
 
