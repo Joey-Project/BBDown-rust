@@ -8,6 +8,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 const LIVE_SAMPLES_FILE: &str = "live-e2e.samples.json";
 const PGC_LIVE_CREDENTIAL_FILE_ENV: &str = "BBDOWN_PGC_LIVE_CREDENTIAL_FILE";
@@ -54,7 +55,7 @@ struct LiveManifest {
     cases: Vec<LiveCase>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LiveCase {
     name: String,
@@ -100,7 +101,7 @@ enum LiveAction {
     Plan,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LiveExpect {
     info: Option<String>,
@@ -167,16 +168,12 @@ async fn live_pgc_web_playurl_routes_for_restricted_episode() -> anyhow::Result<
 
     let manifest_path = find_live_manifest_path()?;
     let manifest = LiveManifest::load(&manifest_path)?;
-    let case = manifest
-        .cases
-        .iter()
-        .find(|case| case.kind == LiveCaseKind::RestrictedPgc && is_ep664928_fixture(&case.url))
-        .context("live manifest is missing the curated ep664928 restricted PGC case")?;
+    let case = select_ep664928_case(&manifest.cases)?;
     let api_proxy_url = configured_hk_api_proxy(&manifest, case)?;
     let temp = tempfile::tempdir()?;
     let credentials = load_pgc_live_credentials(&manifest, case, &manifest_path, temp.path())?;
 
-    let official_client = BiliClient::new(
+    let official_config = apply_manifest_timeout(
         ClientConfig::default()
             .with_credentials(credentials.clone())
             .with_playurl_mode(PlayurlMode::Web)
@@ -184,14 +181,17 @@ async fn live_pgc_web_playurl_routes_for_restricted_episode() -> anyhow::Result<
             .with_restricted_area(
                 RestrictedAreaConfig::default().with_area_hint(RestrictedArea::Hk),
             ),
+        &manifest,
+        case,
     );
+    let official_client = BiliClient::new(official_config);
     let official_failure = official_route_failure(
         official_client
             .plan_playback(URL, Some(Selection::Current))
             .await,
     );
 
-    let proxy_client = BiliClient::new(
+    let proxy_config = apply_manifest_timeout(
         ClientConfig::default()
             .with_credentials(credentials)
             .with_playurl_mode(PlayurlMode::Web)
@@ -201,7 +201,10 @@ async fn live_pgc_web_playurl_routes_for_restricted_episode() -> anyhow::Result<
             .with_restricted_area(
                 RestrictedAreaConfig::default().with_area_hint(RestrictedArea::Hk),
             ),
+        &manifest,
+        case,
     );
+    let proxy_client = BiliClient::new(proxy_config);
     let proxy_failure = proxy_route_failure(
         proxy_client
             .plan_playback(URL, Some(Selection::Current))
@@ -221,6 +224,36 @@ async fn live_pgc_web_playurl_routes_for_restricted_episode() -> anyhow::Result<
         bail!("{FIXTURE}: OfficialOnly {official_status}; ProxyOnly {proxy_status}");
     }
     Ok(())
+}
+
+fn select_ep664928_case(cases: &[LiveCase]) -> anyhow::Result<&LiveCase> {
+    let candidates = cases
+        .iter()
+        .filter(|case| case.kind == LiveCaseKind::RestrictedPgc && is_ep664928_fixture(&case.url))
+        .collect::<Vec<_>>();
+    let documented = candidates
+        .iter()
+        .copied()
+        .filter(|case| case.name == "restricted-bangumi-episode")
+        .collect::<Vec<_>>();
+    match (candidates.as_slice(), documented.as_slice()) {
+        (_, [case]) | ([case], []) => Ok(case),
+        ([], []) => {
+            anyhow::bail!("live manifest is missing the curated ep664928 restricted PGC case")
+        }
+        _ => anyhow::bail!("live manifest has ambiguous ep664928 restricted PGC cases"),
+    }
+}
+
+fn apply_manifest_timeout(
+    config: ClientConfig,
+    manifest: &LiveManifest,
+    case: &LiveCase,
+) -> ClientConfig {
+    match case.request_timeout_seconds(manifest) {
+        Some(seconds) => config.with_request_timeout(Duration::from_secs(seconds)),
+        None => config,
+    }
 }
 
 fn load_pgc_live_credentials(
@@ -264,11 +297,8 @@ fn official_route_failure(
         Ok(plan) => assert_live_route_plan(&plan, &StreamSource::PgcWeb, "restricted episode")
             .err()
             .map(|_| "playback plan assertion failed".to_owned()),
-        Err(Error::AccessRestricted(_) | Error::Api { code: -10403, .. }) => None,
-        Err(Error::Api {
-            code: -40301,
-            message,
-        }) if message.trim().eq_ignore_ascii_case("area restricted") => None,
+        Err(Error::AccessRestricted(message)) if is_region_restriction_message(&message) => None,
+        Err(Error::Api { message, .. }) if is_region_restriction_message(&message) => None,
         Err(error) => Some(safe_live_error_summary(&error)),
     }
 }
@@ -333,20 +363,194 @@ fn configured_hk_api_proxy(manifest: &LiveManifest, case: &LiveCase) -> anyhow::
         .restricted_api_proxy_all_areas
         .iter()
         .chain(case.restricted_api_proxy_all_areas.iter())
-        .map(String::as_str)
+        .map(|spec| parse_hk_api_proxy_spec(spec, true))
+        .collect::<anyhow::Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
         .collect::<Vec<_>>();
     proxies.extend(
         manifest
             .restricted_api_proxy
             .iter()
             .chain(case.restricted_api_proxy.iter())
-            .filter_map(|spec| spec.strip_prefix("hk=")),
+            .map(|spec| parse_hk_api_proxy_spec(spec, false))
+            .collect::<anyhow::Result<Vec<_>>>()?
+            .into_iter()
+            .flatten(),
     );
     ensure!(
         proxies.len() == 1,
         "live PGC route test requires exactly one HK API proxy"
     );
-    Ok(proxies[0].to_owned())
+    Ok(proxies.remove(0))
+}
+
+fn parse_hk_api_proxy_spec(spec: &str, all_areas: bool) -> anyhow::Result<Option<String>> {
+    let spec = spec.trim();
+    anyhow::ensure!(!spec.is_empty(), "API proxy specification is empty");
+    let (area, value) = if let Some((area, value)) = split_area_proxy_spec(spec) {
+        let normalized_area = area.trim().to_ascii_lowercase();
+        anyhow::ensure!(
+            matches!(normalized_area.as_str(), "cn" | "th" | "hk" | "tw"),
+            "API proxy area is unsupported"
+        );
+        (Some(normalized_area), value.trim())
+    } else {
+        (None, spec)
+    };
+    anyhow::ensure!(
+        !all_areas || area.is_none(),
+        "all-areas API proxy must not include an area prefix"
+    );
+    anyhow::ensure!(!value.is_empty(), "API proxy URL is empty");
+    if !all_areas && area.as_deref().is_some_and(|area| area != "hk") {
+        return Ok(None);
+    }
+    let parsed = url::Url::parse(value).map_err(|_| anyhow::anyhow!("API proxy URL is invalid"))?;
+    anyhow::ensure!(
+        matches!(parsed.scheme(), "http" | "https"),
+        "API proxy URL scheme is unsupported"
+    );
+    Ok(Some(value.to_owned()))
+}
+
+fn split_area_proxy_spec(spec: &str) -> Option<(&str, &str)> {
+    if starts_with_url_scheme(spec) {
+        return None;
+    }
+    spec.split_once('=')
+}
+
+fn starts_with_url_scheme(value: &str) -> bool {
+    let Some(scheme_end) = value.find("://") else {
+        return false;
+    };
+    let scheme = &value[..scheme_end];
+    scheme
+        .as_bytes()
+        .first()
+        .is_some_and(u8::is_ascii_alphabetic)
+        && scheme
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.'))
+}
+
+fn is_region_restriction_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    [
+        "area restricted",
+        "area limit",
+        "region restricted",
+        "region limit",
+        "not available in your region",
+        "地区限制",
+        "地區限制",
+        "区域限制",
+        "區域限制",
+        "所在地区不可观看",
+        "所在地區不可觀看",
+        "所在地区无法观看",
+        "所在地區無法觀看",
+        "所在的地区不可观看",
+        "所在的地區不可觀看",
+        "所在的地区无法观看",
+        "所在的地區無法觀看",
+        "地区不可观看",
+        "地區不可觀看",
+        "地区无法观看",
+        "地區無法觀看",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+#[test]
+fn live_proxy_spec_parser_normalizes_hk_and_rejects_unsafe_inputs() -> anyhow::Result<()> {
+    assert_eq!(
+        parse_hk_api_proxy_spec(" HK = https://proxy.example/path ", false)?,
+        Some("https://proxy.example/path".to_owned())
+    );
+    assert_eq!(
+        parse_hk_api_proxy_spec("TH=https://proxy.example", false)?,
+        None
+    );
+    assert_eq!(
+        parse_hk_api_proxy_spec(" https://proxy.example ", true)?,
+        Some("https://proxy.example".to_owned())
+    );
+
+    let Err(error) = parse_hk_api_proxy_spec("hk=", false) else {
+        bail!("empty proxy URL must be rejected");
+    };
+    assert!(!error.to_string().contains("hk="));
+
+    let Err(error) = parse_hk_api_proxy_spec("hk=ftp://secret.example/private", false) else {
+        bail!("unsupported URL input must be rejected");
+    };
+    assert!(!error.to_string().contains("secret.example"));
+    Ok(())
+}
+
+#[test]
+fn live_fixture_case_selection_rejects_ambiguity_and_prefers_documented_label() -> anyhow::Result<()>
+{
+    let mut first = live_case_for_assertions();
+    first.url = "ep664928".to_owned();
+    first.name = "pgc-hk-mo-tw".to_owned();
+    let mut documented = first.clone();
+    documented.name = "restricted-bangumi-episode".to_owned();
+
+    assert_eq!(select_ep664928_case(&[first.clone()])?.name, "pgc-hk-mo-tw");
+    assert_eq!(
+        select_ep664928_case(&[first.clone(), documented.clone()])?.name,
+        "restricted-bangumi-episode"
+    );
+
+    let other = first.clone();
+    let Err(error) = select_ep664928_case(&[first, other]) else {
+        bail!("multiple unlabeled fixture cases must be rejected");
+    };
+    assert!(error.to_string().contains("ambiguous"));
+    Ok(())
+}
+
+#[test]
+fn official_route_only_accepts_classified_region_restrictions() {
+    assert!(is_region_restriction_message("area restricted"));
+    assert!(is_region_restriction_message("抱歉您所在地区不可观看！"));
+    assert!(!is_region_restriction_message("not logged in"));
+    assert!(!is_region_restriction_message("VIP required"));
+    assert_eq!(
+        official_route_failure(Err(Error::Api {
+            code: 403,
+            message: "area restricted".to_owned(),
+        })),
+        None
+    );
+    assert_eq!(
+        official_route_failure(Err(Error::Api {
+            code: -101,
+            message: "not logged in".to_owned(),
+        })),
+        Some("API code -101".to_owned())
+    );
+}
+
+#[test]
+fn live_case_timeout_overrides_manifest_timeout() -> anyhow::Result<()> {
+    let manifest: LiveManifest = serde_json::from_str(
+        r#"{
+          "request_timeout_seconds": 61,
+          "cases": [{"name": "restricted", "kind": "restricted_pgc", "url": "ep664928"}]
+        }"#,
+    )?;
+    let mut case = manifest.cases[0].clone();
+    case.request_timeout_seconds = Some(47);
+
+    let config = apply_manifest_timeout(ClientConfig::default(), &manifest, &case);
+
+    assert_eq!(config.request_timeout, Duration::from_secs(47));
+    Ok(())
 }
 
 fn assert_live_route_plan(

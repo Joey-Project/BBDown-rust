@@ -46,6 +46,8 @@ superseded_by:
   通过。`OfficialOnly` 收到区域限制码 `-10403`；`ProxyOnly` 返回可播放的 `PgcProxy`
   条目，且诊断中没有 `PgcWeb` 尝试。最初 manifest 指向的旧凭据路径已不存在，因此本次通过
   仅用于该测试的环境变量覆盖凭据文件。
+- PR review 后的复核中，公开反代曾单次返回 `AccessRestricted`，10 秒后一次重试通过；
+  该 live 测试保持可选，遇到反代失败会如实失败。单元测试和默认 CI 不依赖公开反代。
 
 ## Follow-up
 
