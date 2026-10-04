@@ -22,6 +22,8 @@ superseded_by:
 - The former v1 producer at the canonical gate path is replaced; the v2 controller is installed, and the previous release CODEOWNERS entries remain alongside the dedicated control-plane block.
 - Unrelated release and CI workflows are unchanged.
 - This consumer-file migration does not modify or assert the production ruleset's required-check state.
+- The release guide documents the fail-closed cutover window: freeze other merges, prove the native v2 context on a separate unmerged canary, activate and read back `codex/github-review-gate`, then retire the legacy `codex/review-gate`; the installation itself does not claim production activation.
+- v2 consumer support is documented as same-repository ordinary PRs targeting the default branch; fork-head and non-default-base PRs are outside this migration's supported boundary.
 
 ## Evidence
 
