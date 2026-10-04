@@ -601,6 +601,20 @@ CLI 覆盖环境变量。未知 manifest 字段会被拒绝，因此拼错的 ex
 `allow_plan_error: true` 和 `plan_error_contains`：成功的 `plan` 仍必须匹配流断言，而受限
 失败必须是 access-restricted failure，并包含列出的诊断片段。
 
+如需用精选受限剧集 `ep664928` 检查独立的 PGC Web playurl 路由，可运行下面的可选 API
+测试。它从被忽略的 manifest 选择该剧集，需要一个香港 API 反代、Web cookie 和通用 access
+key。如果 manifest 中的凭据路径已失效，可以设置 `BBDOWN_PGC_LIVE_CREDENTIAL_FILE`，改为
+读取 BBDown 凭据存储的默认 profile。`OfficialOnly` 必须生成可播放的 `PgcWeb` 条目，或明
+确返回区域限制；`ProxyOnly` 必须生成可播放的 `PgcProxy` 条目，且不尝试官方 playurl。
+测试只规划播放，不下载媒体。Web cookie 会发往 Bilibili 官方接口；通用 access key 可能
+发往选中的反代。
+
+```bash
+BBDOWN_PGC_LIVE_CREDENTIAL_FILE='/path/to/credentials.json' \
+  cargo test -p bbdown-cli --test live_e2e live_pgc_web_playurl_routes_for_restricted_episode \
+  --locked --offline -- --ignored --exact
+```
+
 ## 受限区域代理
 
 工具附带一份可选的历史公共解析服务器目录，但默认不会联系其中任何服务器。使用
