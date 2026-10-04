@@ -23,3 +23,8 @@
 /docs/release.md @JoeyTeng
 /docs/release.zh-CN.md @JoeyTeng
 /docs/release-notes/** @JoeyTeng
+
+# BEGIN codex-review-gate control-plane
+/.github/workflows/ @JoeyTeng
+/.github/CODEOWNERS @JoeyTeng
+# END codex-review-gate control-plane

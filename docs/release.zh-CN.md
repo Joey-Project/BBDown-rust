@@ -34,9 +34,20 @@ rulesets 应只允许这个 App 作为非人工 actor 写 tag。
 
 推荐 rulesets：
 
-- Repository default branch，目前是 `master`：要求 pull request，要求 `Rust` 和
-  `codex/review-gate` status checks，要求 Code Owner review。如果普通 PR 不需要人工审
-  批，可以把通用 required approval count 保持为 `0`。
+- Repository default branch，目前是 `master`：要求 pull request，要求 `Rust` 和（受控 v2
+  切换后）`codex/github-review-gate` status checks，要求 Code Owner review。只有普通 PR 不需要
+  人工审批时才把通用 required approval count 保持为 `0`。保留其他所有非 status 保护，包括
+  conversation resolution 和禁止删除/非快进更新。
+
+目前配置的 legacy status 是 `codex/review-gate`，v2 consumer 不会发布它。合并 consumer 安装
+PR 后会进入明确的 fail-closed 维护窗口：暂停其他 PR 的合并；用另一个尚未合并的 canary PR
+证明 native v2 check 成功；由 coordinator 激活 `codex/github-review-gate` 并回读确认精确
+ruleset；然后才退役 legacy v1 要求。不得绕过缺失的 legacy check，也不得在回读前宣称生产
+ruleset 已迁移。
+
+已安装的 v2 consumer 支持同仓库、目标为 default branch 的普通 PR。Fork-head PR 和目标为
+`release/*` 的 PR 不在支持范围内；除非另有独立审查的能力实现，不要在这些分支要求 v2
+context。
 - RC tags：target `v*-rc.*`；限制创建、更新和删除；只允许 release GitHub App 创建。
 - 正式 release tags：target `v*`，如果 UI 支持 exclude，则排除 `v*-rc.*`；否则使用不会匹配
   RC tag 的单独正式 tag pattern。限制创建、更新和删除；只允许 release GitHub App 创建。
