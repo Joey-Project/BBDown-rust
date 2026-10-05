@@ -325,7 +325,9 @@ bbdown cdn probe https://www.bilibili.com/video/BV1QtjA6BEB8/ --preset overseas
 bbdown download https://www.bilibili.com/video/BV1QtjA6BEB8/ --cdn-preset overseas --cdn-probe --cdn-parallel 4
 ```
 
-`--cdn-parallel` accepts values from 2 to 8; its default is 1 (disabled). CDN probing and parallel
+`--cdn-parallel` accepts values from 2 to 8; its default is 1 (disabled). Explicitly enabling it
+can issue concurrent Range requests even when only one candidate host is compatible; multi-host
+sharding is used when multiple candidates pass compatibility checks. CDN probing and parallel
 media transfer apply only to DASH/FLV media, require valid byte-range responses and a consistent
 total length, and leave cover, subtitle, and danmaku sidecars unchanged. Existing partial files use
 the regular resume path without probe reordering; symlink, multiply linked, or special-file targets
@@ -342,6 +344,40 @@ do not record signed URL query strings. After a complete sharded file is publish
 `--progress-json` emits `cdn_shard_completed` with each shard's source `host` and `bytes`;
 summing those events by host shows the published file's transfer distribution. A failed sharded
 attempt emits no progress for discarded staging bytes. The event excludes signed URL paths and queries.
+
+### Re-running the opt-in live CDN benchmark
+
+The ignored integration harness in `crates/bbdown/tests/cdn_benchmark.rs` makes public HTTP
+requests only when explicitly run. Each invocation resolves one supplied public video fixture and
+compares a fixed-host sequential baseline, four-way ranges on that same host, and four-way ranges
+across multiple hosts.
+Each group gets a fresh output directory, no resume, no mux, and one ordinary download attempt.
+The harness allows representations up to 256 MiB, one to three repetitions, and 300-second
+download requests. If the plan omits size, it uses a donor-only probe capped at 64 KiB. Run from
+the repository root, for example:
+
+```sh
+BBDOWN_CDN_BENCHMARK_URL='https://www.bilibili.com/video/BV1uW4y1s7zN/' \
+BBDOWN_CDN_BENCHMARK_SAMPLE=small \
+BBDOWN_CDN_BENCHMARK_ENTRY=1 \
+BBDOWN_CDN_BENCHMARK_REPETITIONS=1 \
+BBDOWN_CDN_BENCHMARK_ORDER_OFFSET=0 \
+BBDOWN_CDN_BENCHMARK_FIXED_HOST=upos-sz-mirroraliov.bilivideo.com \
+BBDOWN_CDN_BENCHMARK_HOSTS=upos-sz-mirroraliov.bilivideo.com,upos-hz-mirrorakam.akamaized.net,upos-sz-mirror08h.bilivideo.com \
+cargo test -p bbdown-core --test cdn_benchmark -- --ignored --nocapture
+```
+
+Run the command separately for `BV1QtjA6BEB8`, changing the URL and sample label to benchmark the
+large representation. Set `BBDOWN_CDN_BENCHMARK_ORDER_OFFSET` to 0, 1, or 2 to choose the first
+group: baseline, same-host ranges, or multi-host ranges. Each repetition rotates the order again.
+Each JSON record includes order, `started_at_epoch_ms`, `fixed_host`, `candidate_hosts`,
+`request_timeout_secs`, size source and probe cost, output SHA-256, published shard bytes by host,
+fallback status, and validity reasons. The harness exits unsuccessfully if any three-group sample
+is invalid: outputs must have matching size and digest, both range groups must publish exactly the
+declared size without whole-file fallback, and the multi-host group must use at least two hosts.
+Small fixtures may have fewer actual lanes than requested: the 1,644,777-byte sample has only two
+1 MiB chunks, so four-way mode can use at most two lanes. The reported output size is not total
+network traffic: failed/retried requests and actual HTTP wire bytes are not observable here.
 
 The following is BBDown's download flow; it does not describe browser playback. It combines the
 optional restricted-area PGC resolution fallback with CDN selection, transfer, and optional muxing:

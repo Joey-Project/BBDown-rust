@@ -59,11 +59,21 @@
   block the release.
 - Repo-local skill `$bbdown-live-e2e-fixtures` and `live-e2e.samples.example.json` record the current
   real Bilibili fixtures for opt-in normal, multi-page, and restricted-area live e2e validation.
-- The overseas CDN workstream has landed opt-in host selection, bounded probing, multi-CDN range
-  downloads, and bundled public resolver/CDN catalogs. A first same-representation live A/B run
-  found faster 4- and 8-lane downloads, but only two repeats and a variable 2-lane result. The
-  current release remains `v0.6.0`; broader validation and `v0.7.0` scope are next. See the
-  workstream journal.
+- The overseas networking workstream has landed opt-in CDN host selection, bounded probing,
+  parallel Range transfer (including a single compatible host), and bundled public resolver/CDN
+  catalogs. The independent PGC web-route API and its opt-in live validation are also complete.
+  Controlled same-representation runs compared a fixed-host sequential baseline, same-host
+  parallel ranges, and multi-host ranges across two media sizes in two short morning windows. The
+  small-file sample can use at most two lanes because it contains two 1 MiB chunks. Results vary by
+  host, size, and time and do not establish an all-day, multi-location, or stable performance
+  distribution. The September 28 baseline used another fixed host, so its speed ratios are not
+  directly comparable. Matching output hashes verify the produced files across these runs, not
+  universal content identity across all CDN edges. See the workstream journal.
+- Plan the `v0.7.0` slice around the existing opt-in networking/downloader features and independent
+  PGC web-route API. Release preparation is pending; this PR has not changed the published version.
+  Automatic routing, persistent route health, and adaptive tuning remain future work. Add
+  candidate exclusion, cross-candidate retry, and HTTP response-body byte diagnostics before
+  scheduler tuning; response-body counts do not equal total wire traffic.
 
 ## Recovery Pointers
 

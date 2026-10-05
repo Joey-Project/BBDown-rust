@@ -293,7 +293,9 @@ bbdown cdn probe https://www.bilibili.com/video/BV1QtjA6BEB8/ --preset overseas
 bbdown download https://www.bilibili.com/video/BV1QtjA6BEB8/ --cdn-preset overseas --cdn-probe --cdn-parallel 4
 ```
 
-`--cdn-parallel` 接受 2 到 8，默认值为 1（关闭并行传输）。测速和并行媒体传输只作用于
+`--cdn-parallel` 接受 2 到 8，默认值为 1（关闭并行传输）。即使只有一个兼容候选 host，
+显式启用后也可并发发送 Range 请求；若有多个候选通过兼容性检查，则可使用多 host 分片。
+测速和并行媒体传输只作用于
 DASH/FLV 媒体，要求服务器返回有效字节范围和一致的总长度；不会改动封面、字幕和弹幕旁路文件。
 已有部分文件仍走常规续传路径，不会因测速改变候选顺序；符号链接、有多个硬链接或特殊文件目标
 走常规下载路径。Unix 上的 `--no-resume` 可对已有单链接普通文件从头分片；非 Unix 平台对已有文件
@@ -306,6 +308,35 @@ DASH/FLV 媒体，要求服务器返回有效字节范围和一致的总长度�
 记录签名 URL 的 query 字符串。加上 `--progress-json` 后，只有完整分片文件成功发布，才会为各
 分片产生 `cdn_shard_completed` 事件，包含来源 `host` 和 `bytes`；按 host 汇总即可核对最终文件
 的实际供数分布。失败分片暂存文件中被丢弃的字节不会报告为进度。该事件不含签名 URL 的路径或 query。
+
+### 复跑可选的实时 CDN 基准
+
+`crates/bbdown/tests/cdn_benchmark.rs` 中的 ignored 集成测试只有显式运行时才会发起公开
+HTTP 请求。每次调用只解析一个指定的公开视频样本，并比较固定 host 顺序基线、同 host 四路
+Range，以及多 host 四路 Range。每组使用全新输出目录、关闭续传和封装，并只进行一次普通下载尝试。
+媒体上限为 256 MiB，重复次数为 1 到 3，下载请求超时为 300 秒。若计划未提供大小，则只对
+donor host 执行最多 64 KiB 的有界探测。在仓库根目录运行，例如：
+
+```sh
+BBDOWN_CDN_BENCHMARK_URL='https://www.bilibili.com/video/BV1uW4y1s7zN/' \
+BBDOWN_CDN_BENCHMARK_SAMPLE=small \
+BBDOWN_CDN_BENCHMARK_ENTRY=1 \
+BBDOWN_CDN_BENCHMARK_REPETITIONS=1 \
+BBDOWN_CDN_BENCHMARK_ORDER_OFFSET=0 \
+BBDOWN_CDN_BENCHMARK_FIXED_HOST=upos-sz-mirroraliov.bilivideo.com \
+BBDOWN_CDN_BENCHMARK_HOSTS=upos-sz-mirroraliov.bilivideo.com,upos-hz-mirrorakam.akamaized.net,upos-sz-mirror08h.bilivideo.com \
+cargo test -p bbdown-core --test cdn_benchmark -- --ignored --nocapture
+```
+
+对大文件需单独再运行一次，将 URL 和样本标签改为 `BV1QtjA6BEB8`。将
+`BBDOWN_CDN_BENCHMARK_ORDER_OFFSET` 设为 0、1 或 2，可分别指定基线、同 host Range 或多
+host Range 作为首组；每次重复都会继续轮换顺序。每条 JSON 记录包含顺序、
+`started_at_epoch_ms`、`fixed_host`、`candidate_hosts`、`request_timeout_secs`、大小来源与探测耗时、输出 SHA-256、各 host 已发布的分片
+字节数、回退状态和有效性原因。任一组三组比较
+无效时，测试会以非零状态退出：输出大小和摘要必须一致；两个 Range 组必须恰好发布声明的
+总字节数且没有整文件回退；多 host 组必须实际使用至少两个 host。小文件可能无法达到请求
+的并发数：1,644,777 字节样本只有两个 1 MiB 分片，因此四路模式最多实际使用两路。输出
+文件大小不代表网络总流量；当前无法观测失败或重试请求以及实际 HTTP wire bytes。
 
 下面描述的是 BBDown 下载流程，不是浏览器播放流程。图中包含可选的受限区域 PGC 解析回退、CDN
 选择、传输以及可选封装：
