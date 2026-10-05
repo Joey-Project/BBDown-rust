@@ -41,7 +41,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: codex-review-gate-controller-${{ github.repository }}-${{ github.event.workflow_run.pull_requests[0].number || github.event.issue.number || inputs.pr_number }}
+  group: codex-review-gate-controller-${{ github.repository }}-${{ github.event.workflow_run.pull_requests[0].number || github.event.issue.number || inputs.pr_number || github.event.workflow_run.id || github.run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -68,7 +68,10 @@ jobs:
           github.event.action == 'completed' &&
           (
             github.event.workflow_run.path == '.github/workflows/codex-review-gate.yml' ||
-            startsWith(github.event.workflow_run.path, '.github/workflows/codex-review-gate.yml@')
+            (
+              startsWith(github.event.workflow_run.path, '.github/workflows/codex-review-gate.yml@refs/pull/') &&
+              endsWith(github.event.workflow_run.path, '/merge')
+            )
           ) &&
           github.event.workflow_run.event == 'pull_request' &&
           !github.event.workflow_run.pull_requests[1]
