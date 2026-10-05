@@ -2209,7 +2209,7 @@ impl BiliClient {
         let Some(expected_size) = request.expected_size.filter(|size| *size > 0) else {
             return Ok(None);
         };
-        if options.cdn_parallelism == 1 || urls.len() < 2 || !request.kind.is_media() {
+        if options.cdn_parallelism == 1 || urls.is_empty() || !request.kind.is_media() {
             return Ok(None);
         }
         if target_is_symlink(request.path).await? {
@@ -7916,7 +7916,7 @@ mod tests {
         }
         let target_name = media_file_name("video", &plan.entries[0].streams.videos[0]);
         let mut prefix_mocks = Vec::new();
-        let fallback_body = vec![b'z'; total_size as usize];
+        let fallback_body = vec![b'z'; usize::try_from(total_size)?];
         let mut bad_chunk_mocks = Vec::new();
         for (server, path) in [(&server_a, "/asset.m4s"), (&server_b, "/asset.m4s")] {
             for (range, range_end, length) in [
@@ -8012,12 +8012,68 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::cast_possible_truncation)]
-    async fn sharded_prefix_mismatch_falls_back_without_replacing_target_with_partial_data()
-    -> anyhow::Result<()> {
+    async fn single_host_shard_failure_falls_back_to_one_complete_download() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let total_size = 20_000_u64;
+        let fallback_body = vec![b'z'; usize::try_from(total_size)?];
+        let mut plan = single_video_plan(format!("{}/asset.m4s?token=shared", server.base_url()));
+        plan.entries[0].streams.videos[0].size = Some(total_size);
+
+        let candidate_probe = server.mock(|when, then| {
+            when.method(GET)
+                .path("/asset.m4s")
+                .header("range", "bytes=0-19999");
+            then.status(206)
+                .header("Content-Range", "bytes 0-19999/20000")
+                .header("Content-Length", "20000")
+                .body(vec![b'p'; 20_000]);
+        });
+        let shard_probe = server.mock(|when, then| {
+            when.method(GET)
+                .path("/asset.m4s")
+                .header("range", "bytes=0-16383");
+            then.status(503);
+        });
+        let fallback = server.mock(|when, then| {
+            when.method(GET).path("/asset.m4s").header_missing("range");
+            then.status(200).body(fallback_body.clone());
+        });
+
+        let temp = tempfile::tempdir()?;
+        let report = BiliClient::new(ClientConfig::default())
+            .download_plan(
+                &plan,
+                DownloadOptions::new(temp.path())
+                    .with_retry_policy(RetryPolicy::single_attempt())
+                    .with_download_mode(DownloadMode::VideoOnly)
+                    .with_cdn_parallelism(2)
+                    .with_mux(MuxOptions::Disabled),
+            )
+            .await?;
+
+        assert_eq!(
+            tokio::fs::read(&report.entries[0].files[0].path).await?,
+            fallback_body
+        );
+        assert_eq!(candidate_probe.calls(), 1);
+        assert_eq!(
+            shard_probe.calls(),
+            1,
+            "single host needs one compatibility probe"
+        );
+        assert_eq!(
+            fallback.calls(),
+            1,
+            "ordinary fallback must be a single attempt"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn sharded_prefix_mismatch_never_mixes_candidate_chunks() -> anyhow::Result<()> {
         let server = MockServer::start();
         let total_size = 2 * CDN_SHARD_CHUNK_SIZE;
-        let fallback_body = vec![b'z'; total_size as usize];
+        let expected_body = vec![b'a'; usize::try_from(total_size)?];
         let mut plan = single_video_plan(format!("{}/a.m4s", server.base_url()));
         {
             let stream = &mut plan.entries[0].streams.videos[0];
@@ -8040,19 +8096,18 @@ mod tests {
                         .body(body);
                 }));
             }
-            chunk_mocks.push(server.mock(|when, then| {
-                when.method(GET)
-                    .path(path)
-                    .header("range", "bytes=0-1048575");
-                then.status(206)
-                    .header("Content-Range", "bytes 0-1048575/2097152")
-                    .header("Content-Length", "1048576")
-                    .body(vec![byte; 1024 * 1024]);
-            }));
-            server.mock(|when, then| {
-                when.method(GET).path(path).header_missing("range");
-                then.status(200).body(fallback_body.clone());
-            });
+            for (range, content_range) in [
+                ("bytes=0-1048575", "0-1048575"),
+                ("bytes=1048576-2097151", "1048576-2097151"),
+            ] {
+                chunk_mocks.push(server.mock(|when, then| {
+                    when.method(GET).path(path).header("range", range);
+                    then.status(206)
+                        .header("Content-Range", format!("bytes {content_range}/2097152"))
+                        .header("Content-Length", "1048576")
+                        .body(vec![byte; 1024 * 1024]);
+                }));
+            }
         }
         let temp = tempfile::tempdir()?;
         let output_dir = test_entry_dir(temp.path(), &plan)?;
@@ -8072,9 +8127,12 @@ mod tests {
             )
             .await?;
 
-        assert_eq!(tokio::fs::read(&target).await?, fallback_body);
+        assert_eq!(tokio::fs::read(&target).await?, expected_body);
         assert!(prefix_mocks.iter().all(|mock| mock.calls() == 1));
-        assert!(chunk_mocks.iter().all(|mock| mock.calls() == 0));
+        assert_eq!(chunk_mocks[0].calls(), 1);
+        assert_eq!(chunk_mocks[1].calls(), 1);
+        assert_eq!(chunk_mocks[2].calls(), 0);
+        assert_eq!(chunk_mocks[3].calls(), 0);
         Ok(())
     }
 

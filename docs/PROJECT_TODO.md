@@ -100,17 +100,25 @@
 - [completed] Implement opt-in overseas CDN host selection, probing, multi-CDN range downloads,
   and bundled CDN/public resolver catalogs. See
   `docs/project_journal/2026/06/2026-06-21-overseas-cdn-routing-roadmap-019f17.md`.
+- [completed] Add the independent restricted-area PGC web-route API and validate its opt-in live
+  proxy path. See
+  `docs/project_journal/2026/09/2026-09-30-pgc-web-playurl-routes.md`.
 - [completed] Run an initial same-representation single-CDN versus 2-, 4-, and 8-lane live A/B
   measurement with two repeats, recording elapsed time, preflight cost, published per-CDN bytes,
   and whole-file fallback observations. See
   `docs/project_journal/2026/06/2026-06-21-overseas-cdn-routing-roadmap-019f17.md`.
-- [pending] Repeat the CDN benchmark across times and media sizes, with a same-host concurrent
-  range control to isolate CDN diversity from parallelism; add visibility into candidate
-  exclusion, per-chunk retries, and actual probe/wire byte overhead if tuning is needed. Decide
-  the overseas routing scope and release placement for `v0.7.0`. See
+- [completed] Repeat the controlled CDN benchmark on two media sizes in two short same-morning
+  windows, including a fixed single-host concurrent Range control and multi-host transfer. The
+  results do not characterize all-day, multi-location, or stable performance. See
   `docs/project_journal/2026/06/2026-06-21-overseas-cdn-routing-roadmap-019f17.md`.
-- [pending] Plan `v0.7.0` or a later feed/page release for per-video related recommendations and
-  any additional Bilibili page-family parsing that does not fit the downloader or credential lines.
+- [pending] Prepare the opt-in networking/downloader release slice for `v0.7.0`, covering existing
+  CDN selection, probing, parallel transfer, catalogs, and the independent PGC web-route API.
+- [pending] Before future CDN scheduler tuning, add diagnostics for candidate exclusion,
+  cross-candidate retries, and actual HTTP response-body bytes. These byte counts would still not
+  represent total wire traffic. Keep automatic routing, persistent route health, and adaptive
+  policy as a separate follow-up.
+- [pending] Plan per-video related recommendations and additional Bilibili page-family parsing for
+  a later feed/page release.
 - [pending] Continue the remaining BBDown parity backlog after the published `0.4.0` credential and
   danmaku sequence unless reprioritized:
   aria2 or multi-thread download integration, MP4Box muxing, and subtitle-to-SRT conversion.

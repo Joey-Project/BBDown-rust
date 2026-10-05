@@ -3,7 +3,7 @@ id: 20260621-019f17-overseas-cdn-routing-roadmap
 title: Overseas CDN Routing Roadmap
 status: active
 created: 2026-06-21
-updated: 2026-09-28
+updated: 2026-10-05
 branch: feature/overseas-cdn-routing-roadmap
 pr: 62
 supersedes: []
@@ -47,7 +47,9 @@ superseded_by:
   single resolved representation. Unknown-size probes include the one-byte discovery request in
   the 64 KiB per-candidate budget. Automatic ranking reuses that discovery byte in its prefix
   comparison; probe failures preserve candidates as fallback routes.
-- `--cdn-parallel 2..8` opts into bounded multi-CDN range transfer for fresh, known-size media.
+- `--cdn-parallel 2..8` opts into bounded concurrent Range transfer for fresh, known-size media,
+  including concurrent requests to a single compatible candidate; multiple compatible candidates
+  can supply separate shards.
   Responses are checked for exact range metadata, size, and body length. Candidate sources are
   grouped by a shared prefix sample and identical URL scheme/path/query. Each chunk is fetched
   once from its selected CDN; a failed range is retried on another candidate. Parallelism 8 means
@@ -173,6 +175,80 @@ superseded_by:
   bytes. The exact network traffic and retry overhead therefore remain unknown; output bytes and
   the separate preflight sample are not a wire-byte total. A same-host concurrent Range control,
   more repetitions, and other media sizes/times are needed before choosing a default policy.
+
+## Controlled Live Benchmark Follow-up (2026-10-05)
+
+- The ignored harness in `crates/bbdown/tests/cdn_benchmark.rs` explicitly opts into public
+  network requests. Each invocation resolves one supplied fixture once, then runs fixed-host baseline,
+  fixed-host four-way ranges, and multi-host four-way ranges against that same representation.
+  Each run uses a fresh directory, no resume, no mux, and one download attempt. The representation
+  limit is 256 MiB, repetitions are 1–3, and request timeout is 300 seconds. Missing plan size uses
+  one donor-only bounded probe (at most 64 KiB). `BBDOWN_CDN_BENCHMARK_ORDER_OFFSET=0..2` chooses
+  baseline-first, same-host-first, or multi-host-first order; each repetition rotates the order
+  again. JSON records include order, `started_at_epoch_ms`, fixed and candidate hosts,
+  `request_timeout_secs`, size/probe metadata,
+  output size and SHA-256, published shard bytes by host, fallback and validity fields. Invalid
+  three-way samples exit nonzero: matching size/digest, complete shard-byte totals with no
+  whole-file fallback for both range groups, and at least two actual hosts for the multi-host group.
+- First valid window ran 2026-10-05 UTC with a fixed Aliov baseline and candidates Aliov,
+  Akamai (`upos-hz-mirrorakam.akamaized.net`), and mirror08h
+  (`upos-sz-mirror08h.bilivideo.com`). Both samples used entry 1, quality 80, AVC, and one
+  repetition. Every run was valid and no fallback was observed.
+
+| Sample | Start UTC | Size / SHA-256 | Size probe | Fixed baseline | Same-host range4 | Multi-host range4 / published shards |
+| --- | --- | --- | --- | ---: | ---: | --- |
+| Small `BV1uW4y1s7zN` | 07:19:50.908 | 1,644,777 B / `7864dbf341d59958ed70d96cebe2ab19338d9e444e18857ed146e3974de45011` | 0.642 s / 65,536 B | 0.275 s | 0.096 s; all Aliov | 4.418 s; Aliov 1,048,576 B + mirror08h 596,201 B |
+| Large `BV1QtjA6BEB8` | 07:20:24.070 | 106,436,100 B / `a5e36c30dac68f70bdcb0c6a63040e11d7e49410f269ab464def09c19d6df404` | 0.750 s / 65,536 B | 2.042 s | 4.079 s; all Aliov | 5.590 s; Aliov 102,241,796 B + mirror08h 4,194,304 B |
+
+- Second valid window ran 2026-10-05 UTC with the same representation hashes, sizes, codecs,
+  fixed Aliov host, and candidate set. All twelve runs were valid with `whole_file_fallback=false`.
+  Order rotated by repetition as configured. The size probe was 1.217 s / 65,536 B for
+  small and 0.537 s / 65,536 B for large.
+
+| Sample / repetition | Start UTC; group order | Fixed baseline | Same-host range4 | Multi-host range4 / published shards |
+| --- | --- | ---: | ---: | --- |
+| Small rep 1 | 07:45:31.868; same, multi, baseline | 0.044 s | 0.378 s | 3.193 s; Aliov 1,048,576 B + mirror08h 596,201 B |
+| Small rep 2 | 07:45:35.771; multi, baseline, same | 0.050 s | 0.076 s; all Aliov | 0.787 s; same host bytes as rep 1 |
+| Large rep 1 | 07:46:01.280; same, multi, baseline | 1.958 s | 2.215 s; all Aliov, 106,436,100 B | 4.217 s; Aliov 101,193,220 B + mirror08h 5,242,880 B |
+| Large rep 2 | 07:46:24.715; multi, baseline, same | 1.952 s | 2.133 s; all Aliov | 2.678 s; Aliov 95,950,340 B + mirror08h 10,485,760 B |
+
+- Across three repetitions per mode, elapsed-time medians (ranges) were:
+
+| Sample | Baseline | Same-host range4 | Multi-host range4 |
+| --- | --- | --- | --- |
+| Small | 0.050 s (0.044–0.275) | 0.096 s (0.076–0.378) | 3.193 s (0.787–4.418) |
+| Large | 1.958 s (1.952–2.042) | 2.215 s (2.133–4.079) | 4.217 s (2.678–5.590) |
+
+- The two short morning windows were about 26 minutes apart. These results do not establish an
+  all-day, multi-location, or stable performance distribution. The September 28 baseline used
+  mirror08h rather than fixed Aliov, so its speed ratios are not directly comparable.
+
+- The large-file digest matches the 2026-09-28 run. On the small file, 4 was requested but only
+  two 1 MiB chunks exist, so at most two lanes could run. These observations show that results
+  depend on host, representation size, and time; the limited windows do not support a universal
+  speedup claim or a default route policy.
+- Invalid pilot attempts: the first small-file attempt stopped early when plan size was absent.
+  A later pilot with mirror08h as baseline hit the old 30-second default timeout at 30.007 seconds;
+  range output matched but none of the three groups formed a valid sample. The fair comparison
+  window therefore used a 300-second request timeout and one fixed Aliov baseline for both sizes.
+  Pilot timings are excluded from speedup comparisons.
+- Matching output hashes and sizes verify that the completed downloads in these groups match each
+  other; they do not prove that every CDN always serves identical content. Shard totals show
+  published output distribution, not total network traffic. Failed requests, retry traffic, probe
+  routing detail, and actual HTTP wire bytes are not observable in these records. Same-host single
+  candidate concurrency is implemented, and its compatibility probe runs once. Automated route
+  exclusion reasons, retry/body-byte diagnostics, persistent health, and adaptive tuning are not
+  established by this benchmark.
+- Targeted tests, formatting, strict clippy, workspace check/tests, CLI e2e, and the core publish
+  dry-run passed through `just ci`. The dry-run packaged and verified successfully but did not
+  upload. A non-blocking warning notes that the existing lockfile includes yanked `spin 0.9.8`.
+- Plan the `v0.7.0` release slice around existing opt-in networking/downloader support (CDN
+  selection, probing, parallel transfer, catalogs) and the independent PGC web-route API plus live
+  validation. No release or version change has happened in this PR. Keep automatic routing,
+  persistent route health, and adaptive policy as separate future work. Before scheduler tuning,
+  add candidate-exclusion, cross-candidate retry, and actual HTTP response-body byte diagnostics;
+  even body-byte totals would not equal all wire traffic. The second window completes the planned
+  repeat benchmark; this roadmap remains active for release preparation and future tuning.
 
 ## Design Direction
 

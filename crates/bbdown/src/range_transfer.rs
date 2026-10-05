@@ -224,9 +224,6 @@ where
             largest_group_index = index;
         }
     }
-    if candidate_groups[largest_group_index].len() < 2 {
-        return Err(invalid("fewer than two compatible CDN candidates remain"));
-    }
     let candidates: Vec<&str> = candidate_groups
         .swap_remove(largest_group_index)
         .into_iter()
@@ -354,6 +351,12 @@ mod tests {
     use reqwest::header::{CONTENT_LENGTH, CONTENT_RANGE, HeaderMap};
 
     use super::fetch_range;
+
+    #[derive(Default)]
+    struct ChunkOverlapState {
+        first_chunk_waiting: bool,
+        overlapped: bool,
+    }
 
     async fn fetch(server: &MockServer) -> crate::Result<super::RangeFetch> {
         fetch_range(
@@ -648,6 +651,170 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn assembles_parallel_ranges_from_one_host() -> anyhow::Result<()> {
+        let body = [vec![b'a'; 10_000], vec![b'b'; 10_000]].concat();
+        let (url, server) = overlapping_range_server(body.clone())?;
+        let urls = vec![url];
+        let dir = tempfile::tempdir()?;
+        let mut completed = Vec::new();
+        let downloaded = sharded(&urls, 20_000, dir.path(), |bytes, _| completed.push(bytes)).await;
+        let overlapped = server
+            .join()
+            .map_err(|_| anyhow::anyhow!("barrier server thread panicked"))??;
+        let path = downloaded?;
+
+        assert_eq!(std::fs::read(path)?, body.as_slice());
+        assert_eq!(completed.iter().sum::<u64>(), 20_000);
+        assert_eq!(completed.len(), 2);
+        assert!(
+            overlapped,
+            "two shard requests must be active at the same time"
+        );
+        Ok(())
+    }
+
+    fn overlapping_range_server(
+        body: Vec<u8>,
+    ) -> std::io::Result<(String, std::thread::JoinHandle<std::io::Result<bool>>)> {
+        use std::{
+            net::TcpListener,
+            sync::{Arc, Condvar, Mutex},
+            thread,
+            time::Instant,
+        };
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let address = listener.local_addr()?;
+        let body = Arc::new(body);
+        let barrier = Arc::new((Mutex::new(ChunkOverlapState::default()), Condvar::new()));
+        let server = thread::spawn(move || {
+            listener.set_nonblocking(true)?;
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut handlers = Vec::new();
+            while handlers.len() < 3 && Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((stream, _)) => {
+                        let body = Arc::clone(&body);
+                        let barrier = Arc::clone(&barrier);
+                        handlers.push(thread::spawn(move || {
+                            serve_range_connection(stream, body.as_slice(), &barrier)
+                        }));
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            if handlers.len() != 3 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "expected one probe and two shard requests",
+                ));
+            }
+            for handler in handlers {
+                handler
+                    .join()
+                    .map_err(|_| std::io::Error::other("range connection handler panicked"))??;
+            }
+            let overlapped = barrier
+                .0
+                .lock()
+                .map_err(|_| std::io::Error::other("barrier mutex poisoned"))?
+                .overlapped;
+            Ok(overlapped)
+        });
+        Ok((format!("http://{address}/media"), server))
+    }
+
+    fn serve_range_connection(
+        mut stream: std::net::TcpStream,
+        body: &[u8],
+        barrier: &(std::sync::Mutex<ChunkOverlapState>, std::sync::Condvar),
+    ) -> std::io::Result<()> {
+        use std::io::Write;
+
+        stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+        let range = read_range_header(&mut stream)?;
+        let (start, end) = parse_range(&range)?;
+        if (start, end) != (0, 16_383) {
+            wait_for_overlapping_chunks(barrier)?;
+        }
+        let part = body.get(start..=end).ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "range is out of bounds")
+        })?;
+        write!(
+            stream,
+            "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {start}-{end}/{}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len(),
+            part.len()
+        )?;
+        stream.write_all(part)?;
+        stream.flush()
+    }
+
+    fn read_range_header(stream: &mut std::net::TcpStream) -> std::io::Result<String> {
+        use std::io::Read;
+
+        let mut request = Vec::new();
+        let mut buffer = [0_u8; 1024];
+        while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+            let count = stream.read(&mut buffer)?;
+            if count == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "request headers ended early",
+                ));
+            }
+            request.extend_from_slice(&buffer[..count]);
+        }
+        String::from_utf8_lossy(&request)
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("range")
+                    .then_some(value.trim().strip_prefix("bytes=")?.to_owned())
+            })
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "missing Range header")
+            })
+    }
+
+    fn parse_range(range: &str) -> std::io::Result<(usize, usize)> {
+        let (start, end) = range.split_once('-').ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid Range header")
+        })?;
+        let start = start.parse::<usize>().map_err(std::io::Error::other)?;
+        let end = end.parse::<usize>().map_err(std::io::Error::other)?;
+        Ok((start, end))
+    }
+
+    fn wait_for_overlapping_chunks(
+        barrier: &(std::sync::Mutex<ChunkOverlapState>, std::sync::Condvar),
+    ) -> std::io::Result<()> {
+        let (lock, condition) = barrier;
+        let mut state = lock
+            .lock()
+            .map_err(|_| std::io::Error::other("barrier mutex poisoned"))?;
+        if state.first_chunk_waiting {
+            state.overlapped = true;
+            condition.notify_all();
+        } else {
+            state.first_chunk_waiting = true;
+            let (mut next, timeout) = condition
+                .wait_timeout_while(state, Duration::from_millis(1_500), |state| {
+                    !state.overlapped
+                })
+                .map_err(|_| std::io::Error::other("barrier wait poisoned"))?;
+            if timeout.timed_out() && !next.overlapped {
+                next.first_chunk_waiting = false;
+            }
+            state = next;
+        }
+        drop(state);
+        Ok(())
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn sharded_download_future_is_send_for_multithreaded_embedding() -> anyhow::Result<()> {
         let server_a = MockServer::start();
@@ -748,7 +915,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn excludes_candidates_with_different_probe_bytes_or_total() -> anyhow::Result<()> {
+    async fn selects_one_compatible_candidate_without_mixing_other_probe_groups()
+    -> anyhow::Result<()> {
         let good = MockServer::start();
         let different = MockServer::start();
         let wrong_total = MockServer::start();
@@ -763,15 +931,21 @@ mod tests {
             different.url("/media"),
             wrong_total.url("/media"),
         ];
-        let result = sharded(&urls, 20_000, dir.path(), |_, _| {}).await;
-        assert!(matches!(
-            result,
-            Err(crate::Error::InvalidInput(message))
-                if message.contains("fewer than two compatible CDN candidates")
-        ));
-        assert_eq!(good_mock.calls(), 1);
+        let mut completed = Vec::new();
+        let path = sharded(&urls, 20_000, dir.path(), |bytes, source| {
+            completed.push((bytes, source.to_owned()));
+        })
+        .await?;
+        assert_eq!(std::fs::read(path)?, body.as_bytes());
+        assert_eq!(good_mock.calls(), 3, "one probe and two shard ranges");
         assert_eq!(different_mock.calls(), 1);
         assert_eq!(wrong_total_mock.calls(), 1);
+        assert_eq!(completed.len(), 2);
+        assert_eq!(
+            completed.iter().map(|(bytes, _)| bytes).sum::<u64>(),
+            20_000
+        );
+        assert!(completed.iter().all(|(_, source)| source == &urls[0]));
         Ok(())
     }
 
