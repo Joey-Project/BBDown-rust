@@ -24,10 +24,9 @@ crates.io 发布目标是可复用的 `bbdown-core` library package。使用 `ju
 可以在本地执行锁定版本的 dry run，并允许工作树存在未提交修改；使用
 `just publish-dry-run-strict` 或 `cargo publish --dry-run -p bbdown-core --locked` 可以复现
 干净 CI 门禁。`bbdown-cli` 包标记为 `publish = false`；CLI 应通过 GitHub release 归档安
-装或分发。当前开发线是已发布 `0.5.0` 之后的 `0.6.0`，重点是 credential lifecycle：
-profile status、health policy、显式 access-key renewal、provider-aware refresh secrets、
-在兼容的 provider metadata 和 stored refresh secrets 都可用时的 automatic refresh、credential
-preflight，以及更安全的 selected-profile 更新。嵌入调用方仍应优先使用
+装或分发。当前开发线是已发布 `0.6.0` 之后的 `0.7.0`，重点是可选 CDN 选择、探测和并行
+传输、内置网络目录，以及独立的 PGC Web playurl 路由。这些控制都需要显式选择；目录是快照，
+只有用户运行探测或选定路由时才会检查列出的端点。嵌入调用方仍应优先使用
 `DownloadOptions::new`、`StreamSelection::new`、`Default` 等构造器，而不是 public struct 字面量，并把公开的 plan
 输出容器视为会随 crate 成熟继续新增字段的被消费数据表面。
 
@@ -337,6 +336,9 @@ host Range 作为首组；每次重复都会继续轮换顺序。每条 JSON 记
 总字节数且没有整文件回退；多 host 组必须实际使用至少两个 host。小文件可能无法达到请求
 的并发数：1,644,777 字节样本只有两个 1 MiB 分片，因此四路模式最多实际使用两路。输出
 文件大小不代表网络总流量；当前无法观测失败或重试请求以及实际 HTTP wire bytes。
+已完成的对比覆盖两种媒体大小、两个较短的上午时段，共有 18 次成功下载。结果随 host、大小和
+时间变化，无法证明稳定提速、全天或多地点性能分布，也不能据此确定默认路由策略。本可选基准
+只请求公开视频，不需要凭据。
 
 下面描述的是 BBDown 下载流程，不是浏览器播放流程。图中包含可选的受限区域 PGC 解析回退、CDN
 选择、传输以及可选封装：

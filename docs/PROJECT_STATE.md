@@ -69,11 +69,13 @@
   distribution. The September 28 baseline used another fixed host, so its speed ratios are not
   directly comparable. Matching output hashes verify the produced files across these runs, not
   universal content identity across all CDN edges. See the workstream journal.
-- Plan the `v0.7.0` slice around the existing opt-in networking/downloader features and independent
-  PGC web-route API. Release preparation is pending; this PR has not changed the published version.
-  Automatic routing, persistent route health, and adaptive tuning remain future work. Add
-  candidate exclusion, cross-candidate retry, and HTTP response-body byte diagnostics before
-  scheduler tuning; response-body counts do not equal total wire traffic.
+- `v0.7.0` release preparation is complete for the existing opt-in networking/downloader features
+  and independent PGC web-route API. The release remains unpublished; the next step is protected RC
+  creation and promotion. See
+  `docs/project_journal/2026/10/2026-10-05-v0-7-release-prep.md`.
+- Automatic routing, persistent route health, and adaptive tuning remain deferred. Candidate
+  exclusion, cross-candidate retry, and HTTP response-body byte diagnostics are future scheduler
+  work; response-body counts do not equal total wire traffic. Feed/page backlog remains deferred.
 
 ## Recovery Pointers
 

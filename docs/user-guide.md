@@ -26,12 +26,11 @@ The crates.io publish target is the reusable `bbdown-core` library package. Use
 `just publish-dry-run` for a local locked dry run that tolerates an uncommitted worktree, and use
 `just publish-dry-run-strict` or `cargo publish --dry-run -p bbdown-core --locked` to reproduce the
 clean CI gate. The `bbdown-cli` package is marked `publish = false`; install or distribute the CLI
-through GitHub release archives instead. The current development line is `0.6.0` after the published
-`0.5.0` release and is focused on credential lifecycle behavior: profile status, health policy,
-explicit access-key renewal, provider-aware refresh secrets, automatic refresh when compatible
-provider metadata and stored refresh secrets are available, credential preflight, and safer
-selected-profile updates. Embedding callers
-should still prefer
+through GitHub release archives instead. The current development line is `0.7.0` after the published
+`0.6.0` release and focuses on opt-in CDN selection, probing and parallel transfer, bundled network
+catalogs, and independent PGC Web playurl routing. These controls require explicit selection; the
+catalogs are snapshots, and listed endpoints are checked only when a user runs a probe or selects a
+route. Embedding callers should still prefer
 constructors such as `DownloadOptions::new`, `StreamSelection::new`, and
 `Default` over public struct literals, and treat public plan output containers as consumed data
 surfaces that may gain fields while the crate matures.
@@ -378,6 +377,10 @@ declared size without whole-file fallback, and the multi-host group must use at 
 Small fixtures may have fewer actual lanes than requested: the 1,644,777-byte sample has only two
 1 MiB chunks, so four-way mode can use at most two lanes. The reported output size is not total
 network traffic: failed/retried requests and actual HTTP wire bytes are not observable here.
+The completed comparison covered two representation sizes in two short morning windows and 18
+successful downloads. The observed results varied by host, size, and time; they do not establish a
+stable speedup, an all-day or multi-location performance distribution, or a default route policy.
+The public video requests in this opt-in benchmark require no credentials.
 
 The following is BBDown's download flow; it does not describe browser playback. It combines the
 optional restricted-area PGC resolution fallback with CDN selection, transfer, and optional muxing:

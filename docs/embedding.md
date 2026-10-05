@@ -9,12 +9,13 @@ projects that need typed Bilibili metadata, download plans, media downloads, sub
 danmaku sidecars, QR login state, batch collection parsing, and restricted-area proxy diagnostics
 without shelling out to the CLI.
 
-The current crate version is `0.6.0`, a post-`0.5.0` development line focused on credential
-lifecycle integration: profile status, health policy, access-key renewal, provider-aware refresh
-secrets, provider-specific refresh clients, credential preflight, and safer multi-account updates.
+The current crate version is `0.7.0`, a post-`0.6.0` development line that adds explicit CDN host
+pool, probing, and parallel transfer options plus an independent PGC Web playurl route selector.
+These network actions remain caller-selected; the crate does not automatically route requests from
+the bundled CLI catalogs.
 Prefer constructors and builder-style APIs for configuration, and treat metadata and plan
-structs as read-only output surfaces. This keeps
-embedding code resilient when new fields are added while the crate matures.
+structs as read-only output surfaces. This keeps embedding code resilient when new fields are added
+while the crate matures.
 
 ## Planning Only
 
