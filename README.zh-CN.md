@@ -15,7 +15,9 @@
 断信息的受限区域代理排序、面向下游流式播放 / 缓存集成的播放请求规格、UPOS/PCDN 媒体
 host 控制，以及 builder 风格的 crate 集成 API。它还支持显式下载归档，用于重复下载预检
 查、CLI 的 replace / keep-both / cancel 决策，以及已下载归档条目的 append-only 弹幕旁路
-文件更新。输入解析覆盖普通视频、PGC 和 intl 分集、PUGV/cheese 课程、B23 短链接、收藏
+文件更新。`0.7.0` 开发线增加显式 CDN host pool、限额 Range 探测、可选并行 Range 下载、
+内置 CDN/公共 resolver 目录，以及独立的 PGC Web playurl 路由 API；这些功能不会自动选择
+路由。输入解析覆盖普通视频、PGC 和 intl 分集、PUGV/cheese 课程、B23 短链接、收藏
 夹、空间投稿、合集、系列、首页推荐、观看历史、
 稍后再看列表、关注视频 feed 和空间动态视频 feed。URL 解析包括 canonical
 `bilibili.com/list/...` 页面、
@@ -357,10 +359,9 @@ just ci
 ## 文档
 
 - Crate API 说明：可发布 package 是 `bbdown-core`，导入时使用 `bbdown_core`。此重写处于
-  已发布 `0.5.0` 之后的 `0.6.0` credential lifecycle 开发线。该版本线重点是 credential
-  lifecycle metadata、profile health policy、显式 access-key renewal、provider-aware 明文
-  refresh-secret 存储、provider-specific access-key refresh clients、可选 credential
-  preflight，以及更安全的多账号 profile 更新。`0.5.0` 的 download API 仍包含
+  已发布 `0.6.0` 之后的 `0.7.0` networking/downloader 开发线，增加可选 CDN host 选择、探测和
+  并行传输、内置网络目录，以及独立的 PGC Web playurl 路由 API。目录不会触发自动 CDN 路由。
+  `0.5.0` 的 download API 仍包含
   `DownloadProgressEvent` callback、基于 `DownloadCancellationToken` 的 graceful
   cancellation，以及当 plan 条目暴露章节时的 ffmpeg 章节 metadata mux；嵌入项目应优先使用
   `Default`、`new` 和

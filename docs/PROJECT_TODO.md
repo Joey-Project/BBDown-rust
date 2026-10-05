@@ -111,14 +111,17 @@
   windows, including a fixed single-host concurrent Range control and multi-host transfer. The
   results do not characterize all-day, multi-location, or stable performance. See
   `docs/project_journal/2026/06/2026-06-21-overseas-cdn-routing-roadmap-019f17.md`.
-- [pending] Prepare the opt-in networking/downloader release slice for `v0.7.0`, covering existing
-  CDN selection, probing, parallel transfer, catalogs, and the independent PGC web-route API.
+- [completed] Prepare the `v0.7.0` release documentation for existing opt-in CDN selection,
+  probing, parallel transfer, bundled catalogs, and the independent PGC web-route API. See
+  `docs/project_journal/2026/10/2026-10-05-v0-7-release-prep.md`.
+- [pending] Create the protected `v0.7.0` release candidate, then promote it to GitHub Release and
+  crates.io after the full release gate passes.
 - [pending] Before future CDN scheduler tuning, add diagnostics for candidate exclusion,
   cross-candidate retries, and actual HTTP response-body bytes. These byte counts would still not
   represent total wire traffic. Keep automatic routing, persistent route health, and adaptive
   policy as a separate follow-up.
 - [pending] Plan per-video related recommendations and additional Bilibili page-family parsing for
-  a later feed/page release.
+  a later feed/page release; keep this feed/page backlog deferred from `v0.7.0`.
 - [pending] Continue the remaining BBDown parity backlog after the published `0.4.0` credential and
   danmaku sequence unless reprioritized:
   aria2 or multi-thread download integration, MP4Box muxing, and subtitle-to-SRT conversion.
