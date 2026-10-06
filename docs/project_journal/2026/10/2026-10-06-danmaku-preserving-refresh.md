@@ -48,6 +48,9 @@ superseded_by:
   insertion around quoted `>` and `/>`, ASS style insertion at the actual styles header while
   retaining custom comments, and canonical parent-directory symlink target revalidation. The
   symlink regressions cover equal content bytes, both snapshots missing, and stable logical aliases.
+- A later PR #87 documentation review found that the embedding examples awaited synchronous
+  `StagedDanmakuUpdate::publish`; the English and Chinese examples now call `staged.publish()?`.
+  Existing core publisher tests compile and exercise the synchronous call.
 - After those fixes, targeted pure tests passed (19) and targeted publisher tests passed (10). The
   final CI-matching gate `env RUSTUP_TOOLCHAIN=1.99.0 just ci` exited 0 in 42.5 seconds with rustc
   1.99.0 (`b940084d7`), cargo 1.99.0, and Clippy 0.1.99. It passed formatting, all-target Clippy,
@@ -55,6 +58,18 @@ superseded_by:
   CLI e2e (153), live e2e (9 passed, 2 ignored), core library (526), CDN benchmark (3 passed, 1
   ignored), and public API (1). The separate CLI e2e repeat passed all 153 tests. Publish dry-run
   verified 29 packaged files and performed no upload.
+- Final PR #87 follow-ups fix qualified XML root handling for ordinary and self-closing roots with
+  and without default namespaces, and validate each appended node's namespace at its actual output
+  offset. Regression cases cover comment/CDATA namespace shadows and a later append with an
+  incompatible namespace. The English and Chinese embedding examples also use the synchronous
+  `staged.publish()?` call.
+- `cargo +1.99.0 test -p bbdown-core --lib danmaku::preserving::tests --locked` passed (12 passed,
+  0 failed); strict core Clippy passed. The final
+  `env RUSTUP_TOOLCHAIN=1.99.0 just ci` gate exited 0 in 46.72 seconds with formatting,
+  all-target strict Clippy, and the explicit Rust 1.95.0 MSRV check. Workspace suites passed 761
+  tests with 3 ignored and 0 failed: CLI unit (67), CLI e2e (153), live e2e (9 passed, 2 ignored),
+  core library (528), CDN benchmark (3 passed, 1 ignored), and public API (1). A separate CLI e2e
+  repeat passed 153 tests. The publish dry-run verified 29 files and uploaded nothing.
 
 ## Next Steps
 

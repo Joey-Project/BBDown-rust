@@ -37,11 +37,25 @@ superseded_by:
   XML root delimiters, ASS style insertion at the true styles header with custom comments, and
   revalidation through canonical parent-directory symlink targets; targeted pure tests passed (19)
   and targeted publisher tests passed (10).
+- A subsequent PR #87 documentation review caught an `.await` on synchronous
+  `StagedDanmakuUpdate::publish`; both embedding examples now use `staged.publish()?`, matching the
+  API signature. The existing publisher tests already compile and exercise this call.
 - The final CI-matching gate `env RUSTUP_TOOLCHAIN=1.99.0 just ci` exited 0 in 42.5 seconds with
   rustc 1.99.0 (`b940084d7`), cargo 1.99.0, and Clippy 0.1.99. It passed formatting, all-target
   Clippy, the explicit Rust 1.95.0 MSRV check, and workspace tests (759 passed, 3 ignored), with
   separate CLI e2e repeat (153 passed). The publish dry-run verified 29 files and performed no
   upload.
+- Final PR #87 follow-ups cover qualified ordinary and self-closing XML roots with and without
+  default namespaces; every appended node is checked against the namespace at its actual insertion
+  offset, with regressions for comment/CDATA shadows and later incompatible appends. Both embedding
+  guides use the synchronous `staged.publish()?` API call.
+- `cargo +1.99.0 test -p bbdown-core --lib danmaku::preserving::tests --locked` passed (12/12),
+  and strict core Clippy passed.
+- The final `env RUSTUP_TOOLCHAIN=1.99.0 just ci` gate exited 0 in 46.72 seconds. Formatting,
+  all-target strict Clippy, and the explicit Rust 1.95.0 MSRV check passed; workspace suites passed
+  761 tests with 3 ignored and 0 failed: CLI unit (67), CLI e2e (153), live e2e (9 passed, 2
+  ignored), core library (528), CDN benchmark (3 passed, 1 ignored), and public API (1). A separate
+  CLI e2e repeat passed all 153 tests. The publish dry-run verified 29 files and uploaded nothing.
 - No `v0.8.0` GitHub Release or crates.io publication is claimed. Those remain pending until the
   feature PR merges and the protected RC/promotion workflows run.
 

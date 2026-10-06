@@ -70,6 +70,20 @@ fn root_self_closing_slash(source: &str) -> crate::Result<Option<usize>> {
     Err(invalid("existing XML root opening tag is incomplete"))
 }
 
+fn root_qualified_name(source: &str) -> crate::Result<&str> {
+    let opening = source
+        .strip_prefix('<')
+        .ok_or_else(|| invalid("existing XML root opening tag is missing"))?;
+    let end = opening
+        .find(|character: char| character.is_ascii_whitespace() || matches!(character, '/' | '>'))
+        .ok_or_else(|| invalid("existing XML root opening tag is incomplete"))?;
+    let name = &opening[..end];
+    if name.is_empty() {
+        return Err(invalid("existing XML root opening tag has no name"));
+    }
+    Ok(name)
+}
+
 fn xml_comments(document: &Document<'_>, xml: &str) -> Vec<RawComment> {
     document
         .root_element()
@@ -134,48 +148,51 @@ pub fn merge_xml_preserving(
     let root_range = old_root.range();
     let root_source = &existing_xml[root_range.clone()];
     let self_closing_slash = root_self_closing_slash(root_source)?;
-    let insertion = if let Some(slash) = self_closing_slash {
+    let root_name = root_qualified_name(root_source)?;
+    let (insertion, appended_ranges) = if let Some(slash) = self_closing_slash {
         let before_slash = root_range.start + slash;
         let mut result = String::with_capacity(
             existing_xml.len() + append.iter().map(|c| c.raw.len()).sum::<usize>() + 16,
         );
         result.push_str(&existing_xml[..before_slash]);
         result.push('>');
+        let mut ranges = Vec::with_capacity(append.len());
         for comment in &append {
+            ranges.push(result.len());
             result.push_str(&comment.raw);
         }
-        result.push_str("</i>");
+        result.push_str("</");
+        result.push_str(root_name);
+        result.push('>');
         result.push_str(&existing_xml[root_range.end..]);
-        result
+        (result, ranges)
     } else {
+        let close_tag = format!("</{root_name}");
         let root_close_rel = root_source
-            .rfind("</i")
+            .rfind(&close_tag)
             .ok_or_else(|| invalid("existing XML root closing tag is missing"))?;
         let insert_at = root_range.start + root_close_rel;
         let mut result = String::with_capacity(
             existing_xml.len() + append.iter().map(|c| c.raw.len()).sum::<usize>() + append.len(),
         );
         result.push_str(&existing_xml[..insert_at]);
+        let mut ranges = Vec::with_capacity(append.len());
         for comment in &append {
+            ranges.push(result.len());
             result.push_str(&comment.raw);
         }
         result.push_str(&existing_xml[insert_at..]);
-        result
+        (result, ranges)
     };
     // Parse the splice as a complete document so namespace declarations and context are checked.
     let merged_document = parse_xml(&insertion, "merged")?;
     root_element(&merged_document, "merged")?;
     {
-        let added = append
-            .iter()
-            .filter_map(|comment| {
-                let at = insertion.find(&comment.raw)?;
-                merged_document
-                    .descendants()
-                    .find(|node| node.is_element() && node.range().start == at)
-            })
-            .collect::<Vec<_>>();
-        for (source, node) in append.iter().zip(added) {
+        for (source, at) in append.iter().zip(appended_ranges) {
+            let node = merged_document
+                .descendants()
+                .find(|node| node.is_element() && node.range().start == at)
+                .ok_or_else(|| invalid("an appended XML comment could not be located"))?;
             if source.namespace.as_deref() != node.tag_name().namespace() {
                 return Err(invalid(
                     "fetched XML comment namespace is incompatible with existing document",
@@ -826,6 +843,51 @@ mod tests {
         assert_eq!(
             self_closing.xml,
             "<i marker=\"/>\" ><d p='2,1,25,0'>new</d></i>"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn xml_preserves_prefixed_root_names_for_normal_and_self_closing_roots() -> crate::Result<()> {
+        let fetched = "<i xmlns='urn:test'><d p='2,1,25,0'>new</d></i>";
+        let old = "<b:i xmlns:b='urn:test' xmlns='urn:test'><b:meta>keep</b:meta></b:i>";
+        let merged = merge_xml_preserving(old, fetched)?;
+        assert_eq!(merged.appended_comments, 1);
+        assert!(merged.xml.ends_with("<d p='2,1,25,0'>new</d></b:i>"));
+
+        let unqualified_fetched = "<b:i xmlns:b='urn:test'><d p='3,1,25,0'>plain</d></b:i>";
+        let unqualified_old = "<b:i xmlns:b='urn:test'><b:meta>keep</b:meta></b:i>";
+        let merged = merge_xml_preserving(unqualified_old, unqualified_fetched)?;
+        assert_eq!(merged.appended_comments, 1);
+        assert!(merged.xml.ends_with("<d p='3,1,25,0'>plain</d></b:i>"));
+
+        let self_closing = merge_xml_preserving("<b:i xmlns:b='urn:test' />", unqualified_fetched)?;
+        assert_eq!(self_closing.appended_comments, 1);
+        assert!(
+            self_closing
+                .xml
+                .ends_with("<d p='3,1,25,0'>plain</d></b:i>")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn xml_namespace_validation_uses_appended_byte_ranges() -> crate::Result<()> {
+        let fetched = "<i><d p='2,1,25,0'>new</d></i>";
+        let shadowed_in_comment = "<i xmlns='urn:old'><!--<d p='2,1,25,0'>new</d>--></i>";
+        let shadowed_in_cdata = "<i xmlns='urn:old'><![CDATA[<d p='2,1,25,0'>new</d>]]></i>";
+        assert!(merge_xml_preserving(shadowed_in_comment, fetched).is_err());
+        assert!(merge_xml_preserving(shadowed_in_cdata, fetched).is_err());
+
+        let shadowed_later_comment = "<i xmlns='urn:old'><!--<d p='3,1,25,0'>later</d>--></i>";
+        let multiple_fetched = "<i><d xmlns='' p='2,1,25,0'>first</d><d p='3,1,25,0'>later</d></i>";
+        assert!(merge_xml_preserving(shadowed_later_comment, multiple_fetched).is_err());
+
+        let compatible_old = "<i xmlns='urn:test'></i>";
+        let compatible_fetched = "<i xmlns='urn:test'><d p='2,1,25,0'>new</d></i>";
+        assert_eq!(
+            merge_xml_preserving(compatible_old, compatible_fetched)?.appended_comments,
+            1
         );
         Ok(())
     }

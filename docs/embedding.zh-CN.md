@@ -926,7 +926,7 @@ async fn main() -> bbdown_core::Result<()> {
     for stats in staged.ass_statistics() {
         println!("ASS appended {} events", stats.appended_events);
     }
-    let report = staged.publish().await?;
+    let report = staged.publish()?;
     println!("updated {} entries", report.entries.len());
     Ok(())
 }
