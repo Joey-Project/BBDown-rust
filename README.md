@@ -14,8 +14,8 @@ The current implementation establishes the crate/CLI/CI foundation, metadata res
 planning, media downloads, cover/subtitle/danmaku sidecar downloads, retry/resume behavior,
 optional ffmpeg muxing, QR login, opt-in live test harnesses, configured restricted-area proxy
 ordering with diagnostics, playback request specs for downstream streaming/cache integrations,
-UPOS/PCDN media host controls, and builder-style crate integration APIs. The `0.7.0` development
-line adds explicit CDN host pools, bounded Range probes, optional parallel Range downloads,
+UPOS/PCDN media host controls, and builder-style crate integration APIs. The published `0.7.0`
+release adds explicit CDN host pools, bounded Range probes, optional parallel Range downloads,
 snapshot CDN/public-resolver catalogs with runtime probe commands, and independently selectable PGC
 Web playurl routes; it does not introduce automatic CDN routing. It also supports an
 explicit download archive for duplicate preflight, CLI replace / keep-both / cancel decisions, and
@@ -386,7 +386,7 @@ running, so sample behavior is driven by the manifest rather than shell state.
 ## Documentation
 
 - Crate API note: the publishable package is `bbdown-core`, imported as `bbdown_core`. This rewrite
-  is preparing the `0.7.0` networking/downloader line after the published `0.6.0` release. It adds
+  is published as the `0.7.0` networking/downloader release after `0.6.0`. It adds
   opt-in CDN host selection, probing and parallel transfer, bundled network catalogs, and an
   independent PGC Web playurl route API. The download APIs from `0.5.0` still include
   `DownloadProgressEvent` callbacks,

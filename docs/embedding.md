@@ -9,7 +9,7 @@ projects that need typed Bilibili metadata, download plans, media downloads, sub
 danmaku sidecars, QR login state, batch collection parsing, and restricted-area proxy diagnostics
 without shelling out to the CLI.
 
-The current crate version is `0.7.0`, a post-`0.6.0` development line that adds explicit CDN host
+The current crate version is the published `0.7.0` release after `0.6.0`, adding explicit CDN host
 pool, probing, and parallel transfer options plus an independent PGC Web playurl route selector.
 These network actions remain caller-selected; the crate does not automatically route requests from
 the bundled CLI catalogs.

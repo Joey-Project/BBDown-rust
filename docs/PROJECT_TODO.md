@@ -114,14 +114,20 @@
 - [completed] Prepare the `v0.7.0` release documentation for existing opt-in CDN selection,
   probing, parallel transfer, bundled catalogs, and the independent PGC web-route API. See
   `docs/project_journal/2026/10/2026-10-05-v0-7-release-prep.md`.
-- [pending] Create the protected `v0.7.0` release candidate, then promote it to GitHub Release and
-  crates.io after the full release gate passes.
+- [completed] Publish `v0.7.0` through the protected release candidate and promotion workflow as a
+  GitHub Release and crates.io `bbdown-core` package. See
+  `docs/project_journal/2026/10/2026-10-05-v0-7-release-prep.md`.
 - [pending] Before future CDN scheduler tuning, add diagnostics for candidate exclusion,
   cross-candidate retries, and actual HTTP response-body bytes. These byte counts would still not
   represent total wire traffic. Keep automatic routing, persistent route health, and adaptive
   policy as a separate follow-up.
 - [pending] Plan per-video related recommendations and additional Bilibili page-family parsing for
   a later feed/page release; keep this feed/page backlog deferred from `v0.7.0`.
+- [pending] Add a later-release danmaku refresh API and CLI with strict append-only preservation
+  for existing XML and ASS files, safe failure behavior, and core/CLI regression coverage. This is
+  a new strengthening beyond the completed XML append and ASS regeneration workflow; it is deferred
+  from `v0.7.0`. See
+  `docs/project_journal/2026/10/2026-10-06-danmaku-preserving-refresh.md`.
 - [pending] Continue the remaining BBDown parity backlog after the published `0.4.0` credential and
   danmaku sequence unless reprioritized:
   aria2 or multi-thread download integration, MP4Box muxing, and subtitle-to-SRT conversion.
