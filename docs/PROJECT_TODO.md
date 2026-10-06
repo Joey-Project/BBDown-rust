@@ -114,8 +114,9 @@
 - [completed] Prepare the `v0.7.0` release documentation for existing opt-in CDN selection,
   probing, parallel transfer, bundled catalogs, and the independent PGC web-route API. See
   `docs/project_journal/2026/10/2026-10-05-v0-7-release-prep.md`.
-- [pending] Create the protected `v0.7.0` release candidate, then promote it to GitHub Release and
-  crates.io after the full release gate passes.
+- [completed] Publish `v0.7.0` through the protected release candidate and promotion workflow as a
+  GitHub Release and crates.io `bbdown-core` package. See
+  `docs/project_journal/2026/10/2026-10-05-v0-7-release-prep.md`.
 - [pending] Before future CDN scheduler tuning, add diagnostics for candidate exclusion,
   cross-candidate retries, and actual HTTP response-body bytes. These byte counts would still not
   represent total wire traffic. Keep automatic routing, persistent route health, and adaptive
