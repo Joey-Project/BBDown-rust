@@ -24,7 +24,7 @@ crates.io 发布目标是可复用的 `bbdown-core` library package。使用 `ju
 可以在本地执行锁定版本的 dry run，并允许工作树存在未提交修改；使用
 `just publish-dry-run-strict` 或 `cargo publish --dry-run -p bbdown-core --locked` 可以复现
 干净 CI 门禁。`bbdown-cli` 包标记为 `publish = false`；CLI 应通过 GitHub release 归档安
-装或分发。当前开发线是已发布 `0.6.0` 之后的 `0.7.0`，重点是可选 CDN 选择、探测和并行
+装或分发。当前已发布版本是 `0.7.0`，晚于已发布的 `0.6.0`，重点是可选 CDN 选择、探测和并行
 传输、内置网络目录，以及独立的 PGC Web playurl 路由。这些控制都需要显式选择；目录是快照，
 只有用户运行探测或选定路由时才会检查列出的端点。嵌入调用方仍应优先使用
 `DownloadOptions::new`、`StreamSelection::new`、`Default` 等构造器，而不是 public struct 字面量，并把公开的 plan

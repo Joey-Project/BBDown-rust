@@ -16,7 +16,7 @@ video feeds, and space dynamic video feeds.
 
 Install with `cargo add bbdown-core`, then import with `bbdown_core`.
 
-The current crate version is `0.7.0`, a post-`0.6.0` development line focused on opt-in
+The current crate version is the published `0.7.0` release after `0.6.0`, focused on opt-in
 networking and downloader support, including CDN selection, probing, parallel transfer, and
 catalogs, alongside an independent PGC web-route API. PGC region and proxy resolution stays
 separate from media CDN selection and transfer.

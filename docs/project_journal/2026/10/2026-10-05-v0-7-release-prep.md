@@ -23,13 +23,16 @@ superseded_by:
 - Bilingual `v0.7.0` release notes and release-note index links describe explicit CDN host selection,
   bounded probing, single- and multi-host parallel Range transfer, bundled CDN/public-resolver
   snapshots, and PGC Web route selection.
-- User-facing and embedding/architecture docs identify `0.7.0` as the current development line after
-  the published `0.6.0` line. API notes retain the pre-1.0 compatibility caveat and recommend
+- User-facing and embedding/architecture docs identify `0.7.0` as published after `0.6.0`. API
+  notes retain the pre-1.0 compatibility caveat and recommend
   constructors/builders and wildcard handling for non-exhaustive enums.
 - `bbdown-core`, `bbdown-cli`, their local path dependency, and the lockfile are set to `0.7.0`.
 - PR #85 Codex review found that `crates/bbdown/README.zh-CN.md` still described the `0.6.0`
   credential lifecycle line; the crate README is now aligned with `0.7.0` networking/downloader
   features and the independent PGC Web route API (review `5417691490`, inline `4186337026`).
+- PR #86 Codex review found stale `0.7.0` development-line wording in public English and Chinese
+  docs; the README, crate README, user guide, embedding guide, and architecture guide now describe
+  the published release (review `5434112014`, inline `4200038760`).
 - CDN controls remain opt-in. The benchmark covered two media sizes in two short morning windows
   and 18 successful downloads; results do not establish stable speedup, a default route policy, or
   all-day/multi-location performance. Public CDN benchmark requests need no credentials; restricted

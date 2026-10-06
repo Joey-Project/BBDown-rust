@@ -14,7 +14,7 @@ cancellation token。原始输入解析覆盖普
 
 使用 `cargo add bbdown-core` 安装，然后用 `bbdown_core` 导入。
 
-当前 crate 版本是 `0.7.0`，属于已发布 `0.6.0` 之后的开发线，重点是可选网络与下载器支持，
+当前 crate 版本是已发布的 `0.7.0`，晚于 `0.6.0`，重点是可选网络与下载器支持，
 包括 CDN 选择、探测、并行传输和 catalog，并提供独立的 PGC Web 路由 API。PGC 区域与代理
 解析独立于媒体 CDN 选择与传输。嵌入项目
 应优先使用 constructor 和 builder 风格 API，例如 `ClientConfig::default().with_*()`、
