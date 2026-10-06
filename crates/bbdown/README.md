@@ -16,9 +16,9 @@ video feeds, and space dynamic video feeds.
 
 Install with `cargo add bbdown-core`, then import with `bbdown_core`.
 
-The current crate version is the published `0.7.0` release after `0.6.0`, focused on opt-in
-networking and downloader support, including CDN selection, probing, parallel transfer, and
-catalogs, alongside an independent PGC web-route API. PGC region and proxy resolution stays
+The current source line is `0.8.0`, following the published `0.7.0` networking and downloader
+line. It adds staged preserving danmaku refresh for existing XML and ASS files alongside the
+published CDN controls and independent PGC web-route API. PGC region and proxy resolution stays
 separate from media CDN selection and transfer.
 Embedding projects should prefer constructor and builder-style APIs such as
 `ClientConfig::default().with_*()`, `EndpointConfig::default().with_*()`,

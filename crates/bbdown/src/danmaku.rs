@@ -2,6 +2,10 @@ use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::time::Duration;
 
+mod preserving;
+
+pub use preserving::{DanmakuAssMerge, merge_ass_preserving, merge_xml_preserving};
+
 const DANMAKU_FORMAT_ORDER: [DanmakuFormat; 2] = [DanmakuFormat::Xml, DanmakuFormat::Ass];
 const PLAY_RES_X: u32 = 1920;
 const PLAY_RES_Y: u32 = 1080;
@@ -373,6 +377,15 @@ fn render_ass(comments: &[DanmakuComment]) -> String {
 }
 
 fn render_dialogue(comment: &DanmakuComment, index: usize) -> Option<String> {
+    render_dialogue_for_canvas(comment, index, PLAY_RES_X, PLAY_RES_Y)
+}
+
+fn render_dialogue_for_canvas(
+    comment: &DanmakuComment,
+    index: usize,
+    play_res_x: u32,
+    play_res_y: u32,
+) -> Option<String> {
     if matches!(comment.mode, 7 | 8) {
         return None;
     }
@@ -391,34 +404,34 @@ fn render_dialogue(comment: &DanmakuComment, index: usize) -> Option<String> {
     let color = ass_color(comment.color);
     let override_block = match comment.mode {
         4 => {
-            let y = bottom_lane_y(index);
+            let y = bottom_lane_y_for(index, play_res_y);
             format!(
                 "{{\\an2\\pos({},{y:.0})\\fs{font_size:.0}\\c{color}}}",
-                PLAY_RES_X / 2
+                play_res_x / 2
             )
         }
         5 => {
-            let y = top_lane_y(index, FIXED_LANES);
+            let y = top_lane_y_for(index, FIXED_LANES);
             format!(
                 "{{\\an8\\pos({},{y:.0})\\fs{font_size:.0}\\c{color}}}",
-                PLAY_RES_X / 2
+                play_res_x / 2
             )
         }
         6 => {
-            let y = top_lane_y(index, SCROLL_LANES);
+            let y = top_lane_y_for(index, SCROLL_LANES);
             let width = estimated_text_width(&comment.text, font_size);
             format!(
                 "{{\\move({:.0},{y:.0},{:.0},{y:.0})\\fs{font_size:.0}\\c{color}}}",
                 -width,
-                f64::from(PLAY_RES_X) + width
+                f64::from(play_res_x) + width
             )
         }
         _ => {
-            let y = top_lane_y(index, SCROLL_LANES);
+            let y = top_lane_y_for(index, SCROLL_LANES);
             let width = estimated_text_width(&comment.text, font_size);
             format!(
                 "{{\\move({:.0},{y:.0},{:.0},{y:.0})\\fs{font_size:.0}\\c{color}}}",
-                f64::from(PLAY_RES_X) + width,
+                f64::from(play_res_x) + width,
                 -width
             )
         }
@@ -428,12 +441,12 @@ fn render_dialogue(comment: &DanmakuComment, index: usize) -> Option<String> {
     ))
 }
 
-fn top_lane_y(index: usize, lane_count: usize) -> f64 {
+fn top_lane_y_for(index: usize, lane_count: usize) -> f64 {
     TOP_MARGIN + (lane_index(index, lane_count) * LINE_HEIGHT)
 }
 
-fn bottom_lane_y(index: usize) -> f64 {
-    f64::from(PLAY_RES_Y) - TOP_MARGIN - (lane_index(index, FIXED_LANES) * LINE_HEIGHT)
+fn bottom_lane_y_for(index: usize, play_res_y: u32) -> f64 {
+    f64::from(play_res_y) - TOP_MARGIN - (lane_index(index, FIXED_LANES) * LINE_HEIGHT)
 }
 
 fn lane_index(index: usize, lane_count: usize) -> f64 {

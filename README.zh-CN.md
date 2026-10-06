@@ -18,7 +18,8 @@ host 控制，以及 builder 风格的 crate 集成 API。它还支持显式下�
 文件更新。已发布的 `0.7.0` 版本增加显式 CDN host pool、限额 Range 探测、可选并行
 Range 下载、
 内置 CDN/公共 resolver 目录，以及独立的 PGC Web playurl 路由 API；这些功能不会自动选择
-路由。输入解析覆盖普通视频、PGC 和 intl 分集、PUGV/cheese 课程、B23 短链接、收藏
+路由。当前 `0.8.0` source line 增加可选 preserving danmaku 刷新，保留未知 XML 细节与已有
+ASS 样式/事件，并将暂存后的旁路文件和 archive 一起发布。输入解析覆盖普通视频、PGC 和 intl 分集、PUGV/cheese 课程、B23 短链接、收藏
 夹、空间投稿、合集、系列、首页推荐、观看历史、
 稍后再看列表、关注视频 feed 和空间动态视频 feed。URL 解析包括 canonical
 `bilibili.com/list/...` 页面、
@@ -162,7 +163,9 @@ mux 路径会在记录时保存为绝对路径，因此同一份归档可以从�
 刷新已有归档记录的弹幕旁路文件。命令会重新规划输入，用稳定的 aid/cid 身份查找匹配归档
 条目，下载当前 XML 弹幕 payload，只把新增弹幕 append-merge 到 `danmaku.xml`，再重新生成
 所选派生格式，例如 `danmaku.ass`，并把更新后的旁路文件路径写回归档。XML 始终是 canonical
-更新目标；`--danmaku-format ass` 会基于合并后的 XML 新增或刷新 ASS。
+更新目标；`--danmaku-format ass` 会基于合并后的 XML 新增或刷新 ASS。可选
+`--update-policy preserve` 会保留未知 XML 结构和现有 ASS 样式/事件，并把暂存后的旁路文件与
+archive 一起发布；默认仍是 `legacy`。
 
 `ss` 和 `md` 输入在非交互模式下需要显式选择：
 

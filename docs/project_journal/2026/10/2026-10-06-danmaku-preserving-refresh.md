@@ -1,7 +1,7 @@
 ---
 id: 20261006-danmaku-preserving-refresh
 title: Strictly Preserving Danmaku Refresh
-status: active
+status: completed
 created: 2026-10-06
 updated: 2026-10-06
 branch:
@@ -14,43 +14,39 @@ superseded_by:
 
 ## Summary
 
-- Track a later-release enhancement for refreshing downloaded danmaku while preserving every
-  existing XML and ASS detail. This is additional backlog, not a claim that the completed 0.4.0
-  append-only XML and ASS regeneration workflow already meets these stricter requirements.
-- This work is deferred from `v0.7.0` and does not change its release scope.
+- Add opt-in preserving refresh for existing archive-backed danmaku files while keeping the
+  default legacy update behavior and JSON report unchanged.
+- The implementation is complete for the `0.8.0` source line. Actual publication remains a
+  separate protected post-merge release workflow.
 
 ## Current State
 
-- The existing workflow is documented in
-  `docs/project_journal/2026/06/2026-06-18-danmaku-append-update-019f0a.md`. The downstream request
-  reports preservation boundaries for unknown existing XML nodes and whole-file ASS regeneration
-  in its current integration. That integration does not meet the strict preservation requirement
-  below.
+- The existing workflow remains documented in
+  `docs/project_journal/2026/06/2026-06-18-danmaku-append-update-019f0a.md` and remains the CLI
+  default. The new `Preserve` policy stages XML, optional ASS, and archive JSON before grouped
+  publication. The core exposes staged outputs and a group publisher with content/destination
+  revalidation, detected-error rollback, and recovery-location reporting.
 - The request was transferred from the Telegram-Video-Downloader task. Its bot-side consumer pinned
-  BBDown-rust revision `0a94b071bbc1897ec1d1fec9dfcf7883c5754a15`; that bot should update its
-  dependency after the core capability is implemented.
-- Responsibility boundary: the bot owns historical-task buttons, whole-directory batch selection,
-  queueing, progress, recovery, macOS File Provider coordination, and safe publication. BBDown core
-  owns content parsing and merging, with CLI options exposing the reusable capability.
+  BBDown-rust revision `0a94b071bbc1897ec1d1fec9dfcf7883c5754a15`; its dependency update remains a
+  downstream follow-up.
+- Responsibility boundary: BBDown core owns content parsing/merging and grouped publication of
+  staged sidecars plus archive. The bot owns historical-task buttons, whole-directory selection,
+  queueing and progress, and coordination with File Provider materialization and concurrent external
+  writers; core content checks do not lock those external writers.
+- The complete local gate passed: formatting, workspace all-target Clippy, Rust 1.95.0 workspace
+  check, workspace tests (754 passed, 3 ignored), CLI e2e repeat (153 passed), and
+  `cargo publish --dry-run -p bbdown-core --locked --allow-dirty` (29 files packaged; dry-run did not upload).
+  Test suites included CLI unit (67), CLI e2e (153), live e2e (9 passed, 2 ignored), core library
+  (521), CDN benchmark (3 passed, 1 ignored), public API (1), and doc tests (0).
 
 ## Next Steps
 
-- Add a reusable core API and CLI options for strict append-only refresh while keeping existing
-  public APIs compatible.
-- For XML, retain every existing node, attribute, text body, and duplicate; append only newly fetched
-  danmaku. For ASS, retain styles, every event, ASS-only or custom existing content, and append only
-  new events without rebuilding the whole file.
-- For non-empty old files that are damaged, use an unknown format, or cannot be safely merged,
-  return an explicit skip/error and preserve the original. Network, parse, and write failures must
-  also leave old content intact; expose a staged result or safe publication interface for callers
-  coordinating final replacement.
-- Cover XML node/attribute preservation and existing duplicates, ASS styles/old events/custom
-  content, and old-content retention on failures with core unit tests, mock-download tests, and CLI
-  end-to-end tests.
-- After implementation and validation, update the pinned bot dependency and integrate the bot-side
-  workflow.
+- Coordinate the downstream bot dependency update and bot-side workflow as a separate workstream.
+- Publish the `0.8.0` source line through the protected RC and promotion workflow after merge.
 
 ## Evidence
 
 - Existing implementation record: `docs/project_journal/2026/06/2026-06-18-danmaku-append-update-019f0a.md`.
+- Release preparation: `docs/project_journal/2026/10/2026-10-06-v0-8-release-prep.md`.
 - Downstream bot dependency pin: `0a94b071bbc1897ec1d1fec9dfcf7883c5754a15`.
+- Local delivery evidence: full `just ci` passed; workspace suite counts are recorded above.

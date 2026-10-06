@@ -24,8 +24,9 @@ crates.io 发布目标是可复用的 `bbdown-core` library package。使用 `ju
 可以在本地执行锁定版本的 dry run，并允许工作树存在未提交修改；使用
 `just publish-dry-run-strict` 或 `cargo publish --dry-run -p bbdown-core --locked` 可以复现
 干净 CI 门禁。`bbdown-cli` 包标记为 `publish = false`；CLI 应通过 GitHub release 归档安
-装或分发。当前已发布版本是 `0.7.0`，晚于已发布的 `0.6.0`，重点是可选 CDN 选择、探测和并行
-传输、内置网络目录，以及独立的 PGC Web playurl 路由。这些控制都需要显式选择；目录是快照，
+装或分发。当前已发布版本是 `0.7.0`，后续 `0.8.0` source line 加入 preserving danmaku 刷新。
+`0.7.0` 重点是可选 CDN 选择、探测和并行传输、内置网络目录，以及独立的 PGC Web playurl 路由。
+这些控制都需要显式选择；目录是快照，
 只有用户运行探测或选定路由时才会检查列出的端点。嵌入调用方仍应优先使用
 `DownloadOptions::new`、`StreamSelection::new`、`Default` 等构造器，而不是 public struct 字面量，并把公开的 plan
 输出容器视为会随 crate 成熟继续新增字段的被消费数据表面。
@@ -410,6 +411,19 @@ XML 始终是 canonical 更新目标，即使只请求 `--danmaku-format ass` �
 合并后的 XML 重新生成。`--select` 沿用 `download` 的 selection 语法，因此批量输入可以按
 输入类型更新单个 page、范围、`latest` 或 `all`。归档文件不能与被更新的旁路文件路径重叠；
 `--json` 会输出 typed report，包含每个条目的已有、拉取和追加弹幕数量。
+
+默认 `--update-policy legacy` 保持原有行为以兼容旧脚本。可选
+`--update-policy preserve` 保留未知 XML 节点、属性、注释和重复项，以及 ASS 样式与已有事件，
+只追加新拉取的内容。XML 仍是 canonical 来源。如果只有 ASS，命令会保留旧事件并以其作为粗略
+基线；缺少 XML 元数据时，这种回退可能有歧义。Strict 模式会把所选旁路文件和 archive JSON
+一起 stage 并发布，ASS 事件数量单独报告，不与 XML 弹幕数混淆。检测到错误时会保留原文件；
+如果回滚无法完成，会报告恢复文件位置。这不承诺多个文件之间具有崩溃或断电原子性。对于
+File Provider 等同步目录，请调用方协调 materialization 和并发写入。
+
+```bash
+bbdown danmaku update av170001 --archive-file downloads/archive.json \
+  --danmaku-format xml,ass --update-policy preserve --json
+```
 
 `--request-timeout-seconds` 作用于 API 请求。媒体正文读取使用
 `--download-idle-timeout-seconds`；传入 `0` 可禁用该 idle timeout。

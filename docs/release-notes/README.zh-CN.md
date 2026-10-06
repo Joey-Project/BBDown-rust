@@ -7,6 +7,8 @@
 
 ## 版本
 
+- [v0.8.0 source line](v0.8.0.zh-CN.md)：可选的 preserving danmaku 刷新，保留 XML、ASS 和 archive
+  文件内容。
 - [v0.7.0](v0.7.0.zh-CN.md)：可选 CDN host 选择、限额探测、并行 Range 传输、内置网络目录
   和独立的 PGC Web playurl 路由。
 - [v0.6.0](v0.6.0.zh-CN.md)：credential lifecycle integration，包括 profile status、

@@ -20,6 +20,8 @@ snapshot CDN/public-resolver catalogs with runtime probe commands, and independe
 Web playurl routes; it does not introduce automatic CDN routing. It also supports an
 explicit download archive for duplicate preflight, CLI replace / keep-both / cancel decisions, and
 append-only danmaku sidecar updates for already-downloaded archive entries.
+The current `0.8.0` source line adds opt-in preserving danmaku refresh for unknown XML details and
+existing ASS styles/events, with staged sidecar-plus-archive publication.
 Input parsing covers normal videos, PGC and intl episodes, PUGV/cheese courses, B23 short links,
 favorite lists, space videos, collections, series, homepage recommendations, watch history,
 watch-later lists, following video feeds, and space dynamic video feeds. URL parsing includes canonical
@@ -172,7 +174,9 @@ archive records without redownloading media. The command replans the input, find
 entries by stable aid/cid identity, downloads the current XML danmaku payload, append-merges only
 new comments into `danmaku.xml`, regenerates selected derived formats such as `danmaku.ass`, and
 saves the updated sidecar paths back to the archive. XML is always the canonical update target;
-`--danmaku-format ass` adds or refreshes ASS from the merged XML.
+`--danmaku-format ass` adds or refreshes ASS from the merged XML. The opt-in
+`--update-policy preserve` retains unknown XML structure and existing ASS styles/events, then
+publishes the staged sidecars with the archive; `legacy` remains the default.
 
 `ss` and `md` inputs require an explicit selection in non-interactive mode:
 

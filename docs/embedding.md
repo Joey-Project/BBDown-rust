@@ -9,10 +9,10 @@ projects that need typed Bilibili metadata, download plans, media downloads, sub
 danmaku sidecars, QR login state, batch collection parsing, and restricted-area proxy diagnostics
 without shelling out to the CLI.
 
-The current crate version is the published `0.7.0` release after `0.6.0`, adding explicit CDN host
-pool, probing, and parallel transfer options plus an independent PGC Web playurl route selector.
-These network actions remain caller-selected; the crate does not automatically route requests from
-the bundled CLI catalogs.
+The current published crate line is `0.7.0`; the `0.8.0` source line adds staged preserving
+danmaku refresh. The published line added explicit CDN host pools, probing, and parallel transfer
+options plus an independent PGC Web playurl route selector. These network actions remain
+caller-selected; the crate does not automatically route requests from the bundled CLI catalogs.
 Prefer constructors and builder-style APIs for configuration, and treat metadata and plan
 structs as read-only output surfaces. This keeps embedding code resilient when new fields are added
 while the crate matures.
@@ -954,6 +954,55 @@ async fn main() -> bbdown_core::Result<()> {
 
 Callers that manage sidecar storage themselves can use `merge_xml_append_only(existing, fetched)`
 to apply the same XML-level append-only merge without touching `DownloadArchive`.
+
+Use `DanmakuUpdatePolicy::Preserve` with `stage_preserving_danmaku_update_for_archive_file` when
+an embedding application must preserve existing files and publish the archive with the sidecars.
+The staged value exposes an immutable report, updated archive snapshot, staged file list, and
+per-file ASS event statistics. Each staged file exposes its destination path, expected original
+bytes when present, and complete output bytes. The caller can inspect those values before consuming
+the stage with `publish()`:
+
+```rust,no_run
+use bbdown_core::{
+    BiliClient, ClientConfig, DanmakuFormat, DanmakuUpdateOptions, DanmakuUpdatePolicy,
+    DownloadMode,
+};
+
+#[tokio::main]
+async fn main() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let plan = client
+        .plan_download_with_mode("BV1qt4y1X7TW", None, DownloadMode::DanmakuOnly)
+        .await?;
+    let staged = client
+        .stage_preserving_danmaku_update_for_archive_file(
+            &plan,
+            "downloads/archive.json",
+            DanmakuUpdateOptions::default()
+                .with_danmaku_formats([DanmakuFormat::Xml, DanmakuFormat::Ass])
+                .with_update_policy(DanmakuUpdatePolicy::Preserve),
+        )
+        .await?;
+    for file in staged.files() {
+        println!("staged {} bytes for {}", file.output_bytes().len(), file.path().display());
+    }
+    for stats in staged.ass_statistics() {
+        println!("ASS appended {} events", stats.appended_events);
+    }
+    let report = staged.publish().await?;
+    println!("updated {} entries", report.entries.len());
+    Ok(())
+}
+```
+
+The stage captures expected contents before publication and revalidates them before choosing the
+destination. Coordinate File Provider materialization and any concurrent writer around this
+operation; validation detects changes but does not lock external writers. Detected publication
+errors trigger rollback, and errors that prevent complete rollback identify retained recovery
+files. A successful call does not provide crash or power-loss atomicity across the sidecars and
+archive. `Preserve` keeps all existing XML structure and ASS styles/events, then appends new
+comments/events. ASS-only entries use their existing event text as a coarse baseline, so matching
+may be ambiguous when the original XML metadata is unavailable.
 
 ## Endpoint Overrides
 

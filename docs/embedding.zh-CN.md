@@ -8,9 +8,9 @@
 typed Bilibili metadata、下载计划、媒体下载、字幕旁路文件、弹幕旁路文件、二维码登录状态
 、批量集合解析和受限区域代理诊断，但不希望 shell out 到 CLI 的场景。
 
-当前 crate 版本是已发布的 `0.7.0`，晚于 `0.6.0`，增加了显式 CDN host pool、探测、
-并行传输选项，以及独立的 PGC Web playurl 路由选择器。这些网络操作仍由调用方显式选择；crate
-不会根据 CLI 内置目录自动路由请求。配置应优先使用构造器和 builder 风格 API，并把 metadata
+当前已发布 crate 版本为 `0.7.0`，`0.8.0` source line 加入 staged preserving danmaku 刷新。
+`0.7.0` 增加了显式 CDN host pool、探测、并行传输选项，以及独立的 PGC Web playurl 路由选择器。
+这些网络操作仍由调用方显式选择；crate 不会根据 CLI 内置目录自动路由请求。配置应优先使用构造器和 builder 风格 API，并把 metadata
 和 plan 结构体视为只读输出表面。这样在 crate 成熟过程中新增字段时，嵌入代码更不容易受影响。
 
 ## 仅规划
@@ -892,6 +892,51 @@ async fn main() -> bbdown_core::Result<()> {
 
 如果调用方自行管理旁路文件存储，可以直接使用 `merge_xml_append_only(existing, fetched)`，
 在不接触 `DownloadArchive` 的情况下复用同一套 XML-level append-only merge 逻辑。
+
+当嵌入应用需要保留现有文件，并与旁路文件一起发布 archive 时，使用
+`DanmakuUpdatePolicy::Preserve` 和 `stage_preserving_danmaku_update_for_archive_file`。stage
+结果提供不可变 report、更新后的 archive 快照、暂存文件列表，以及按文件区分的 ASS 事件统计。
+每个暂存文件都提供目标路径、存在时预期的旧字节和完整的新输出字节。调用方可以检查这些值，
+然后消费 stage 并调用 `publish()`：
+
+```rust,no_run
+use bbdown_core::{
+    BiliClient, ClientConfig, DanmakuFormat, DanmakuUpdateOptions, DanmakuUpdatePolicy,
+    DownloadMode,
+};
+
+#[tokio::main]
+async fn main() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let plan = client
+        .plan_download_with_mode("BV1qt4y1X7TW", None, DownloadMode::DanmakuOnly)
+        .await?;
+    let staged = client
+        .stage_preserving_danmaku_update_for_archive_file(
+            &plan,
+            "downloads/archive.json",
+            DanmakuUpdateOptions::default()
+                .with_danmaku_formats([DanmakuFormat::Xml, DanmakuFormat::Ass])
+                .with_update_policy(DanmakuUpdatePolicy::Preserve),
+        )
+        .await?;
+    for file in staged.files() {
+        println!("staged {} bytes for {}", file.output_bytes().len(), file.path().display());
+    }
+    for stats in staged.ass_statistics() {
+        println!("ASS appended {} events", stats.appended_events);
+    }
+    let report = staged.publish().await?;
+    println!("updated {} entries", report.entries.len());
+    Ok(())
+}
+```
+
+stage 会捕获预期内容，并在发布前重新校验再选择目标。调用方需要围绕此操作协调 File Provider
+materialization 和并发写入；校验可以检测变化，但不会锁住外部写入方。检测到发布错误时会尝试
+回滚；如果回滚无法完成，错误会指出保留的恢复文件。调用成功不代表旁路文件与 archive 之间
+具有崩溃或断电原子性。`Preserve` 保留完整 XML 结构与 ASS 样式和已有事件，然后追加新弹幕/事件。
+只有 ASS 的条目会把已有事件文本作为粗略基线；缺少原 XML 元数据时，匹配可能有歧义。
 
 ## 端点覆盖
 

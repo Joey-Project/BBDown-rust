@@ -7589,6 +7589,372 @@ fn download_archive_replace_overwrites_existing_file() -> anyhow::Result<()> {
 }
 
 #[test]
+fn danmaku_update_help_lists_policy_and_rejects_unknown_values() -> anyhow::Result<()> {
+    let help = bbdown_command()?
+        .args(["danmaku", "update", "--help"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let help = String::from_utf8(help)?;
+    assert!(help.contains("--update-policy <POLICY>"));
+    assert!(help.contains("legacy"));
+    assert!(help.contains("preserve"));
+
+    bbdown_command()?
+        .args([
+            "danmaku",
+            "update",
+            "av170001",
+            "--archive-file",
+            "archive.json",
+            "--update-policy",
+            "strict",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "possible values: legacy, preserve",
+        ));
+    Ok(())
+}
+
+#[test]
+fn danmaku_update_preserve_keeps_existing_xml_and_ass_content() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_root = temp.path().join("downloads").join("Mock video");
+    let entry_dir = output_root.join("P001-BV1xx411c7mD-Main");
+    let archive_file = temp.path().join("archive.json");
+    let xml_path = entry_dir.join("danmaku.xml");
+    let ass_path = entry_dir.join("danmaku.ass");
+    fs::create_dir_all(&entry_dir)?;
+    let existing_xml = concat!(
+        "<!-- keep this comment -->\n",
+        "<i custom=\"retain\"><meta unknown=\"yes\">raw</meta>",
+        "<d p=\"1,1,25,0,0,0,0,0\" custom=\"first\">old</d>",
+        "<d p=\"1,1,25,0,0,0,0,0\" custom=\"duplicate\">old</d>",
+        "</i>"
+    );
+    let existing_ass = concat!(
+        "[Script Info]\nTitle: Custom title\n\n",
+        "[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n",
+        "Style: Custom,Arial,24,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,1,0,2,10,10,10,1\n\n",
+        "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n",
+        "Dialogue: 0,0:00:01.00,0:00:02.00,Custom,,0,0,0,,user event\n"
+    );
+    fs::write(&xml_path, existing_xml)?;
+    fs::write(&ass_path, existing_ass)?;
+    write_mock_danmaku_update_archive(&archive_file, &output_root, &entry_dir, &xml_path)?;
+    mock_minimal_video_metadata(&server);
+    let danmaku_mock = server.mock(|when, then| {
+        when.method(GET).path("/2.xml");
+        then.status(200).body(concat!(
+            "<i><d p=\"1,1,25,0,0,0,0,0\">old</d>",
+            "<d p=\"2,1,25,0,0,0,0,0\">new text</d></i>"
+        ));
+    });
+
+    let output = danmaku_update_command(&credential_file, &server, &archive_file)?
+        .args(["--danmaku-format", "xml,ass", "--update-policy", "preserve"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    let merged_xml = fs::read_to_string(&xml_path)?;
+    let merged_ass = fs::read_to_string(&ass_path)?;
+
+    danmaku_mock.assert_calls(1);
+    assert_eq!(json["policy"], "preserve");
+    assert_eq!(json["report"]["entries"][0]["appended_comments"], 1);
+    assert_eq!(json["ass_statistics"][0]["appended_events"], 1);
+    assert!(merged_xml.contains("<!-- keep this comment -->"));
+    assert!(merged_xml.contains("custom=\"retain\""));
+    assert!(merged_xml.contains("unknown=\"yes\""));
+    assert_eq!(merged_xml.matches("custom=\"first\"").count(), 1);
+    assert_eq!(merged_xml.matches("custom=\"duplicate\"").count(), 1);
+    assert!(merged_xml.contains("new text"));
+    assert!(merged_ass.contains("Title: Custom title"));
+    assert!(merged_ass.contains("Style: Custom,Arial"));
+    assert!(merged_ass.contains("user event"));
+    assert!(merged_ass.contains("new text"));
+    Ok(())
+}
+
+#[test]
+fn danmaku_update_preserve_failure_keeps_original_sidecars_and_archive_bytes() -> anyhow::Result<()>
+{
+    for fetched_result in ["malformed-old", "malformed-xml", "http-error"] {
+        let server = MockServer::start();
+        let temp = tempfile::tempdir()?;
+        let credential_file = temp.path().join("credentials.json");
+        let output_root = temp.path().join("downloads").join("Mock video");
+        let entry_dir = output_root.join("P001-BV1xx411c7mD-Main");
+        let archive_file = temp.path().join("archive.json");
+        let xml_path = entry_dir.join("danmaku.xml");
+        let ass_path = entry_dir.join("danmaku.ass");
+        fs::create_dir_all(&entry_dir)?;
+        let original_xml = if fetched_result == "malformed-old" {
+            b"<i><d broken>".as_slice()
+        } else {
+            b"<i custom=\"keep\"><d p=\"1,1,25,0,0,0,0,0\">old</d></i>".as_slice()
+        };
+        let original_ass = b"[Script Info]\nTitle: keep\n[Events]\nDialogue: original\n";
+        fs::write(&xml_path, original_xml)?;
+        fs::write(&ass_path, original_ass)?;
+        let original_archive =
+            write_mock_danmaku_update_archive(&archive_file, &output_root, &entry_dir, &xml_path)?;
+        mock_minimal_video_metadata(&server);
+        let danmaku_mock = server.mock(|when, then| {
+            when.method(GET).path("/2.xml");
+            if fetched_result == "malformed-xml" {
+                then.status(200).body("<i><d broken>");
+            } else if fetched_result == "malformed-old" {
+                then.status(200).body("<i><d p=\"2\">new</d></i>");
+            } else {
+                then.status(503).body("upstream unavailable");
+            }
+        });
+
+        danmaku_update_command(&credential_file, &server, &archive_file)?
+            .args(["--update-policy", "preserve", "--danmaku-format", "xml,ass"])
+            .assert()
+            .failure();
+
+        if fetched_result == "malformed-old" || fetched_result == "malformed-xml" {
+            danmaku_mock.assert_calls(1);
+        } else {
+            danmaku_mock.assert_calls(3);
+        }
+        assert_eq!(fs::read(&xml_path)?, original_xml);
+        assert_eq!(fs::read(&ass_path)?, original_ass);
+        assert_eq!(fs::read(&archive_file)?, original_archive);
+    }
+    Ok(())
+}
+
+#[test]
+fn danmaku_update_preserve_second_entry_failure_keeps_every_original() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_root = temp.path().join("downloads").join("Mock video");
+    let entry_dirs = [
+        output_root.join("P001-BV1xx411c7mD-First"),
+        output_root.join("P002-BV1xx411c7mD-Second"),
+    ];
+    let xml_paths = [
+        entry_dirs[0].join("danmaku.xml"),
+        entry_dirs[1].join("danmaku.xml"),
+    ];
+    let archive_file = temp.path().join("archive.json");
+    for (index, directory) in entry_dirs.iter().enumerate() {
+        fs::create_dir_all(directory)?;
+        fs::write(
+            &xml_paths[index],
+            format!("<i custom=\"keep-{index}\"><d p=\"1,1,25,0,0,0,0,0\">old-{index}</d></i>"),
+        )?;
+    }
+    let archive_bytes = serde_json::to_vec_pretty(&serde_json::json!({
+        "records": [{
+            "content_key": "plan",
+            "title": "Mock video",
+            "output_dir": output_root,
+            "completed_at_unix": 1,
+            "entries": [
+                {"content_key":"entry-1","index":1,"aid":170_001,"bvid":"BV1xx411c7mD","cid":2,"epid":null,"title":"First","directory":entry_dirs[0],"files":[xml_paths[0]],"mux_output":null},
+                {"content_key":"entry-2","index":2,"aid":170_001,"bvid":"BV1xx411c7mD","cid":3,"epid":null,"title":"Second","directory":entry_dirs[1],"files":[xml_paths[1]],"mux_output":null}
+            ]
+        }]
+    }))?;
+    fs::write(&archive_file, &archive_bytes)?;
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/view")
+            .query_param("aid", "170001");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "aid": 170_001,
+                "bvid": "BV1xx411c7mD",
+                "title": "Mock video",
+                "pages": [
+                    {"page":1,"cid":2,"part":"First","duration":3},
+                    {"page":2,"cid":3,"part":"Second","duration":3}
+                ]
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/tag/archive/tags")
+            .query_param("aid", "170001");
+        then.status(200)
+            .json_body_obj(&serde_json::json!({"code":0,"data":[]}));
+    });
+    let first_mock = server.mock(|when, then| {
+        when.method(GET).path("/2.xml");
+        then.status(200)
+            .body("<i><d p=\"2,1,25,0,0,0,0,0\">new-1</d></i>");
+    });
+    let second_mock = server.mock(|when, then| {
+        when.method(GET).path("/3.xml");
+        then.status(503).body("upstream unavailable");
+    });
+    let original_xml = [fs::read(&xml_paths[0])?, fs::read(&xml_paths[1])?];
+
+    danmaku_update_command(&credential_file, &server, &archive_file)?
+        .args(["--select", "all", "--update-policy", "preserve"])
+        .assert()
+        .failure();
+
+    first_mock.assert_calls(1);
+    second_mock.assert_calls(3);
+    assert_eq!(fs::read(&xml_paths[0])?, original_xml[0]);
+    assert_eq!(fs::read(&xml_paths[1])?, original_xml[1]);
+    assert_eq!(fs::read(&archive_file)?, archive_bytes);
+    Ok(())
+}
+
+#[test]
+fn danmaku_update_preserve_allows_archive_at_unused_legacy_temp_name() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_root = temp.path().join("downloads").join("Mock video");
+    let entry_dir = output_root.join("P001-BV1xx411c7mD-Main");
+    let xml_path = entry_dir.join("danmaku.xml");
+    let archive_file = entry_dir.join("danmaku.xml.bbdown-source");
+    fs::create_dir_all(&entry_dir)?;
+    fs::write(&xml_path, "<i><d p=\"1,1,25,0,0,0,0,0\">old</d></i>")?;
+    write_mock_danmaku_update_archive(&archive_file, &output_root, &entry_dir, &xml_path)?;
+    mock_minimal_video_metadata(&server);
+    let danmaku_mock = server.mock(|when, then| {
+        when.method(GET).path("/2.xml");
+        then.status(200)
+            .body("<i><d p=\"1,1,25,0,0,0,0,0\">old</d><d p=\"2,1,25,0,0,0,0,0\">new</d></i>");
+    });
+
+    let output = danmaku_update_command(&credential_file, &server, &archive_file)?
+        .args(["--update-policy", "preserve"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output)?;
+
+    danmaku_mock.assert_calls(1);
+    assert_eq!(json["policy"], "preserve");
+    assert!(fs::read_to_string(&xml_path)?.contains("new"));
+    assert!(serde_json::from_slice::<Value>(&fs::read(&archive_file)?).is_ok());
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn danmaku_update_preserve_keeps_archive_symlink_and_updates_its_target() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_root = temp.path().join("downloads").join("Mock video");
+    let entry_dir = output_root.join("P001-BV1xx411c7mD-Main");
+    let archive_target = temp.path().join("archive-target.json");
+    let archive_link = temp.path().join("archive.json");
+    let xml_path = entry_dir.join("danmaku.xml");
+    fs::create_dir_all(&entry_dir)?;
+    fs::write(&xml_path, "<i><d p=\"1,1,25,0,0,0,0,0\">old</d></i>")?;
+    write_mock_danmaku_update_archive(&archive_target, &output_root, &entry_dir, &xml_path)?;
+    std::os::unix::fs::symlink(&archive_target, &archive_link)?;
+    let original_target = fs::read(&archive_target)?;
+    mock_minimal_video_metadata(&server);
+    let danmaku_mock = server.mock(|when, then| {
+        when.method(GET).path("/2.xml");
+        then.status(200)
+            .body("<i><d p=\"1,1,25,0,0,0,0,0\">old</d><d p=\"2,1,25,0,0,0,0,0\">new</d></i>");
+    });
+
+    let output = danmaku_update_command(&credential_file, &server, &archive_link)?
+        .args(["--update-policy", "preserve"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output)?;
+
+    danmaku_mock.assert_calls(1);
+    assert_eq!(json["policy"], "preserve");
+    assert!(
+        fs::symlink_metadata(&archive_link)?
+            .file_type()
+            .is_symlink()
+    );
+    assert_ne!(fs::read(&archive_target)?, original_target);
+    assert_eq!(fs::read(&archive_link)?, fs::read(&archive_target)?);
+    Ok(())
+}
+
+#[test]
+fn danmaku_update_preserve_ass_only_refresh_is_idempotent() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_root = temp.path().join("downloads").join("Mock video");
+    let entry_dir = output_root.join("P001-BV1xx411c7mD-Main");
+    let archive_file = temp.path().join("archive.json");
+    let ass_path = entry_dir.join("danmaku.ass");
+    fs::create_dir_all(&entry_dir)?;
+    fs::write(
+        &ass_path,
+        concat!(
+            "[Script Info]\nTitle: custom\n\n[V4+ Styles]\nFormat: Name, Fontname\n",
+            "Style: Existing,Arial\n\n[Events]\n",
+            "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n",
+            "Dialogue: 0,0:00:01.00,0:00:02.00,Existing,,0,0,0,,old\n"
+        ),
+    )?;
+    write_mock_danmaku_update_archive(&archive_file, &output_root, &entry_dir, &ass_path)?;
+    mock_minimal_video_metadata(&server);
+    let danmaku_mock = server.mock(|when, then| {
+        when.method(GET).path("/2.xml");
+        then.status(200).body(concat!(
+            "<i><d p=\"1,1,25,0,0,0,0,0\">old</d>",
+            "<d p=\"2,1,25,0,0,0,0,0\">new</d></i>"
+        ));
+    });
+
+    let first_output = danmaku_update_command(&credential_file, &server, &archive_file)?
+        .args(["--update-policy", "preserve", "--danmaku-format", "ass"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let first_json: Value = serde_json::from_slice(&first_output)?;
+    let after_first = fs::read(&ass_path)?;
+    let second_output = danmaku_update_command(&credential_file, &server, &archive_file)?
+        .args(["--update-policy", "preserve", "--danmaku-format", "ass"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let second_json: Value = serde_json::from_slice(&second_output)?;
+
+    danmaku_mock.assert_calls(2);
+    assert_eq!(first_json["ass_statistics"][0]["appended_events"], 1);
+    assert_eq!(second_json["ass_statistics"][0]["appended_events"], 0);
+    assert_eq!(fs::read(&ass_path)?, after_first);
+    assert!(fs::read_to_string(&ass_path)?.contains("Title: custom"));
+    Ok(())
+}
+
+#[test]
 fn danmaku_update_archive_appends_xml_and_writes_ass() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;

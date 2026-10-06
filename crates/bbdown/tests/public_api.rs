@@ -2,10 +2,10 @@ use bbdown_core::{
     BiliClient, ClientConfig, CredentialHealthSummaryStatus, CredentialKind,
     CredentialLifecycleMetadata, CredentialLifecyclePolicy, CredentialLifecycleSource,
     CredentialLifecycleStatus, CredentialPreflightMode, CredentialPreflightReport,
-    CredentialProfileMetadata, CredentialProfiles, DownloadCancellationToken, DownloadOptions,
-    DownloadProgressEvent, DownloadProgressSink, DownloadReportSummary, Input,
-    NoopDownloadProgress, PlayurlMode, RestrictedAreaConfig, StreamSelection, SubtitleAiPolicy,
-    UgcCollectionKind, UgcCollectionReference,
+    CredentialProfileMetadata, CredentialProfiles, DanmakuUpdateOptions, DanmakuUpdatePolicy,
+    DownloadCancellationToken, DownloadOptions, DownloadProgressEvent, DownloadProgressSink,
+    DownloadReportSummary, Input, NoopDownloadProgress, PlayurlMode, RestrictedAreaConfig,
+    StreamSelection, SubtitleAiPolicy, UgcCollectionKind, UgcCollectionReference,
 };
 use std::path::PathBuf;
 
@@ -34,6 +34,9 @@ fn embedding_surface_is_reexported() -> anyhow::Result<()> {
         .with_stream_selection(StreamSelection::audio_language("Japanese"))
         .with_subtitles(true)
         .with_subtitle_ai_policy(SubtitleAiPolicy::PreferNonAi);
+    let update_options =
+        DanmakuUpdateOptions::default().with_update_policy(DanmakuUpdatePolicy::Preserve);
+    assert_eq!(update_options.update_policy, DanmakuUpdatePolicy::Preserve);
     let _summary = DownloadReportSummary::default();
 
     let cancellation = DownloadCancellationToken::new();
