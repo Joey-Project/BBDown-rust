@@ -932,7 +932,8 @@ async fn main() -> bbdown_core::Result<()> {
 }
 ```
 
-stage 会捕获预期内容，并在发布前重新校验再选择目标。调用方需要围绕此操作协调 File Provider
+stage 会捕获预期内容，并在发布前重新校验再选择目标。`StagedDanmakuFile::path()` 返回经父目录
+符号链接解析后的选定目标；发布时会针对该目标重新校验逻辑路径别名。调用方需要围绕此操作协调 File Provider
 materialization 和并发写入；校验可以检测变化，但不会锁住外部写入方。检测到发布错误时会尝试
 回滚；如果回滚无法完成，错误会指出保留的恢复文件。调用成功不代表旁路文件与 archive 之间
 具有崩溃或断电原子性。`Preserve` 保留完整 XML 结构与 ASS 样式和已有事件，然后追加新弹幕/事件。

@@ -5,7 +5,7 @@ status: completed
 created: 2026-10-06
 updated: 2026-10-06
 branch:
-pr:
+pr: 87
 supersedes: []
 superseded_by:
 ---
@@ -44,6 +44,17 @@ superseded_by:
   with rustc 1.99.0 (`b940084d7`), cargo 1.99.0, and Clippy 0.1.99. It included formatting,
   all-target Clippy, the explicit Rust 1.95.0 MSRV check, 754 workspace tests passed / 3 ignored,
   a separate CLI e2e repeat (153 passed), and the publish dry-run above.
+- PR [#87](https://github.com/Joey-Project/BBDown-rust/pull/87) follow-up fixes cover XML root
+  insertion around quoted `>` and `/>`, ASS style insertion at the actual styles header while
+  retaining custom comments, and canonical parent-directory symlink target revalidation. The
+  symlink regressions cover equal content bytes, both snapshots missing, and stable logical aliases.
+- After those fixes, targeted pure tests passed (19) and targeted publisher tests passed (10). The
+  final CI-matching gate `env RUSTUP_TOOLCHAIN=1.99.0 just ci` exited 0 in 42.5 seconds with rustc
+  1.99.0 (`b940084d7`), cargo 1.99.0, and Clippy 0.1.99. It passed formatting, all-target Clippy,
+  the explicit Rust 1.95.0 MSRV check, and workspace tests (759 passed, 3 ignored): CLI unit (67),
+  CLI e2e (153), live e2e (9 passed, 2 ignored), core library (526), CDN benchmark (3 passed, 1
+  ignored), and public API (1). The separate CLI e2e repeat passed all 153 tests. Publish dry-run
+  verified 29 packaged files and performed no upload.
 
 ## Next Steps
 
@@ -53,6 +64,7 @@ superseded_by:
 ## Evidence
 
 - Existing implementation record: `docs/project_journal/2026/06/2026-06-18-danmaku-append-update-019f0a.md`.
+- Feature PR: [#87](https://github.com/Joey-Project/BBDown-rust/pull/87).
 - Release preparation: `docs/project_journal/2026/10/2026-10-06-v0-8-release-prep.md`.
 - Downstream bot dependency pin: `0a94b071bbc1897ec1d1fec9dfcf7883c5754a15`.
 - Local delivery evidence: full `just ci` passed; workspace suite counts are recorded above.

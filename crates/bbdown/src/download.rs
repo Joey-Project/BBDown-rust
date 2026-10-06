@@ -13118,10 +13118,18 @@ mod tests {
         danmaku_mock.assert_calls(1);
         assert!(!entry_dir.join("danmaku.xml").exists());
         assert_eq!(std::fs::read(&ass_path)?, old_ass.as_bytes());
+        let ass_parent = ass_path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("ASS output has no parent directory"))?;
+        let resolved_ass_path = std::fs::canonicalize(ass_parent)?.join(
+            ass_path
+                .file_name()
+                .ok_or_else(|| anyhow::anyhow!("ASS output has no file name"))?,
+        );
         let ass_output = staged
             .files()
             .iter()
-            .find(|file| file.path() == ass_path)
+            .find(|file| file.path() == resolved_ass_path)
             .ok_or_else(|| anyhow::anyhow!("ASS output was not staged"))?;
         let ass_output = std::str::from_utf8(ass_output.output_bytes())?;
         assert!(ass_output.contains("Handwritten annotation"));

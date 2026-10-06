@@ -42,6 +42,34 @@ fn root_element<'a>(document: &'a Document<'a>, label: &str) -> crate::Result<No
     Ok(root)
 }
 
+fn root_self_closing_slash(source: &str) -> crate::Result<Option<usize>> {
+    let bytes = source.as_bytes();
+    let mut quote = None;
+    for (index, byte) in bytes.iter().copied().enumerate().skip(1) {
+        if let Some(quote_byte) = quote {
+            if byte == quote_byte {
+                quote = None;
+            }
+            continue;
+        }
+        match byte {
+            b'\'' | b'"' => quote = Some(byte),
+            b'>' => {
+                let mut previous = index;
+                while previous > 0 && bytes[previous - 1].is_ascii_whitespace() {
+                    previous -= 1;
+                }
+                let slash = previous
+                    .checked_sub(1)
+                    .filter(|offset| bytes[*offset] == b'/');
+                return Ok(slash);
+            }
+            _ => {}
+        }
+    }
+    Err(invalid("existing XML root opening tag is incomplete"))
+}
+
 fn xml_comments(document: &Document<'_>, xml: &str) -> Vec<RawComment> {
     document
         .root_element()
@@ -105,15 +133,9 @@ pub fn merge_xml_preserving(
 
     let root_range = old_root.range();
     let root_source = &existing_xml[root_range.clone()];
-    let open_end = root_source
-        .find('>')
-        .ok_or_else(|| invalid("existing XML root opening tag is incomplete"))?;
-    let opening = &root_source[..=open_end];
-    let insertion = if opening.trim_end().ends_with("/>") {
-        let before_slash = opening
-            .rfind('/')
-            .map(|offset| root_range.start + offset)
-            .ok_or_else(|| invalid("existing self-closing XML root is malformed"))?;
+    let self_closing_slash = root_self_closing_slash(root_source)?;
+    let insertion = if let Some(slash) = self_closing_slash {
+        let before_slash = root_range.start + slash;
         let mut result = String::with_capacity(
             existing_xml.len() + append.iter().map(|c| c.raw.len()).sum::<usize>() + 16,
         );
@@ -189,6 +211,37 @@ fn ass_section_lines(ass: &str) -> crate::Result<(usize, usize, Vec<&str>)> {
     }
     let start = events_start.ok_or_else(|| invalid("existing ASS is missing [Events]"))?;
     Ok((start, events_end, lines))
+}
+
+struct AssSection {
+    name: String,
+    start: usize,
+    content_start: usize,
+    end: usize,
+}
+
+fn ass_sections(ass: &str) -> Vec<AssSection> {
+    let mut sections: Vec<AssSection> = Vec::new();
+    let mut offset = 0;
+    for line in ass.split_inclusive('\n') {
+        let header = line.trim();
+        if header.starts_with('[') && header.ends_with(']') {
+            let name = &header[1..header.len() - 1];
+            if !name.contains('[') && !name.contains(']') {
+                if let Some(previous) = sections.last_mut() {
+                    previous.end = offset;
+                }
+                sections.push(AssSection {
+                    name: name.to_owned(),
+                    start: offset,
+                    content_start: offset + line.len(),
+                    end: ass.len(),
+                });
+            }
+        }
+        offset += line.len();
+    }
+    sections
 }
 
 fn event_fields(line: &str, column_count: usize) -> Option<Vec<&str>> {
@@ -403,21 +456,19 @@ fn event_line(
 }
 
 fn style_insertion(ass: &str) -> crate::Result<Option<(usize, String)>> {
-    let lower = ass.to_ascii_lowercase();
-    let sections = ["[v4+ styles]", "[v4 styles]"];
-    let Some((section_name, section_start)) = sections
-        .iter()
-        .find_map(|name| lower.find(name).map(|at| (*name, at)))
-    else {
-        let events = lower
-            .find("[events]")
+    let sections = ass_sections(ass);
+    let style_section = sections.iter().find(|section| {
+        section.name.eq_ignore_ascii_case("V4+ Styles")
+            || section.name.eq_ignore_ascii_case("V4 Styles")
+    });
+    let Some(section) = style_section else {
+        let events = sections
+            .iter()
+            .find(|section| section.name.eq_ignore_ascii_case("Events"))
             .ok_or_else(|| invalid("existing ASS is missing [Events]"))?;
-        return Ok(Some((events, "[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Danmaku,Arial,42,&H00FFFFFF,&H000000FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2,0,7,20,20,20,1\n\n".to_owned())));
+        return Ok(Some((events.start, "[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Danmaku,Arial,42,&H00FFFFFF,&H000000FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2,0,7,20,20,20,1\n\n".to_owned())));
     };
-    let section_end = lower[section_start + section_name.len()..]
-        .find('[')
-        .map_or(ass.len(), |at| section_start + section_name.len() + at);
-    let body = &ass[section_start..section_end];
+    let body = &ass[section.content_start..section.end];
     let format = body
         .lines()
         .find_map(|line| {
@@ -467,7 +518,7 @@ fn style_insertion(ass: &str) -> crate::Result<Option<(usize, String)>> {
     let line = format!("Style: {style}\n");
     let at = body
         .rfind('\n')
-        .map_or(section_end, |index| section_start + index + 1);
+        .map_or(section.end, |index| section.content_start + index + 1);
     Ok(Some((at, line)))
 }
 
@@ -762,6 +813,24 @@ mod tests {
     }
 
     #[test]
+    fn xml_root_attributes_with_terminator_characters_are_not_self_closing() -> crate::Result<()> {
+        let old = "<i marker=\"/>\"><meta>keep</meta></i>";
+        let fetched = "<i><d p='2,1,25,0'>new</d></i>";
+        let merged = merge_xml_preserving(old, fetched)?;
+        assert_eq!(
+            merged.xml,
+            "<i marker=\"/>\"><meta>keep</meta><d p='2,1,25,0'>new</d></i>"
+        );
+
+        let self_closing = merge_xml_preserving("<i marker=\"/>\" />", fetched)?;
+        assert_eq!(
+            self_closing.xml,
+            "<i marker=\"/>\" ><d p='2,1,25,0'>new</d></i>"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn xml_rejects_malformed_and_incompatible_documents() {
         assert!(merge_xml_preserving("<i><d>", "<i/>").is_err());
         assert!(merge_xml_preserving("<i/>", "<i><d>").is_err());
@@ -792,6 +861,23 @@ mod tests {
         );
         assert!(merged.ass.contains("new, with comma\\Nline"));
         assert!(merged.ass.contains("\\pos(640,628)"));
+        Ok(())
+    }
+
+    #[test]
+    fn ass_section_comment_with_brackets_does_not_end_styles_section() -> crate::Result<()> {
+        let old = "[Script Info]\n\n[V4+ Styles]\n; [custom note]\nFormat: Name, Fontname, Fontsize, PrimaryColour\nStyle: Custom,Arial,20,&H00FFFFFF\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n";
+        let fetched = "<i><d p='3,1,25,0'>new</d></i>";
+        let merged = merge_ass_preserving(old, fetched, None)?;
+        assert_eq!(merged.appended_events, 1);
+        assert!(
+            merged
+                .ass
+                .contains("[V4+ Styles]\n; [custom note]\nFormat:")
+        );
+        assert!(merged.ass.contains("Style: Custom,Arial,20,&H00FFFFFF\n"));
+        assert!(merged.ass.contains("Style: Danmaku,Arial,42,&H00FFFFFF\n"));
+        assert!(merged.ass.contains("[Events]\nFormat:"));
         Ok(())
     }
 

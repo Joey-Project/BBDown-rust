@@ -115,7 +115,7 @@ impl BiliClient {
         options: DanmakuUpdateOptions,
     ) -> Result<StagedDanmakuUpdate> {
         let archive_path = archive_path.as_ref();
-        let resolved_path = archive_storage_path(archive_path)?;
+        let resolved_path = resolve_destination_path(archive_path)?;
         let original = read_optional_bytes(&resolved_path)?;
         let archive = match &original {
             Some(bytes) => serde_json::from_slice::<DownloadArchive>(bytes)?,
@@ -313,8 +313,30 @@ async fn download_danmaku_source(
 }
 
 fn read_destination(logical_path: &Path) -> Result<(PathBuf, Option<Vec<u8>>)> {
-    let path = archive_storage_path(logical_path)?;
+    let path = resolve_destination_path(logical_path)?;
     Ok((path.clone(), read_optional_bytes(&path)?))
+}
+
+// The canonical parent resolves every existing ancestor symlink; joining the leaf also
+// represents a not-yet-created file. This path is the chosen-destination signal. File bytes
+// are checked separately, so benign inode or timestamp changes do not reject publication.
+fn resolve_destination_path(logical_path: &Path) -> Result<PathBuf> {
+    let storage_path = archive_storage_path(logical_path)?;
+    let absolute_path = super::absolute_path(&storage_path);
+    let parent = absolute_path.parent().ok_or_else(|| {
+        Error::InvalidInput(format!(
+            "danmaku destination has no parent directory: {}",
+            logical_path.display()
+        ))
+    })?;
+    let file_name = absolute_path.file_name().ok_or_else(|| {
+        Error::InvalidInput(format!(
+            "danmaku destination has no file name: {}",
+            logical_path.display()
+        ))
+    })?;
+    let resolved_parent = std_fs::canonicalize(parent).map_err(Error::Io)?;
+    Ok(resolved_parent.join(file_name))
 }
 
 fn read_optional_bytes(path: &Path) -> Result<Option<Vec<u8>>> {
@@ -497,7 +519,7 @@ fn verify_original(file: &StagedDanmakuFile) -> Result<()> {
 }
 
 fn verify_destination_and_original(file: &StagedDanmakuFile) -> Result<()> {
-    let current_path = archive_storage_path(&file.logical_path)?;
+    let current_path = resolve_destination_path(&file.logical_path)?;
     if current_path != file.path {
         return Err(Error::InvalidInput(format!(
             "danmaku destination changed after staging: {}",
@@ -603,11 +625,12 @@ fn unique_candidate(parent: &Path, label: &str) -> PathBuf {
 mod tests {
     use super::{
         ReplaceFailure, StagedDanmakuFile, create_unique_directory, publish_file_group,
-        publish_file_group_with, publish_file_group_with_ops, replace_target, rollback_target,
+        publish_file_group_with, publish_file_group_with_ops, replace_target,
+        resolve_destination_path, rollback_target,
     };
     use crate::DownloadFileKind;
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::Path;
 
     fn require_err<T, E: std::fmt::Debug>(
         result: std::result::Result<T, E>,
@@ -619,14 +642,18 @@ mod tests {
         }
     }
 
-    fn staged(path: PathBuf, original: &[u8], output: &[u8]) -> StagedDanmakuFile {
-        StagedDanmakuFile {
-            logical_path: path.clone(),
-            path,
+    fn staged(
+        path: &Path,
+        original: &[u8],
+        output: &[u8],
+    ) -> std::result::Result<StagedDanmakuFile, crate::Error> {
+        Ok(StagedDanmakuFile {
+            logical_path: path.to_path_buf(),
+            path: resolve_destination_path(path)?,
             output_bytes: output.to_vec(),
             expected_original_bytes: Some(original.to_vec()),
             kind: DownloadFileKind::Danmaku,
-        }
+        })
     }
 
     #[cfg(unix)]
@@ -635,7 +662,7 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let path = temp.path().join("danmaku.xml");
         fs::write(&path, b"old")?;
-        let file = staged(path.clone(), b"old", b"new");
+        let file = staged(&path, b"old", b"new")?;
         let mut permissions = fs::metadata(&path)?.permissions();
         permissions.set_readonly(true);
         fs::set_permissions(&path, permissions)?;
@@ -651,7 +678,7 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let path = temp.path().join("danmaku.xml");
         fs::write(&path, b"old")?;
-        let file = staged(path.clone(), b"old", b"new");
+        let file = staged(&path, b"old", b"new")?;
         fs::write(&path, b"changed")?;
 
         let error = require_err(
@@ -669,7 +696,7 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let disappeared = temp.path().join("disappeared.xml");
         fs::write(&disappeared, b"old")?;
-        let disappeared_stage = staged(disappeared.clone(), b"old", b"new");
+        let disappeared_stage = staged(&disappeared, b"old", b"new")?;
         fs::remove_file(&disappeared)?;
         let disappeared_error = require_err(
             publish_file_group(&[disappeared_stage]),
@@ -684,7 +711,7 @@ mod tests {
         let missing = temp.path().join("missing.xml");
         let missing_stage = StagedDanmakuFile {
             logical_path: missing.clone(),
-            path: missing.clone(),
+            path: resolve_destination_path(&missing)?,
             output_bytes: b"new".to_vec(),
             expected_original_bytes: None,
             kind: DownloadFileKind::Danmaku,
@@ -706,7 +733,7 @@ mod tests {
         let unreadable_error = require_err(
             publish_file_group(&[StagedDanmakuFile {
                 logical_path: unreadable.clone(),
-                path: unreadable,
+                path: resolve_destination_path(&unreadable)?,
                 output_bytes: b"new".to_vec(),
                 expected_original_bytes: None,
                 kind: DownloadFileKind::Danmaku,
@@ -734,7 +761,7 @@ mod tests {
         symlink(&first_target, &link)?;
         let file = StagedDanmakuFile {
             logical_path: link.clone(),
-            path: first_target.clone(),
+            path: resolve_destination_path(&link)?,
             output_bytes: b"new".to_vec(),
             expected_original_bytes: Some(b"old".to_vec()),
             kind: DownloadFileKind::Danmaku,
@@ -750,6 +777,106 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn publisher_rejects_parent_directory_symlink_retargeting() -> anyhow::Result<()> {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir()?;
+        let first_directory = temp.path().join("first-directory");
+        let second_directory = temp.path().join("second-directory");
+        let alias = temp.path().join("selected-directory");
+        fs::create_dir(&first_directory)?;
+        fs::create_dir(&second_directory)?;
+        let first_target = first_directory.join("danmaku.xml");
+        let second_target = second_directory.join("danmaku.xml");
+        fs::write(&first_target, b"same old bytes")?;
+        fs::write(&second_target, b"same old bytes")?;
+        symlink(&first_directory, &alias)?;
+        let logical_path = alias.join("danmaku.xml");
+        let file = StagedDanmakuFile {
+            logical_path: logical_path.clone(),
+            path: resolve_destination_path(&logical_path)?,
+            output_bytes: b"new output".to_vec(),
+            expected_original_bytes: Some(b"same old bytes".to_vec()),
+            kind: DownloadFileKind::Danmaku,
+        };
+        fs::remove_file(&alias)?;
+        symlink(&second_directory, &alias)?;
+
+        let error = require_err(
+            publish_file_group(&[file]),
+            "retargeted parent directory symlink must be rejected",
+        )?;
+
+        assert!(error.to_string().contains("destination changed"));
+        assert_eq!(fs::read(first_target)?, b"same old bytes");
+        assert_eq!(fs::read(second_target)?, b"same old bytes");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn publisher_rejects_parent_retarget_when_both_destinations_are_absent() -> anyhow::Result<()> {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir()?;
+        let first_directory = temp.path().join("first-directory");
+        let second_directory = temp.path().join("second-directory");
+        let alias = temp.path().join("selected-directory");
+        fs::create_dir(&first_directory)?;
+        fs::create_dir(&second_directory)?;
+        symlink(&first_directory, &alias)?;
+        let logical_path = alias.join("danmaku.xml");
+        let file = StagedDanmakuFile {
+            logical_path: logical_path.clone(),
+            path: resolve_destination_path(&logical_path)?,
+            output_bytes: b"new output".to_vec(),
+            expected_original_bytes: None,
+            kind: DownloadFileKind::Danmaku,
+        };
+        fs::remove_file(&alias)?;
+        symlink(&second_directory, &alias)?;
+
+        let error = require_err(
+            publish_file_group(&[file]),
+            "retargeted absent destination must be rejected",
+        )?;
+
+        assert!(error.to_string().contains("destination changed"));
+        assert!(!first_directory.join("danmaku.xml").exists());
+        assert!(!second_directory.join("danmaku.xml").exists());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn publisher_accepts_stable_parent_directory_symlink() -> anyhow::Result<()> {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir()?;
+        let target_directory = temp.path().join("target-directory");
+        let alias = temp.path().join("selected-directory");
+        fs::create_dir(&target_directory)?;
+        let target = target_directory.join("danmaku.xml");
+        fs::write(&target, b"old")?;
+        symlink(&target_directory, &alias)?;
+        let logical_path = alias.join("danmaku.xml");
+        let file = StagedDanmakuFile {
+            logical_path: logical_path.clone(),
+            path: resolve_destination_path(&logical_path)?,
+            output_bytes: b"new".to_vec(),
+            expected_original_bytes: Some(b"old".to_vec()),
+            kind: DownloadFileKind::Danmaku,
+        };
+
+        publish_file_group(&[file])?;
+
+        assert_eq!(fs::read(target)?, b"new");
+        assert!(fs::symlink_metadata(alias)?.file_type().is_symlink());
+        Ok(())
+    }
+
     #[test]
     fn publisher_rolls_back_prior_files_after_nth_replacement_failure() -> anyhow::Result<()> {
         let temp = tempfile::tempdir()?;
@@ -758,8 +885,8 @@ mod tests {
         fs::write(&first_path, b"first-old")?;
         fs::write(&second_path, b"second-old")?;
         let files = [
-            staged(first_path.clone(), b"first-old", b"first-new"),
-            staged(second_path.clone(), b"second-old", b"second-new"),
+            staged(&first_path, b"first-old", b"first-new")?,
+            staged(&second_path, b"second-old", b"second-new")?,
         ];
         let mut calls = 0;
 
@@ -801,9 +928,10 @@ mod tests {
         let second_path = temp.path().join("second.xml");
         fs::write(&first_path, b"first-old")?;
         fs::write(&second_path, b"second-old")?;
+        let resolved_second_path = resolve_destination_path(&second_path)?;
         let files = [
-            staged(first_path.clone(), b"first-old", b"first-new"),
-            staged(second_path.clone(), b"second-old", b"second-new"),
+            staged(&first_path, b"first-old", b"first-new")?,
+            staged(&second_path, b"second-old", b"second-new")?,
         ];
         let mut calls = 0;
 
@@ -825,7 +953,7 @@ mod tests {
                 }
             },
             |replacement| {
-                if replacement.target == second_path {
+                if replacement.target == resolved_second_path {
                     Err(std::io::Error::other("injected rollback failure"))
                 } else {
                     rollback_target(replacement)

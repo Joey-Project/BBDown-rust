@@ -996,7 +996,9 @@ async fn main() -> bbdown_core::Result<()> {
 ```
 
 The stage captures expected contents before publication and revalidates them before choosing the
-destination. Coordinate File Provider materialization and any concurrent writer around this
+destination. `StagedDanmakuFile::path()` reports the selected destination resolved through
+parent-directory symlinks; publication revalidates logical aliases against that destination.
+Coordinate File Provider materialization and any concurrent writer around this
 operation; validation detects changes but does not lock external writers. Detected publication
 errors trigger rollback, and errors that prevent complete rollback identify retained recovery
 files. A successful call does not provide crash or power-loss atomicity across the sidecars and
