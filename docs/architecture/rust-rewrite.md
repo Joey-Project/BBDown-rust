@@ -26,11 +26,11 @@ constructor paths so downstream projects do not need struct literals for ordinar
 The CLI uses the same public builders, which makes it an in-repo integration test surface for the
 crate API.
 
-Output models remain typed data surfaces. The current crate version is `0.6.0`, a post-`0.5.0`
-development line focused on credential lifecycle behavior: profile metadata, health policy,
-access-key renewal, provider-aware refresh secrets, provider-specific refresh clients, credential
-preflight, and safer multi-account updates. Callers should read fields or serialize output values
-rather than treating output structs as stable construction targets.
+Output models remain typed data surfaces. The current crate version is `0.7.0`, a post-`0.6.0`
+development line adding explicit CDN host pools, bounded probing, parallel Range transfer, and an
+independent PGC Web playurl route selector. Catalog snapshots are CLI inputs selected by users;
+they do not implement an automatic routing policy. Callers should read fields or serialize output
+values rather than treating output structs as stable construction targets.
 
 ## Resolver Model
 
@@ -628,7 +628,7 @@ DASH video ids plus optional labels derived from `accept_description` and `suppo
 human summary prints the same ids alongside video/audio stream summaries, while JSON callers can
 select exact DASH streams through `DownloadOptions::stream_selection`.
 
-The reusable crate is now on the `0.6.0` development line after the published `0.5.0` release, so
+The reusable crate is now on the `0.7.0` development line after the published `0.6.0` release, so
 public configuration structs are intentionally hardened through constructor and builder APIs rather
 than preserving local struct-literal experiments. Embedders should create configuration with those APIs, including
 `ClientConfig::default().with_*`, `EndpointConfig::default().with_*`,

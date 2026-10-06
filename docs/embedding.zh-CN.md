@@ -8,12 +8,10 @@
 typed Bilibili metadata、下载计划、媒体下载、字幕旁路文件、弹幕旁路文件、二维码登录状态
 、批量集合解析和受限区域代理诊断，但不希望 shell out 到 CLI 的场景。
 
-当前 crate 版本是 `0.6.0`，属于已发布 `0.5.0` 之后的开发线，重点是 credential lifecycle
-integration：profile status、health policy、access-key renewal、provider-aware refresh
-secrets、provider-specific refresh clients、credential preflight，以及更安全的 multi-account
-updates。配置应优先
-使用构造器和 builder 风格 API，并把 metadata 和 plan 结构体视为只读输出表面。这样在 crate 成熟过程
-中新增字段时，嵌入代码更不容易受影响。
+当前 crate 版本是 `0.7.0`，属于已发布 `0.6.0` 之后的开发线，增加了显式 CDN host pool、探测、
+并行传输选项，以及独立的 PGC Web playurl 路由选择器。这些网络操作仍由调用方显式选择；crate
+不会根据 CLI 内置目录自动路由请求。配置应优先使用构造器和 builder 风格 API，并把 metadata
+和 plan 结构体视为只读输出表面。这样在 crate 成熟过程中新增字段时，嵌入代码更不容易受影响。
 
 ## 仅规划
 

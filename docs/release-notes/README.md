@@ -8,6 +8,8 @@ embedding-facing shape of each shipped line.
 
 ## Versions
 
+- [v0.7.0](v0.7.0.md): opt-in CDN host selection, bounded probing, parallel Range transfer,
+  bundled network catalogs, and independent PGC Web playurl routing.
 - [v0.6.0](v0.6.0.md): credential lifecycle integration for profile status, provider-aware
   access-key refresh, credential preflight, and safer multi-account updates.
 - [v0.5.0](v0.5.0.md): downloader and embedding polish for progress callbacks, cancellation,

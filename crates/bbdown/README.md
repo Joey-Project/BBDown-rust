@@ -16,9 +16,10 @@ video feeds, and space dynamic video feeds.
 
 Install with `cargo add bbdown-core`, then import with `bbdown_core`.
 
-The current crate version is `0.6.0`, a post-`0.5.0` development line focused on credential
-lifecycle integration: profile status, health policy, access-key renewal, provider-aware refresh
-secrets, provider-specific refresh clients, credential preflight, and safer multi-account updates.
+The current crate version is `0.7.0`, a post-`0.6.0` development line focused on opt-in
+networking and downloader support, including CDN selection, probing, parallel transfer, and
+catalogs, alongside an independent PGC web-route API. PGC region and proxy resolution stays
+separate from media CDN selection and transfer.
 Embedding projects should prefer constructor and builder-style APIs such as
 `ClientConfig::default().with_*()`, `EndpointConfig::default().with_*()`,
 `RestrictedAreaConfig::default().with_*()`, `DownloadOptions::new(...).with_*()`,
