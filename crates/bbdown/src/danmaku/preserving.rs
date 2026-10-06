@@ -479,7 +479,8 @@ fn parsed_renderer_key(start: &str, text: &str) -> Option<(String, String, u8, S
         (4, rest.split_once(')')?.1)
     } else if let Some(rest) = overrides.strip_prefix("\\an8\\pos(") {
         (5, rest.split_once(')')?.1)
-    } else if let Some(rest) = overrides.strip_prefix("\\move(") {
+    } else {
+        let rest = overrides.strip_prefix("\\move(")?;
         let (coordinates, suffix) = rest.split_once(')')?;
         let coordinates = coordinates.split(',').collect::<Vec<_>>();
         if coordinates.len() != 4 || coordinates.iter().any(|part| part.parse::<f64>().is_err()) {
@@ -488,8 +489,6 @@ fn parsed_renderer_key(start: &str, text: &str) -> Option<(String, String, u8, S
         let x1 = coordinates[0].parse::<f64>().ok()?;
         let x2 = coordinates[2].parse::<f64>().ok()?;
         (if x1 < x2 { 6 } else { 1 }, suffix)
-    } else {
-        return None;
     };
     let after_size = after_geometry.strip_prefix("\\fs")?;
     let (font_text, color_text) = after_size.split_once("\\c&H")?;

@@ -26,7 +26,13 @@ superseded_by:
   crash/power-loss atomicity promise.
 - The full `just ci` gate passed: formatting, workspace all-target Clippy, Rust 1.95.0 workspace
   check, workspace tests (754 passed, 3 ignored), CLI e2e repeat (153 passed), and
-  `cargo publish --dry-run -p bbdown-core --locked --allow-dirty` (29 files packaged; no upload occurred).
+  `cargo publish --dry-run -p bbdown-core --locked --allow-dirty` (29 files packaged; no upload
+  occurred).
+- The initial full gate passed on Rust 1.95.0. After the separate `question_mark` lint correction,
+  the CI-matching rerun `env RUSTUP_TOOLCHAIN=1.99.0 just ci` also exited 0 in 105.82 seconds with
+  rustc 1.99.0 (`b940084d7`), cargo 1.99.0, and Clippy 0.1.99. The rerun included formatting,
+  all-target Clippy, the explicit Rust 1.95.0 MSRV check, 754 workspace tests passed / 3 ignored, a
+  separate CLI e2e repeat (153 passed), and the publish dry-run above.
 - No `v0.8.0` GitHub Release or crates.io publication is claimed. Those remain pending until the
   feature PR merges and the protected RC/promotion workflows run.
 
