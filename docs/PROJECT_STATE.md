@@ -69,9 +69,9 @@
   distribution. The September 28 baseline used another fixed host, so its speed ratios are not
   directly comparable. Matching output hashes verify the produced files across these runs, not
   universal content identity across all CDN edges. See the workstream journal.
-- `v0.7.0` release preparation is complete for the existing opt-in networking/downloader features
-  and independent PGC web-route API. The release remains unpublished; the next step is protected RC
-  creation and promotion. See
+- `v0.7.0` is published through the protected RC and promotion flow for the existing opt-in
+  networking/downloader features and independent PGC web-route API. GitHub Release and crates.io
+  publication succeeded on 2026-10-06. See
   `docs/project_journal/2026/10/2026-10-05-v0-7-release-prep.md`.
 - Automatic routing, persistent route health, and adaptive tuning remain deferred. Candidate
   exclusion, cross-candidate retry, and HTTP response-body byte diagnostics are future scheduler

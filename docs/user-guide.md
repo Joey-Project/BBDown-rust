@@ -26,9 +26,9 @@ The crates.io publish target is the reusable `bbdown-core` library package. Use
 `just publish-dry-run` for a local locked dry run that tolerates an uncommitted worktree, and use
 `just publish-dry-run-strict` or `cargo publish --dry-run -p bbdown-core --locked` to reproduce the
 clean CI gate. The `bbdown-cli` package is marked `publish = false`; install or distribute the CLI
-through GitHub release archives instead. The current development line is `0.7.0` after the published
-`0.6.0` release and focuses on opt-in CDN selection, probing and parallel transfer, bundled network
-catalogs, and independent PGC Web playurl routing. These controls require explicit selection; the
+through GitHub release archives instead. The current published release is `0.7.0`, following the
+published `0.6.0` release. It focuses on opt-in CDN selection, probing and parallel transfer, bundled
+network catalogs, and independent PGC Web playurl routing. These controls require explicit selection; the
 catalogs are snapshots, and listed endpoints are checked only when a user runs a probe or selects a
 route. Embedding callers should still prefer
 constructors such as `DownloadOptions::new`, `StreamSelection::new`, and
