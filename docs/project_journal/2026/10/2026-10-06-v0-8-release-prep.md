@@ -5,7 +5,7 @@ status: completed
 created: 2026-10-06
 updated: 2026-10-08
 branch:
-pr:
+pr: 88
 supersedes: []
 superseded_by:
 ---
@@ -61,6 +61,15 @@ superseded_by:
   all-target Clippy, and the Rust 1.95.0 MSRV check passed. Workspace suites passed 761 tests with
   3 ignored and 0 failed; the separate CLI e2e repeat passed 153 tests. The `bbdown-core 0.8.0`
   publish dry-run verified 29 packaged files and uploaded nothing.
+- The release tree now includes the feature-side single-decode fix and its actual-renderer ASS-only
+  regression. Its comparison against the feature branch remains limited to 14 release-only files.
+  At release gate HEAD `9929ba2`, `env RUSTUP_TOOLCHAIN=1.99.0 just ci` exited 0 in 44.44 seconds
+  (`/private/tmp/bbdown-danmaku-preserve-check.20261008/release-entity-ci.log`, 75,412 bytes).
+  Formatting, strict all-target Clippy, and the explicit Rust 1.95.0 MSRV check passed. Workspace
+  suites passed 763 tests with 3 ignored and 0 failed: CLI unit (67), CLI e2e (154), live e2e (9
+  passed, 2 ignored), core (529), CDN benchmark (3 passed, 1 ignored), and public API (1). The
+  separate CLI e2e repeat passed 154 tests. The `bbdown-core 0.8.0` publish dry-run verified 29
+  packaged files and uploaded nothing.
 - No `v0.8.0` GitHub Release or crates.io publication is claimed. Those remain pending until the
   feature PR merges and the protected RC/promotion workflows run.
 
@@ -73,5 +82,6 @@ superseded_by:
 
 - Feature workstream: `docs/project_journal/2026/10/2026-10-06-danmaku-preserving-refresh.md`.
 - Feature dependency: PR [#87](https://github.com/Joey-Project/BBDown-rust/pull/87).
+- Release-prep PR: [#88](https://github.com/Joey-Project/BBDown-rust/pull/88).
 - Bilingual notes: `docs/release-notes/v0.8.0.md` and `docs/release-notes/v0.8.0.zh-CN.md`.
 - Gate evidence: full `just ci` passed; workspace suite counts are recorded above.
