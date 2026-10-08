@@ -21,9 +21,11 @@ superseded_by:
 ## Current State
 
 - `bbdown-core`, `bbdown-cli`, the CLI's local core dependency, and `Cargo.lock` are set to `0.8.0`.
-- Release notes and indexes describe opt-in preserving refresh, staged publication, ASS-only
-  baseline ambiguity, caller coordination, detected-error recovery, and the lack of a multi-file
-  crash/power-loss atomicity promise.
+- Release notes describe opt-in preserving refresh, positive comment-ID-first XML deduplication
+  with complete-parameter-and-decoded-text fallback for invalid IDs, and full ASS regeneration
+  from merged XML. When no XML baseline exists, fetched XML initializes generated files; ASS-only
+  historical events are not backfilled. They also describe staged publication, caller coordination,
+  detected-error recovery, and the lack of a multi-file crash/power-loss atomicity promise.
 - The full `just ci` gate passed: formatting, workspace all-target Clippy, Rust 1.95.0 workspace
   check, workspace tests (754 passed, 3 ignored), CLI e2e repeat (153 passed), and
   `cargo publish --dry-run -p bbdown-core --locked --allow-dirty` (29 files packaged; no upload

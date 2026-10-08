@@ -42,8 +42,7 @@ pub use credentials::{
     DEFAULT_CREDENTIAL_PROFILE,
 };
 pub use danmaku::{
-    DanmakuAssMerge, DanmakuFormat, DanmakuFormats, DanmakuXmlMerge, merge_ass_preserving,
-    merge_xml_append_only, merge_xml_preserving,
+    DanmakuFormat, DanmakuFormats, DanmakuXmlMerge, merge_xml_append_only, merge_xml_preserving,
 };
 pub use download::{
     CdnProbeResult, DanmakuAssStatistics, DanmakuUpdateOptions, DanmakuUpdatePolicy,

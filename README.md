@@ -21,8 +21,9 @@ Web playurl routes; it does not introduce automatic CDN routing. It also support
 explicit download archive for duplicate preflight, CLI replace / keep-both / cancel decisions, and
 append-only danmaku sidecar updates for already-downloaded archive entries.
 The project is now on the `0.8.0` source line.
-Its preserving update policy retains unknown XML details and existing ASS styles/events, then
-publishes staged sidecars together with the archive.
+Its preserving update policy deduplicates XML comments by positive IDs (falling back to complete
+`p` values and decoded text for invalid IDs), retains XML history, and regenerates selected ASS output
+from the merged XML before publishing staged sidecars with the archive.
 Input parsing covers normal videos, PGC and intl episodes, PUGV/cheese courses, B23 short links,
 favorite lists, space videos, collections, series, homepage recommendations, watch history,
 watch-later lists, following video feeds, and space dynamic video feeds. URL parsing includes canonical
@@ -176,8 +177,13 @@ entries by stable aid/cid identity, downloads the current XML danmaku payload, a
 new comments into `danmaku.xml`, regenerates selected derived formats such as `danmaku.ass`, and
 saves the updated sidecar paths back to the archive. XML is always the canonical update target;
 `--danmaku-format ass` adds or refreshes ASS from the merged XML. The opt-in
-`--update-policy preserve` retains unknown XML structure and existing ASS styles/events, then
-publishes the staged sidecars with the archive; `legacy` remains the default.
+`--update-policy preserve` keeps the original XML history and publishes the staged sidecars with the
+archive; each selected ASS file is regenerated from the complete merged XML, so old custom ASS
+styles and events are not retained. XML comments with the same valid positive ASCII decimal `p[7]` id
+match even if fetched metadata or text changed; a different id is appended even when its text
+matches. Missing, zero, or invalid ids fall back to the complete `p` attribute plus decoded text.
+When no XML baseline exists, old ASS events are not used as history; ASS is generated from the
+fetched XML payload. `legacy` remains the default.
 
 `ss` and `md` inputs require an explicit selection in non-interactive mode:
 

@@ -14,8 +14,8 @@ superseded_by:
 
 ## Summary
 
-- Add opt-in preserving refresh for existing archive-backed danmaku files while keeping the
-  default legacy update behavior and JSON report unchanged.
+- Add an opt-in XML-history-preserving refresh for archive-backed danmaku files while keeping the
+  default legacy update behavior. Selected ASS output is regenerated from the complete merged XML.
 - The implementation is complete in feature PR #87.
 
 ## Current State
@@ -25,6 +25,16 @@ superseded_by:
   default. The new `Preserve` policy stages XML, optional ASS, and archive JSON before grouped
   publication. The core exposes staged outputs and a group publisher with content/destination
   revalidation, detected-error rollback, and recovery-location reporting.
+- Current `Preserve` identity prefers a positive ASCII decimal comment id in `p[7]`, canonicalizing
+  leading zeros. A matching id remains the same XML comment if fetched metadata or text changes;
+  a different id appends even with matching text. Missing, zero, or invalid ids fall back to the
+  complete `p` attribute and decoded text. The original XML history remains in order. Every selected
+  ASS file is regenerated from the complete merged XML, so old custom styles and events are not
+  retained. With no XML baseline, old ASS events do not count as history; output comes from fetched
+  XML only. ASS statistics report `generated_events`. No standalone ASS event matcher or merge
+  helper is exposed; the existing XML merge and staged archive APIs remain the supported surfaces.
+  This current contract supersedes earlier implementation and test notes below that describe
+  preserving or merging old ASS content.
 - The request was transferred from the Telegram-Video-Downloader task. Its bot-side consumer pinned
   BBDown-rust revision `0a94b071bbc1897ec1d1fec9dfcf7883c5754a15`; its dependency update remains a
   downstream follow-up.
@@ -59,7 +69,8 @@ superseded_by:
   offset. Regression cases cover comment/CDATA namespace shadows and a later append with an
   incompatible namespace. The English and Chinese embedding examples also use the synchronous
   `staged.publish()?` call.
-- A 2026-10-08 follow-up found a double-decoding bug in preservation matching: `roxmltree` had
+- An earlier implementation checkpoint found a double-decoding bug in ASS-only preservation
+  matching: `roxmltree` had
   already decoded XML text, but the old-ASS parsing path passed that text through `xml_unescape`
   again. This could miss an existing old-ASS-only event containing a literal entity. The fix routes
   already-decoded text directly to the renderer through a small private helper; the raw-XML path
@@ -81,10 +92,11 @@ superseded_by:
   The `bbdown-core` 0.7.0 publish dry-run verified 29 packaged files and uploaded nothing. The
   broader danmaku suite passed 36 tests, and formatting checks passed. The new test's strict Clippy
   `expect_used` finding was corrected before this successful full gate.
-- These regression inputs are synthetic/mock; no new live Bilibili two-time comparison was run.
-  XML identity remains the full `p` attribute plus decoded text, so a source rewrite of `p` may be
-  treated as a new item. ASS-only input has no original comment IDs; its fallback identity is an
-  approximation based on time and text plus recognized font, color, and mode.
+- These earlier regression inputs are synthetic/mock; no new live Bilibili two-time comparison was
+  run. Before the current stable-id contract, XML identity used the full `p` attribute plus decoded
+  text, so a source rewrite of `p` could be treated as a new item. The previous ASS-only matching
+  design had no original comment IDs and used time/text plus recognized font, color, and mode as an
+  approximation; the current design rebuilds ASS and does not match old ASS events.
 - `cargo +1.99.0 test -p bbdown-core --lib danmaku::preserving::tests --locked` passed (12 passed,
   0 failed); strict core Clippy passed. The final
   `env RUSTUP_TOOLCHAIN=1.99.0 just ci` gate exited 0 in 46.72 seconds with formatting,
@@ -111,3 +123,12 @@ superseded_by:
   core library (528), CDN benchmark (3 passed, 1 ignored), and public API (1). The separate CLI e2e
   repeat passed 153 tests. The core `0.7.0` publish dry-run verified 29 packaged files and uploaded
   nothing; the existing `0.7.0` registry warning was expected.
+- Under the current ID-first XML-history and complete ASS-rebuild contract, the final feature gate
+  `env RUSTUP_TOOLCHAIN=1.99.0 just ci` exited 0 in 56.78 seconds
+  (`/private/tmp/bbdown-danmaku-id-rebuild.20261008/feature-ci-final.log`, 75,465 bytes). Formatting,
+  strict workspace Clippy, and the Rust 1.95 MSRV check passed. Workspace suites passed 763 tests,
+  with 3 ignored and 0 failed: CLI unit (67), CLI e2e (154), live e2e (9 passed, 2 ignored), core
+  (529), CDN benchmark (3 passed, 1 ignored), and public API (1). A separate CLI e2e repeat passed
+  154 tests and is not added to the workspace total. The `bbdown-core` 0.7.0 publish dry-run
+  verified 29 files and uploaded nothing. These regression fixtures use synthetic/mock XML; no new
+  live Bilibili source comparison was run.

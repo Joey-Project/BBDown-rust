@@ -956,7 +956,8 @@ Callers that manage sidecar storage themselves can use `merge_xml_append_only(ex
 to apply the same XML-level append-only merge without touching `DownloadArchive`.
 
 Use `DanmakuUpdatePolicy::Preserve` with `stage_preserving_danmaku_update_for_archive_file` when
-an embedding application must preserve existing files and publish the archive with the sidecars.
+an embedding application must retain XML history and publish the archive with the sidecars. ASS
+output is regenerated from merged XML rather than preserving the previous ASS document.
 The staged value exposes an immutable report, updated archive snapshot, staged file list, and
 per-file ASS event statistics. Each staged file exposes its destination path, expected original
 bytes when present, and complete output bytes. The caller can inspect those values before consuming
@@ -987,7 +988,7 @@ async fn main() -> bbdown_core::Result<()> {
         println!("staged {} bytes for {}", file.output_bytes().len(), file.path().display());
     }
     for stats in staged.ass_statistics() {
-        println!("ASS appended {} events", stats.appended_events);
+        println!("ASS generated {} events", stats.generated_events);
     }
     let report = staged.publish()?;
     println!("updated {} entries", report.entries.len());
@@ -1002,9 +1003,13 @@ Coordinate File Provider materialization and any concurrent writer around this
 operation; validation detects changes but does not lock external writers. Detected publication
 errors trigger rollback, and errors that prevent complete rollback identify retained recovery
 files. A successful call does not provide crash or power-loss atomicity across the sidecars and
-archive. `Preserve` keeps all existing XML structure and ASS styles/events, then appends new
-comments/events. ASS-only entries use their existing event text as a coarse baseline, so matching
-may be ambiguous when the original XML metadata is unavailable.
+archive. `Preserve` retains XML history and appends only unmatched fetched comments. A positive ASCII
+decimal id in `p[7]` is preferred and canonicalized across leading zeros: the same id matches even
+when fetched metadata or text changes, while a different id appends even when text matches. Missing,
+zero, or invalid ids fall back to the complete `p` attribute plus decoded text. Every selected ASS
+file is rebuilt from the complete merged XML; old custom styles and events are discarded. Without an
+XML baseline, old ASS events are not used as history and generated ASS reflects only the fetched XML
+payload. `ass_statistics()` reports `generated_events` for each ASS output.
 
 ## Endpoint Overrides
 

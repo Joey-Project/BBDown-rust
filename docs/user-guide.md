@@ -466,15 +466,18 @@ archive file must not overlap the updated sidecar paths, and `--json` prints a t
 per-entry existing, fetched, and appended comment counts.
 
 The default `--update-policy legacy` keeps this behavior for compatibility. Opt into
-`--update-policy preserve` to retain unknown XML nodes, attributes, comments, duplicate entries,
-ASS styles, and existing ASS events while appending only newly fetched content. XML remains the
-canonical source. If only ASS exists, its old events are preserved and used as a coarse baseline;
-without XML metadata that fallback can be ambiguous. Strict mode stages the selected sidecars and
-archive JSON as one publication group and reports ASS event counts separately from XML comment
-counts. Detected errors leave originals in place and identify recovery files when rollback cannot
-finish. This does not promise crash or power-loss atomicity across files. For synchronized folders
-such as File Provider directories, coordinate concurrent writers and materialization around the
-command.
+`--update-policy preserve` to retain XML history and append only fetched comments that do not match
+it. A positive decimal `p[7]` comment id is the preferred identity and is canonicalized across
+leading zeros: the same id remains matched when fetched metadata or text changes, while a different
+id is appended even if its text matches. Missing, zero, or invalid ids fall back to the complete
+`p` attribute and decoded text. XML remains the canonical source. Every selected ASS file is
+regenerated from the complete merged XML, so custom ASS styles and events are not retained. If the
+archive has no XML baseline, old ASS events are not used as history; output is generated from the
+fetched XML payload. Strict mode stages the selected sidecars and archive JSON as one publication
+group, and its ASS statistics report generated event counts separately from XML comment counts.
+Detected errors leave originals in place and identify recovery files when rollback cannot finish.
+This does not promise crash or power-loss atomicity across files. For synchronized folders such as
+File Provider directories, coordinate concurrent writers and materialization around the command.
 
 ```bash
 bbdown danmaku update av170001 --archive-file downloads/archive.json \

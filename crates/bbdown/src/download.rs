@@ -12840,8 +12840,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn preserving_danmaku_stage_keeps_old_xml_and_custom_ass_until_publish()
-    -> anyhow::Result<()> {
+    async fn preserving_danmaku_stage_rebuilds_ass_from_merged_xml_on_publish() -> anyhow::Result<()>
+    {
         let server = MockServer::start();
         let plan = test_plan(&server);
         let temp = tempfile::tempdir()?;
@@ -12895,8 +12895,7 @@ mod tests {
         assert_eq!(staged.files().len(), 2);
         assert_eq!(staged.ass_statistics().len(), 1);
         assert_eq!(staged.ass_statistics()[0].path, ass_path);
-        assert_eq!(staged.ass_statistics()[0].preserved_existing_events, 1);
-        assert_eq!(staged.ass_statistics()[0].appended_events, 1);
+        assert_eq!(staged.ass_statistics()[0].generated_events, 2);
 
         let report = staged.publish()?;
 
@@ -12905,9 +12904,73 @@ mod tests {
         assert!(merged_xml.contains("<d p=\"1,1,25,0,0,0,0,0\">old</d>"));
         assert!(merged_xml.contains("<d p=\"2,1,25,0,0,0,0,0\">new</d>"));
         let merged_ass = std::fs::read_to_string(&ass_path)?;
-        assert!(merged_ass.contains("Handwritten annotation"));
+        assert_eq!(merged_ass, crate::danmaku::xml_to_ass(&merged_xml));
+        assert!(!merged_ass.contains("Handwritten annotation"));
+        assert!(merged_ass.contains("old"));
         assert!(merged_ass.contains("new"));
         assert_eq!(archive.records[0].entries[0].files.len(), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn preserving_danmaku_rebuilds_ass_when_xml_has_no_new_comments() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let plan = test_plan(&server);
+        let temp = tempfile::tempdir()?;
+        let output_dir = temp.path().join("downloads").join("Mock video");
+        let entry_dir = output_dir.join("P001-BV1xx411c7mD-Main");
+        std::fs::create_dir_all(&entry_dir)?;
+        let xml_path = entry_dir.join("danmaku.xml");
+        let ass_path = entry_dir.join("danmaku.ass");
+        let old_xml = r#"<i><d p="1,1,25,0,0,0,0,0">same</d></i>"#;
+        std::fs::write(&xml_path, old_xml)?;
+        std::fs::write(&ass_path, b"\xffinvalid old ASS")?;
+        let danmaku_mock = server.mock(|when, then| {
+            when.method(GET).path("/danmaku.xml");
+            then.status(200).body(old_xml);
+        });
+        let archive = DownloadArchive::new(vec![DownloadArchiveRecord {
+            content_key: download_plan_content_key(&plan),
+            title: plan.title.clone(),
+            output_dir,
+            completed_at_unix: 1,
+            entries: vec![DownloadArchiveEntryRecord {
+                content_key: download_entry_content_key(&plan.entries[0]),
+                index: 1,
+                aid: plan.entries[0].aid,
+                bvid: plan.entries[0].bvid.clone(),
+                cid: plan.entries[0].cid,
+                epid: plan.entries[0].epid,
+                title: plan.entries[0].title.clone(),
+                directory: entry_dir,
+                files: vec![xml_path.clone(), ass_path.clone()],
+                mux_output: None,
+            }],
+        }]);
+        let client = BiliClient::new(ClientConfig::default());
+        let staged = client
+            .stage_preserving_danmaku_update_for_archive(
+                &plan,
+                &archive,
+                DanmakuUpdateOptions::default()
+                    .with_danmaku_formats([DanmakuFormat::Xml, DanmakuFormat::Ass])
+                    .with_update_policy(DanmakuUpdatePolicy::Preserve),
+            )
+            .await?;
+
+        danmaku_mock.assert_calls(1);
+        assert_eq!(staged.report().entries[0].appended_comments, 0);
+        assert_eq!(staged.ass_statistics()[0].generated_events, 1);
+        assert_eq!(std::fs::read(&xml_path)?, old_xml.as_bytes());
+        assert_eq!(std::fs::read(&ass_path)?, b"\xffinvalid old ASS");
+        let merged_xml = std::str::from_utf8(staged.files()[0].output_bytes())?;
+        let expected_ass = crate::danmaku::xml_to_ass(merged_xml);
+        assert_eq!(
+            std::str::from_utf8(staged.files()[1].output_bytes())?,
+            expected_ass
+        );
+        staged.publish()?;
+        assert_eq!(std::fs::read_to_string(ass_path)?, expected_ass);
         Ok(())
     }
 
@@ -12999,6 +13062,68 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn preserving_invalid_existing_xml_keeps_xml_ass_and_archive_unchanged()
+    -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let plan = test_plan(&server);
+        let temp = tempfile::tempdir()?;
+        let output_dir = temp.path().join("downloads").join("Mock video");
+        let entry_dir = output_dir.join("P001-BV1xx411c7mD-Main");
+        std::fs::create_dir_all(&entry_dir)?;
+        let xml_path = entry_dir.join("danmaku.xml");
+        let ass_path = entry_dir.join("danmaku.ass");
+        let old_xml = b"<i><d p=invalid";
+        let old_ass = b"\xffold ASS bytes";
+        std::fs::write(&xml_path, old_xml)?;
+        std::fs::write(&ass_path, old_ass)?;
+        let danmaku_mock = server.mock(|when, then| {
+            when.method(GET).path("/danmaku.xml");
+            then.status(200)
+                .body(r#"<i><d p="2,1,25,0,0,0,0,0">new</d></i>"#);
+        });
+        let archive = DownloadArchive::new(vec![DownloadArchiveRecord {
+            content_key: download_plan_content_key(&plan),
+            title: plan.title.clone(),
+            output_dir,
+            completed_at_unix: 1,
+            entries: vec![DownloadArchiveEntryRecord {
+                content_key: download_entry_content_key(&plan.entries[0]),
+                index: 1,
+                aid: plan.entries[0].aid,
+                bvid: plan.entries[0].bvid.clone(),
+                cid: plan.entries[0].cid,
+                epid: plan.entries[0].epid,
+                title: plan.entries[0].title.clone(),
+                directory: entry_dir,
+                files: vec![xml_path.clone(), ass_path.clone()],
+                mux_output: None,
+            }],
+        }]);
+        let archive_before = archive.clone();
+        let client = BiliClient::new(ClientConfig::default());
+
+        let result = client
+            .stage_preserving_danmaku_update_for_archive(
+                &plan,
+                &archive,
+                DanmakuUpdateOptions::default()
+                    .with_danmaku_formats([DanmakuFormat::Xml, DanmakuFormat::Ass])
+                    .with_update_policy(DanmakuUpdatePolicy::Preserve),
+            )
+            .await;
+        let Err(error) = result else {
+            anyhow::bail!("invalid existing XML must abort the complete stage");
+        };
+
+        assert!(error.to_string().contains("invalid existing XML"));
+        danmaku_mock.assert_calls(1);
+        assert_eq!(std::fs::read(xml_path)?, old_xml);
+        assert_eq!(std::fs::read(ass_path)?, old_ass);
+        assert_eq!(archive, archive_before);
+        Ok(())
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn preserving_archive_file_stage_publishes_archive_and_sidecar_as_one_group()
@@ -13072,7 +13197,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn preserving_ass_only_archive_entry_uses_no_xml_baseline() -> anyhow::Result<()> {
+    async fn preserving_ass_only_archive_entry_repairs_invalid_ass_without_xml_baseline()
+    -> anyhow::Result<()> {
         let server = MockServer::start();
         let plan = test_plan(&server);
         let temp = tempfile::tempdir()?;
@@ -13080,7 +13206,7 @@ mod tests {
         let entry_dir = output_dir.join("P001-BV1xx411c7mD-Main");
         std::fs::create_dir_all(&entry_dir)?;
         let ass_path = entry_dir.join("danmaku.ass");
-        let old_ass = "[Script Info]\nPlayResX: 1920\nPlayResY: 1080\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Arial,40,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,1,1,0,2,10,10,10,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:03.00,0:00:07.00,Default,,0,0,0,,Handwritten annotation\n";
+        let old_ass = b"\xffbroken ASS";
         std::fs::write(&ass_path, old_ass)?;
         let danmaku_mock = server.mock(|when, then| {
             when.method(GET).path("/danmaku.xml");
@@ -13117,7 +13243,7 @@ mod tests {
 
         danmaku_mock.assert_calls(1);
         assert!(!entry_dir.join("danmaku.xml").exists());
-        assert_eq!(std::fs::read(&ass_path)?, old_ass.as_bytes());
+        assert_eq!(std::fs::read(&ass_path)?, old_ass);
         let ass_parent = ass_path
             .parent()
             .ok_or_else(|| anyhow::anyhow!("ASS output has no parent directory"))?;
@@ -13132,10 +13258,10 @@ mod tests {
             .find(|file| file.path() == resolved_ass_path)
             .ok_or_else(|| anyhow::anyhow!("ASS output was not staged"))?;
         let ass_output = std::str::from_utf8(ass_output.output_bytes())?;
-        assert!(ass_output.contains("Handwritten annotation"));
+        let merged_xml = std::str::from_utf8(staged.files()[0].output_bytes())?;
+        assert_eq!(ass_output, crate::danmaku::xml_to_ass(merged_xml));
         assert!(ass_output.contains("new"));
-        assert_eq!(staged.ass_statistics()[0].preserved_existing_events, 1);
-        assert_eq!(staged.ass_statistics()[0].appended_events, 1);
+        assert_eq!(staged.ass_statistics()[0].generated_events, 1);
         Ok(())
     }
 

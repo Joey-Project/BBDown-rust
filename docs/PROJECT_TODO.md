@@ -123,8 +123,9 @@
   policy as a separate follow-up.
 - [pending] Plan per-video related recommendations and additional Bilibili page-family parsing for
   a later feed/page release; keep this feed/page backlog deferred from `v0.7.0`.
-- [completed] Add the `0.8.0` preserving danmaku refresh API and CLI for existing XML and ASS files,
-  with staged grouped publication, failure preservation, and core/CLI regression coverage. See
+- [completed] Add the `0.8.0` preserving danmaku refresh API and CLI: retain XML history, regenerate
+  selected ASS from merged XML, and publish staged sidecars with the archive as a group, with
+  failure preservation and core/CLI regression coverage. See
   `docs/project_journal/2026/10/2026-10-06-danmaku-preserving-refresh.md`.
 - [pending] Publish the prepared `0.8.0` source line through the protected RC and promotion flow
   after its feature PR merges. See
