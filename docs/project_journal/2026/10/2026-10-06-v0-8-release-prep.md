@@ -80,6 +80,16 @@ superseded_by:
   workspace total. The `bbdown-core 0.8.0` publish dry-run verified 29 files and uploaded nothing.
   The release-only comparison remains 14 paths. This gate records source-tree validation only; it
   does not claim the feature PR was merged or the `0.8.0` release was published.
+- The release-prep working tree was synchronized with feature head
+  `0a2802cd32d9d815835cbe475017ca7a4cf2e93c`; its comparison against that feature tree remained
+  exactly 14 release-only files. On this staged tree, `env RUSTUP_TOOLCHAIN=1.99.0 just ci` exited 0
+  in 49.15 seconds (`/private/tmp/bbdown-pr87-findings.20261008/release-ci.log`, 75,974 bytes).
+  Formatting, strict workspace Clippy, and the Rust 1.95 MSRV check passed. Workspace suites passed
+  768 tests, with 3 ignored and 0 failed; the independent CLI e2e repeat passed 154 tests and is
+  not added to the workspace total. The `bbdown-core 0.8.0` publish dry-run verified 29 files
+  (1.6 MiB uncompressed, 246.6 KiB compressed) and uploaded nothing; the run reported the existing
+  yanked `spin 0.9.8` dependency. This records staged source-tree validation, not the later
+  journal-only commit, a merged PR, or a published release.
 - No `v0.8.0` GitHub Release or crates.io publication is claimed. Those remain pending until the
   feature PR merges and the protected RC/promotion workflows run.
 

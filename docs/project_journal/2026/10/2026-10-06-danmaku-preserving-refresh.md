@@ -132,3 +132,21 @@ superseded_by:
   154 tests and is not added to the workspace total. The `bbdown-core` 0.7.0 publish dry-run
   verified 29 files and uploaded nothing. These regression fixtures use synthetic/mock XML; no new
   live Bilibili source comparison was run.
+- The latest PR #87 review fixes make DTD detection syntax-aware with `roxmltree` 0.21.1 and
+  `allow_dtd: false`: literal `<!DOCTYPE` text in comments, CDATA, and processing instructions is
+  preserved, while actual DTD declarations and internal entities are rejected. Destination
+  resolution now follows symlinks through to a final non-link target and detects cycles; the
+  publication path is bound to that chosen resolved target, with expected-content checks performed
+  separately (no inode or mtime claim). An RAII guard removes the unique temporary source directory
+  and partial source when a pending download future is dropped; ordinary close errors remain
+  reportable, and a download error remains primary if both occur. Focused preserving tests passed
+  32/32, including the 12-test XML group; these counts overlap. The complete feature gate
+  `env RUSTUP_TOOLCHAIN=1.99.0 just ci` exited 0 in 58.03 seconds
+  (`/private/tmp/bbdown-pr87-findings.20261008/feature-ci.log`, 76,041 bytes). Formatting, strict
+  workspace Clippy, and the Rust 1.95 MSRV check passed. Workspace suites passed 768 tests, with 3
+  ignored and 0 failed: CLI unit (67), CLI e2e (154), live e2e (9 passed, 2 ignored), core (534),
+  CDN benchmark (3 passed, 1 ignored), public API (1), and doc tests (0). A separate CLI e2e repeat
+  passed 154 tests and is not added to the workspace total. The `bbdown-core` 0.7.0 publish dry-run
+  verified 29 files (1.6 MiB uncompressed, 246.4 KiB compressed) and uploaded nothing; it reported
+  the existing package-version warning and the existing yanked `spin 0.9.8` dependency. The
+  regressions use synthetic/local fixtures; no new live Bilibili source comparison was run.

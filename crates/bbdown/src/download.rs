@@ -13196,6 +13196,226 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn preserving_archive_and_sidecar_multihop_aliases_remain_intact() -> anyhow::Result<()> {
+        use std::os::unix::fs::symlink;
+
+        let server = MockServer::start();
+        let plan = test_plan(&server);
+        let temp = tempfile::tempdir()?;
+        let output_dir = temp.path().join("downloads").join("Mock video");
+        let entry_dir = output_dir.join("P001-BV1xx411c7mD-Main");
+        std::fs::create_dir_all(&entry_dir)?;
+        let final_dir = temp.path().join("final-sidecars");
+        std::fs::create_dir_all(&final_dir)?;
+
+        let xml_target = final_dir.join("danmaku.xml");
+        let xml_second = final_dir.join("xml-second-link");
+        let xml_alias = entry_dir.join("danmaku.xml");
+        symlink(&xml_target, &xml_second)?;
+        symlink(&xml_second, &xml_alias)?;
+
+        let ass_target = final_dir.join("danmaku.ass");
+        let ass_second = final_dir.join("ass-second-link");
+        let ass_alias = entry_dir.join("danmaku.ass");
+        symlink(&ass_target, &ass_second)?;
+        symlink(&ass_second, &ass_alias)?;
+
+        let archive = DownloadArchive::new(vec![DownloadArchiveRecord {
+            content_key: download_plan_content_key(&plan),
+            title: plan.title.clone(),
+            output_dir: output_dir.clone(),
+            completed_at_unix: 1,
+            entries: vec![DownloadArchiveEntryRecord {
+                content_key: download_entry_content_key(&plan.entries[0]),
+                index: 1,
+                aid: plan.entries[0].aid,
+                bvid: plan.entries[0].bvid.clone(),
+                cid: plan.entries[0].cid,
+                epid: plan.entries[0].epid,
+                title: plan.entries[0].title.clone(),
+                directory: entry_dir.clone(),
+                files: vec![xml_alias.clone(), ass_alias.clone()],
+                mux_output: None,
+            }],
+        }]);
+        let archive_target = final_dir.join("download-index.json");
+        let archive_second = final_dir.join("archive-second-link");
+        let archive_alias = temp.path().join("download-index-link.json");
+        archive.save(&archive_target)?;
+        symlink(&archive_target, &archive_second)?;
+        symlink(&archive_second, &archive_alias)?;
+
+        let danmaku_mock = server.mock(|when, then| {
+            when.method(GET).path("/danmaku.xml");
+            then.status(200)
+                .body(r#"<i><d p="2,1,25,0,0,0,0,0">new</d></i>"#);
+        });
+        let client = BiliClient::new(ClientConfig::default());
+        let staged = client
+            .stage_preserving_danmaku_update_for_archive_file(
+                &plan,
+                &archive_alias,
+                DanmakuUpdateOptions::default()
+                    .with_danmaku_formats([DanmakuFormat::Xml, DanmakuFormat::Ass]),
+            )
+            .await?;
+        danmaku_mock.assert_calls(1);
+        staged.publish()?;
+
+        for alias in [
+            &archive_alias,
+            &archive_second,
+            &xml_alias,
+            &xml_second,
+            &ass_alias,
+            &ass_second,
+        ] {
+            assert!(std::fs::symlink_metadata(alias)?.file_type().is_symlink());
+        }
+        assert!(std::fs::read_to_string(xml_target)?.contains("new"));
+        assert!(std::fs::read_to_string(ass_target)?.contains("new"));
+        let published_archive = DownloadArchive::load(&archive_target)?;
+        assert_eq!(published_archive.records[0].entries[0].files.len(), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancelled_preserving_download_removes_staging_and_preserves_outputs()
+    -> anyhow::Result<()> {
+        let (url, body_sent_rx, release_server_tx, server_task) =
+            start_pending_download_server().await?;
+        let server = MockServer::start();
+        let mut plan = test_plan(&server);
+        plan.entries[0].danmaku.xml_url = url;
+        let temp = tempfile::tempdir()?;
+        let output_dir = temp.path().join("downloads").join("Mock video");
+        let entry_dir = output_dir.join("P001-BV1xx411c7mD-Main");
+        std::fs::create_dir_all(&entry_dir)?;
+        let xml_path = entry_dir.join("danmaku.xml");
+        let ass_path = entry_dir.join("danmaku.ass");
+        let old_xml = b"<i><d p=\"1,1,25,0,0,0,0,0\">old</d></i>";
+        let old_ass = b"old ASS";
+        std::fs::write(&xml_path, old_xml)?;
+        std::fs::write(&ass_path, old_ass)?;
+        let archive = DownloadArchive::new(vec![DownloadArchiveRecord {
+            content_key: download_plan_content_key(&plan),
+            title: plan.title.clone(),
+            output_dir,
+            completed_at_unix: 1,
+            entries: vec![DownloadArchiveEntryRecord {
+                content_key: download_entry_content_key(&plan.entries[0]),
+                index: 1,
+                aid: plan.entries[0].aid,
+                bvid: plan.entries[0].bvid.clone(),
+                cid: plan.entries[0].cid,
+                epid: plan.entries[0].epid,
+                title: plan.entries[0].title.clone(),
+                directory: entry_dir.clone(),
+                files: vec![xml_path.clone(), ass_path.clone()],
+                mux_output: None,
+            }],
+        }]);
+        let archive_path = temp.path().join("download-index.json");
+        archive.save(&archive_path)?;
+        let archive_before = std::fs::read(&archive_path)?;
+        let client = BiliClient::new(ClientConfig::default());
+        let task_archive_path = archive_path.clone();
+        let stage_task = tokio::spawn(async move {
+            client
+                .stage_preserving_danmaku_update_for_archive_file(
+                    &plan,
+                    &task_archive_path,
+                    DanmakuUpdateOptions::default()
+                        .with_danmaku_formats([DanmakuFormat::Xml, DanmakuFormat::Ass])
+                        .with_update_policy(DanmakuUpdatePolicy::Preserve),
+                )
+                .await
+        });
+
+        body_sent_rx.await?;
+        wait_for_partial_preserving_source(&entry_dir).await?;
+
+        stage_task.abort();
+        let cancellation = stage_task.await;
+        assert!(matches!(cancellation, Err(error) if error.is_cancelled()));
+        let _ = release_server_tx.send(());
+        server_task.await??;
+
+        assert_eq!(std::fs::read(&xml_path)?, old_xml);
+        assert_eq!(std::fs::read(&ass_path)?, old_ass);
+        assert_eq!(std::fs::read(&archive_path)?, archive_before);
+        assert!(std::fs::read_dir(&entry_dir)?.all(|entry| {
+            entry.is_ok_and(|entry| {
+                !entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".bbdown-preserving-source-")
+            })
+        }));
+        Ok(())
+    }
+
+    async fn start_pending_download_server() -> anyhow::Result<(
+        String,
+        tokio::sync::oneshot::Receiver<()>,
+        tokio::sync::oneshot::Sender<()>,
+        tokio::task::JoinHandle<anyhow::Result<()>>,
+    )> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        let (body_sent_tx, body_sent_rx) = tokio::sync::oneshot::channel();
+        let (release_server_tx, release_server_rx) = tokio::sync::oneshot::channel();
+        let server_task = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await?;
+            let mut request = Vec::new();
+            let mut buffer = [0; 1024];
+            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                let read = stream.read(&mut buffer).await?;
+                if read == 0 {
+                    anyhow::bail!("client closed before sending request headers");
+                }
+                request.extend_from_slice(&buffer[..read]);
+            }
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 256\r\nConnection: close\r\n\r\n")
+                .await?;
+            stream.write_all(b"<i><d p=\"1,1,25,0,0,0,0,0\">").await?;
+            stream.flush().await?;
+            let _ = body_sent_tx.send(());
+            let _ = release_server_rx.await;
+            Ok::<(), anyhow::Error>(())
+        });
+        Ok((
+            format!("http://{address}/pending.xml"),
+            body_sent_rx,
+            release_server_tx,
+            server_task,
+        ))
+    }
+
+    async fn wait_for_partial_preserving_source(directory: &Path) -> anyhow::Result<()> {
+        for _ in 0..10_000 {
+            for entry in std::fs::read_dir(directory)? {
+                let entry = entry?;
+                if entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".bbdown-preserving-source-")
+                    && std::fs::read(entry.path().join("source.xml"))
+                        .is_ok_and(|bytes| !bytes.is_empty() && bytes.len() < 256)
+                {
+                    return Ok(());
+                }
+            }
+            tokio::task::yield_now().await;
+        }
+        anyhow::bail!("partial source download was not observed")
+    }
+
     #[tokio::test]
     async fn preserving_ass_only_archive_entry_repairs_invalid_ass_without_xml_baseline()
     -> anyhow::Result<()> {

@@ -9,6 +9,7 @@ use crate::{
     BiliClient, DanmakuFormat, DanmakuUpdateReport, DownloadEntry, DownloadPlan, Error, Result,
     danmaku, progress::NoopDownloadProgress,
 };
+use std::collections::HashSet;
 use std::fs::{self as std_fs, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -275,7 +276,7 @@ async fn download_danmaku_source(
     options: &DanmakuUpdateOptions,
 ) -> Result<String> {
     let temp_dir = create_unique_directory(directory)?;
-    let source_path = temp_dir.join("source.xml");
+    let source_path = temp_dir.path().join("source.xml");
     let request =
         super::DownloadFileRequest::new(plan_entry, &source_path, DownloadFileKind::Danmaku, None);
     let download_options = super::DownloadOptions::default()
@@ -296,7 +297,7 @@ async fn download_danmaku_source(
         Ok(_) => async_fs::read(&source_path).await.map_err(Error::Io),
         Err(error) => Err(error),
     };
-    let cleanup = async_fs::remove_dir_all(&temp_dir).await;
+    let cleanup = temp_dir.close();
     if let Err(error) = cleanup
         && error.kind() != std::io::ErrorKind::NotFound
         && bytes.is_ok()
@@ -318,21 +319,48 @@ fn read_destination(logical_path: &Path) -> Result<(PathBuf, Option<Vec<u8>>)> {
 // are checked separately, so benign inode or timestamp changes do not reject publication.
 fn resolve_destination_path(logical_path: &Path) -> Result<PathBuf> {
     let storage_path = archive_storage_path(logical_path)?;
-    let absolute_path = super::absolute_path(&storage_path);
-    let parent = absolute_path.parent().ok_or_else(|| {
-        Error::InvalidInput(format!(
-            "danmaku destination has no parent directory: {}",
-            logical_path.display()
-        ))
-    })?;
-    let file_name = absolute_path.file_name().ok_or_else(|| {
-        Error::InvalidInput(format!(
-            "danmaku destination has no file name: {}",
-            logical_path.display()
-        ))
-    })?;
-    let resolved_parent = std_fs::canonicalize(parent).map_err(Error::Io)?;
-    Ok(resolved_parent.join(file_name))
+    let mut candidate = super::absolute_path(&storage_path);
+    let mut visited = HashSet::new();
+    loop {
+        candidate = super::canonicalize_existing_prefix(&candidate);
+        if !visited.insert(candidate.clone()) {
+            return Err(Error::InvalidInput(format!(
+                "danmaku destination contains a symlink cycle: {}",
+                logical_path.display()
+            )));
+        }
+        match std_fs::symlink_metadata(&candidate) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                let target = std_fs::read_link(&candidate).map_err(Error::Io)?;
+                candidate = if target.is_absolute() {
+                    target
+                } else {
+                    candidate
+                        .parent()
+                        .unwrap_or_else(|| Path::new(""))
+                        .join(target)
+                };
+            }
+            Ok(_) => return std_fs::canonicalize(candidate).map_err(Error::Io),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let parent = candidate.parent().ok_or_else(|| {
+                    Error::InvalidInput(format!(
+                        "danmaku destination has no parent directory: {}",
+                        logical_path.display()
+                    ))
+                })?;
+                let file_name = candidate.file_name().ok_or_else(|| {
+                    Error::InvalidInput(format!(
+                        "danmaku destination has no file name: {}",
+                        logical_path.display()
+                    ))
+                })?;
+                let resolved_parent = std_fs::canonicalize(parent).map_err(Error::Io)?;
+                return Ok(resolved_parent.join(file_name));
+            }
+            Err(error) => return Err(Error::Io(error)),
+        }
+    }
 }
 
 fn read_optional_bytes(path: &Path) -> Result<Option<Vec<u8>>> {
@@ -576,15 +604,11 @@ fn cleanup_prepared(prepared: &[PreparedReplacement], include_recovery: bool) {
     }
 }
 
-fn create_unique_directory(parent: &Path) -> Result<PathBuf> {
-    loop {
-        let path = unique_candidate(parent, ".bbdown-preserving-source");
-        match std_fs::create_dir(&path) {
-            Ok(()) => return Ok(path),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(Error::Io(error)),
-        }
-    }
+fn create_unique_directory(parent: &Path) -> Result<tempfile::TempDir> {
+    tempfile::Builder::new()
+        .prefix(".bbdown-preserving-source-")
+        .tempdir_in(parent)
+        .map_err(Error::Io)
 }
 
 fn create_and_write_unique(parent: &Path, label: &str, bytes: &[u8]) -> Result<PathBuf> {
@@ -770,6 +794,46 @@ mod tests {
         assert!(error.to_string().contains("destination changed"));
         assert_eq!(fs::read(first_target)?, b"old");
         assert_eq!(fs::read(second_target)?, b"old");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn destination_resolves_multihop_symlinks_to_missing_final_target() -> anyhow::Result<()> {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir()?;
+        let final_parent = temp.path().join("final");
+        fs::create_dir(&final_parent)?;
+        let final_target = final_parent.join("danmaku.xml");
+        let second_link = temp.path().join("second.xml");
+        let first_link = temp.path().join("first.xml");
+        symlink(&final_target, &second_link)?;
+        symlink(&second_link, &first_link)?;
+
+        assert_eq!(
+            resolve_destination_path(&first_link)?,
+            fs::canonicalize(final_parent)?.join("danmaku.xml")
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn destination_rejects_symlink_cycles() -> anyhow::Result<()> {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir()?;
+        let first = temp.path().join("first.xml");
+        let second = temp.path().join("second.xml");
+        symlink(&second, &first)?;
+        symlink(&first, &second)?;
+
+        let error = require_err(
+            resolve_destination_path(&first),
+            "cyclic symlink destinations must fail safely",
+        )?;
+        assert!(error.to_string().contains("symlink cycle"));
         Ok(())
     }
 
@@ -980,8 +1044,8 @@ mod tests {
     fn source_staging_directory_is_exclusive_and_private() -> anyhow::Result<()> {
         let temp = tempfile::tempdir()?;
         let directory = create_unique_directory(temp.path())?;
-        fs::write(directory.join("source.xml"), b"fetched")?;
-        fs::remove_dir_all(&directory)?;
+        fs::write(directory.path().join("source.xml"), b"fetched")?;
+        directory.close()?;
         assert_eq!(fs::read_dir(temp.path())?.count(), 0);
         Ok(())
     }
