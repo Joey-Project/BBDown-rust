@@ -42,9 +42,7 @@ fn invalid(message: impl Into<String>) -> crate::Error {
 }
 
 fn parse_xml<'a>(xml: &'a str, label: &str) -> crate::Result<Document<'a>> {
-    if xml.to_ascii_lowercase().contains("<!doctype") {
-        return Err(invalid(format!("{label} XML contains a forbidden DTD")));
-    }
+    // roxmltree rejects actual DTD declarations by default and recognizes XML literal contexts.
     Document::parse(xml).map_err(|error| invalid(format!("invalid {label} XML: {error}")))
 }
 
@@ -283,6 +281,39 @@ mod tests {
     }
 
     #[test]
+    fn doctype_literals_in_comments_cdata_and_processing_instructions_are_safe() -> crate::Result<()>
+    {
+        let old = "<?xml version='1.0'?><i><?review <!DOCTYPE old?><!--literal <!DOCTYPE old>--><meta><![CDATA[literal <!DOCTYPE old>]]></meta><d p='1,1,25,16777215'>old</d></i>";
+        let fetched = "<i><?review <!DOCTYPE fetched?><!--literal <!DOCTYPE fetched>--><meta><![CDATA[literal <!DOCTYPE fetched>]]></meta><d p='2,1,25,16777215'>new</d></i>";
+
+        let merged = merge_xml_preserving(old, fetched)?;
+        assert_eq!(merged.appended_comments, 1);
+        assert!(
+            merged.xml.starts_with(
+                old.split_once("</i>")
+                    .ok_or_else(|| {
+                        crate::Error::InvalidInput("test XML is missing its root close".into())
+                    })?
+                    .0
+            )
+        );
+        for literal in [
+            "<?review <!DOCTYPE old?>",
+            "<!--literal <!DOCTYPE old>-->",
+            "<![CDATA[literal <!DOCTYPE old>]]>",
+        ] {
+            assert!(merged.xml.contains(literal));
+        }
+
+        let initialized = merge_xml_preserving("", fetched)?;
+        assert_eq!(initialized.xml, fetched);
+        let ass = xml_to_ass_validated(&merged.xml)?;
+        assert_eq!(ass.matches("Dialogue:").count(), 2);
+        assert!(!ass.contains("DOCTYPE"));
+        Ok(())
+    }
+
+    #[test]
     fn xml_preserves_raw_nodes_duplicates_and_entities() -> crate::Result<()> {
         let old = "<?xml version='1.0'?>\n<i foo='x&amp;y'>\n<!--keep--><meta a=\"1\">&lt;ok&gt;<![CDATA[z]]></meta><d p='1,1,25,0'>x&amp;y</d><d p='1,1,25,0'>x&amp;y</d></i>";
         let fetched = "<i><unknown/><d p=\"1,1,25,0\">x&#38;y</d><d p='2,1,25,0'>new<![CDATA[!]]></d><d p='2,1,25,0'>new<![CDATA[!]]></d></i>";
@@ -389,6 +420,12 @@ mod tests {
             .is_err()
         );
         assert!(merge_xml_preserving("<!DOCTYPE i><i/>", "<i/>").is_err());
+
+        let entity_dtd =
+            "<!DOCTYPE i [<!ENTITY marker 'expanded'>]><i><d p='1,1,25,0'>&marker;</d></i>";
+        assert!(merge_xml_preserving(entity_dtd, "<i/>").is_err());
+        assert!(merge_xml_preserving("<i/>", entity_dtd).is_err());
+        assert!(xml_to_ass_validated(entity_dtd).is_err());
     }
 
     #[test]
