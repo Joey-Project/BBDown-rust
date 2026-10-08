@@ -72,6 +72,14 @@ superseded_by:
   passed, 2 ignored), core (529), CDN benchmark (3 passed, 1 ignored), and public API (1). The
   separate CLI e2e repeat passed 154 tests. The `bbdown-core 0.8.0` publish dry-run verified 29
   packaged files and uploaded nothing.
+- At release-prep validation HEAD `504b31c2eccff8c3d87c660be087d4952b2f1004`, based on feature
+  source `d1bdc4ef`, `env RUSTUP_TOOLCHAIN=1.99.0 just ci` exited 0 in 56.00 seconds
+  (`/private/tmp/bbdown-danmaku-id-rebuild.20261008/release-ci.log`, 75,494 bytes). Formatting,
+  strict workspace Clippy, and the Rust 1.95.0 MSRV check passed. Workspace tests passed 763 with 3
+  ignored and 0 failed; an independent CLI e2e repeat passed 154 tests and is not included in that
+  workspace total. The `bbdown-core 0.8.0` publish dry-run verified 29 files and uploaded nothing.
+  The release-only comparison remains 14 paths. This gate records source-tree validation only; it
+  does not claim the feature PR was merged or the `0.8.0` release was published.
 - No `v0.8.0` GitHub Release or crates.io publication is claimed. Those remain pending until the
   feature PR merges and the protected RC/promotion workflows run.
 
