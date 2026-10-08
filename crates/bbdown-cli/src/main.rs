@@ -4131,8 +4131,7 @@ async fn handle_danmaku_update(
                     "path": statistics.path,
                     "index": statistics.index,
                     "cid": statistics.cid,
-                    "preserved_existing_events": statistics.preserved_existing_events,
-                    "appended_events": statistics.appended_events,
+                    "generated_events": statistics.generated_events,
                 })
             })
             .collect::<Vec<_>>();
@@ -7202,12 +7201,9 @@ fn print_danmaku_update_report(report: &bbdown_core::DanmakuUpdateReport) {
 fn print_danmaku_preserving_ass_statistics(statistics: &[serde_json::Value]) {
     for item in statistics {
         println!(
-            "  ASS {}: preserved={} appended={}",
+            "  ASS {}: generated={}",
             item["path"].as_str().unwrap_or("<non-UTF-8 path>"),
-            item["preserved_existing_events"]
-                .as_u64()
-                .unwrap_or_default(),
-            item["appended_events"].as_u64().unwrap_or_default()
+            item["generated_events"].as_u64().unwrap_or_default()
         );
     }
 }

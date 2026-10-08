@@ -16,9 +16,9 @@ video feeds, and space dynamic video feeds.
 
 Install with `cargo add bbdown-core`, then import with `bbdown_core`.
 
-The crate provides staged preserving danmaku refresh for existing XML and ASS files alongside
-CDN controls and an independent PGC web-route API. PGC region and proxy resolution stays separate
-from media CDN selection and transfer.
+The crate provides staged XML-history-preserving danmaku refresh with ASS regenerated from the
+merged XML, alongside CDN controls and an independent PGC web-route API. PGC region and proxy
+resolution stays separate from media CDN selection and transfer.
 Embedding projects should prefer constructor and builder-style APIs such as
 `ClientConfig::default().with_*()`, `EndpointConfig::default().with_*()`,
 `RestrictedAreaConfig::default().with_*()`, `DownloadOptions::new(...).with_*()`,

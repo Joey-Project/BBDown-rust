@@ -893,9 +893,10 @@ async fn main() -> bbdown_core::Result<()> {
 如果调用方自行管理旁路文件存储，可以直接使用 `merge_xml_append_only(existing, fetched)`，
 在不接触 `DownloadArchive` 的情况下复用同一套 XML-level append-only merge 逻辑。
 
-当嵌入应用需要保留现有文件，并与旁路文件一起发布 archive 时，使用
+当嵌入应用需要保留 XML 历史，并与旁路文件一起发布 archive 时，使用
 `DanmakuUpdatePolicy::Preserve` 和 `stage_preserving_danmaku_update_for_archive_file`。stage
-结果提供不可变 report、更新后的 archive 快照、暂存文件列表，以及按文件区分的 ASS 事件统计。
+结果提供不可变 report、更新后的 archive 快照、暂存文件列表，以及按文件区分的 ASS 生成事件统计。
+ASS 会从合并 XML 重新生成，不会保留旧 ASS 文档。
 每个暂存文件都提供目标路径、存在时预期的旧字节和完整的新输出字节。调用方可以检查这些值，
 然后消费 stage 并调用 `publish()`：
 
@@ -924,7 +925,7 @@ async fn main() -> bbdown_core::Result<()> {
         println!("staged {} bytes for {}", file.output_bytes().len(), file.path().display());
     }
     for stats in staged.ass_statistics() {
-        println!("ASS appended {} events", stats.appended_events);
+        println!("ASS generated {} events", stats.generated_events);
     }
     let report = staged.publish()?;
     println!("updated {} entries", report.entries.len());
@@ -936,8 +937,11 @@ stage 会捕获预期内容，并在发布前重新校验再选择目标。`Stag
 符号链接解析后的选定目标；发布时会针对该目标重新校验逻辑路径别名。调用方需要围绕此操作协调 File Provider
 materialization 和并发写入；校验可以检测变化，但不会锁住外部写入方。检测到发布错误时会尝试
 回滚；如果回滚无法完成，错误会指出保留的恢复文件。调用成功不代表旁路文件与 archive 之间
-具有崩溃或断电原子性。`Preserve` 保留完整 XML 结构与 ASS 样式和已有事件，然后追加新弹幕/事件。
-只有 ASS 的条目会把已有事件文本作为粗略基线；缺少原 XML 元数据时，匹配可能有歧义。
+具有崩溃或断电原子性。`Preserve` 保留 XML 历史，只追加与历史不匹配的新弹幕。优先使用 `p[7]`
+中的正 ASCII 十进制 id，并忽略前导零：id 相同即使拉取后的元数据或文本改变也视为匹配；id 不同即使
+文本相同也会追加。id 缺失、为零或格式无效时，回退为完整 `p` 属性和解码后的文本。每次都会从完整
+合并 XML 重建所选 ASS，旧自定义样式和事件会被丢弃。没有 XML 基线时，旧 ASS 事件不作为历史，生成的
+ASS 只反映本次拉取的 XML payload。`ass_statistics()` 为每个 ASS 输出报告 `generated_events`。
 
 ## 端点覆盖
 

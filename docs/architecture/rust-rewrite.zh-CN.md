@@ -224,14 +224,19 @@ Append-only 弹幕刷新被建模为单独的 archive-backed 执行路径，而�
 例如 ASS。底层 `merge_xml_append_only` helper 也是 public API，供自行管理 sidecar storage
 且不使用 `DownloadArchive` 的调用方复用。
 
-`DanmakuUpdatePolicy::Preserve` 选择更严格的路径，同时保持默认 `Legacy` 行为和 report shape
-不变。preserving merger 保留原 XML 字节，只在 root close tag 前插入新弹幕 block。ASS 更新保留
-已有 script section、样式和事件，再追加新拉取的事件；只有 ASS 的条目使用粗略文本基线。
+`DanmakuUpdatePolicy::Preserve` 选择更严格的路径，同时保持默认 `Legacy` 行为。XML merger 保留
+原 XML 字节，只在 root close tag 前插入未匹配的新弹幕。优先使用 `p[7]` 中的正 ASCII 十进制 id，
+并忽略前导零；id 相同即使拉取后的元数据或文本改变也视为同一弹幕，id 不同即使文本相同也会追加。
+id 缺失、为零或格式无效时，回退为完整 `p` 属性和解码后的文本。所选 ASS 每次都从完整合并 XML
+重新生成，因此不保留旧 ASS 样式或事件。如果没有 XML 基线，旧 ASS 事件不作为历史，输出由拉取的 XML
+payload 生成。
 `stage_preserving_danmaku_update_for_archive_file` 捕获 archive 和所选旁路文件，并返回不可变的
 `StagedDanmakuUpdate`，其中包含预期旧字节、目标路径、新字节、更新后的 archive 快照，以及按条目
-统计的 ASS 事件数。`publish()` 会重新校验内容与目标，然后把 archive 和旁路文件作为一组发布，
+统计的 ASS `generated_events` 数量。`publish()` 会重新校验内容与目标，然后把 archive 和旁路文件作为一组发布，
 并对可检测错误执行回滚。调用方需要协调 File Provider materialization 和并发写入。该 API 不承诺
 多个文件之间具有崩溃或断电原子性；检测到回滚无法完成时会报告恢复文件位置。
+不会公开独立的 ASS 事件匹配或合并 helper；集成方应使用现有 XML merge API 和 staged archive
+发布接口。
 
 输出命名由 `DownloadPathTemplates` 驱动。输出根目录模板从 plan context 渲染；条目目录
 和 mux 文件名 stem 模板从 entry context 渲染。渲染结果会作为单个文件名组件清洗，因此模

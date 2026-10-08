@@ -24,8 +24,7 @@ pub struct DanmakuAssStatistics {
     pub path: PathBuf,
     pub index: u32,
     pub cid: u64,
-    pub preserved_existing_events: usize,
-    pub appended_events: usize,
+    pub generated_events: usize,
 }
 
 /// A file replacement prepared without changing its destination.
@@ -222,17 +221,15 @@ async fn stage_entry(
     if options.danmaku_formats.contains(DanmakuFormat::Ass) {
         let ass_logical_path = archive_entry.directory.join("danmaku.ass");
         let (ass_path, original_ass_bytes) = read_destination(&ass_logical_path)?;
-        let existing_ass = bytes_to_text(original_ass_bytes.as_deref(), "existing danmaku ASS")?;
-        let baseline = (!existing_xml.trim().is_empty()).then_some(existing_xml);
-        let ass = if existing_ass.trim().is_empty() {
-            danmaku::merge_ass_preserving("", &merged.xml, None)?
-        } else {
-            danmaku::merge_ass_preserving(existing_ass, &fetched_xml, baseline)?
-        };
+        let ass = danmaku::xml_to_ass_validated(&merged.xml)?;
+        let generated_events = ass
+            .lines()
+            .filter(|line| line.starts_with("Dialogue:"))
+            .count();
         files.push(StagedDanmakuFile {
             logical_path: ass_logical_path.clone(),
             path: ass_path,
-            output_bytes: ass.ass.as_bytes().to_vec(),
+            output_bytes: ass.as_bytes().to_vec(),
             expected_original_bytes: original_ass_bytes,
             kind: DownloadFileKind::DanmakuAss,
         });
@@ -240,8 +237,7 @@ async fn stage_entry(
             path: ass_logical_path,
             index: archive_entry.index,
             cid: archive_entry.cid,
-            preserved_existing_events: ass.existing_events,
-            appended_events: ass.appended_events,
+            generated_events,
         });
     }
     let report_files = files

@@ -20,8 +20,8 @@ Range 下载、
 内置 CDN/公共 resolver 目录，以及独立的 PGC Web playurl 路由 API；这些功能不会自动选择
 路由。输入解析覆盖普通视频、PGC 和 intl 分集、PUGV/cheese 课程、B23 短链接、收藏
 夹、空间投稿、合集、系列、首页推荐、观看历史、
-稍后再看列表、关注视频 feed 和空间动态视频 feed。Preserve 更新策略会保留未知 XML 细节与已有
-ASS 样式/事件，并将暂存后的旁路文件和 archive 一起发布。URL 解析包括 canonical
+稍后再看列表、关注视频 feed 和空间动态视频 feed。Preserve 更新策略会保留 XML 历史，并从合并后
+的 XML 重新生成所选 ASS，再将暂存后的旁路文件和 archive 一起发布。URL 解析包括 canonical
 `bilibili.com/list/...` 页面、
 path-based medialist 收藏夹 URL，以及带 uploader mid 的空间合集 / 系列 URL，以便使用较
 新的空间 API；同时支持 B 站首页、空间动态页面和需要登录态的
@@ -164,8 +164,11 @@ mux 路径会在记录时保存为绝对路径，因此同一份归档可以从�
 条目，下载当前 XML 弹幕 payload，只把新增弹幕 append-merge 到 `danmaku.xml`，再重新生成
 所选派生格式，例如 `danmaku.ass`，并把更新后的旁路文件路径写回归档。XML 始终是 canonical
 更新目标；`--danmaku-format ass` 会基于合并后的 XML 新增或刷新 ASS。可选
-`--update-policy preserve` 会保留未知 XML 结构和现有 ASS 样式/事件，并把暂存后的旁路文件与
-archive 一起发布；默认仍是 `legacy`。
+`--update-policy preserve` 会保留原 XML 历史，并把暂存后的旁路文件与 archive 一起发布；每次
+都会从完整合并 XML 重新生成所选 ASS，因此不会保留旧 ASS 的自定义样式或事件。有效的正 ASCII 十进制
+`p[7]` id 相同的 XML 弹幕即使拉取后的元数据或文本改变，也会视为已有弹幕；id 不同的弹幕即使文本
+相同也会追加。id 缺失、为零或格式无效时，回退为完整 `p` 属性和解码后的文本匹配。没有 XML 基线时，
+旧 ASS 事件不作为历史，ASS 只从本次拉取的 XML payload 生成。默认仍是 `legacy`。
 
 `ss` 和 `md` 输入在非交互模式下需要显式选择：
 

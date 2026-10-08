@@ -7621,7 +7621,7 @@ fn danmaku_update_help_lists_policy_and_rejects_unknown_values() -> anyhow::Resu
 }
 
 #[test]
-fn danmaku_update_preserve_keeps_existing_xml_and_ass_content() -> anyhow::Result<()> {
+fn danmaku_update_preserve_keeps_xml_history_and_rebuilds_ass() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;
     let credential_file = temp.path().join("credentials.json");
@@ -7634,8 +7634,8 @@ fn danmaku_update_preserve_keeps_existing_xml_and_ass_content() -> anyhow::Resul
     let existing_xml = concat!(
         "<!-- keep this comment -->\n",
         "<i custom=\"retain\"><meta unknown=\"yes\">raw</meta>",
-        "<d p=\"1,1,25,0,0,0,0,0\" custom=\"first\">old</d>",
-        "<d p=\"1,1,25,0,0,0,0,0\" custom=\"duplicate\">old</d>",
+        "<d p=\"1,1,25,0,0,0,0,000101\" custom=\"first\">old text</d>",
+        "<d p=\"1,1,25,0,0,0,0,101\" custom=\"duplicate\">old text</d>",
         "</i>"
     );
     let existing_ass = concat!(
@@ -7652,8 +7652,8 @@ fn danmaku_update_preserve_keeps_existing_xml_and_ass_content() -> anyhow::Resul
     let danmaku_mock = server.mock(|when, then| {
         when.method(GET).path("/2.xml");
         then.status(200).body(concat!(
-            "<i><d p=\"1,1,25,0,0,0,0,0\">old</d>",
-            "<d p=\"2,1,25,0,0,0,0,0\">new text</d></i>"
+            "<i><d p=\"9,2,30,777,1,1,1,101\" custom=\"source-change\">source changed text</d>",
+            "<d p=\"2,1,25,0,0,0,0,202\">old text</d></i>"
         ));
     });
 
@@ -7666,22 +7666,45 @@ fn danmaku_update_preserve_keeps_existing_xml_and_ass_content() -> anyhow::Resul
         .clone();
     let json: Value = serde_json::from_slice(&output)?;
     let merged_xml = fs::read_to_string(&xml_path)?;
-    let merged_ass = fs::read_to_string(&ass_path)?;
+    let merged_ass = fs::read(&ass_path)?;
 
     danmaku_mock.assert_calls(1);
     assert_eq!(json["policy"], "preserve");
     assert_eq!(json["report"]["entries"][0]["appended_comments"], 1);
-    assert_eq!(json["ass_statistics"][0]["appended_events"], 1);
+    assert_eq!(json["ass_statistics"][0]["generated_events"], 3);
+    assert!(json["ass_statistics"][0]["preserved_existing_events"].is_null());
+    assert!(json["ass_statistics"][0]["appended_events"].is_null());
     assert!(merged_xml.contains("<!-- keep this comment -->"));
     assert!(merged_xml.contains("custom=\"retain\""));
     assert!(merged_xml.contains("unknown=\"yes\""));
     assert_eq!(merged_xml.matches("custom=\"first\"").count(), 1);
     assert_eq!(merged_xml.matches("custom=\"duplicate\"").count(), 1);
-    assert!(merged_xml.contains("new text"));
-    assert!(merged_ass.contains("Title: Custom title"));
-    assert!(merged_ass.contains("Style: Custom,Arial"));
-    assert!(merged_ass.contains("user event"));
-    assert!(merged_ass.contains("new text"));
+    assert!(merged_xml.contains("p=\"1,1,25,0,0,0,0,000101\" custom=\"first\">old text"));
+    assert!(merged_xml.contains("p=\"1,1,25,0,0,0,0,101\" custom=\"duplicate\">old text"));
+    assert!(merged_xml.contains("p=\"2,1,25,0,0,0,0,202\">old text"));
+    assert!(!merged_xml.contains("source changed text"));
+    let merged_xml_after_first = fs::read(&xml_path)?;
+
+    let expected_ass = render_ass_for_merged_xml_via_legacy_cli(&merged_xml)?;
+    assert_eq!(expected_ass, merged_ass);
+
+    let second_output = danmaku_update_command(&credential_file, &server, &archive_file)?
+        .args(["--danmaku-format", "xml,ass", "--update-policy", "preserve"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let second_json: Value = serde_json::from_slice(&second_output)?;
+    danmaku_mock.assert_calls(2);
+    assert_eq!(second_json["report"]["entries"][0]["appended_comments"], 0);
+    assert_eq!(fs::read(&xml_path)?, merged_xml_after_first);
+    assert_eq!(fs::read(&ass_path)?, merged_ass);
+    let rebuilt_ass = String::from_utf8(merged_ass)?;
+    assert!(!rebuilt_ass.contains("Custom title"));
+    assert!(!rebuilt_ass.contains("Style: Custom,Arial"));
+    assert!(!rebuilt_ass.contains("user event"));
+    assert!(rebuilt_ass.contains("old text"));
     Ok(())
 }
 
@@ -7900,7 +7923,7 @@ fn danmaku_update_preserve_keeps_archive_symlink_and_updates_its_target() -> any
 }
 
 #[test]
-fn danmaku_update_preserve_ass_only_refresh_is_idempotent() -> anyhow::Result<()> {
+fn danmaku_update_preserve_ass_only_rebuilds_from_fetched_xml() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;
     let credential_file = temp.path().join("credentials.json");
@@ -7908,6 +7931,7 @@ fn danmaku_update_preserve_ass_only_refresh_is_idempotent() -> anyhow::Result<()
     let entry_dir = output_root.join("P001-BV1xx411c7mD-Main");
     let archive_file = temp.path().join("archive.json");
     let ass_path = entry_dir.join("danmaku.ass");
+    let xml_path = entry_dir.join("danmaku.xml");
     fs::create_dir_all(&entry_dir)?;
     fs::write(
         &ass_path,
@@ -7915,16 +7939,20 @@ fn danmaku_update_preserve_ass_only_refresh_is_idempotent() -> anyhow::Result<()
             "[Script Info]\nTitle: custom\n\n[V4+ Styles]\nFormat: Name, Fontname\n",
             "Style: Existing,Arial\n\n[Events]\n",
             "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n",
-            "Dialogue: 0,0:00:01.00,0:00:02.00,Existing,,0,0,0,,old\n"
+            "Dialogue: 0,0:00:01.00,0:00:02.00,Existing,,0,0,0,,user-only event\n"
         ),
     )?;
     write_mock_danmaku_update_archive(&archive_file, &output_root, &entry_dir, &ass_path)?;
+    assert!(
+        !xml_path.exists(),
+        "the refresh must start without an XML baseline"
+    );
     mock_minimal_video_metadata(&server);
     let danmaku_mock = server.mock(|when, then| {
         when.method(GET).path("/2.xml");
         then.status(200).body(concat!(
-            "<i><d p=\"1,1,25,0,0,0,0,0\">old</d>",
-            "<d p=\"2,1,25,0,0,0,0,0\">new</d></i>"
+            "<i><d p=\"1,1,25,0,0,0,0,101\">old</d>",
+            "<d p=\"2,1,25,0,0,0,0,202\">new</d></i>"
         ));
     });
 
@@ -7947,15 +7975,20 @@ fn danmaku_update_preserve_ass_only_refresh_is_idempotent() -> anyhow::Result<()
     let second_json: Value = serde_json::from_slice(&second_output)?;
 
     danmaku_mock.assert_calls(2);
-    assert_eq!(first_json["ass_statistics"][0]["appended_events"], 1);
-    assert_eq!(second_json["ass_statistics"][0]["appended_events"], 0);
+    assert_eq!(first_json["ass_statistics"][0]["generated_events"], 2);
+    assert_eq!(second_json["ass_statistics"][0]["generated_events"], 2);
     assert_eq!(fs::read(&ass_path)?, after_first);
-    assert!(fs::read_to_string(&ass_path)?.contains("Title: custom"));
+    let rebuilt_ass = fs::read_to_string(&ass_path)?;
+    assert!(rebuilt_ass.contains("old"));
+    assert!(rebuilt_ass.contains("new"));
+    assert!(!rebuilt_ass.contains("Title: custom"));
+    assert!(!rebuilt_ass.contains("Style: Existing,Arial"));
+    assert!(!rebuilt_ass.contains("user-only event"));
     Ok(())
 }
 
 #[test]
-fn danmaku_update_preserve_deduplicates_renderer_ass_with_xml_entities() -> anyhow::Result<()> {
+fn danmaku_update_preserve_ass_only_rebuilds_from_xml_with_entities() -> anyhow::Result<()> {
     let first_server = MockServer::start();
     let second_server = MockServer::start();
     let temp = tempfile::tempdir()?;
@@ -8027,11 +8060,12 @@ fn danmaku_update_preserve_deduplicates_renderer_ass_with_xml_entities() -> anyh
 
     assert_eq!(first_refresh_json["policy"], "preserve");
     assert_eq!(
-        first_refresh_json["ass_statistics"][0]["appended_events"],
-        1
+        first_refresh_json["ass_statistics"][0]["generated_events"],
+        2
     );
     assert_eq!(first_refresh_ass.matches(rendered_old_text).count(), 1);
     assert_eq!(first_refresh_ass.matches("new comment").count(), 1);
+    assert!(!first_refresh_ass.contains("Title: custom"));
 
     let second_refresh_output =
         danmaku_update_command(&credential_file, &second_server, &archive_file)?
@@ -8045,8 +8079,8 @@ fn danmaku_update_preserve_deduplicates_renderer_ass_with_xml_entities() -> anyh
 
     refreshed_danmaku.assert_calls(2);
     assert_eq!(
-        second_refresh_json["ass_statistics"][0]["appended_events"],
-        0
+        second_refresh_json["ass_statistics"][0]["generated_events"],
+        2
     );
     assert_eq!(fs::read(&ass_path)?, after_first_refresh);
     Ok(())
@@ -8534,6 +8568,39 @@ fn danmaku_update_rejects_archive_file_that_overlaps_ass_replace_temp_file() -> 
     assert_eq!(fs::read(&archive_file)?, archive_bytes);
     danmaku_mock.assert_calls(0);
     Ok(())
+}
+
+fn render_ass_for_merged_xml_via_legacy_cli(xml: &str) -> anyhow::Result<Vec<u8>> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_root = temp.path().join("downloads").join("Mock video");
+    let entry_dir = output_root.join("P001-BV1xx411c7mD-Main");
+    let archive_file = temp.path().join("archive.json");
+    let xml_path = entry_dir.join("danmaku.xml");
+    let ass_path = entry_dir.join("danmaku.ass");
+    fs::create_dir_all(&entry_dir)?;
+    fs::write(&xml_path, xml)?;
+    write_mock_danmaku_update_archive(&archive_file, &output_root, &entry_dir, &xml_path)?;
+    mock_minimal_video_metadata(&server);
+    let danmaku_mock = server.mock(|when, then| {
+        when.method(GET).path("/2.xml");
+        then.status(200).body(xml);
+    });
+
+    let output = danmaku_update_command(&credential_file, &server, &archive_file)?
+        .args(["--danmaku-format", "xml,ass"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let report: Value = serde_json::from_slice(&output)?;
+
+    danmaku_mock.assert_calls(1);
+    assert_eq!(report["entries"][0]["appended_comments"], 0);
+    assert_eq!(fs::read(&xml_path)?, xml.as_bytes());
+    Ok(fs::read(ass_path)?)
 }
 
 fn danmaku_update_command(
