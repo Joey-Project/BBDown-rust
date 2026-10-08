@@ -749,7 +749,7 @@ pub fn merge_ass_preserving(
     let incoming = incoming_items
         .iter()
         .filter_map(|item| {
-            super::parse_comment(&item.key.0, &item.key.1).map(|comment| (item, comment))
+            super::parse_comment_decoded(&item.key.0, &item.key.1).map(|comment| (item, comment))
         })
         .collect::<Vec<_>>();
     let (events_start, events_end, lines) = if existing_ass.trim().is_empty() {
@@ -795,6 +795,7 @@ pub fn merge_ass_preserving(
 
 #[cfg(test)]
 mod tests {
+    use super::super::xml_to_ass;
     use super::{merge_ass_preserving, merge_xml_preserving};
 
     #[test]
@@ -970,6 +971,27 @@ mod tests {
             let merged = merge_ass_preserving(&existing, &fetched, None)?;
             assert_eq!(merged.appended_events, 1, "font={font_size}, color={color}");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn ass_only_xml_text_is_decoded_once_and_generated_events_match() -> crate::Result<()> {
+        let old_xml = "<i><d p='1,1,25,16777215'>&amp;amp;</d><d p='2,4,32,16711680'>&amp;lt;</d><d p='3,6,36,65280'>line&#10;next \\{brace\\} and \\\\ slash</d></i>";
+        let fetched_xml = "<i><d p='1,1,25,16777215'>&amp;amp;</d><d p='2,4,32,16711680'>&amp;lt;</d><d p='3,6,36,65280'>line&#10;next \\{brace\\} and \\\\ slash</d><d p='4,5,40,255'>new &amp;amp; line&#10;next \\{braces\\}</d></i>";
+
+        let old_ass = xml_to_ass(old_xml);
+        let initialized = merge_ass_preserving("", old_xml, None)?;
+        assert_eq!(initialized.ass, old_ass);
+        assert!(initialized.ass.contains("}&amp;\n"));
+        assert!(initialized.ass.contains("}&lt;\n"));
+
+        let first = merge_ass_preserving(&old_ass, fetched_xml, None)?;
+        assert_eq!(first.appended_events, 1);
+        assert!(first.ass.contains(r"new &amp; line\Nnext \\\{braces\\\}"));
+
+        let second = merge_ass_preserving(&first.ass, fetched_xml, None)?;
+        assert_eq!(second.appended_events, 0);
+        assert_eq!(second.ass, first.ass);
         Ok(())
     }
 
