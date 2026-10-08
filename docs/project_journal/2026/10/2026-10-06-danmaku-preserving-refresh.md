@@ -3,7 +3,7 @@ id: 20261006-danmaku-preserving-refresh
 title: Strictly Preserving Danmaku Refresh
 status: completed
 created: 2026-10-06
-updated: 2026-10-06
+updated: 2026-10-08
 branch:
 pr: 87
 supersedes: []
@@ -16,8 +16,7 @@ superseded_by:
 
 - Add opt-in preserving refresh for existing archive-backed danmaku files while keeping the
   default legacy update behavior and JSON report unchanged.
-- The implementation is complete for the `0.8.0` source line. Actual publication remains a
-  separate protected post-merge release workflow.
+- The implementation is complete in feature PR #87.
 
 ## Current State
 
@@ -34,16 +33,14 @@ superseded_by:
   queueing and progress, and coordination with File Provider materialization and concurrent external
   writers; core content checks do not lock those external writers.
 - The complete local gate passed: formatting, workspace all-target Clippy, Rust 1.95.0 workspace
-  check, workspace tests (754 passed, 3 ignored), CLI e2e repeat (153 passed), and
-  `cargo publish --dry-run -p bbdown-core --locked --allow-dirty` (29 files packaged; dry-run did
-  not upload).
+  check, workspace tests (754 passed, 3 ignored), and CLI e2e repeat (153 passed).
   Test suites included CLI unit (67), CLI e2e (153), live e2e (9 passed, 2 ignored), core library
   (521), CDN benchmark (3 passed, 1 ignored), public API (1), and doc tests (0).
 - An initial full gate passed on Rust 1.95.0. After the separate `question_mark` lint correction, a
   CI-matching rerun also passed: `env RUSTUP_TOOLCHAIN=1.99.0 just ci` exited 0 in 105.82 seconds
   with rustc 1.99.0 (`b940084d7`), cargo 1.99.0, and Clippy 0.1.99. It included formatting,
   all-target Clippy, the explicit Rust 1.95.0 MSRV check, 754 workspace tests passed / 3 ignored,
-  a separate CLI e2e repeat (153 passed), and the publish dry-run above.
+  and a separate CLI e2e repeat (153 passed).
 - PR [#87](https://github.com/Joey-Project/BBDown-rust/pull/87) follow-up fixes cover XML root
   insertion around quoted `>` and `/>`, ASS style insertion at the actual styles header while
   retaining custom comments, and canonical parent-directory symlink target revalidation. The
@@ -56,8 +53,7 @@ superseded_by:
   1.99.0 (`b940084d7`), cargo 1.99.0, and Clippy 0.1.99. It passed formatting, all-target Clippy,
   the explicit Rust 1.95.0 MSRV check, and workspace tests (759 passed, 3 ignored): CLI unit (67),
   CLI e2e (153), live e2e (9 passed, 2 ignored), core library (526), CDN benchmark (3 passed, 1
-  ignored), and public API (1). The separate CLI e2e repeat passed all 153 tests. Publish dry-run
-  verified 29 packaged files and performed no upload.
+  ignored), and public API (1). The separate CLI e2e repeat passed all 153 tests.
 - Final PR #87 follow-ups fix qualified XML root handling for ordinary and self-closing roots with
   and without default namespaces, and validate each appended node's namespace at its actual output
   offset. Regression cases cover comment/CDATA namespace shadows and a later append with an
@@ -69,17 +65,23 @@ superseded_by:
   all-target strict Clippy, and the explicit Rust 1.95.0 MSRV check. Workspace suites passed 761
   tests with 3 ignored and 0 failed: CLI unit (67), CLI e2e (153), live e2e (9 passed, 2 ignored),
   core library (528), CDN benchmark (3 passed, 1 ignored), and public API (1). A separate CLI e2e
-  repeat passed 153 tests. The publish dry-run verified 29 files and uploaded nothing.
+  repeat passed 153 tests.
 
 ## Next Steps
 
 - Coordinate the downstream bot dependency update and bot-side workflow as a separate workstream.
-- Publish the `0.8.0` source line through the protected RC and promotion workflow after merge.
 
 ## Evidence
 
 - Existing implementation record: `docs/project_journal/2026/06/2026-06-18-danmaku-append-update-019f0a.md`.
 - Feature PR: [#87](https://github.com/Joey-Project/BBDown-rust/pull/87).
-- Release preparation: `docs/project_journal/2026/10/2026-10-06-v0-8-release-prep.md`.
 - Downstream bot dependency pin: `0a94b071bbc1897ec1d1fec9dfcf7883c5754a15`.
 - Local delivery evidence: full `just ci` passed; workspace suite counts are recorded above.
+- After the release-only split, the feature tree retained `bbdown-core` and `bbdown-cli` at
+  `0.7.0`; release-version and release-documentation changes were separated into the release patch.
+  On 2026-10-08, `env RUSTUP_TOOLCHAIN=1.99.0 just ci` passed in 96.93 seconds with formatting,
+  all-target strict Clippy, and the explicit Rust 1.95.0 MSRV check. Workspace suites passed 761
+  tests with 3 ignored and 0 failed: CLI unit (67), CLI e2e (153), live e2e (9 passed, 2 ignored),
+  core library (528), CDN benchmark (3 passed, 1 ignored), and public API (1). The separate CLI e2e
+  repeat passed 153 tests. The core `0.7.0` publish dry-run verified 29 packaged files and uploaded
+  nothing; the existing `0.7.0` registry warning was expected.

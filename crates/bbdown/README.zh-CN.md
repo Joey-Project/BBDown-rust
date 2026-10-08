@@ -14,9 +14,8 @@ cancellation token。原始输入解析覆盖普
 
 使用 `cargo add bbdown-core` 安装，然后用 `bbdown_core` 导入。
 
-当前 source line 是 `0.8.0`，接续已发布的 `0.7.0` 网络与下载器版本线。本版本线增加了面向
-现有 XML/ASS 文件的 staged preserving danmaku refresh，并保留已发布的 CDN 控制和独立 PGC Web
-路由 API。PGC 区域与代理解析独立于媒体 CDN 选择与传输。嵌入项目
+crate 提供面向现有 XML/ASS 文件的 staged preserving danmaku refresh，同时包含 CDN 控制和独立
+PGC Web 路由 API。PGC 区域与代理解析独立于媒体 CDN 选择与传输。嵌入项目
 应优先使用 constructor 和 builder 风格 API，例如 `ClientConfig::default().with_*()`、
 `EndpointConfig::default().with_*()`、`RestrictedAreaConfig::default().with_*()`、
 `DownloadOptions::new(...).with_*()`、`RetryPolicy::new(...)` 和

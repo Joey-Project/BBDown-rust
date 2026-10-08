@@ -18,10 +18,10 @@ host 控制，以及 builder 风格的 crate 集成 API。它还支持显式下�
 文件更新。已发布的 `0.7.0` 版本增加显式 CDN host pool、限额 Range 探测、可选并行
 Range 下载、
 内置 CDN/公共 resolver 目录，以及独立的 PGC Web playurl 路由 API；这些功能不会自动选择
-路由。当前 `0.8.0` source line 增加可选 preserving danmaku 刷新，保留未知 XML 细节与已有
-ASS 样式/事件，并将暂存后的旁路文件和 archive 一起发布。输入解析覆盖普通视频、PGC 和 intl 分集、PUGV/cheese 课程、B23 短链接、收藏
+路由。输入解析覆盖普通视频、PGC 和 intl 分集、PUGV/cheese 课程、B23 短链接、收藏
 夹、空间投稿、合集、系列、首页推荐、观看历史、
-稍后再看列表、关注视频 feed 和空间动态视频 feed。URL 解析包括 canonical
+稍后再看列表、关注视频 feed 和空间动态视频 feed。Preserve 更新策略会保留未知 XML 细节与已有
+ASS 样式/事件，并将暂存后的旁路文件和 archive 一起发布。URL 解析包括 canonical
 `bilibili.com/list/...` 页面、
 path-based medialist 收藏夹 URL，以及带 uploader mid 的空间合集 / 系列 URL，以便使用较
 新的空间 API；同时支持 B 站首页、空间动态页面和需要登录态的
