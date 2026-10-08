@@ -59,6 +59,32 @@ superseded_by:
   offset. Regression cases cover comment/CDATA namespace shadows and a later append with an
   incompatible namespace. The English and Chinese embedding examples also use the synchronous
   `staged.publish()?` call.
+- A 2026-10-08 follow-up found a double-decoding bug in preservation matching: `roxmltree` had
+  already decoded XML text, but the old-ASS parsing path passed that text through `xml_unescape`
+  again. This could miss an existing old-ASS-only event containing a literal entity. The fix routes
+  already-decoded text directly to the renderer through a small private helper; the raw-XML path
+  still decodes once.
+- Focused regressions reproduced the issue before the fix and passed afterward. The core RED case
+  expected one append but produced three (`preserve-red.log`, exit 101); after the fix, the
+  preserving core tests passed (13 passed). The CLI RED case used actual `xml_to_ass` output as the
+  old ASS, removed the XML baseline from disk and archive, then expected one append but produced
+  two (`entity-red3.log`, exit 101). After the fix, that regression passed (1 passed), the preserving
+  CLI group passed (7 passed, 147 filtered), and a second run appended zero events while leaving the
+  ASS bytes identical. At that checkpoint, the complete feature gate for this follow-up had not yet
+  been reported.
+- The follow-up's complete gate subsequently passed: `env RUSTUP_TOOLCHAIN=1.99.0 just ci` exited 0
+  in 45.02 seconds (`/private/tmp/bbdown-danmaku-preserve-check.20261008/feature-entity-ci-green.log`,
+  75,383 bytes). Formatting, strict all-target Clippy, and the Rust 1.95 MSRV check passed. The
+  workspace had 763 passed, 3 ignored, and 0 failed: CLI unit (67), CLI e2e (154), live e2e (9
+  passed, 2 ignored), core (529), CDN benchmark (3 passed, 1 ignored), and public API (1). A separate
+  CLI e2e repeat passed 154 tests; this is independent of, and not added to, the workspace total.
+  The `bbdown-core` 0.7.0 publish dry-run verified 29 packaged files and uploaded nothing. The
+  broader danmaku suite passed 36 tests, and formatting checks passed. The new test's strict Clippy
+  `expect_used` finding was corrected before this successful full gate.
+- These regression inputs are synthetic/mock; no new live Bilibili two-time comparison was run.
+  XML identity remains the full `p` attribute plus decoded text, so a source rewrite of `p` may be
+  treated as a new item. ASS-only input has no original comment IDs; its fallback identity is an
+  approximation based on time and text plus recognized font, color, and mode.
 - `cargo +1.99.0 test -p bbdown-core --lib danmaku::preserving::tests --locked` passed (12 passed,
   0 failed); strict core Clippy passed. The final
   `env RUSTUP_TOOLCHAIN=1.99.0 just ci` gate exited 0 in 46.72 seconds with formatting,

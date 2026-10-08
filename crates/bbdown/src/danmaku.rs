@@ -269,6 +269,10 @@ fn parse_comments(xml: &str) -> Vec<DanmakuComment> {
 }
 
 fn parse_comment(parameters: &str, raw_text: &str) -> Option<DanmakuComment> {
+    parse_comment_decoded(parameters, &xml_unescape(raw_text))
+}
+
+fn parse_comment_decoded(parameters: &str, text: &str) -> Option<DanmakuComment> {
     let mut parts = parameters.split(',');
     let start_seconds = parts.next()?.parse::<f64>().ok()?;
     if !start_seconds.is_finite() {
@@ -289,7 +293,6 @@ fn parse_comment(parameters: &str, raw_text: &str) -> Option<DanmakuComment> {
         .and_then(|value| value.parse::<u32>().ok())
         .unwrap_or(0xFF_FF_FF)
         & 0xFF_FF_FF;
-    let text = xml_unescape(raw_text);
     if text.is_empty() {
         return None;
     }
@@ -298,7 +301,7 @@ fn parse_comment(parameters: &str, raw_text: &str) -> Option<DanmakuComment> {
         mode,
         font_size,
         color,
-        text,
+        text: text.to_owned(),
     })
 }
 

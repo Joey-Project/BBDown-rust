@@ -7955,6 +7955,104 @@ fn danmaku_update_preserve_ass_only_refresh_is_idempotent() -> anyhow::Result<()
 }
 
 #[test]
+fn danmaku_update_preserve_deduplicates_renderer_ass_with_xml_entities() -> anyhow::Result<()> {
+    let first_server = MockServer::start();
+    let second_server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_root = temp.path().join("downloads").join("Mock video");
+    let entry_dir = output_root.join("P001-BV1xx411c7mD-Main");
+    let archive_file = temp.path().join("archive.json");
+    let xml_path = entry_dir.join("danmaku.xml");
+    let ass_path = entry_dir.join("danmaku.ass");
+    fs::create_dir_all(&entry_dir)?;
+    fs::write(&ass_path, "")?;
+    write_mock_danmaku_update_archive(&archive_file, &output_root, &entry_dir, &ass_path)?;
+
+    let old_comment = concat!(
+        "<d p=\"1,1,25,16777215,0,0,0,0\">",
+        "literal &amp;amp;lt; &amp;amp;amp;\nsecond {line}",
+        "</d>"
+    );
+    mock_minimal_video_metadata(&first_server);
+    let initial_danmaku = first_server.mock(|when, then| {
+        when.method(GET).path("/2.xml");
+        then.status(200).body(format!("<i>{old_comment}</i>"));
+    });
+
+    let initial_output = danmaku_update_command(&credential_file, &first_server, &archive_file)?
+        .args(["--danmaku-format", "ass"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let initial_json: Value = serde_json::from_slice(&initial_output)?;
+    let renderer_ass = fs::read_to_string(&ass_path)?;
+    let rendered_old_text = "literal &amp;lt; &amp;amp;\\Nsecond \\{line\\}";
+
+    initial_danmaku.assert_calls(1);
+    assert_eq!(initial_json["entries"][0]["appended_comments"], 1);
+    assert!(renderer_ass.contains("Dialogue:"));
+    assert!(renderer_ass.contains(rendered_old_text));
+
+    fs::remove_file(&xml_path)?;
+    let mut archive: Value = serde_json::from_slice(&fs::read(&archive_file)?)?;
+    let files = archive["records"][0]["entries"][0]["files"]
+        .as_array_mut()
+        .ok_or_else(|| anyhow::anyhow!("archive entry files must be an array"))?;
+    files.retain(|path| path.as_str() != Some(xml_path.to_string_lossy().as_ref()));
+    fs::write(&archive_file, serde_json::to_vec(&archive)?)?;
+    assert!(!xml_path.exists(), "the refresh must have no XML baseline");
+
+    mock_minimal_video_metadata(&second_server);
+    let refreshed_danmaku = second_server.mock(|when, then| {
+        when.method(GET).path("/2.xml");
+        then.status(200).body(format!(
+            "<i>{old_comment}<d p=\"2,1,25,16777215,0,0,0,0\">new comment</d></i>"
+        ));
+    });
+
+    let first_refresh_output =
+        danmaku_update_command(&credential_file, &second_server, &archive_file)?
+            .args(["--update-policy", "preserve", "--danmaku-format", "ass"])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+    let first_refresh_json: Value = serde_json::from_slice(&first_refresh_output)?;
+    let after_first_refresh = fs::read(&ass_path)?;
+    let first_refresh_ass = String::from_utf8(after_first_refresh.clone())?;
+
+    assert_eq!(first_refresh_json["policy"], "preserve");
+    assert_eq!(
+        first_refresh_json["ass_statistics"][0]["appended_events"],
+        1
+    );
+    assert_eq!(first_refresh_ass.matches(rendered_old_text).count(), 1);
+    assert_eq!(first_refresh_ass.matches("new comment").count(), 1);
+
+    let second_refresh_output =
+        danmaku_update_command(&credential_file, &second_server, &archive_file)?
+            .args(["--update-policy", "preserve", "--danmaku-format", "ass"])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+    let second_refresh_json: Value = serde_json::from_slice(&second_refresh_output)?;
+
+    refreshed_danmaku.assert_calls(2);
+    assert_eq!(
+        second_refresh_json["ass_statistics"][0]["appended_events"],
+        0
+    );
+    assert_eq!(fs::read(&ass_path)?, after_first_refresh);
+    Ok(())
+}
+
+#[test]
 fn danmaku_update_archive_appends_xml_and_writes_ass() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;
