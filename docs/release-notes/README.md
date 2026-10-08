@@ -8,6 +8,9 @@ embedding-facing shape of each shipped line.
 
 ## Versions
 
+- [v0.8.0 source line](v0.8.0.md): opt-in preserving danmaku refresh for XML, ASS, and archive
+  files.
+
 - [v0.7.0](v0.7.0.md): opt-in CDN host selection, bounded probing, parallel Range transfer,
   bundled network catalogs, and independent PGC Web playurl routing.
 - [v0.6.0](v0.6.0.md): credential lifecycle integration for profile status, provider-aware

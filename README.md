@@ -20,6 +20,7 @@ snapshot CDN/public-resolver catalogs with runtime probe commands, and independe
 Web playurl routes; it does not introduce automatic CDN routing. It also supports an
 explicit download archive for duplicate preflight, CLI replace / keep-both / cancel decisions, and
 append-only danmaku sidecar updates for already-downloaded archive entries.
+The project is now on the `0.8.0` source line.
 Its preserving update policy retains unknown XML details and existing ASS styles/events, then
 publishes staged sidecars together with the archive.
 Input parsing covers normal videos, PGC and intl episodes, PUGV/cheese courses, B23 short links,
