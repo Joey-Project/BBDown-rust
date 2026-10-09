@@ -32,13 +32,14 @@ pub use credential_preflight::{
     credential_preflight_requirements_for_media_request,
 };
 pub use credentials::{
-    AccessKeyProvider, AccessKeyProviderSecret, AccessKeyRefreshKeypair, AccessKeyRefreshProvider,
-    CredentialHealthProbe, CredentialHealthReport, CredentialHealthScope, CredentialHealthStatus,
-    CredentialHealthSummary, CredentialHealthSummaryStatus, CredentialKind,
-    CredentialLifecycleCredentialStatus, CredentialLifecycleMetadata, CredentialLifecyclePolicy,
-    CredentialLifecycleSource, CredentialLifecycleStatus, CredentialProfileLifecycleStatus,
-    CredentialProfileMetadata, CredentialProfileSecrets, CredentialProfileSelection,
-    CredentialProfiles, CredentialRefreshSecret, CredentialSource, CredentialStore, Credentials,
+    AccessKeyIdentityKeypair, AccessKeyProvider, AccessKeyProviderSecret, AccessKeyRefreshKeypair,
+    AccessKeyRefreshProvider, CredentialAccountIdentity, CredentialHealthProbe,
+    CredentialHealthReport, CredentialHealthScope, CredentialHealthStatus, CredentialHealthSummary,
+    CredentialHealthSummaryStatus, CredentialKind, CredentialLifecycleCredentialStatus,
+    CredentialLifecycleMetadata, CredentialLifecyclePolicy, CredentialLifecycleSource,
+    CredentialLifecycleStatus, CredentialProfileLifecycleStatus, CredentialProfileMetadata,
+    CredentialProfileSecrets, CredentialProfileSelection, CredentialProfiles,
+    CredentialRefreshSecret, CredentialSource, CredentialStore, Credentials,
     DEFAULT_CREDENTIAL_PROFILE,
 };
 pub use danmaku::{

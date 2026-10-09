@@ -1,0 +1,35 @@
+---
+id: 20261008-b46383
+title: Credential Account Identity
+status: completed
+created: 2026-10-08
+updated: 2026-10-09
+branch: wip/credential-account-identity
+pr: https://github.com/Joey-Project/BBDown-rust/pull/90
+supersedes: []
+superseded_by:
+---
+
+# Credential Account Identity
+
+## Scope
+- Supply the narrow core prerequisite for the server-owned tvOS-net-player credential lifecycle.
+- Add `BiliClient::credential_account_identity(CredentialKind)` and the typed `CredentialAccountIdentity` result, without changing existing health-check, login, storage, or CLI behavior.
+- Reuse the official Web nav and signed generic/TV OAuth-info request paths. Require successful provider status and a positive account ID; bound the response body to 64 KiB.
+- Keep cookies off OAuth probes and redact credentials and account IDs from debug/errors. The embedding server remains responsible for session authority, same-account checks, renewal policy, and private storage.
+- Support explicit generic-key identity signing with IntlBstar, BiliTv, Android, or AndroidB. Legacy keys without issuer metadata use at most four probes, retrying only app-authentication or signature rejection codes within one aggregate request timeout; malformed identities and transport failures remain terminal.
+- Reuse the existing BiliTv refresh endpoint selection for BiliTv-signed generic identity probes, including the legacy fallback: honor an explicit TV poll base and retain the untouched-TV/default plus custom-main compatibility rule. Other generic keypairs remain on the main passport base.
+- Keep the crate README and embedding guide aligned in English and Simplified Chinese, including the private account-binding boundary and Git-only availability of the new API.
+
+## Delivery
+- Implement and test in a separate worktree from `master` commit `d28b2c7539b564c6e492bbdb5b103817ececd0e9`; preserve unrelated dirty source-checkout changes.
+- Run focused mocked probes, complete workspace formatting/lint/tests, declared-toolchain checks, and the crate publish dry run.
+- Use current-head GitHub Codex review and CI, with every PR conversation resolved before merge. No local formal review lane or release publication is included.
+
+## Validation Boundaries
+- Rust/Cargo `1.95.0`: complete workspace tests passed (746 passed, 3 opt-in live tests ignored), including CLI e2e (146 passed). The identity-specific tests passed (18), as did unchanged health-check coverage (9) and existing TV-keypair/refresh routing filters (4 and 6). Formatting, workspace/all-target Clippy with warnings denied, declared-toolchain checks, and a core publish dry run remain delivery gates. No crate was published.
+- Implementation and validation delegation requested GPT-6 Luna (Max for the initial keypair fix; High for endpoint routing and delivery gates). Effective runtime introspection was unavailable. The lead integrated documentation and delivery. No local formal review lane was run.
+- Deterministic provider fixtures establish parsing, signing, cookie separation, limits, and redaction contracts, not live account validity.
+- A read-only official-endpoint check of the consumer's selected saved profile accepted the original IntlBstar identity probe and matched the Web identity. Its Main/BALH refresh metadata does not establish the current key's issuer or prove compatibility for every supported signing keypair.
+- Server integration and saved-profile validation belong to the consumer's credential-lifecycle slice after updating its exact dependency revision.
+- This additive API is Git-only until a later crate release; the previously published `0.7.0` does not include it.

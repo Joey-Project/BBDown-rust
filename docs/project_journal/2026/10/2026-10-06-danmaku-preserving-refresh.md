@@ -51,6 +51,8 @@ superseded_by:
   declarations, so equivalent root namespaces can use different declarations. Existing bytes
   and initialization ranges remain unchanged; appends between different root namespaces are
   rejected explicitly.
+- The Simplified Chinese embedding guide includes the chapter-output planning example and
+  localized preserving-refresh and publication-recovery guidance aligned with the English guide.
 - The request was transferred from the Telegram-Video-Downloader task. Its bot-side consumer pinned
   BBDown-rust revision `0a94b071bbc1897ec1d1fec9dfcf7883c5754a15`; its dependency update remains a
   downstream follow-up.

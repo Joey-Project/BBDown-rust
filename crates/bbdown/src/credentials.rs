@@ -1247,6 +1247,23 @@ pub enum CredentialKind {
     TvAccessKey,
 }
 
+#[non_exhaustive]
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub struct CredentialAccountIdentity {
+    pub kind: CredentialKind,
+    pub account_id: u64,
+}
+
+impl fmt::Debug for CredentialAccountIdentity {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CredentialAccountIdentity")
+            .field("kind", &self.kind)
+            .field("account_id", &"<redacted>")
+            .finish()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AccessKeyProvider {
@@ -1276,6 +1293,15 @@ pub enum AccessKeyRefreshProvider {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AccessKeyRefreshKeypair {
+    BiliTv,
+    Android,
+    AndroidB,
+}
+
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AccessKeyIdentityKeypair {
+    IntlBstar,
     BiliTv,
     Android,
     AndroidB,
