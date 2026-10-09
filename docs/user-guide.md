@@ -470,7 +470,9 @@ The default `--update-policy legacy` keeps this behavior for compatibility. Opt 
 it. A positive decimal `p[7]` comment id is the preferred identity and is canonicalized across
 leading zeros: the same id remains matched when fetched metadata or text changes, while a different
 id is appended even if its text matches. Missing, zero, or invalid ids fall back to the complete
-`p` attribute and decoded text. XML remains the canonical source. Every selected ASS file is
+`p` attribute and decoded text. Only `<d>` elements without a namespace or in the `<i>` root's
+namespace participate in matching and ASS rendering. Existing elements in unrelated namespaces
+remain preserved as unknown XML. XML remains the canonical source. Every selected ASS file is
 regenerated from the complete merged XML, so custom ASS styles and events are not retained. If the
 archive has no XML baseline, old ASS events are not used as history; output is generated from the
 fetched XML payload. Strict mode stages the selected sidecars and archive JSON as one publication

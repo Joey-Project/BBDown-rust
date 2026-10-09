@@ -43,6 +43,10 @@ superseded_by:
   helper is exposed; the existing XML merge and staged archive APIs remain the supported surfaces.
   This current contract supersedes earlier implementation and test notes below that describe
   preserving or merging old ASS content.
+- Comment matching and ASS rendering accept only `<d>` elements without a namespace or in the
+  `<i>` root's namespace. Existing elements from unrelated namespaces remain byte-preserved as
+  unknown XML and cannot occupy a real comment's ID. Qualified roots still accept legacy
+  unqualified comments.
 - The request was transferred from the Telegram-Video-Downloader task. Its bot-side consumer pinned
   BBDown-rust revision `0a94b071bbc1897ec1d1fec9dfcf7883c5754a15`; its dependency update remains a
   downstream follow-up.

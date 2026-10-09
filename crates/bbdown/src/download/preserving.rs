@@ -1148,9 +1148,14 @@ mod tests {
                         .is_some_and(|name| name.to_string_lossy().contains("preserving-recovery"))
                 })
                 .ok_or_else(|| anyhow::anyhow!("rollback recovery copy was not retained"))?;
-            anyhow::ensure!(error.to_string().contains(&recovery.display().to_string()));
-            anyhow::ensure!(fs::read(recovery)? == originals[1]);
-            anyhow::ensure!(fs::metadata(recovery)?.permissions().readonly());
+            let recovery = fs::canonicalize(recovery)?;
+            anyhow::ensure!(
+                error.to_string().contains(&recovery.display().to_string()),
+                "error did not report retained recovery copy {}: {error}",
+                recovery.display()
+            );
+            anyhow::ensure!(fs::read(&recovery)? == originals[1]);
+            anyhow::ensure!(fs::metadata(&recovery)?.permissions().readonly());
             anyhow::ensure!(fs::read(&paths[0])? == originals[0]);
             anyhow::ensure!(fs::metadata(&paths[0])?.permissions().readonly());
             anyhow::ensure!(!paths[1].exists());
@@ -1367,10 +1372,17 @@ mod tests {
             }]),
             "directory read errors must not be treated as absence",
         )?;
-        assert!(matches!(
-            unreadable_error,
-            crate::Error::Io(error) if error.kind() == std::io::ErrorKind::IsADirectory
-        ));
+        #[cfg(windows)]
+        let expected_unreadable_kind = std::io::ErrorKind::PermissionDenied;
+        #[cfg(not(windows))]
+        let expected_unreadable_kind = std::io::ErrorKind::IsADirectory;
+        assert!(
+            matches!(
+                &unreadable_error,
+                crate::Error::Io(error) if error.kind() == expected_unreadable_kind
+            ),
+            "expected directory access error {expected_unreadable_kind:?}, got {unreadable_error:?}"
+        );
         Ok(())
     }
 
@@ -1664,10 +1676,15 @@ mod tests {
                     .is_some_and(|name| name.to_string_lossy().contains("preserving-recovery"))
             })
             .ok_or_else(|| anyhow::anyhow!("rollback recovery copy was not retained"))?;
-        assert!(error.to_string().contains(&recovery.display().to_string()));
-        assert_eq!(fs::read(recovery)?, b"second-old");
+        let recovery = fs::canonicalize(recovery)?;
+        assert!(
+            error.to_string().contains(&recovery.display().to_string()),
+            "error did not report retained recovery copy {}: {error}",
+            recovery.display()
+        );
+        assert_eq!(fs::read(&recovery)?, b"second-old");
         #[cfg(unix)]
-        assert_eq!(fs::metadata(recovery)?.permissions().mode() & 0o777, 0o400);
+        assert_eq!(fs::metadata(&recovery)?.permissions().mode() & 0o777, 0o400);
         assert_eq!(fs::read(first_path)?, b"first-old");
         assert!(!second_path.exists());
         Ok(())
