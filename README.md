@@ -20,6 +20,8 @@ snapshot CDN/public-resolver catalogs with runtime probe commands, and independe
 Web playurl routes; it does not introduce automatic CDN routing. It also supports an
 explicit download archive for duplicate preflight, CLI replace / keep-both / cancel decisions, and
 append-only danmaku sidecar updates for already-downloaded archive entries.
+Its preserving update policy retains XML history and regenerates selected ASS output from the merged
+XML, then publishes the staged sidecars together with the archive.
 Input parsing covers normal videos, PGC and intl episodes, PUGV/cheese courses, B23 short links,
 favorite lists, space videos, collections, series, homepage recommendations, watch history,
 watch-later lists, following video feeds, and space dynamic video feeds. URL parsing includes canonical
@@ -172,7 +174,14 @@ archive records without redownloading media. The command replans the input, find
 entries by stable aid/cid identity, downloads the current XML danmaku payload, append-merges only
 new comments into `danmaku.xml`, regenerates selected derived formats such as `danmaku.ass`, and
 saves the updated sidecar paths back to the archive. XML is always the canonical update target;
-`--danmaku-format ass` adds or refreshes ASS from the merged XML.
+`--danmaku-format ass` adds or refreshes ASS from the merged XML. The opt-in
+`--update-policy preserve` keeps the original XML history and publishes the staged sidecars with the
+archive; each selected ASS file is regenerated from the complete merged XML, so old custom ASS
+styles and events are not retained. XML comments with the same valid positive ASCII decimal `p[7]` id
+match even if fetched metadata or text changed; a different id is appended even when its text
+matches. Missing, zero, or invalid ids fall back to the complete `p` attribute plus decoded text.
+When no XML baseline exists, old ASS events are not used as history; ASS is generated from the
+fetched XML payload. `legacy` remains the default.
 
 `ss` and `md` inputs require an explicit selection in non-interactive mode:
 

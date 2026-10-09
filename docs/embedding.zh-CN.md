@@ -4,14 +4,15 @@
 
 ## 范围
 
-`bbdown_core` crate 通过 `bbdown-core` package 发布，是 Rust 项目的集成表面，适用于需要
-typed Bilibili metadata、下载计划、媒体下载、字幕旁路文件、弹幕旁路文件、二维码登录状态
-、批量集合解析和受限区域代理诊断，但不希望 shell out 到 CLI 的场景。
+`bbdown_core` crate 以 `bbdown-core` package 发布，为 Rust 项目提供集成 API，涵盖类型化的
+Bilibili 元数据、下载计划、媒体下载、字幕和弹幕旁路文件、二维码登录状态、批量集合解析，以及
+受限区域代理诊断；调用方无需通过 shell 启动 CLI。
 
-当前 crate 版本是已发布的 `0.7.0`，晚于 `0.6.0`，增加了显式 CDN host pool、探测、
-并行传输选项，以及独立的 PGC Web playurl 路由选择器。这些网络操作仍由调用方显式选择；crate
-不会根据 CLI 内置目录自动路由请求。配置应优先使用构造器和 builder 风格 API，并把 metadata
-和 plan 结构体视为只读输出表面。这样在 crate 成熟过程中新增字段时，嵌入代码更不容易受影响。
+当前已发布版本为 `0.7.0`；`0.8.0` 开发线新增了分阶段暂存并保留历史的弹幕刷新。
+`0.7.0` 增加了显式 CDN 主机池、探测和并行传输选项，以及独立的 PGC Web playurl 路由选择器。
+这些网络操作仍由调用方显式选择；crate 不会根据 CLI 内置目录自动路由请求。配置应优先使用构造器和
+builder 风格 API，并将元数据和 plan 结构体视为只读输出。这样 crate 增加字段时，嵌入代码更不容易
+受到影响。
 
 ## 仅规划
 
@@ -32,6 +33,7 @@ async fn main() -> bbdown_core::Result<()> {
 
     for entry in &plan.entries {
         println!("{}: {} streams", entry.title, entry.streams.videos.len());
+        println!("chapters: {}", entry.chapters.len());
     }
 
     Ok(())
@@ -877,14 +879,14 @@ aid/cid 媒体 id，而不是可选 BVID 或分集 id，因此通过分集 URL �
 JSON 文件路径；`DownloadArchive::save` 会拒绝目录目标。如果归档路径是符号链接，
 `DownloadArchive::save` 会更新符号链接目标，而不是替换链接本身。
 
-Append-only 弹幕刷新是面向已下载条目的单独 archive-driven 操作。用相同输入和 selection 按
+仅追加式弹幕刷新是针对已下载条目的独立归档操作。用相同输入和 selection 按
 `DownloadMode::DanmakuOnly` 生成 plan，加载归档，然后调用
-`BiliClient::update_danmaku_for_archive`。Danmaku-only planning 不依赖媒体 playurl 可用性。
-该方法按 aid/cid 匹配归档条目，下载当前 XML 弹幕 payload，把新弹幕 append-merge 到
-`danmaku.xml`，重新生成所选派生格式（例如 ASS），更新归档条目的旁路文件列表，并返回 typed
-`DanmakuUpdateReport`，其中包含每个条目的已有、拉取和追加弹幕数量。XML 始终是 canonical 更
-新目标；`DanmakuUpdateOptions::with_danmaku_formats([DanmakuFormat::Ass])` 会基于合并后的
-XML 新增或刷新 `danmaku.ass`。
+`BiliClient::update_danmaku_for_archive`。仅弹幕模式的规划不依赖媒体 playurl 是否可用。
+该方法按 aid/cid 匹配归档条目，下载当前 XML 弹幕数据，将新弹幕追加合并到
+`danmaku.xml`，重新生成所选派生格式（例如 ASS），更新归档条目的旁路文件列表，并返回带类型的
+`DanmakuUpdateReport`，其中包含每个条目已有、拉取和追加的弹幕数量。XML 始终作为更新的基准文件；
+`DanmakuUpdateOptions::with_danmaku_formats([DanmakuFormat::Ass])` 会根据合并后的 XML 新增或刷新
+`danmaku.ass`。
 
 ```rust,no_run
 use bbdown_core::{
@@ -914,7 +916,64 @@ async fn main() -> bbdown_core::Result<()> {
 ```
 
 如果调用方自行管理旁路文件存储，可以直接使用 `merge_xml_append_only(existing, fetched)`，
-在不接触 `DownloadArchive` 的情况下复用同一套 XML-level append-only merge 逻辑。
+无需访问 `DownloadArchive`，即可复用相同的 XML 级仅追加合并逻辑。
+
+当嵌入应用需要保留 XML 历史，并将归档与旁路文件一起发布时，使用
+`DanmakuUpdatePolicy::Preserve` 和 `stage_preserving_danmaku_update_for_archive_file`。暂存
+结果提供不可变报告、更新后的归档快照、暂存文件列表，以及各文件的 ASS 生成事件统计。
+ASS 会从合并后的 XML 重新生成，不会保留旧 ASS 文档。
+每个暂存文件都提供目标路径、目标原先存在时的预期字节，以及完整的新输出字节。调用方可以先检查这些值，
+再消费暂存结果并调用 `publish()`：
+
+```rust,no_run
+use bbdown_core::{
+    BiliClient, ClientConfig, DanmakuFormat, DanmakuUpdateOptions, DanmakuUpdatePolicy,
+    DownloadMode,
+};
+
+#[tokio::main]
+async fn main() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let plan = client
+        .plan_download_with_mode("BV1qt4y1X7TW", None, DownloadMode::DanmakuOnly)
+        .await?;
+    let staged = client
+        .stage_preserving_danmaku_update_for_archive_file(
+            &plan,
+            "downloads/archive.json",
+            DanmakuUpdateOptions::default()
+                .with_danmaku_formats([DanmakuFormat::Xml, DanmakuFormat::Ass])
+                .with_update_policy(DanmakuUpdatePolicy::Preserve),
+        )
+        .await?;
+    for file in staged.files() {
+        println!("staged {} bytes for {}", file.output_bytes().len(), file.path().display());
+    }
+    for stats in staged.ass_statistics() {
+        println!("ASS generated {} events", stats.generated_events);
+    }
+    let report = staged.publish()?;
+    println!("updated {} entries", report.entries.len());
+    Ok(())
+}
+```
+
+暂存结果会记录预期内容，发布前会重新校验选定的目标。`StagedDanmakuFile::path()` 返回解析
+父目录符号链接后的选定目标；发布时会针对该目标重新校验逻辑路径别名。发布准备阶段会捕获已有目标的
+Unix 权限位或可移植的只读设置，将其应用到替换文件和恢复副本，并在替换目标前再次校验。
+Windows 删除待替换目标时会临时清除其只读属性；删除失败会恢复原属性，回滚时也会将捕获的属性
+重新应用到恢复文件。新建输出沿用默认创建权限。调用方需要协调 File Provider 将占位文件物化为
+实际文件的过程，以及其他并发写入；校验可以检测变化，但不会锁住外部写入方。检测到发布错误时会尝试
+回滚；如果回滚无法完成，错误会指出保留的恢复文件。调用成功不代表旁路文件和归档之间具备崩溃或
+断电原子性。`Preserve` 会保留 XML 历史，只追加与历史不匹配的新弹幕。优先使用 `p[7]` 中的正
+ASCII 十进制 ID，并统一忽略前导零：ID 相同，即使拉取后的元数据或文本改变也视为匹配；ID 不同，
+即使文本相同也会追加。ID 缺失、为零或格式无效时，改用完整 `p` 属性和解码后的文本作为匹配依据。
+只有无命名空间或与 `<i>` 根元素同命名空间的 `<d>` 元素参与匹配和 ASS 渲染；已有 XML 中其他
+命名空间的元素会作为未知内容保留。追加节点会携带来自拉取文档的必要命名空间声明，因此根元素命名空间
+相同但前缀不同或使用默认命名空间时，绑定仍会保留；根元素命名空间不同时，追加会失败。每次都会从
+完整合并 XML 重建所选 ASS，旧自定义样式和事件会被丢弃。没有 XML 基线时，旧 ASS 事件不会作为历史，
+生成的 ASS 只反映本次拉取的 XML 数据。`ass_statistics()` 会为每个 ASS 输出报告
+`generated_events`。
 
 ## 端点覆盖
 

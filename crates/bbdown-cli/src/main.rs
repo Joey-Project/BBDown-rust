@@ -14,7 +14,7 @@ use bbdown_core::{
     CredentialPreflightRequirement, CredentialPreflightRequirementStatus,
     CredentialProfileLifecycleStatus, CredentialProfileSelection, CredentialProfiles,
     CredentialRefreshSecret, CredentialStore, Credentials, DanmakuFormat, DanmakuUpdateOptions,
-    DownloadArchive, DownloadCancellationToken, DownloadMode, DownloadOptions,
+    DanmakuUpdatePolicy, DownloadArchive, DownloadCancellationToken, DownloadMode, DownloadOptions,
     DownloadPathTemplates, DownloadPlan, DownloadPreflight, DownloadProgressEvent,
     DownloadProgressSink, DownloadReport, DuplicateDecision, EndpointConfig, Input,
     MediaHostOptions, MediaStream, MuxOptions, PlaybackPlan, PlayurlMode, QrLoginCredentials,
@@ -326,6 +326,8 @@ struct DanmakuUpdateCliArgs {
     archive_file: PathBuf,
     #[arg(long)]
     json: bool,
+    #[arg(long, value_enum, default_value = "legacy", value_name = "POLICY")]
+    update_policy: DanmakuUpdatePolicyArg,
     #[arg(long, default_value_t = 3)]
     retry_attempts: u32,
     #[arg(long, default_value_t = 250)]
@@ -655,6 +657,22 @@ enum DanmakuFormatArg {
     Ass,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+enum DanmakuUpdatePolicyArg {
+    Legacy,
+    Preserve,
+}
+
+impl From<DanmakuUpdatePolicyArg> for DanmakuUpdatePolicy {
+    fn from(value: DanmakuUpdatePolicyArg) -> Self {
+        match value {
+            DanmakuUpdatePolicyArg::Legacy => Self::Legacy,
+            DanmakuUpdatePolicyArg::Preserve => Self::Preserve,
+        }
+    }
+}
+
 impl From<DanmakuFormatArg> for DanmakuFormat {
     fn from(value: DanmakuFormatArg) -> Self {
         match value {
@@ -919,7 +937,8 @@ fn danmaku_update_options_from_cli(
             Duration::from_millis(args.retry_backoff_ms),
         ))
         .with_download_idle_timeout(download_idle_timeout)
-        .with_danmaku_formats(args.danmaku_formats.iter().copied().map(Into::into)))
+        .with_danmaku_formats(args.danmaku_formats.iter().copied().map(Into::into))
+        .with_update_policy(args.update_policy.into()))
 }
 
 fn path_templates_from_cli(flags: DownloadTemplateCliFlags) -> DownloadPathTemplates {
@@ -4099,6 +4118,39 @@ async fn handle_danmaku_update(
     let plan = client
         .plan_download_with_mode(&args.url, args.select, DownloadMode::DanmakuOnly)
         .await?;
+    if args.update_policy == DanmakuUpdatePolicyArg::Preserve {
+        let staged = client
+            .stage_preserving_danmaku_update_for_archive_file(&plan, &args.archive_file, options)
+            .await?;
+        let report = staged.report().clone();
+        let ass_statistics = staged
+            .ass_statistics()
+            .iter()
+            .map(|statistics| {
+                serde_json::json!({
+                    "path": statistics.path,
+                    "index": statistics.index,
+                    "cid": statistics.cid,
+                    "generated_events": statistics.generated_events,
+                })
+            })
+            .collect::<Vec<_>>();
+        staged.publish()?;
+        if args.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "policy": "preserve",
+                    "report": report,
+                    "ass_statistics": ass_statistics,
+                }))?
+            );
+        } else {
+            print_danmaku_update_report(&report);
+            print_danmaku_preserving_ass_statistics(&ass_statistics);
+        }
+        return Ok(());
+    }
     let mut archive = DownloadArchive::load(&args.archive_file)
         .with_context(|| format!("failed to load archive {}", args.archive_file.display()))?;
     ensure_archive_file_does_not_overlap_danmaku_update_targets(
@@ -7143,6 +7195,16 @@ fn print_danmaku_update_report(report: &bbdown_core::DanmakuUpdateReport) {
                 file.path.display()
             );
         }
+    }
+}
+
+fn print_danmaku_preserving_ass_statistics(statistics: &[serde_json::Value]) {
+    for item in statistics {
+        println!(
+            "  ASS {}: generated={}",
+            item["path"].as_str().unwrap_or("<non-UTF-8 path>"),
+            item["generated_events"].as_u64().unwrap_or_default()
+        );
     }
 }
 

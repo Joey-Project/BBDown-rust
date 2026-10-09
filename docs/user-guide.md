@@ -27,7 +27,8 @@ The crates.io publish target is the reusable `bbdown-core` library package. Use
 `just publish-dry-run-strict` or `cargo publish --dry-run -p bbdown-core --locked` to reproduce the
 clean CI gate. The `bbdown-cli` package is marked `publish = false`; install or distribute the CLI
 through GitHub release archives instead. The current published release is `0.7.0`, following the
-published `0.6.0` release. It focuses on opt-in CDN selection, probing and parallel transfer, bundled
+published `0.6.0` release. The current `0.8.0` source line builds on that release with preserving
+danmaku refresh. The published line focuses on opt-in CDN selection, probing and parallel transfer, bundled
 network catalogs, and independent PGC Web playurl routing. These controls require explicit selection; the
 catalogs are snapshots, and listed endpoints are checked only when a user runs a probe or selects a
 route. Embedding callers should still prefer
@@ -463,6 +464,32 @@ is regenerated from the merged XML. `--select` follows the same selection syntax
 batch inputs can update one page, a range, `latest`, or `all` as appropriate for the input type. The
 archive file must not overlap the updated sidecar paths, and `--json` prints a typed report with
 per-entry existing, fetched, and appended comment counts.
+
+The default `--update-policy legacy` keeps this behavior for compatibility. Opt into
+`--update-policy preserve` to retain XML history and append only fetched comments that do not match
+it. A positive decimal `p[7]` comment id is the preferred identity and is canonicalized across
+leading zeros: the same id remains matched when fetched metadata or text changes, while a different
+id is appended even if its text matches. Missing, zero, or invalid ids fall back to the complete
+`p` attribute and decoded text. Only `<d>` elements without a namespace or in the `<i>` root's
+namespace participate in matching and ASS rendering. Existing elements in unrelated namespaces
+remain preserved as unknown XML. Appended comments carry required namespace declarations from
+the fetched document; compatible root namespaces can use different prefixes or default declarations.
+Appending between different root namespaces fails. XML remains the canonical source. Every selected
+ASS file is regenerated from the complete merged XML, so custom ASS styles and events are not retained. If the
+archive has no XML baseline, old ASS events are not used as history; output is generated from the
+fetched XML payload. Strict mode stages the selected sidecars and archive JSON as one publication
+group, and its ASS statistics report generated event counts separately from XML comment counts.
+Replacement and recovery retain existing Unix mode bits or the portable read-only setting.
+On Windows, replacement temporarily clears a target's read-only attribute for deletion and
+restores the captured attribute when recovering from failure.
+Detected errors leave originals in place and identify recovery files when rollback cannot finish.
+This does not promise crash or power-loss atomicity across files. For synchronized folders such as
+File Provider directories, coordinate concurrent writers and materialization around the command.
+
+```bash
+bbdown danmaku update av170001 --archive-file downloads/archive.json \
+  --danmaku-format xml,ass --update-policy preserve --json
+```
 
 `--request-timeout-seconds` applies to API requests. Media body reads use
 `--download-idle-timeout-seconds`; pass `0` to disable that idle timeout.

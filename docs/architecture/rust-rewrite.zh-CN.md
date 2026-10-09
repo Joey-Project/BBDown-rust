@@ -26,9 +26,9 @@
 项目在普通集成代码中不需要结构体字面量。CLI 使用相同 public builder，这让它成为 crate
 API 的仓库内集成测试表面。
 
-输出模型保持为 typed data surfaces。当前 crate 版本是已发布的 `0.7.0`，晚于 `0.6.0`，
-增加显式 CDN host pool、限额探测、并行 Range 传输和独立的 PGC Web playurl 路由
-选择器。目录快照由 CLI 用户显式选择，不构成自动路由策略；调用方应读取字段或序列化输出值，
+输出模型保持为 typed data surfaces。当前已发布 crate 版本为 `0.7.0`，`0.8.0` source line
+增加 staged preserving danmaku 刷新。`0.7.0` 增加显式 CDN host pool、限额探测、并行 Range
+传输和独立的 PGC Web playurl 路由选择器。目录快照由 CLI 用户显式选择，不构成自动路由策略；调用方应读取字段或序列化输出值，
 而不是把输出结构体视为稳定的构造目标。
 
 ## 解析器模型
@@ -223,6 +223,20 @@ Append-only 弹幕刷新被建模为单独的 archive-backed 执行路径，而�
 把新的弹幕 block 合并进 canonical `danmaku.xml`，再从合并后的 XML 重新生成所选派生格式，
 例如 ASS。底层 `merge_xml_append_only` helper 也是 public API，供自行管理 sidecar storage
 且不使用 `DownloadArchive` 的调用方复用。
+
+`DanmakuUpdatePolicy::Preserve` 选择更严格的路径，同时保持默认 `Legacy` 行为。XML merger 保留
+原 XML 字节，只在 root close tag 前插入未匹配的新弹幕。优先使用 `p[7]` 中的正 ASCII 十进制 id，
+并忽略前导零；id 相同即使拉取后的元数据或文本改变也视为同一弹幕，id 不同即使文本相同也会追加。
+id 缺失、为零或格式无效时，回退为完整 `p` 属性和解码后的文本。所选 ASS 每次都从完整合并 XML
+重新生成，因此不保留旧 ASS 样式或事件。如果没有 XML 基线，旧 ASS 事件不作为历史，输出由拉取的 XML
+payload 生成。
+`stage_preserving_danmaku_update_for_archive_file` 捕获 archive 和所选旁路文件，并返回不可变的
+`StagedDanmakuUpdate`，其中包含预期旧字节、目标路径、新字节、更新后的 archive 快照，以及按条目
+统计的 ASS `generated_events` 数量。`publish()` 会重新校验内容与目标，然后把 archive 和旁路文件作为一组发布，
+并对可检测错误执行回滚。调用方需要协调 File Provider materialization 和并发写入。该 API 不承诺
+多个文件之间具有崩溃或断电原子性；检测到回滚无法完成时会报告恢复文件位置。
+不会公开独立的 ASS 事件匹配或合并 helper；集成方应使用现有 XML merge API 和 staged archive
+发布接口。
 
 输出命名由 `DownloadPathTemplates` 驱动。输出根目录模板从 plan context 渲染；条目目录
 和 mux 文件名 stem 模板从 entry context 渲染。渲染结果会作为单个文件名组件清洗，因此模

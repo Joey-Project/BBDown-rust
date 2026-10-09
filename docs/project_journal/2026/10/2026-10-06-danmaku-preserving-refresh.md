@@ -1,11 +1,11 @@
 ---
 id: 20261006-danmaku-preserving-refresh
 title: Strictly Preserving Danmaku Refresh
-status: active
+status: completed
 created: 2026-10-06
-updated: 2026-10-06
+updated: 2026-10-09
 branch:
-pr:
+pr: 87
 supersedes: []
 superseded_by:
 ---
@@ -14,43 +14,163 @@ superseded_by:
 
 ## Summary
 
-- Track a later-release enhancement for refreshing downloaded danmaku while preserving every
-  existing XML and ASS detail. This is additional backlog, not a claim that the completed 0.4.0
-  append-only XML and ASS regeneration workflow already meets these stricter requirements.
-- This work is deferred from `v0.7.0` and does not change its release scope.
+- Add an opt-in XML-history-preserving refresh for archive-backed danmaku files while keeping the
+  default legacy update behavior. Selected ASS output is regenerated from the complete merged XML.
+- The implementation is complete in feature PR #87.
 
 ## Current State
 
-- The existing workflow is documented in
-  `docs/project_journal/2026/06/2026-06-18-danmaku-append-update-019f0a.md`. The downstream request
-  reports preservation boundaries for unknown existing XML nodes and whole-file ASS regeneration
-  in its current integration. That integration does not meet the strict preservation requirement
-  below.
+- The existing workflow remains documented in
+  `docs/project_journal/2026/06/2026-06-18-danmaku-append-update-019f0a.md` and remains the CLI
+  default. The new `Preserve` policy stages XML, optional ASS, and archive JSON before grouped
+  publication. The core exposes staged outputs and a group publisher with content/destination
+  revalidation, detected-error rollback, and recovery-location reporting.
+- Publication preparation captures existing Unix mode bits or the portable read-only setting,
+  preserves them on replacement and recovery copies, and rejects permission changes detected
+  during preparation. Content and resolved destinations remain separate checks; timestamps and
+  inode identity are not mutation signals. Newly absent outputs retain default creation modes.
+- Windows replacement and rollback temporarily clear read-only attributes before deleting
+  targets and restore the captured policy on deletion failure or recovery. Attribute changes
+  and restoration use the same opened object; external writers still require caller coordination.
+  The CI workflow includes a Windows publisher regression job.
+- Current `Preserve` identity prefers a positive ASCII decimal comment id in `p[7]`, canonicalizing
+  leading zeros. A matching id remains the same XML comment if fetched metadata or text changes;
+  a different id appends even with matching text. Missing, zero, or invalid ids fall back to the
+  complete `p` attribute and decoded text. The original XML history remains in order. Every selected
+  ASS file is regenerated from the complete merged XML, so old custom styles and events are not
+  retained. With no XML baseline, old ASS events do not count as history; output comes from fetched
+  XML only. ASS statistics report `generated_events`. No standalone ASS event matcher or merge
+  helper is exposed; the existing XML merge and staged archive APIs remain the supported surfaces.
+  This current contract supersedes earlier implementation and test notes below that describe
+  preserving or merging old ASS content.
+- Comment matching and ASS rendering accept only `<d>` elements without a namespace or in the
+  `<i>` root's namespace. Existing elements from unrelated namespaces remain byte-preserved as
+  unknown XML and cannot occupy a real comment's ID. Qualified roots still accept legacy
+  unqualified comments.
+- Appended comments carry source namespace bindings, including inherited prefixes and default
+  declarations, so equivalent root namespaces can use different declarations. Existing bytes
+  and initialization ranges remain unchanged; appends between different root namespaces are
+  rejected explicitly.
+- The Simplified Chinese embedding guide includes the chapter-output planning example and
+  localized preserving-refresh and publication-recovery guidance aligned with the English guide.
 - The request was transferred from the Telegram-Video-Downloader task. Its bot-side consumer pinned
-  BBDown-rust revision `0a94b071bbc1897ec1d1fec9dfcf7883c5754a15`; that bot should update its
-  dependency after the core capability is implemented.
-- Responsibility boundary: the bot owns historical-task buttons, whole-directory batch selection,
-  queueing, progress, recovery, macOS File Provider coordination, and safe publication. BBDown core
-  owns content parsing and merging, with CLI options exposing the reusable capability.
+  BBDown-rust revision `0a94b071bbc1897ec1d1fec9dfcf7883c5754a15`; its dependency update remains a
+  downstream follow-up.
+- Responsibility boundary: BBDown core owns content parsing/merging and grouped publication of
+  staged sidecars plus archive. The bot owns historical-task buttons, whole-directory selection,
+  queueing and progress, and coordination with File Provider materialization and concurrent external
+  writers; core content checks do not lock those external writers.
+- The complete local gate passed: formatting, workspace all-target Clippy, Rust 1.95.0 workspace
+  check, workspace tests (754 passed, 3 ignored), and CLI e2e repeat (153 passed).
+  Test suites included CLI unit (67), CLI e2e (153), live e2e (9 passed, 2 ignored), core library
+  (521), CDN benchmark (3 passed, 1 ignored), public API (1), and doc tests (0).
+- An initial full gate passed on Rust 1.95.0. After the separate `question_mark` lint correction, a
+  CI-matching rerun also passed: `env RUSTUP_TOOLCHAIN=1.99.0 just ci` exited 0 in 105.82 seconds
+  with rustc 1.99.0 (`b940084d7`), cargo 1.99.0, and Clippy 0.1.99. It included formatting,
+  all-target Clippy, the explicit Rust 1.95.0 MSRV check, 754 workspace tests passed / 3 ignored,
+  and a separate CLI e2e repeat (153 passed).
+- PR [#87](https://github.com/Joey-Project/BBDown-rust/pull/87) follow-up fixes cover XML root
+  insertion around quoted `>` and `/>`, ASS style insertion at the actual styles header while
+  retaining custom comments, and canonical parent-directory symlink target revalidation. The
+  symlink regressions cover equal content bytes, both snapshots missing, and stable logical aliases.
+- A later PR #87 documentation review found that the embedding examples awaited synchronous
+  `StagedDanmakuUpdate::publish`; the English and Chinese examples now call `staged.publish()?`.
+  Existing core publisher tests compile and exercise the synchronous call.
+- After those fixes, targeted pure tests passed (19) and targeted publisher tests passed (10). The
+  final CI-matching gate `env RUSTUP_TOOLCHAIN=1.99.0 just ci` exited 0 in 42.5 seconds with rustc
+  1.99.0 (`b940084d7`), cargo 1.99.0, and Clippy 0.1.99. It passed formatting, all-target Clippy,
+  the explicit Rust 1.95.0 MSRV check, and workspace tests (759 passed, 3 ignored): CLI unit (67),
+  CLI e2e (153), live e2e (9 passed, 2 ignored), core library (526), CDN benchmark (3 passed, 1
+  ignored), and public API (1). The separate CLI e2e repeat passed all 153 tests.
+- Final PR #87 follow-ups fix qualified XML root handling for ordinary and self-closing roots with
+  and without default namespaces, and validate each appended node's namespace at its actual output
+  offset. Regression cases cover comment/CDATA namespace shadows and a later append with an
+  incompatible namespace. The English and Chinese embedding examples also use the synchronous
+  `staged.publish()?` call.
+- An earlier implementation checkpoint found a double-decoding bug in ASS-only preservation
+  matching: `roxmltree` had
+  already decoded XML text, but the old-ASS parsing path passed that text through `xml_unescape`
+  again. This could miss an existing old-ASS-only event containing a literal entity. The fix routes
+  already-decoded text directly to the renderer through a small private helper; the raw-XML path
+  still decodes once.
+- Focused regressions reproduced the issue before the fix and passed afterward. The core RED case
+  expected one append but produced three (`preserve-red.log`, exit 101); after the fix, the
+  preserving core tests passed (13 passed). The CLI RED case used actual `xml_to_ass` output as the
+  old ASS, removed the XML baseline from disk and archive, then expected one append but produced
+  two (`entity-red3.log`, exit 101). After the fix, that regression passed (1 passed), the preserving
+  CLI group passed (7 passed, 147 filtered), and a second run appended zero events while leaving the
+  ASS bytes identical. At that checkpoint, the complete feature gate for this follow-up had not yet
+  been reported.
+- The follow-up's complete gate subsequently passed: `env RUSTUP_TOOLCHAIN=1.99.0 just ci` exited 0
+  in 45.02 seconds (`/private/tmp/bbdown-danmaku-preserve-check.20261008/feature-entity-ci-green.log`,
+  75,383 bytes). Formatting, strict all-target Clippy, and the Rust 1.95 MSRV check passed. The
+  workspace had 763 passed, 3 ignored, and 0 failed: CLI unit (67), CLI e2e (154), live e2e (9
+  passed, 2 ignored), core (529), CDN benchmark (3 passed, 1 ignored), and public API (1). A separate
+  CLI e2e repeat passed 154 tests; this is independent of, and not added to, the workspace total.
+  The `bbdown-core` 0.7.0 publish dry-run verified 29 packaged files and uploaded nothing. The
+  broader danmaku suite passed 36 tests, and formatting checks passed. The new test's strict Clippy
+  `expect_used` finding was corrected before this successful full gate.
+- These earlier regression inputs are synthetic/mock; no new live Bilibili two-time comparison was
+  run. Before the current stable-id contract, XML identity used the full `p` attribute plus decoded
+  text, so a source rewrite of `p` could be treated as a new item. The previous ASS-only matching
+  design had no original comment IDs and used time/text plus recognized font, color, and mode as an
+  approximation; the current design rebuilds ASS and does not match old ASS events.
+- `cargo +1.99.0 test -p bbdown-core --lib danmaku::preserving::tests --locked` passed (12 passed,
+  0 failed); strict core Clippy passed. The final
+  `env RUSTUP_TOOLCHAIN=1.99.0 just ci` gate exited 0 in 46.72 seconds with formatting,
+  all-target strict Clippy, and the explicit Rust 1.95.0 MSRV check. Workspace suites passed 761
+  tests with 3 ignored and 0 failed: CLI unit (67), CLI e2e (153), live e2e (9 passed, 2 ignored),
+  core library (528), CDN benchmark (3 passed, 1 ignored), and public API (1). A separate CLI e2e
+  repeat passed 153 tests.
 
 ## Next Steps
 
-- Add a reusable core API and CLI options for strict append-only refresh while keeping existing
-  public APIs compatible.
-- For XML, retain every existing node, attribute, text body, and duplicate; append only newly fetched
-  danmaku. For ASS, retain styles, every event, ASS-only or custom existing content, and append only
-  new events without rebuilding the whole file.
-- For non-empty old files that are damaged, use an unknown format, or cannot be safely merged,
-  return an explicit skip/error and preserve the original. Network, parse, and write failures must
-  also leave old content intact; expose a staged result or safe publication interface for callers
-  coordinating final replacement.
-- Cover XML node/attribute preservation and existing duplicates, ASS styles/old events/custom
-  content, and old-content retention on failures with core unit tests, mock-download tests, and CLI
-  end-to-end tests.
-- After implementation and validation, update the pinned bot dependency and integrate the bot-side
-  workflow.
+- Coordinate the downstream bot dependency update and bot-side workflow as a separate workstream.
 
 ## Evidence
 
 - Existing implementation record: `docs/project_journal/2026/06/2026-06-18-danmaku-append-update-019f0a.md`.
+- Feature PR: [#87](https://github.com/Joey-Project/BBDown-rust/pull/87).
 - Downstream bot dependency pin: `0a94b071bbc1897ec1d1fec9dfcf7883c5754a15`.
+- Local delivery evidence: full `just ci` passed; workspace suite counts are recorded above.
+- After the release-only split, the feature tree retained `bbdown-core` and `bbdown-cli` at
+  `0.7.0`; release-version and release-documentation changes were separated into the release patch.
+  On 2026-10-08, `env RUSTUP_TOOLCHAIN=1.99.0 just ci` passed in 96.93 seconds with formatting,
+  all-target strict Clippy, and the explicit Rust 1.95.0 MSRV check. Workspace suites passed 761
+  tests with 3 ignored and 0 failed: CLI unit (67), CLI e2e (153), live e2e (9 passed, 2 ignored),
+  core library (528), CDN benchmark (3 passed, 1 ignored), and public API (1). The separate CLI e2e
+  repeat passed 153 tests. The core `0.7.0` publish dry-run verified 29 packaged files and uploaded
+  nothing; the existing `0.7.0` registry warning was expected.
+- Under the current ID-first XML-history and complete ASS-rebuild contract, the final feature gate
+  `env RUSTUP_TOOLCHAIN=1.99.0 just ci` exited 0 in 56.78 seconds
+  (`/private/tmp/bbdown-danmaku-id-rebuild.20261008/feature-ci-final.log`, 75,465 bytes). Formatting,
+  strict workspace Clippy, and the Rust 1.95 MSRV check passed. Workspace suites passed 763 tests,
+  with 3 ignored and 0 failed: CLI unit (67), CLI e2e (154), live e2e (9 passed, 2 ignored), core
+  (529), CDN benchmark (3 passed, 1 ignored), and public API (1). A separate CLI e2e repeat passed
+  154 tests and is not added to the workspace total. The `bbdown-core` 0.7.0 publish dry-run
+  verified 29 files and uploaded nothing. These regression fixtures use synthetic/mock XML; no new
+  live Bilibili source comparison was run.
+- The latest PR #87 review fixes make DTD detection syntax-aware with `roxmltree` 0.21.1 and
+  `allow_dtd: false`: literal `<!DOCTYPE` text in comments, CDATA, and processing instructions is
+  preserved, while actual DTD declarations and internal entities are rejected. Destination
+  resolution now follows symlinks through to a final non-link target and detects cycles; the
+  publication path is bound to that chosen resolved target, with expected-content checks performed
+  separately (no inode or mtime claim). An RAII guard removes the unique temporary source directory
+  and partial source when a pending download future is dropped; ordinary close errors remain
+  reportable, and a download error remains primary if both occur. Focused preserving tests passed
+  32/32, including the 12-test XML group; these counts overlap. The complete feature gate
+  `env RUSTUP_TOOLCHAIN=1.99.0 just ci` exited 0 in 58.03 seconds
+  (`/private/tmp/bbdown-pr87-findings.20261008/feature-ci.log`, 76,041 bytes). Formatting, strict
+  workspace Clippy, and the Rust 1.95 MSRV check passed. Workspace suites passed 768 tests, with 3
+  ignored and 0 failed: CLI unit (67), CLI e2e (154), live e2e (9 passed, 2 ignored), core (534),
+  CDN benchmark (3 passed, 1 ignored), public API (1), and doc tests (0). A separate CLI e2e repeat
+  passed 154 tests and is not added to the workspace total. The `bbdown-core` 0.7.0 publish dry-run
+  verified 29 files (1.6 MiB uncompressed, 246.4 KiB compressed) and uploaded nothing; it reported
+  the existing package-version warning and the existing yanked `spin 0.9.8` dependency. The
+  regressions use synthetic/local fixtures; no new live Bilibili source comparison was run.
+- The permission regression first failed four focused cases: restrictive/read-only output modes,
+  distinct target modes, rollback restoration, and retained recovery copies. After the fix,
+  all 16 publisher tests passed, including special Unix bits, permission changes during
+  preparation, benign inode replacement with equal contents, and default modes for new targets.
+  Focused core Clippy with `-D warnings`, formatting, and whitespace checks passed. These checks
+  use local filesystem fixtures and do not request Bilibili credentials or media.

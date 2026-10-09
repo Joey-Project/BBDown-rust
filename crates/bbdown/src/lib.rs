@@ -42,15 +42,17 @@ pub use credentials::{
     CredentialRefreshSecret, CredentialSource, CredentialStore, Credentials,
     DEFAULT_CREDENTIAL_PROFILE,
 };
-pub use danmaku::{DanmakuFormat, DanmakuFormats, DanmakuXmlMerge, merge_xml_append_only};
+pub use danmaku::{
+    DanmakuFormat, DanmakuFormats, DanmakuXmlMerge, merge_xml_append_only, merge_xml_preserving,
+};
 pub use download::{
-    CdnProbeResult, DanmakuUpdateOptions, DanmakuUpdateReport, DownloadArchive,
-    DownloadArchiveEntryRecord, DownloadArchiveRecord, DownloadFileKind, DownloadMode,
-    DownloadOptions, DownloadOutputConflict, DownloadPathTemplates, DownloadPreflight,
-    DownloadReport, DownloadReportSummary, DownloadedFile, DuplicateDecision,
+    CdnProbeResult, DanmakuAssStatistics, DanmakuUpdateOptions, DanmakuUpdatePolicy,
+    DanmakuUpdateReport, DownloadArchive, DownloadArchiveEntryRecord, DownloadArchiveRecord,
+    DownloadFileKind, DownloadMode, DownloadOptions, DownloadOutputConflict, DownloadPathTemplates,
+    DownloadPreflight, DownloadReport, DownloadReportSummary, DownloadedFile, DuplicateDecision,
     EntryDanmakuUpdateReport, EntryDownloadReport, EntryDownloadSummary, MediaHostOptions,
-    MuxOptions, MuxReport, RetryPolicy, SidecarOptions, StreamSelection, SubtitleAiPolicy,
-    archive_entry_allows_danmaku_update, probe_media_cdns,
+    MuxOptions, MuxReport, RetryPolicy, SidecarOptions, StagedDanmakuFile, StagedDanmakuUpdate,
+    StreamSelection, SubtitleAiPolicy, archive_entry_allows_danmaku_update, probe_media_cdns,
 };
 pub use error::{Error, Result};
 pub use input::Input;

@@ -26,11 +26,12 @@ constructor paths so downstream projects do not need struct literals for ordinar
 The CLI uses the same public builders, which makes it an in-repo integration test surface for the
 crate API.
 
-Output models remain typed data surfaces. The current crate version is the published `0.7.0`
-release after `0.6.0`, adding explicit CDN host pools, bounded probing, parallel Range transfer, and
-an independent PGC Web playurl route selector. Catalog snapshots are CLI inputs selected by users;
-they do not implement an automatic routing policy. Callers should read fields or serialize output
-values rather than treating output structs as stable construction targets.
+Output models remain typed data surfaces. The current published crate line is `0.7.0`; the
+`0.8.0` source line adds staged preserving danmaku refresh. The published line added explicit CDN
+host pools, bounded probing, parallel Range transfer, and an independent PGC Web playurl route
+selector. Catalog snapshots are CLI inputs selected by users; they do not implement an automatic
+routing policy. Callers should read fields or serialize output values rather than treating output
+structs as stable construction targets.
 
 ## Resolver Model
 
@@ -252,6 +253,23 @@ archive entries by stable aid/cid identity, downloads the current XML payload, m
 comment blocks into canonical `danmaku.xml`, and regenerates selected derived formats such as ASS
 from the merged XML. The lower-level `merge_xml_append_only` helper is public for callers that own
 sidecar storage outside `DownloadArchive`.
+
+`DanmakuUpdatePolicy::Preserve` selects a stricter path while leaving the default `Legacy` behavior
+intact. The XML merger retains original XML bytes and inserts only unmatched comments before the
+root close tag. A positive ASCII decimal id in `p[7]` is the preferred comment identity and is
+canonicalized across leading zeros; matching ids remain the same comment if metadata or text
+changes, while different ids append even when text matches. Missing, zero, or invalid ids fall back
+to the complete `p` attribute plus decoded text. Selected ASS output is rebuilt from the complete
+merged XML, so previous ASS styles and events are not retained. If no XML baseline exists, old ASS
+events are not used as history; the fetched XML payload supplies the generated output.
+`stage_preserving_danmaku_update_for_archive_file` captures the archive and selected sidecars and
+returns an immutable `StagedDanmakuUpdate` with expected old bytes, destination paths, new bytes,
+the updated archive snapshot, and per-entry ASS `generated_events` counts. `publish()` revalidates contents and
+destinations, then publishes the archive and sidecars as a file group with detectable-error rollback.
+Callers must coordinate File Provider materialization and concurrent writers. The API does not
+promise crash or power-loss atomicity across files, and reports recovery locations if detected
+rollback cannot complete. No standalone ASS event-matching or merge helper is exposed; the existing
+XML merge API and staged archive publication surface remain the supported integration points.
 
 Output naming is driven by `DownloadPathTemplates`. The output-root template is rendered from plan
 context, while entry-directory and mux-file-stem templates are rendered from entry context. Rendered

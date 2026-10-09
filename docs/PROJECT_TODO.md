@@ -123,10 +123,8 @@
   policy as a separate follow-up.
 - [pending] Plan per-video related recommendations and additional Bilibili page-family parsing for
   a later feed/page release; keep this feed/page backlog deferred from `v0.7.0`.
-- [pending] Add a later-release danmaku refresh API and CLI with strict append-only preservation
-  for existing XML and ASS files, safe failure behavior, and core/CLI regression coverage. This is
-  a new strengthening beyond the completed XML append and ASS regeneration workflow; it is deferred
-  from `v0.7.0`. See
+- [completed] Add the preserving danmaku refresh API and CLI: retain XML history, regenerate
+  selected ASS from merged XML, and publish staged sidecars with the archive as a group. See
   `docs/project_journal/2026/10/2026-10-06-danmaku-preserving-refresh.md`.
 - [pending] Continue the remaining BBDown parity backlog after the published `0.4.0` credential and
   danmaku sequence unless reprioritized:
