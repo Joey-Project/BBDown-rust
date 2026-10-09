@@ -85,6 +85,11 @@ fallback handling.
 Use `BiliClient::credential_account_identity(CredentialKind::Cookie)` (or `AccessKey`/
 `TvAccessKey`) when a server needs verified same-account login or renewal. The result is private
 account-binding data, not a client-facing health report or permission to overwrite credentials.
+For a generic key with known issuer metadata, use
+`BiliClient::access_key_account_identity_with_keypair(AccessKeyIdentityKeypair::Android)` (or
+`IntlBstar`, `BiliTv`, `AndroidB`). Without that metadata, the generic identity method tries at most
+four signing keypairs within one request-timeout budget, continuing only after explicit signature
+or app-authentication rejection. It does not retry malformed identities or transport failures.
 This additive identity API is available from Git; the already published `0.7.0` crate does not
 contain it. Pin a commit containing the API until the next crate release.
 Use `BiliClient::plan_playback` when an embedding application needs serializable DASH video/audio

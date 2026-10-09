@@ -79,6 +79,11 @@ CLI-compatible PCDN fallback 处理时，应显式设置 `MediaHostOptions`。
 `BiliClient::credential_account_identity(CredentialKind::Cookie)`，或选择
 `AccessKey`/`TvAccessKey`。返回的身份数据只用于服务器私有账号绑定，不是面向客户端的
 健康报告，也不授权调用方覆盖凭据。
+已知通用 key 的签发 keypair（用于请求签名的应用密钥对）时，可调用
+`BiliClient::access_key_account_identity_with_keypair(AccessKeyIdentityKeypair::Android)`，
+也可选择 `IntlBstar`、`BiliTv` 或 `AndroidB`。缺少签发信息时，通用身份方法只会在明确的
+签名或应用鉴权拒绝后，尝试最多四组 keypair；所有尝试共享一次请求超时预算，不会在身份
+响应异常或网络失败后继续探测。
 该新增身份 API 目前通过 Git 提供，不包含在此前已发布的 `0.7.0` crate 中；在下次
 crate release 前，请固定包含该 API 的 commit。
 当嵌入应用需要给下游 streaming/cache service 使用的可序列化 DASH video/audio 或 FLV

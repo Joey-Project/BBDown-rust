@@ -1298,6 +1298,15 @@ pub enum AccessKeyRefreshKeypair {
     AndroidB,
 }
 
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AccessKeyIdentityKeypair {
+    IntlBstar,
+    BiliTv,
+    Android,
+    AndroidB,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CredentialHealthScope {

@@ -1,5 +1,5 @@
 use crate::app_playurl;
-use crate::credentials::AccessKeyProvider;
+use crate::credentials::{AccessKeyIdentityKeypair, AccessKeyProvider};
 use crate::download::DownloadMode;
 use crate::feed_list::{
     FeedListFetchMode, feed_list_fetch_mode, feed_list_info_fetch_mode, push_unique_feed_list_item,
@@ -39,6 +39,12 @@ const RECOMMENDATION_MIN_PAGE_SIZE: u32 = 20;
 const RECOMMENDATION_MAX_PAGE_SIZE: u32 = 30;
 const RECOMMENDATION_MAX_REFRESH_PAGES: u32 = 10;
 const CREDENTIAL_IDENTITY_RESPONSE_MAX_BYTES: usize = 64 * 1024;
+const ACCESS_KEY_IDENTITY_KEYPAIR_FALLBACK_ORDER: [AccessKeyIdentityKeypair; 4] = [
+    AccessKeyIdentityKeypair::IntlBstar,
+    AccessKeyIdentityKeypair::BiliTv,
+    AccessKeyIdentityKeypair::Android,
+    AccessKeyIdentityKeypair::AndroidB,
+];
 
 fn request_credential_value(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
@@ -467,15 +473,27 @@ impl BiliClient {
     ) -> Result<CredentialAccountIdentity> {
         match kind {
             CredentialKind::Cookie => self.fetch_web_account_identity().await,
-            CredentialKind::AccessKey => {
-                self.fetch_oauth_account_identity(kind, CredentialHealthScope::IntlBstar)
-                    .await
-            }
+            CredentialKind::AccessKey => self.fetch_generic_access_key_account_identity().await,
             CredentialKind::TvAccessKey => {
                 self.fetch_oauth_account_identity(kind, CredentialHealthScope::Tv)
                     .await
             }
         }
+    }
+
+    /// Resolves the configured generic access key using its known signing keypair.
+    pub async fn access_key_account_identity_with_keypair(
+        &self,
+        keypair: AccessKeyIdentityKeypair,
+    ) -> Result<CredentialAccountIdentity> {
+        let access_key = request_credential_value(self.config.credentials.access_key.as_deref())
+            .ok_or_else(|| Error::InvalidInput("OAuth credential is not configured".to_owned()))?;
+        self.fetch_access_key_account_identity_with_keypair(
+            access_key,
+            keypair,
+            Some(self.config.request_timeout),
+        )
+        .await
     }
 
     pub async fn resolve_input(
@@ -727,16 +745,87 @@ impl BiliClient {
         })
     }
 
+    async fn fetch_generic_access_key_account_identity(&self) -> Result<CredentialAccountIdentity> {
+        let access_key = request_credential_value(self.config.credentials.access_key.as_deref())
+            .ok_or_else(|| Error::InvalidInput("OAuth credential is not configured".to_owned()))?;
+        let deadline = tokio::time::timeout(self.config.request_timeout, async {
+            let mut last_retryable_error = None;
+            for keypair in ACCESS_KEY_IDENTITY_KEYPAIR_FALLBACK_ORDER {
+                match self
+                    .fetch_access_key_account_identity_with_keypair(access_key, keypair, None)
+                    .await
+                {
+                    Ok(identity) => return Ok(identity),
+                    Err(
+                        error @ Error::Api {
+                            code: -663 | -3, ..
+                        },
+                    ) => {
+                        last_retryable_error = Some(error);
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            Err(last_retryable_error.unwrap_or_else(|| {
+                Error::InvalidInput("credential identity request failed".to_owned())
+            }))
+        })
+        .await;
+        deadline.unwrap_or_else(|_| {
+            Err(Error::InvalidInput(
+                "credential identity request timed out".to_owned(),
+            ))
+        })
+    }
+
+    async fn fetch_access_key_account_identity_with_keypair(
+        &self,
+        access_key: &str,
+        keypair: AccessKeyIdentityKeypair,
+        request_timeout: Option<Duration>,
+    ) -> Result<CredentialAccountIdentity> {
+        let mut url = Self::endpoint_url(
+            &self.config.endpoints.passport_base,
+            "/x/passport-login/oauth2/info",
+        )?;
+        for (key, value) in
+            access_key_identity_params(keypair, access_key, current_unix_timestamp())?
+        {
+            url.query_pairs_mut().append_pair(key, &value);
+        }
+        let response = self
+            .get_credential_identity_response_with_timeout(url, None, request_timeout)
+            .await?;
+        let data = response.into_data::<OAuthCredentialIdentityData>()?;
+        Ok(CredentialAccountIdentity {
+            kind: CredentialKind::AccessKey,
+            account_id: required_credential_account_id(data.mid)?,
+        })
+    }
+
     async fn get_credential_identity_response(
         &self,
         url: Url,
         cookie: Option<&str>,
     ) -> Result<CredentialIdentityApiResponse> {
-        let mut request = self
-            .http
-            .get(url)
-            .headers(self.headers(false)?)
-            .timeout(self.config.request_timeout);
+        self.get_credential_identity_response_with_timeout(
+            url,
+            cookie,
+            Some(self.config.request_timeout),
+        )
+        .await
+    }
+
+    async fn get_credential_identity_response_with_timeout(
+        &self,
+        url: Url,
+        cookie: Option<&str>,
+        request_timeout: Option<Duration>,
+    ) -> Result<CredentialIdentityApiResponse> {
+        let mut request = self.http.get(url).headers(self.headers(false)?);
+        if let Some(request_timeout) = request_timeout {
+            request = request.timeout(request_timeout);
+        }
         if let Some(cookie) = cookie {
             let cookie = HeaderValue::from_str(cookie)
                 .map_err(|_| Error::InvalidInput("invalid cookie header".to_owned()))?;
@@ -6273,6 +6362,49 @@ fn oauth2_info_params(
     Ok(params)
 }
 
+fn access_key_identity_params(
+    keypair: AccessKeyIdentityKeypair,
+    access_key: &str,
+    timestamp: u64,
+) -> Result<Vec<(&'static str, String)>> {
+    match keypair {
+        AccessKeyIdentityKeypair::IntlBstar => {
+            oauth2_info_params(CredentialHealthScope::IntlBstar, access_key, timestamp)
+        }
+        AccessKeyIdentityKeypair::BiliTv => {
+            oauth2_info_params(CredentialHealthScope::Tv, access_key, timestamp)
+        }
+        AccessKeyIdentityKeypair::Android => Ok(minimal_access_key_identity_params(
+            access_key,
+            timestamp,
+            BILIBILI_ANDROID_APPKEY,
+            BILIBILI_ANDROID_APP_SECRET,
+        )),
+        AccessKeyIdentityKeypair::AndroidB => Ok(minimal_access_key_identity_params(
+            access_key,
+            timestamp,
+            BILIBILI_ANDROID_B_APPKEY,
+            BILIBILI_ANDROID_B_APP_SECRET,
+        )),
+    }
+}
+
+fn minimal_access_key_identity_params(
+    access_key: &str,
+    timestamp: u64,
+    appkey: &str,
+    secret: &str,
+) -> Vec<(&'static str, String)> {
+    let mut params = vec![
+        ("access_key", access_key.to_owned()),
+        ("appkey", appkey.to_owned()),
+        ("ts", timestamp.to_string()),
+    ];
+    let sign = sign_ordered_params(&params, secret);
+    params.push(("sign", sign));
+    params
+}
+
 pub(crate) fn sign_ordered_params(params: &[(&str, String)], secret: &str) -> String {
     let mut plaintext = String::new();
     for (index, (key, value)) in params.iter().enumerate() {
@@ -6290,18 +6422,21 @@ pub(crate) fn sign_ordered_params(params: &[(&str, String)], secret: &str) -> St
 #[cfg(test)]
 mod tests {
     use super::{
-        BiliClient, ClientConfig, EndpointConfig, INTL_OGV_APP_SECRET, INTL_OGV_APPKEY,
-        MediaListKind, PgcWebPlayurlRoute, PlayUrlRoot, PlayurlMode, RestrictedArea,
-        RestrictedAreaConfig, RestrictedAreaProxy, TV_PLAYURL_APP_SECRET, TV_PLAYURL_APPKEY,
+        ACCESS_KEY_IDENTITY_KEYPAIR_FALLBACK_ORDER, BILIBILI_ANDROID_APP_SECRET,
+        BILIBILI_ANDROID_APPKEY, BILIBILI_ANDROID_B_APP_SECRET, BILIBILI_ANDROID_B_APPKEY,
+        BiliClient, CREDENTIAL_IDENTITY_RESPONSE_MAX_BYTES, ClientConfig, EndpointConfig,
+        INTL_OGV_APP_SECRET, INTL_OGV_APPKEY, MediaListKind, PgcWebPlayurlRoute, PlayUrlRoot,
+        PlayurlMode, RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy,
+        TV_PLAYURL_APP_SECRET, TV_PLAYURL_APPKEY, access_key_identity_params,
         append_pgc_playurl_params, append_tv_playurl_params, decode_app_grpc_stream_set,
         intl_ogv_playurl_params, oauth2_info_params, sign_ordered_params,
     };
     use crate::{
-        AccessKeyProvider, CodecFamily, CredentialHealthScope, CredentialHealthStatus,
-        CredentialKind, Credentials, EpisodeMetadata, Error, IndexSelection, IndexSelector, Input,
-        PageMetadata, ResolvedContent, SeasonMetadata, Selection, StreamSource, SubtitleFormat,
-        UgcCollectionKind, VideoCollectionItem, VideoCollectionKind, VideoCollectionMetadata,
-        VideoMetadata, app_playurl,
+        AccessKeyIdentityKeypair, AccessKeyProvider, CodecFamily, CredentialHealthScope,
+        CredentialHealthStatus, CredentialKind, Credentials, EpisodeMetadata, Error,
+        IndexSelection, IndexSelector, Input, PageMetadata, ResolvedContent, SeasonMetadata,
+        Selection, StreamSource, SubtitleFormat, UgcCollectionKind, VideoCollectionItem,
+        VideoCollectionKind, VideoCollectionMetadata, VideoMetadata, app_playurl,
     };
     use http_body_util::BodyExt as _;
     use httpmock::MockServer;
@@ -6315,6 +6450,62 @@ mod tests {
     const IDENTITY_COOKIE_FIXTURE: &str = "codex_synth_v1_bearer_a";
     const IDENTITY_ACCESS_KEY_FIXTURE: &str = "codex_synth_v1_access_a";
     const IDENTITY_TV_ACCESS_KEY_FIXTURE: &str = "codex_synth_v1_access_b";
+
+    fn identity_keypair_appkey(keypair: AccessKeyIdentityKeypair) -> &'static str {
+        match keypair {
+            AccessKeyIdentityKeypair::IntlBstar => INTL_OGV_APPKEY,
+            AccessKeyIdentityKeypair::BiliTv => TV_PLAYURL_APPKEY,
+            AccessKeyIdentityKeypair::Android => BILIBILI_ANDROID_APPKEY,
+            AccessKeyIdentityKeypair::AndroidB => BILIBILI_ANDROID_B_APPKEY,
+        }
+    }
+
+    fn expect_identity_request(
+        when: httpmock::When,
+        keypair: AccessKeyIdentityKeypair,
+        access_key: &str,
+    ) -> httpmock::When {
+        let when = when
+            .method(GET)
+            .path("/x/passport-login/oauth2/info")
+            .query_param("access_key", access_key)
+            .query_param("appkey", identity_keypair_appkey(keypair))
+            .query_param_exists("ts")
+            .query_param_matches("sign", r"^[0-9a-f]{32}$")
+            .header_missing("cookie");
+        match keypair {
+            AccessKeyIdentityKeypair::IntlBstar => when
+                .query_param("build", "1001310")
+                .query_param("mobi_app", "bstar_a")
+                .query_param("platform", "android"),
+            AccessKeyIdentityKeypair::BiliTv => when
+                .query_param("build", "102801")
+                .query_param("mobi_app", "android_tv_yst")
+                .query_param("platform", "android"),
+            AccessKeyIdentityKeypair::Android | AccessKeyIdentityKeypair::AndroidB => when
+                .query_param_missing("build")
+                .query_param_missing("mobi_app")
+                .query_param_missing("platform"),
+        }
+    }
+
+    fn mock_identity_response<'a>(
+        server: &'a MockServer,
+        keypair: AccessKeyIdentityKeypair,
+        access_key: &str,
+        status: u16,
+        body: String,
+        delay: Option<Duration>,
+    ) -> httpmock::Mock<'a> {
+        let access_key = access_key.to_owned();
+        server.mock(move |when, then| {
+            drop(expect_identity_request(when, keypair, &access_key));
+            let then = then.status(status).body(body);
+            if let Some(delay) = delay {
+                then.delay(delay);
+            }
+        })
+    }
 
     #[tokio::test]
     async fn credential_account_identity_resolves_each_kind_without_crossing_credentials()
@@ -6392,6 +6583,498 @@ mod tests {
         assert!(!debug.contains(IDENTITY_COOKIE_FIXTURE));
         assert!(!debug.contains(IDENTITY_ACCESS_KEY_FIXTURE));
         assert!(!debug.contains(IDENTITY_TV_ACCESS_KEY_FIXTURE));
+        Ok(())
+    }
+
+    #[test]
+    fn credential_account_identity_keypair_params_use_issuer_signatures() -> anyhow::Result<()> {
+        for keypair in ACCESS_KEY_IDENTITY_KEYPAIR_FALLBACK_ORDER {
+            let actual =
+                access_key_identity_params(keypair, IDENTITY_ACCESS_KEY_FIXTURE, 1_700_000_000)?;
+            let expected = match keypair {
+                AccessKeyIdentityKeypair::IntlBstar => oauth2_info_params(
+                    CredentialHealthScope::IntlBstar,
+                    IDENTITY_ACCESS_KEY_FIXTURE,
+                    1_700_000_000,
+                )?,
+                AccessKeyIdentityKeypair::BiliTv => oauth2_info_params(
+                    CredentialHealthScope::Tv,
+                    IDENTITY_ACCESS_KEY_FIXTURE,
+                    1_700_000_000,
+                )?,
+                AccessKeyIdentityKeypair::Android => {
+                    let mut params = vec![
+                        ("access_key", IDENTITY_ACCESS_KEY_FIXTURE.to_owned()),
+                        ("appkey", BILIBILI_ANDROID_APPKEY.to_owned()),
+                        ("ts", "1700000000".to_owned()),
+                    ];
+                    let sign = sign_ordered_params(&params, BILIBILI_ANDROID_APP_SECRET);
+                    params.push(("sign", sign));
+                    params
+                }
+                AccessKeyIdentityKeypair::AndroidB => {
+                    let mut params = vec![
+                        ("access_key", IDENTITY_ACCESS_KEY_FIXTURE.to_owned()),
+                        ("appkey", BILIBILI_ANDROID_B_APPKEY.to_owned()),
+                        ("ts", "1700000000".to_owned()),
+                    ];
+                    let sign = sign_ordered_params(&params, BILIBILI_ANDROID_B_APP_SECRET);
+                    params.push(("sign", sign));
+                    params
+                }
+            };
+            assert_eq!(actual, expected);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn credential_account_identity_explicit_keypairs_use_the_selected_issuer()
+    -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let mocks: Vec<_> = ACCESS_KEY_IDENTITY_KEYPAIR_FALLBACK_ORDER
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(index, keypair)| {
+                mock_identity_response(
+                    &server,
+                    keypair,
+                    IDENTITY_ACCESS_KEY_FIXTURE,
+                    200,
+                    serde_json::json!({
+                        "code": 0,
+                        "data": {"mid": 400_000_000 + index as u64}
+                    })
+                    .to_string(),
+                    None,
+                )
+            })
+            .collect();
+        let mut client = test_client(&server);
+        client.config.credentials = Credentials::default()
+            .with_cookie(IDENTITY_COOKIE_FIXTURE)
+            .with_access_key(IDENTITY_ACCESS_KEY_FIXTURE)
+            .with_tv_access_key(IDENTITY_TV_ACCESS_KEY_FIXTURE);
+
+        for (index, keypair) in ACCESS_KEY_IDENTITY_KEYPAIR_FALLBACK_ORDER
+            .iter()
+            .copied()
+            .enumerate()
+        {
+            let identity = client
+                .access_key_account_identity_with_keypair(keypair)
+                .await?;
+            assert_eq!(identity.kind, CredentialKind::AccessKey);
+            assert_eq!(identity.account_id, 400_000_000 + index as u64);
+        }
+        for mock in mocks {
+            mock.assert_calls(1);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn credential_account_identity_default_falls_back_in_bounded_issuer_order()
+    -> anyhow::Result<()> {
+        for target_index in 0..ACCESS_KEY_IDENTITY_KEYPAIR_FALLBACK_ORDER.len() {
+            let server = MockServer::start();
+            let mocks: Vec<_> = ACCESS_KEY_IDENTITY_KEYPAIR_FALLBACK_ORDER
+                .iter()
+                .copied()
+                .enumerate()
+                .map(|(index, keypair)| {
+                    let body = if index < target_index {
+                        serde_json::json!({
+                            "code": if index % 2 == 0 { -663 } else { -3 },
+                            "message": "synthetic issuer mismatch",
+                        })
+                    } else {
+                        serde_json::json!({
+                            "code": 0,
+                            "data": {"mid": 500_000_000 + target_index as u64},
+                        })
+                    };
+                    mock_identity_response(
+                        &server,
+                        keypair,
+                        IDENTITY_ACCESS_KEY_FIXTURE,
+                        200,
+                        body.to_string(),
+                        None,
+                    )
+                })
+                .collect();
+            let mut client = test_client(&server);
+            client.config.credentials = Credentials::default()
+                .with_cookie(IDENTITY_COOKIE_FIXTURE)
+                .with_access_key(IDENTITY_ACCESS_KEY_FIXTURE)
+                .with_tv_access_key(IDENTITY_TV_ACCESS_KEY_FIXTURE);
+
+            let identity = client
+                .credential_account_identity(CredentialKind::AccessKey)
+                .await?;
+
+            assert_eq!(identity.kind, CredentialKind::AccessKey);
+            assert_eq!(identity.account_id, 500_000_000 + target_index as u64);
+            for (index, mock) in mocks.into_iter().enumerate() {
+                mock.assert_calls(if index <= target_index { 1 } else { 0 });
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn credential_account_identity_default_stops_after_four_issuer_rejections()
+    -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let mocks: Vec<_> = ACCESS_KEY_IDENTITY_KEYPAIR_FALLBACK_ORDER
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(index, keypair)| {
+                mock_identity_response(
+                    &server,
+                    keypair,
+                    IDENTITY_ACCESS_KEY_FIXTURE,
+                    200,
+                    serde_json::json!({
+                        "code": if index % 2 == 0 { -663 } else { -3 },
+                        "message": format!("rejected {IDENTITY_ACCESS_KEY_FIXTURE} for 987654321"),
+                    })
+                    .to_string(),
+                    None,
+                )
+            })
+            .collect();
+        let mut client = test_client(&server);
+        client.config.credentials = Credentials::default()
+            .with_cookie(IDENTITY_COOKIE_FIXTURE)
+            .with_access_key(IDENTITY_ACCESS_KEY_FIXTURE)
+            .with_tv_access_key(IDENTITY_TV_ACCESS_KEY_FIXTURE);
+
+        let Err(error) = client
+            .credential_account_identity(CredentialKind::AccessKey)
+            .await
+        else {
+            return Err(anyhow::anyhow!("all issuer rejections were accepted"));
+        };
+
+        assert_eq!(
+            error.to_string(),
+            "API returned code -3: credential identity request rejected"
+        );
+        for mock in mocks {
+            mock.assert_calls(1);
+        }
+        for sensitive in [IDENTITY_ACCESS_KEY_FIXTURE, "987654321", "sign="] {
+            assert!(!error.to_string().contains(sensitive));
+            assert!(!format!("{error:?}").contains(sensitive));
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn credential_account_identity_explicit_keypair_does_not_fallback() -> anyhow::Result<()>
+    {
+        let server = MockServer::start();
+        let selected = AccessKeyIdentityKeypair::Android;
+        let mocks: Vec<_> = ACCESS_KEY_IDENTITY_KEYPAIR_FALLBACK_ORDER
+            .iter()
+            .copied()
+            .map(|keypair| {
+                mock_identity_response(
+                    &server,
+                    keypair,
+                    IDENTITY_ACCESS_KEY_FIXTURE,
+                    200,
+                    serde_json::json!({
+                        "code": -663,
+                        "message": "synthetic issuer mismatch",
+                    })
+                    .to_string(),
+                    None,
+                )
+            })
+            .collect();
+        let mut client = test_client(&server);
+        client.config.credentials = Credentials::default()
+            .with_access_key(IDENTITY_ACCESS_KEY_FIXTURE)
+            .with_tv_access_key(IDENTITY_TV_ACCESS_KEY_FIXTURE);
+
+        let Err(error) = client
+            .access_key_account_identity_with_keypair(selected)
+            .await
+        else {
+            return Err(anyhow::anyhow!("explicit issuer rejection was accepted"));
+        };
+
+        assert!(matches!(error, Error::Api { code: -663, .. }));
+        for (keypair, mock) in ACCESS_KEY_IDENTITY_KEYPAIR_FALLBACK_ORDER.iter().zip(mocks) {
+            mock.assert_calls(if *keypair == selected { 1 } else { 0 });
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn credential_account_identity_never_uses_tv_key_for_generic_access_key()
+    -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let mocks: Vec<_> = ACCESS_KEY_IDENTITY_KEYPAIR_FALLBACK_ORDER
+            .iter()
+            .copied()
+            .map(|keypair| {
+                mock_identity_response(
+                    &server,
+                    keypair,
+                    IDENTITY_TV_ACCESS_KEY_FIXTURE,
+                    200,
+                    serde_json::json!({
+                        "code": 0,
+                        "data": {"mid": 600_000_001},
+                    })
+                    .to_string(),
+                    None,
+                )
+            })
+            .collect();
+        let mut client = test_client(&server);
+        client.config.credentials = Credentials::default()
+            .with_cookie(IDENTITY_COOKIE_FIXTURE)
+            .with_tv_access_key(IDENTITY_TV_ACCESS_KEY_FIXTURE);
+
+        for result in [
+            client
+                .credential_account_identity(CredentialKind::AccessKey)
+                .await,
+            client
+                .access_key_account_identity_with_keypair(AccessKeyIdentityKeypair::AndroidB)
+                .await,
+        ] {
+            assert!(
+                matches!(result, Err(Error::InvalidInput(message)) if message == "OAuth credential is not configured")
+            );
+        }
+        for mock in mocks {
+            mock.assert_calls(0);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn credential_account_identity_stops_on_nonmatching_failures_and_redacts_them()
+    -> anyhow::Result<()> {
+        let oversized_body = format!(
+            "{{\"code\":0,\"data\":{{\"mid\":1}},\"padding\":\"{}PRIVATE_RESPONSE_BODY\"}}",
+            "x".repeat(CREDENTIAL_IDENTITY_RESPONSE_MAX_BYTES)
+        );
+        let cases = [
+            (
+                200,
+                format!(
+                    "{{\"code\":-101,\"message\":\"{} 987654321 PRIVATE_RESPONSE_BODY\",\"data\":{{\"mid\":987654321}}}}",
+                    IDENTITY_ACCESS_KEY_FIXTURE
+                ),
+            ),
+            (
+                200,
+                format!(
+                    "{{\"code\":-400,\"message\":\"{} 987654321 PRIVATE_RESPONSE_BODY\"}}",
+                    IDENTITY_ACCESS_KEY_FIXTURE
+                ),
+            ),
+            (
+                503,
+                format!(
+                    "{} 987654321 PRIVATE_RESPONSE_BODY",
+                    IDENTITY_ACCESS_KEY_FIXTURE
+                ),
+            ),
+            (
+                200,
+                format!(
+                    "malformed {} 987654321 PRIVATE_RESPONSE_BODY",
+                    IDENTITY_ACCESS_KEY_FIXTURE
+                ),
+            ),
+            (200, "{\"code\":0}".to_owned()),
+            (
+                200,
+                "{\"code\":0,\"data\":{\"mid\":0,\"echo\":\"PRIVATE_RESPONSE_BODY\"}}".to_owned(),
+            ),
+            (200, oversized_body),
+        ];
+
+        for (status, body) in cases {
+            let server = MockServer::start();
+            let mocks: Vec<_> = ACCESS_KEY_IDENTITY_KEYPAIR_FALLBACK_ORDER
+                .iter()
+                .copied()
+                .map(|keypair| {
+                    mock_identity_response(
+                        &server,
+                        keypair,
+                        IDENTITY_ACCESS_KEY_FIXTURE,
+                        status,
+                        body.clone(),
+                        None,
+                    )
+                })
+                .collect();
+            let mut client = test_client(&server);
+            client.config.credentials = Credentials::default()
+                .with_cookie(IDENTITY_COOKIE_FIXTURE)
+                .with_access_key(IDENTITY_ACCESS_KEY_FIXTURE)
+                .with_tv_access_key(IDENTITY_TV_ACCESS_KEY_FIXTURE);
+
+            let Err(error) = client
+                .credential_account_identity(CredentialKind::AccessKey)
+                .await
+            else {
+                return Err(anyhow::anyhow!("invalid identity response was accepted"));
+            };
+            for (index, mock) in mocks.into_iter().enumerate() {
+                mock.assert_calls(if index == 0 { 1 } else { 0 });
+            }
+            let message = error.to_string();
+            let debug = format!("{error:?}");
+            for sensitive in [
+                IDENTITY_ACCESS_KEY_FIXTURE,
+                "987654321",
+                "PRIVATE_RESPONSE_BODY",
+                "sign=",
+            ] {
+                assert!(
+                    !message.contains(sensitive),
+                    "leaked {sensitive}: {message}"
+                );
+                assert!(!debug.contains(sensitive), "leaked {sensitive}: {debug}");
+            }
+            assert!(!message.contains(&server.base_url()));
+            assert!(!debug.contains(&server.base_url()));
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn credential_account_identity_default_uses_one_aggregate_deadline() -> anyhow::Result<()>
+    {
+        let server = MockServer::start();
+        let mocks: Vec<_> = ACCESS_KEY_IDENTITY_KEYPAIR_FALLBACK_ORDER
+            .iter()
+            .copied()
+            .map(|keypair| {
+                mock_identity_response(
+                    &server,
+                    keypair,
+                    IDENTITY_ACCESS_KEY_FIXTURE,
+                    200,
+                    serde_json::json!({"code": -663}).to_string(),
+                    Some(Duration::from_millis(700)),
+                )
+            })
+            .collect();
+        let mut client = test_client(&server);
+        client.config.credentials =
+            Credentials::default().with_access_key(IDENTITY_ACCESS_KEY_FIXTURE);
+        client.config.request_timeout = Duration::from_millis(1_600);
+
+        let started = Instant::now();
+        let Err(error) = client
+            .credential_account_identity(CredentialKind::AccessKey)
+            .await
+        else {
+            return Err(anyhow::anyhow!("retryable issuer rejections were accepted"));
+        };
+        let elapsed = started.elapsed();
+
+        assert_eq!(
+            error.to_string(),
+            "invalid input: credential identity request timed out"
+        );
+        assert!(elapsed < Duration::from_millis(2_300));
+        mocks[0].assert_calls(1);
+        mocks[1].assert_calls(1);
+        mocks[3].assert_calls(0);
+        assert!(!error.to_string().contains(IDENTITY_ACCESS_KEY_FIXTURE));
+        assert!(!format!("{error:?}").contains(IDENTITY_ACCESS_KEY_FIXTURE));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn credential_account_identity_explicit_keypair_keeps_per_request_timeout()
+    -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let mock = mock_identity_response(
+            &server,
+            AccessKeyIdentityKeypair::Android,
+            IDENTITY_ACCESS_KEY_FIXTURE,
+            200,
+            serde_json::json!({"code": 0, "data": {"mid": 700_000_001}}).to_string(),
+            Some(Duration::from_millis(500)),
+        );
+        let mut client = test_client(&server);
+        client.config.credentials =
+            Credentials::default().with_access_key(IDENTITY_ACCESS_KEY_FIXTURE);
+        client.config.request_timeout = Duration::from_millis(50);
+
+        let Err(error) = client
+            .access_key_account_identity_with_keypair(AccessKeyIdentityKeypair::Android)
+            .await
+        else {
+            return Err(anyhow::anyhow!(
+                "delayed explicit identity request was accepted"
+            ));
+        };
+
+        assert!(matches!(error, Error::Http(_)));
+        mock.assert_calls(1);
+        assert!(!error.to_string().contains(IDENTITY_ACCESS_KEY_FIXTURE));
+        assert!(!error.to_string().contains("sign="));
+        assert!(!error.to_string().contains(&server.base_url()));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn credential_account_identity_does_not_change_health_probe_retry_behavior()
+    -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let mocks: Vec<_> = ACCESS_KEY_IDENTITY_KEYPAIR_FALLBACK_ORDER
+            .iter()
+            .copied()
+            .map(|keypair| {
+                mock_identity_response(
+                    &server,
+                    keypair,
+                    IDENTITY_ACCESS_KEY_FIXTURE,
+                    200,
+                    serde_json::json!({
+                        "code": -663,
+                        "message": "health probe does not retry identity keypairs",
+                    })
+                    .to_string(),
+                    None,
+                )
+            })
+            .collect();
+        let mut client = test_client(&server);
+        client.config.credentials =
+            Credentials::default().with_access_key(IDENTITY_ACCESS_KEY_FIXTURE);
+
+        let report = client.check_credential_health().await;
+        let access_key_probe = report
+            .probes
+            .iter()
+            .find(|probe| probe.kind == CredentialKind::AccessKey)
+            .ok_or_else(|| anyhow::anyhow!("missing generic access-key probe"))?;
+
+        assert_eq!(access_key_probe.scope, CredentialHealthScope::IntlBstar);
+        assert_eq!(access_key_probe.status, CredentialHealthStatus::Rejected);
+        assert_eq!(access_key_probe.api_code, Some(-663));
+        mocks[0].assert_calls(1);
+        for mock in mocks.into_iter().skip(1) {
+            mock.assert_calls(0);
+        }
         Ok(())
     }
 

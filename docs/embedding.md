@@ -258,6 +258,17 @@ does not establish identity. The response body is bounded to 64 KiB, OAuth probe
 the Web cookie, and debug/error output does not include credentials or account IDs. Keep the returned
 identity on the server and compare it before replacing a profile; the library does not grant callback
 authority or perform credential storage on the caller's behalf.
+For a generic access key whose signing issuer is known, call
+`BiliClient::access_key_account_identity_with_keypair(AccessKeyIdentityKeypair::Android)` and select
+the actual `IntlBstar`, `BiliTv`, `Android`, or `AndroidB` keypair. This method makes one probe with
+that keypair and reads only `Credentials::access_key`, even when the selected keypair is `BiliTv`.
+The default generic identity method supports legacy keys without issuer metadata: it tries these
+four keypairs in that order only after API codes `-663` or `-3`, within one aggregate
+`ClientConfig::request_timeout` budget. Other API rejections, transport failures, oversized or
+malformed responses, and missing or nonpositive account IDs stop immediately. Provider names and
+refresh-keypair metadata alone do not prove the issuer of a currently stored key. Cookie and TV
+identity probes retain their separate credentials and existing request paths; health checks are
+unchanged.
 This additive API is currently Git-only, not part of the previously published `0.7.0` crate.
 Pin a commit containing it or wait for a later crate release.
 For QR login, convert `QrLoginTicket` to `QrLoginTicketOutput` when a downstream application needs a
