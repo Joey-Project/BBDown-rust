@@ -75,6 +75,12 @@ async fn main() -> bbdown_core::Result<()> {
 
 library 默认保留 plan 中的媒体 URL。嵌入应用需要自定义 UPOS host、强制替换，或
 CLI-compatible PCDN fallback 处理时，应显式设置 `MediaHostOptions`。
+服务器需要验证登录或续期是否属于同一账号时，可使用
+`BiliClient::credential_account_identity(CredentialKind::Cookie)`，或选择
+`AccessKey`/`TvAccessKey`。返回的身份数据只用于服务器私有账号绑定，不是面向客户端的
+健康报告，也不授权调用方覆盖凭据。
+该新增身份 API 目前通过 Git 提供，不包含在此前已发布的 `0.7.0` crate 中；在下次
+crate release 前，请固定包含该 API 的 commit。
 当嵌入应用需要给下游 streaming/cache service 使用的可序列化 DASH video/audio 或 FLV
 segment 请求规格时，使用 `BiliClient::plan_playback`。`PlaybackPlan` 包含主 URL、备用
 URL、媒体 headers、mime/codec metadata、时长、大小、entry/variant/media cache key，以及

@@ -17,6 +17,7 @@ superseded_by:
 - Add `BiliClient::credential_account_identity(CredentialKind)` and the typed `CredentialAccountIdentity` result, without changing existing health-check, login, storage, or CLI behavior.
 - Reuse the official Web nav and signed generic/TV OAuth-info request paths. Require successful provider status and a positive account ID; bound the response body to 64 KiB.
 - Keep cookies off OAuth probes and redact credentials and account IDs from debug/errors. The embedding server remains responsible for session authority, same-account checks, renewal policy, and private storage.
+- Keep the crate README and embedding guide aligned in English and Simplified Chinese, including the private account-binding boundary and Git-only availability of the new API.
 
 ## Delivery
 - Implement and test in a separate worktree from `master` commit `d28b2c7539b564c6e492bbdb5b103817ececd0e9`; preserve unrelated dirty source-checkout changes.
