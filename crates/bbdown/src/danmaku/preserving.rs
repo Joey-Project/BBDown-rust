@@ -19,6 +19,15 @@ struct RawComment {
     raw: String,
     range: Range<usize>,
     namespace: Option<String>,
+    namespace_bindings: Vec<NamespaceBinding>,
+    local_namespace_prefixes: HashSet<Option<String>>,
+    start_tag_name_end: usize,
+}
+
+#[derive(Clone, Debug)]
+struct NamespaceBinding {
+    prefix: Option<String>,
+    uri: String,
 }
 
 fn xml_key(parameters: &str, text: &str) -> XmlKey {
@@ -96,8 +105,8 @@ fn root_qualified_name(source: &str) -> crate::Result<&str> {
     Ok(name)
 }
 
-fn xml_comments(document: &Document<'_>, xml: &str) -> Vec<RawComment> {
-    let root_namespace = document.root_element().tag_name().namespace();
+fn xml_comments(document: &Document<'_>, xml: &str) -> crate::Result<Vec<RawComment>> {
+    let root_namespace = normalized_namespace(document.root_element().tag_name().namespace());
     document
         .root_element()
         .children()
@@ -105,7 +114,7 @@ fn xml_comments(document: &Document<'_>, xml: &str) -> Vec<RawComment> {
             if !node.is_element() || node.tag_name().name() != "d" {
                 return false;
             }
-            let namespace = node.tag_name().namespace();
+            let namespace = normalized_namespace(node.tag_name().namespace());
             namespace.is_none() || namespace == root_namespace
         })
         .filter_map(|node| {
@@ -116,16 +125,190 @@ fn xml_comments(document: &Document<'_>, xml: &str) -> Vec<RawComment> {
                 .filter_map(|child| child.text())
                 .collect::<String>();
             let range = node.range();
-            Some(RawComment {
-                key: xml_key(parameter, &text),
-                parameters: parameter.to_owned(),
-                text,
-                raw: xml[range.clone()].to_owned(),
-                range,
-                namespace: node.tag_name().namespace().map(str::to_owned),
-            })
+            let raw = xml[range.clone()].to_owned();
+            let namespace = normalized_namespace(node.tag_name().namespace());
+            Some(local_namespace_prefixes(&raw).map(
+                |(start_tag_name_end, local_namespace_prefixes)| {
+                    RawComment {
+                        key: xml_key(parameter, &text),
+                        parameters: parameter.to_owned(),
+                        text,
+                        raw,
+                        range,
+                        namespace: namespace.map(str::to_owned),
+                        namespace_bindings: node
+                            .namespaces()
+                            .map(|binding| NamespaceBinding {
+                                prefix: binding.name().map(str::to_owned),
+                                uri: binding.uri().to_owned(),
+                            })
+                            .collect(),
+                        local_namespace_prefixes,
+                        start_tag_name_end,
+                    }
+                },
+            ))
         })
         .collect()
+}
+
+fn normalized_namespace(namespace: Option<&str>) -> Option<&str> {
+    namespace.filter(|uri| !uri.is_empty())
+}
+
+fn local_namespace_prefixes(raw: &str) -> crate::Result<(usize, HashSet<Option<String>>)> {
+    let bytes = raw.as_bytes();
+    if bytes.first() != Some(&b'<') {
+        return Err(invalid("fetched XML comment opening tag is missing"));
+    }
+    let mut position = 1;
+    while position < bytes.len()
+        && !bytes[position].is_ascii_whitespace()
+        && !matches!(bytes[position], b'/' | b'>')
+    {
+        position += 1;
+    }
+    if position == 1 {
+        return Err(invalid("fetched XML comment name is missing"));
+    }
+    let name_end = position;
+    let mut prefixes = HashSet::new();
+    loop {
+        while position < bytes.len() && bytes[position].is_ascii_whitespace() {
+            position += 1;
+        }
+        match bytes.get(position) {
+            Some(b'>') => break,
+            Some(b'/') => {
+                position += 1;
+                if bytes.get(position) == Some(&b'>') {
+                    break;
+                }
+            }
+            None => return Err(invalid("fetched XML comment opening tag is incomplete")),
+            _ => {
+                let attribute_start = position;
+                while position < bytes.len()
+                    && !bytes[position].is_ascii_whitespace()
+                    && !matches!(bytes[position], b'=' | b'>')
+                {
+                    position += 1;
+                }
+                if position == attribute_start {
+                    return Err(invalid("fetched XML comment attribute is malformed"));
+                }
+                let attribute_name = &raw[attribute_start..position];
+                while position < bytes.len() && bytes[position].is_ascii_whitespace() {
+                    position += 1;
+                }
+                if bytes.get(position) != Some(&b'=') {
+                    return Err(invalid("fetched XML comment attribute value is missing"));
+                }
+                position += 1;
+                while position < bytes.len() && bytes[position].is_ascii_whitespace() {
+                    position += 1;
+                }
+                let quote = *bytes
+                    .get(position)
+                    .filter(|byte| matches!(byte, b'\'' | b'"'))
+                    .ok_or_else(|| invalid("fetched XML comment attribute quote is missing"))?;
+                position += 1;
+                while position < bytes.len() && bytes[position] != quote {
+                    position += 1;
+                }
+                if position == bytes.len() {
+                    return Err(invalid("fetched XML comment attribute quote is incomplete"));
+                }
+                position += 1;
+                if attribute_name == "xmlns" {
+                    prefixes.insert(None);
+                } else if let Some(prefix) = attribute_name.strip_prefix("xmlns:") {
+                    prefixes.insert(Some(prefix.to_owned()));
+                }
+            }
+        }
+    }
+    Ok((name_end, prefixes))
+}
+
+fn escape_xml_attribute(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        escaped.push_str(match character {
+            '&' => "&amp;",
+            '<' => "&lt;",
+            '>' => "&gt;",
+            '"' => "&quot;",
+            '\t' => "&#x9;",
+            '\n' => "&#xA;",
+            '\r' => "&#xD;",
+            _ => {
+                escaped.push(character);
+                continue;
+            }
+        });
+    }
+    escaped
+}
+
+fn comment_with_namespace_bindings(
+    comment: &RawComment,
+    target_bindings: &[(Option<String>, String)],
+) -> String {
+    let name_end = comment.start_tag_name_end;
+    let mut declarations = Vec::new();
+    for binding in &comment.namespace_bindings {
+        if binding.prefix.as_deref() == Some("xml")
+            || comment.local_namespace_prefixes.contains(&binding.prefix)
+        {
+            continue;
+        }
+        if target_bindings
+            .iter()
+            .any(|(prefix, uri)| prefix == &binding.prefix && uri == &binding.uri)
+        {
+            continue;
+        }
+        declarations.push((binding.prefix.as_deref(), binding.uri.as_str()));
+    }
+    let target_default_namespace = target_bindings
+        .iter()
+        .find(|(prefix, _)| prefix.is_none())
+        .map(|(_, uri)| uri.as_str())
+        .filter(|uri| !uri.is_empty());
+    if !comment.local_namespace_prefixes.contains(&None)
+        && !comment
+            .namespace_bindings
+            .iter()
+            .any(|binding| binding.prefix.is_none())
+        && target_default_namespace.is_some()
+    {
+        declarations.push((None, ""));
+    }
+    if declarations.is_empty() {
+        return comment.raw.clone();
+    }
+    let extra_len = declarations
+        .iter()
+        .map(|(prefix, uri)| {
+            prefix.map_or(9, |prefix| prefix.len() + 10) + escape_xml_attribute(uri).len()
+        })
+        .sum::<usize>();
+    let mut raw = String::with_capacity(comment.raw.len() + extra_len);
+    raw.push_str(&comment.raw[..name_end]);
+    for (prefix, uri) in declarations {
+        raw.push(' ');
+        raw.push_str("xmlns");
+        if let Some(prefix) = prefix {
+            raw.push(':');
+            raw.push_str(prefix);
+        }
+        raw.push_str("=\"");
+        raw.push_str(&escape_xml_attribute(uri));
+        raw.push('"');
+    }
+    raw.push_str(&comment.raw[name_end..]);
+    raw
 }
 
 /// Append fetched `<d>` elements while preserving every byte of the existing document.
@@ -135,7 +318,7 @@ pub fn merge_xml_preserving(
 ) -> crate::Result<DanmakuXmlMerge> {
     let fetched_document = parse_xml(fetched_xml, "fetched")?;
     let fetched_root = root_element(&fetched_document, "fetched")?;
-    let fetched_comments = xml_comments(&fetched_document, fetched_xml);
+    let fetched_comments = xml_comments(&fetched_document, fetched_xml)?;
 
     if existing_xml.trim().is_empty() {
         let (xml, appended_comments) = dedupe_fetched_xml(fetched_xml, &fetched_comments);
@@ -149,7 +332,7 @@ pub fn merge_xml_preserving(
 
     let old_document = parse_xml(existing_xml, "existing")?;
     let old_root = root_element(&old_document, "existing")?;
-    let old_comments = xml_comments(&old_document, existing_xml);
+    let old_comments = xml_comments(&old_document, existing_xml)?;
     let mut seen = old_comments
         .iter()
         .map(|comment| comment.key.clone())
@@ -168,6 +351,44 @@ pub fn merge_xml_preserving(
         });
     }
 
+    if normalized_namespace(old_root.tag_name().namespace())
+        != normalized_namespace(fetched_root.tag_name().namespace())
+    {
+        return Err(invalid(
+            "fetched XML root namespace is incompatible with existing document",
+        ));
+    }
+
+    let target_bindings = old_root
+        .namespaces()
+        .map(|binding| (binding.name().map(str::to_owned), binding.uri().to_owned()))
+        .collect::<Vec<_>>();
+    let appended_raw = append
+        .iter()
+        .map(|comment| comment_with_namespace_bindings(comment, &target_bindings))
+        .collect::<Vec<_>>();
+
+    let insertion = splice_comments_preserving_source_namespace(
+        existing_xml,
+        old_root,
+        &append,
+        &appended_raw,
+    )?;
+
+    Ok(DanmakuXmlMerge {
+        xml: insertion,
+        existing_comments: old_comments.len(),
+        fetched_comments: fetched_comments.len(),
+        appended_comments,
+    })
+}
+
+fn splice_comments_preserving_source_namespace(
+    existing_xml: &str,
+    old_root: Node<'_, '_>,
+    append: &[&RawComment],
+    appended_raw: &[String],
+) -> crate::Result<String> {
     let root_range = old_root.range();
     let root_source = &existing_xml[root_range.clone()];
     let self_closing_slash = root_self_closing_slash(root_source)?;
@@ -175,14 +396,14 @@ pub fn merge_xml_preserving(
     let (insertion, appended_ranges) = if let Some(slash) = self_closing_slash {
         let before_slash = root_range.start + slash;
         let mut result = String::with_capacity(
-            existing_xml.len() + append.iter().map(|c| c.raw.len()).sum::<usize>() + 16,
+            existing_xml.len() + appended_raw.iter().map(String::len).sum::<usize>() + 16,
         );
         result.push_str(&existing_xml[..before_slash]);
         result.push('>');
         let mut ranges = Vec::with_capacity(append.len());
-        for comment in &append {
+        for raw in appended_raw {
             ranges.push(result.len());
-            result.push_str(&comment.raw);
+            result.push_str(raw);
         }
         result.push_str("</");
         result.push_str(root_name);
@@ -196,13 +417,13 @@ pub fn merge_xml_preserving(
             .ok_or_else(|| invalid("existing XML root closing tag is missing"))?;
         let insert_at = root_range.start + root_close_rel;
         let mut result = String::with_capacity(
-            existing_xml.len() + append.iter().map(|c| c.raw.len()).sum::<usize>() + append.len(),
+            existing_xml.len() + appended_raw.iter().map(String::len).sum::<usize>() + append.len(),
         );
         result.push_str(&existing_xml[..insert_at]);
         let mut ranges = Vec::with_capacity(append.len());
-        for comment in &append {
+        for raw in appended_raw {
             ranges.push(result.len());
-            result.push_str(&comment.raw);
+            result.push_str(raw);
         }
         result.push_str(&existing_xml[insert_at..]);
         (result, ranges)
@@ -210,33 +431,24 @@ pub fn merge_xml_preserving(
     // Parse the splice as a complete document so namespace declarations and context are checked.
     let merged_document = parse_xml(&insertion, "merged")?;
     root_element(&merged_document, "merged")?;
-    {
-        for (source, at) in append.iter().zip(appended_ranges) {
-            let node = merged_document
-                .descendants()
-                .find(|node| node.is_element() && node.range().start == at)
-                .ok_or_else(|| invalid("an appended XML comment could not be located"))?;
-            if source.namespace.as_deref() != node.tag_name().namespace() {
-                return Err(invalid(
-                    "fetched XML comment namespace is incompatible with existing document",
-                ));
-            }
+    for (source, at) in append.iter().zip(appended_ranges) {
+        let node = merged_document
+            .descendants()
+            .find(|node| node.is_element() && node.range().start == at)
+            .ok_or_else(|| invalid("an appended XML comment could not be located"))?;
+        if source.namespace.as_deref() != normalized_namespace(node.tag_name().namespace()) {
+            return Err(invalid(
+                "fetched XML comment namespace is incompatible with existing document",
+            ));
         }
     }
-    let _ = fetched_root;
-
-    Ok(DanmakuXmlMerge {
-        xml: insertion,
-        existing_comments: old_comments.len(),
-        fetched_comments: fetched_comments.len(),
-        appended_comments,
-    })
+    Ok(insertion)
 }
 
 pub(crate) fn xml_to_ass_validated(xml: &str) -> crate::Result<String> {
     let document = parse_xml(xml, "fetched")?;
     root_element(&document, "fetched")?;
-    let comments = xml_comments(&document, xml)
+    let comments = xml_comments(&document, xml)?
         .iter()
         .filter_map(|item| super::parse_comment_decoded(&item.parameters, &item.text))
         .collect::<Vec<_>>();
@@ -391,6 +603,184 @@ mod tests {
                 .xml
                 .ends_with("<d p='3,1,25,0'>plain</d></b:i>")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn appended_namespace_bindings_follow_expanded_names_not_source_prefixes() -> crate::Result<()>
+    {
+        let namespace = "urn:quote&quot;&amp;&lt;v&gt;";
+        let old = format!("<a:i xmlns:a='{namespace}'></a:i>");
+        let fetched =
+            format!("<b:i xmlns:b='{namespace}'><b:d p='1,1,25,16777215'>quoted</b:d></b:i>");
+
+        let merged = merge_xml_preserving(&old, &fetched)?;
+
+        assert_eq!(merged.appended_comments, 1);
+        assert!(
+            merged
+                .xml
+                .starts_with("<a:i xmlns:a='urn:quote&quot;&amp;&lt;v&gt;'>")
+        );
+        assert!(merged.xml.contains(
+            "<b:d xmlns:b=\"urn:quote&quot;&amp;&lt;v&gt;\" p='1,1,25,16777215'>quoted</b:d>"
+        ));
+        let parsed = roxmltree::Document::parse(&merged.xml)
+            .map_err(|error| crate::Error::InvalidInput(error.to_string()))?;
+        let appended = parsed
+            .root_element()
+            .children()
+            .find(|node| node.is_element() && node.tag_name().name() == "d")
+            .ok_or_else(|| crate::Error::InvalidInput("appended <d> is missing".into()))?;
+        assert_eq!(appended.tag_name().namespace(), Some("urn:quote\"&<v>"));
+        Ok(())
+    }
+
+    #[test]
+    fn appended_namespaces_work_with_default_and_prefixed_target_roots() -> crate::Result<()> {
+        let prefixed_target = "<a:i xmlns:a='urn:test'></a:i>";
+        let default_fetched = "<i xmlns='urn:test'><d p='1,1,25,16777215'>default fetched</d></i>";
+        let merged = merge_xml_preserving(prefixed_target, default_fetched)?;
+        assert!(
+            merged
+                .xml
+                .contains("<d xmlns=\"urn:test\" p='1,1,25,16777215'>default fetched</d>")
+        );
+        let parsed = roxmltree::Document::parse(&merged.xml)
+            .map_err(|error| crate::Error::InvalidInput(error.to_string()))?;
+        let appended = parsed
+            .root_element()
+            .children()
+            .find(|node| node.is_element() && node.tag_name().name() == "d")
+            .ok_or_else(|| crate::Error::InvalidInput("appended default <d> is missing".into()))?;
+        assert_eq!(appended.tag_name().namespace(), Some("urn:test"));
+
+        let default_target = "<i xmlns='urn:test'></i>";
+        let prefixed_fetched =
+            "<b:i xmlns:b='urn:test'><b:d p='2,1,25,16777215'>prefixed fetched</b:d></b:i>";
+        let merged = merge_xml_preserving(default_target, prefixed_fetched)?;
+        assert!(merged.xml.contains(
+            "<b:d xmlns:b=\"urn:test\" xmlns=\"\" p='2,1,25,16777215'>prefixed fetched</b:d>"
+        ));
+        let parsed = roxmltree::Document::parse(&merged.xml)
+            .map_err(|error| crate::Error::InvalidInput(error.to_string()))?;
+        let appended = parsed
+            .root_element()
+            .children()
+            .find(|node| node.is_element() && node.tag_name().name() == "d")
+            .ok_or_else(|| crate::Error::InvalidInput("appended prefixed <d> is missing".into()))?;
+        assert_eq!(appended.tag_name().namespace(), Some("urn:test"));
+        Ok(())
+    }
+
+    #[test]
+    fn appended_legacy_comment_clears_target_default_namespace() -> crate::Result<()> {
+        let old = "<i xmlns='urn:test'></i>";
+        let fetched = "<b:i xmlns:b='urn:test'><d p='1,1,25,16777215'>legacy</d></b:i>";
+
+        let merged = merge_xml_preserving(old, fetched)?;
+
+        assert!(merged.xml.contains("xmlns=\"\""));
+        let parsed = roxmltree::Document::parse(&merged.xml)
+            .map_err(|error| crate::Error::InvalidInput(error.to_string()))?;
+        let appended = parsed
+            .root_element()
+            .children()
+            .find(|node| node.is_element() && node.tag_name().name() == "d")
+            .ok_or_else(|| crate::Error::InvalidInput("appended legacy <d> is missing".into()))?;
+        assert_eq!(
+            super::normalized_namespace(appended.tag_name().namespace()),
+            None
+        );
+
+        let prefixed_legacy =
+            "<b:i xmlns:b='urn:test'><b:d p='2'><child>legacy child</child></b:d></b:i>";
+        let merged = merge_xml_preserving(old, prefixed_legacy)?;
+        assert!(merged.xml.contains("xmlns=\"\""));
+        let parsed = roxmltree::Document::parse(&merged.xml)
+            .map_err(|error| crate::Error::InvalidInput(error.to_string()))?;
+        let appended = parsed
+            .root_element()
+            .children()
+            .find(|node| node.is_element() && node.tag_name().name() == "d")
+            .ok_or_else(|| crate::Error::InvalidInput("appended prefixed <d> is missing".into()))?;
+        assert_eq!(appended.tag_name().namespace(), Some("urn:test"));
+        let child = appended
+            .children()
+            .find(roxmltree::Node::is_element)
+            .ok_or_else(|| crate::Error::InvalidInput("legacy child is missing".into()))?;
+        assert_eq!(
+            super::normalized_namespace(child.tag_name().namespace()),
+            None
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn local_namespace_declarations_survive_shadowing_without_duplicates() -> crate::Result<()> {
+        let old = "<a:i xmlns:a='urn:test' xmlns:p='urn:target'></a:i>";
+        let fetched = "<b:i xmlns:b='urn:test' xmlns:p='urn:root'><b:d xmlns:b='urn:test' xmlns:p='urn:local' p='4' p:flag='yes'><p:child/></b:d></b:i>";
+
+        let merged = merge_xml_preserving(old, fetched)?;
+
+        let appended = merged
+            .xml
+            .split_once("</a:i>")
+            .map(|(before_close, _)| before_close)
+            .ok_or_else(|| crate::Error::InvalidInput("test root close is missing".into()))?;
+        assert!(appended.contains(
+            "<b:d xmlns:b='urn:test' xmlns:p='urn:local' p='4' p:flag='yes'><p:child/></b:d>"
+        ));
+        let inserted = appended
+            .split_once('>')
+            .map(|(_, content)| content)
+            .ok_or_else(|| crate::Error::InvalidInput("test root open is missing".into()))?;
+        assert_eq!(inserted.matches("xmlns:b=").count(), 1);
+        assert_eq!(inserted.matches("xmlns:p=").count(), 1);
+        let parsed = roxmltree::Document::parse(&merged.xml)
+            .map_err(|error| crate::Error::InvalidInput(error.to_string()))?;
+        let appended = parsed
+            .root_element()
+            .children()
+            .find(|node| node.is_element() && node.tag_name().name() == "d")
+            .ok_or_else(|| crate::Error::InvalidInput("appended shadowed <d> is missing".into()))?;
+        assert_eq!(appended.tag_name().namespace(), Some("urn:test"));
+        assert_eq!(appended.attribute(("urn:local", "flag")), Some("yes"));
+        let child = appended
+            .children()
+            .find(roxmltree::Node::is_element)
+            .ok_or_else(|| {
+                crate::Error::InvalidInput("appended namespaced child is missing".into())
+            })?;
+        assert_eq!(child.tag_name().namespace(), Some("urn:local"));
+        Ok(())
+    }
+
+    #[test]
+    fn inherited_prefixes_are_moved_for_attributes_and_descendants() -> crate::Result<()> {
+        let old = "<a:i xmlns:a='urn:test' xmlns:p='urn:target'></a:i>";
+        let fetched = "<b:i xmlns:b='urn:test' xmlns:p='urn:source'><b:d p='4' p:flag='yes'><p:child/></b:d></b:i>";
+
+        let merged = merge_xml_preserving(old, fetched)?;
+
+        assert!(merged.xml.contains(
+            "<b:d xmlns:b=\"urn:test\" xmlns:p=\"urn:source\" p='4' p:flag='yes'><p:child/></b:d>"
+        ));
+        let parsed = roxmltree::Document::parse(&merged.xml)
+            .map_err(|error| crate::Error::InvalidInput(error.to_string()))?;
+        let appended = parsed
+            .root_element()
+            .children()
+            .find(|node| node.is_element() && node.tag_name().name() == "d")
+            .ok_or_else(|| {
+                crate::Error::InvalidInput("appended inherited <d> is missing".into())
+            })?;
+        assert_eq!(appended.attribute(("urn:source", "flag")), Some("yes"));
+        let child = appended
+            .children()
+            .find(roxmltree::Node::is_element)
+            .ok_or_else(|| crate::Error::InvalidInput("inherited child is missing".into()))?;
+        assert_eq!(child.tag_name().namespace(), Some("urn:source"));
         Ok(())
     }
 
