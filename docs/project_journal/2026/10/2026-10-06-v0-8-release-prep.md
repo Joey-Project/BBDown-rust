@@ -3,9 +3,9 @@ id: 20261006-v0-8-release-prep
 title: v0.8.0 Release Preparation
 status: completed
 created: 2026-10-06
-updated: 2026-10-09
-branch:
-pr: 88
+updated: 2026-10-10
+branch: wip/v0-8-release-prep-master
+pr: 91
 supersedes: []
 superseded_by:
 ---
@@ -96,6 +96,15 @@ superseded_by:
   (1.6 MiB uncompressed, 246.6 KiB compressed) and uploaded nothing; the run reported the existing
   yanked `spin 0.9.8` dependency. This records staged source-tree validation, not the later
   journal-only commit, a merged PR, or a published release.
+- Source head `f856ac9633e598e9e52fb22e98c1b0b4045cabe9` passed
+  `env RUSTUP_TOOLCHAIN=1.99.0 just ci` in 24.96 seconds: 798 workspace tests passed, 3 ignored, and
+  a separate CLI e2e repeat passed 154 tests (not added to the workspace total). The `bbdown-core
+  0.8.0` publish dry-run verified 29 files and uploaded nothing. This evidence applies to `f856ac9`,
+  not any later journal-updated head.
+- The earlier stacked release PR #88 could not be safely reused after its observed base-ref retarget:
+  the gate returned `request_clean_generation` with `retry_safe=false` and required a replacement
+  PR. Release preparation continues in PR #91; the closed PR #88 retains the superseded historical
+  attempt and its resolved documentation findings.
 - No `v0.8.0` GitHub Release or crates.io publication is recorded here. Publication uses the
   protected release-candidate and promotion workflows.
 
@@ -108,6 +117,7 @@ superseded_by:
 
 - Feature workstream: `docs/project_journal/2026/10/2026-10-06-danmaku-preserving-refresh.md`.
 - Feature dependency: PR [#87](https://github.com/Joey-Project/BBDown-rust/pull/87).
-- Release-prep PR: [#88](https://github.com/Joey-Project/BBDown-rust/pull/88).
+- Current replacement release-prep PR: [#91](https://github.com/Joey-Project/BBDown-rust/pull/91).
+- Superseded stacked release-prep attempt: [#88](https://github.com/Joey-Project/BBDown-rust/pull/88).
 - Bilingual notes: `docs/release-notes/v0.8.0.md` and `docs/release-notes/v0.8.0.zh-CN.md`.
 - Gate evidence: full `just ci` passed; workspace suite counts are recorded above.
