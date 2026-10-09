@@ -6718,7 +6718,7 @@ mod tests {
             assert_eq!(identity.kind, CredentialKind::AccessKey);
             assert_eq!(identity.account_id, 500_000_000 + target_index as u64);
             for (index, mock) in mocks.into_iter().enumerate() {
-                mock.assert_calls(if index <= target_index { 1 } else { 0 });
+                mock.assert_calls(usize::from(index <= target_index));
             }
         }
         Ok(())
@@ -6811,7 +6811,7 @@ mod tests {
 
         assert!(matches!(error, Error::Api { code: -663, .. }));
         for (keypair, mock) in ACCESS_KEY_IDENTITY_KEYPAIR_FALLBACK_ORDER.iter().zip(mocks) {
-            mock.assert_calls(if *keypair == selected { 1 } else { 0 });
+            mock.assert_calls(usize::from(*keypair == selected));
         }
         Ok(())
     }
@@ -6872,30 +6872,22 @@ mod tests {
             (
                 200,
                 format!(
-                    "{{\"code\":-101,\"message\":\"{} 987654321 PRIVATE_RESPONSE_BODY\",\"data\":{{\"mid\":987654321}}}}",
-                    IDENTITY_ACCESS_KEY_FIXTURE
+                    "{{\"code\":-101,\"message\":\"{IDENTITY_ACCESS_KEY_FIXTURE} 987654321 PRIVATE_RESPONSE_BODY\",\"data\":{{\"mid\":987654321}}}}"
                 ),
             ),
             (
                 200,
                 format!(
-                    "{{\"code\":-400,\"message\":\"{} 987654321 PRIVATE_RESPONSE_BODY\"}}",
-                    IDENTITY_ACCESS_KEY_FIXTURE
+                    "{{\"code\":-400,\"message\":\"{IDENTITY_ACCESS_KEY_FIXTURE} 987654321 PRIVATE_RESPONSE_BODY\"}}"
                 ),
             ),
             (
                 503,
-                format!(
-                    "{} 987654321 PRIVATE_RESPONSE_BODY",
-                    IDENTITY_ACCESS_KEY_FIXTURE
-                ),
+                format!("{IDENTITY_ACCESS_KEY_FIXTURE} 987654321 PRIVATE_RESPONSE_BODY"),
             ),
             (
                 200,
-                format!(
-                    "malformed {} 987654321 PRIVATE_RESPONSE_BODY",
-                    IDENTITY_ACCESS_KEY_FIXTURE
-                ),
+                format!("malformed {IDENTITY_ACCESS_KEY_FIXTURE} 987654321 PRIVATE_RESPONSE_BODY"),
             ),
             (200, "{\"code\":0}".to_owned()),
             (
@@ -6934,7 +6926,7 @@ mod tests {
                 return Err(anyhow::anyhow!("invalid identity response was accepted"));
             };
             for (index, mock) in mocks.into_iter().enumerate() {
-                mock.assert_calls(if index == 0 { 1 } else { 0 });
+                mock.assert_calls(usize::from(index == 0));
             }
             let message = error.to_string();
             let debug = format!("{error:?}");
