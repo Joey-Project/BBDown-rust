@@ -1011,7 +1011,9 @@ files. A successful call does not provide crash or power-loss atomicity across t
 archive. `Preserve` retains XML history and appends only unmatched fetched comments. A positive ASCII
 decimal id in `p[7]` is preferred and canonicalized across leading zeros: the same id matches even
 when fetched metadata or text changes, while a different id appends even when text matches. Missing,
-zero, or invalid ids fall back to the complete `p` attribute plus decoded text. Every selected ASS
+zero, or invalid ids fall back to the complete `p` attribute plus decoded text. Only `<d>` elements
+without a namespace or in the `<i>` root's namespace participate in matching and ASS rendering;
+existing elements in unrelated namespaces remain preserved as unknown XML. Every selected ASS
 file is rebuilt from the complete merged XML; old custom styles and events are discarded. Without an
 XML baseline, old ASS events are not used as history and generated ASS reflects only the fetched XML
 payload. `ass_statistics()` reports `generated_events` for each ASS output.

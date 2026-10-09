@@ -97,10 +97,17 @@ fn root_qualified_name(source: &str) -> crate::Result<&str> {
 }
 
 fn xml_comments(document: &Document<'_>, xml: &str) -> Vec<RawComment> {
+    let root_namespace = document.root_element().tag_name().namespace();
     document
         .root_element()
         .children()
-        .filter(|node| node.is_element() && node.tag_name().name() == "d")
+        .filter(|node| {
+            if !node.is_element() || node.tag_name().name() != "d" {
+                return false;
+            }
+            let namespace = node.tag_name().namespace();
+            namespace.is_none() || namespace == root_namespace
+        })
         .filter_map(|node| {
             let parameter = node.attribute("p")?;
             let text = node
@@ -453,6 +460,73 @@ mod tests {
         let refreshed = merge_xml_preserving(&merged.xml, fetched)?;
         assert_eq!(refreshed.appended_comments, 0);
         assert_eq!(refreshed.xml, merged.xml);
+        Ok(())
+    }
+
+    #[test]
+    fn unrelated_namespace_id_does_not_block_or_render_real_fetched_comment() -> crate::Result<()> {
+        let old =
+            "<i xmlns:x='urn:extension'><x:d p='1,1,25,16777215,0,0,0,42'>extension</x:d></i>";
+        let fetched = "<i><d p='1,1,25,16777215,0,0,0,42'>real comment</d></i>";
+
+        let merged = merge_xml_preserving(old, fetched)?;
+
+        assert_eq!(merged.existing_comments, 0);
+        assert_eq!(merged.fetched_comments, 1);
+        assert_eq!(merged.appended_comments, 1);
+        assert!(
+            merged
+                .xml
+                .contains("<x:d p='1,1,25,16777215,0,0,0,42'>extension</x:d>")
+        );
+        assert!(
+            merged
+                .xml
+                .contains("<d p='1,1,25,16777215,0,0,0,42'>real comment</d>")
+        );
+        let ass = xml_to_ass_validated(&merged.xml)?;
+        assert_eq!(ass.matches("Dialogue:").count(), 1);
+        assert!(ass.contains("real comment"));
+        assert!(!ass.contains("extension"));
+        Ok(())
+    }
+
+    #[test]
+    fn fetched_extension_does_not_dedupe_unqualified_comment_or_render() -> crate::Result<()> {
+        let fetched = "<i xmlns:x='urn:extension'><x:d p='1,1,25,16777215,0,0,0,42'>extension</x:d><d p='1,1,25,16777215,0,0,0,42'>real comment</d><d p='1,1,25,16777215,0,0,0,42'>duplicate real</d></i>";
+
+        let merged = merge_xml_preserving("", fetched)?;
+
+        assert_eq!(merged.fetched_comments, 2);
+        assert_eq!(merged.appended_comments, 1);
+        assert!(
+            merged
+                .xml
+                .contains("<x:d p='1,1,25,16777215,0,0,0,42'>extension</x:d>")
+        );
+        assert!(
+            merged
+                .xml
+                .contains("<d p='1,1,25,16777215,0,0,0,42'>real comment</d>")
+        );
+        assert!(!merged.xml.contains("duplicate real"));
+        let ass = xml_to_ass_validated(&merged.xml)?;
+        assert_eq!(ass.matches("Dialogue:").count(), 1);
+        assert!(ass.contains("real comment"));
+        assert!(!ass.contains("extension"));
+        Ok(())
+    }
+
+    #[test]
+    fn ass_accepts_schema_and_unqualified_comments_but_ignores_extensions() -> crate::Result<()> {
+        let xml = "<b:i xmlns:b='urn:test' xmlns:x='urn:extension'><b:d p='1,1,25,16777215'>schema</b:d><d p='2,1,25,16777215'>legacy</d><x:d p='3,1,25,16777215'>extension</x:d></b:i>";
+
+        let ass = xml_to_ass_validated(xml)?;
+
+        assert_eq!(ass.matches("Dialogue:").count(), 2);
+        assert!(ass.contains("schema"));
+        assert!(ass.contains("legacy"));
+        assert!(!ass.contains("extension"));
         Ok(())
     }
 
