@@ -3,7 +3,7 @@ id: 20261006-v0-8-release-prep
 title: v0.8.0 Release Preparation
 status: completed
 created: 2026-10-06
-updated: 2026-10-08
+updated: 2026-10-09
 branch:
 pr: 88
 supersedes: []
@@ -14,9 +14,15 @@ superseded_by:
 
 ## Summary
 
-- Prepare the `0.8.0` workspace package versions and bilingual source-line notes for preserving
-  danmaku refresh. Preparation is complete; the protected RC and promotion workflows remain the
-  publication path after the feature PR lands.
+- Prepare the `0.8.0` workspace package versions and bilingual source-line notes for
+  preserving danmaku refresh and the credential-account identity API merged in PR #90.
+  Preparation is complete; the protected RC and promotion workflows are the publication
+  path. Release notes document preserving refresh plus explicit Web and signed-OAuth
+  identity probes, verified UID and available username/issuer metadata, failure and
+  redaction boundaries, and caller-owned same-account and storage policy.
+- The bilingual embedding guides describe preserving refresh and credential-account identity as
+  `0.8.0` source-line additions absent from the `0.7.0` crate, and CDN-transfer features as prior
+  `0.7.0` additions.
 
 ## Current State
 
@@ -90,8 +96,8 @@ superseded_by:
   (1.6 MiB uncompressed, 246.6 KiB compressed) and uploaded nothing; the run reported the existing
   yanked `spin 0.9.8` dependency. This records staged source-tree validation, not the later
   journal-only commit, a merged PR, or a published release.
-- No `v0.8.0` GitHub Release or crates.io publication is claimed. Those remain pending until the
-  feature PR merges and the protected RC/promotion workflows run.
+- No `v0.8.0` GitHub Release or crates.io publication is recorded here. Publication uses the
+  protected release-candidate and promotion workflows.
 
 ## Publication Follow-up
 

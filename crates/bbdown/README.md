@@ -95,8 +95,8 @@ four signing keypairs within one request-timeout budget, continuing only after e
 or app-authentication rejection. It does not retry malformed identities or transport failures.
 BiliTv signing respects `tv_passport_poll_base`; when that base is untouched and only
 `passport_base` is customized, it uses the main override as existing refresh routing does.
-This additive identity API is available from Git; the already published `0.7.0` crate does not
-contain it. Pin a commit containing the API until the next crate release.
+These additive identity APIs are included in the `0.8.0` source line and are unavailable in the
+`0.7.0` crate.
 Use `BiliClient::plan_playback` when an embedding application needs serializable DASH video/audio
 or FLV segment request specs for a downstream streaming/cache service. `PlaybackPlan` includes
 primary and backup URLs, media headers, mime/codec metadata, duration, size, entry/variant/media

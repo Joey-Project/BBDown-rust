@@ -88,8 +88,7 @@ CLI-compatible PCDN fallback 处理时，应显式设置 `MediaHostOptions`。
 响应异常或网络失败后继续探测。
 BiliTv 签名遵循 `tv_passport_poll_base` 配置；若该地址保持默认且只修改了
 `passport_base`，则与原有刷新路由一样，兼容使用主 passport 地址。
-该新增身份 API 目前通过 Git 提供，不包含在此前已发布的 `0.7.0` crate 中；在下次
-crate release 前，请固定包含该 API 的 commit。
+这些新增身份 API 包含在 `0.8.0` 开发版本线中，`0.7.0` crate 不提供这些 API。
 当嵌入应用需要给下游 streaming/cache service 使用的可序列化 DASH video/audio 或 FLV
 segment 请求规格时，使用 `BiliClient::plan_playback`。`PlaybackPlan` 包含主 URL、备用
 URL、媒体 headers、mime/codec metadata、时长、大小、entry/variant/media cache key，以及
