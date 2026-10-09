@@ -622,6 +622,12 @@ impl AccessPolicy {
     }
 }
 
+#[cfg(windows)]
+#[allow(clippy::permissions_set_readonly_false)] // Windows requires this bit cleared for deletion.
+fn clear_readonly_for_deletion(permissions: &mut std_fs::Permissions) {
+    permissions.set_readonly(false);
+}
+
 fn capture_destination_policy(file: &StagedDanmakuFile) -> Result<CapturedDestinationPolicy> {
     let current = match std_fs::metadata(&file.path) {
         Ok(metadata) => Some(AccessPolicy::from_metadata(&metadata)),
@@ -746,7 +752,7 @@ fn remove_target(
             });
         }
 
-        permissions.set_readonly(false);
+        clear_readonly_for_deletion(&mut permissions);
         if let Err(error) = file.set_permissions(permissions) {
             return Err(failed_readonly_removal(error, &file, access_policy));
         }
@@ -820,7 +826,7 @@ fn remove_owned_temp(path: &Path) {
     if let Ok(metadata) = std_fs::metadata(path) {
         let mut permissions = metadata.permissions();
         if permissions.readonly() {
-            permissions.set_readonly(false);
+            clear_readonly_for_deletion(&mut permissions);
             let _ = std_fs::set_permissions(path, permissions);
         }
     }
@@ -902,13 +908,15 @@ fn unique_candidate(parent: &Path, label: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(windows)]
-    use super::remove_target;
+    #[cfg(unix)]
+    use super::publish_file_group_with_prepare_hook;
     use super::{
         ReplaceFailure, StagedDanmakuFile, create_unique_directory, publish_file_group,
-        publish_file_group_with, publish_file_group_with_ops, publish_file_group_with_prepare_hook,
-        replace_target, resolve_destination_path, rollback_target,
+        publish_file_group_with, publish_file_group_with_ops, replace_target,
+        resolve_destination_path, rollback_target,
     };
+    #[cfg(windows)]
+    use super::{clear_readonly_for_deletion, remove_target};
     use crate::DownloadFileKind;
     use std::fs;
     use std::path::Path;
@@ -943,7 +951,7 @@ mod tests {
             let path = entry?.path();
             let mut permissions = fs::metadata(&path)?.permissions();
             if permissions.readonly() {
-                permissions.set_readonly(false);
+                clear_readonly_for_deletion(&mut permissions);
                 fs::set_permissions(&path, permissions)?;
             }
         }

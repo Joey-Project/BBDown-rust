@@ -3250,7 +3250,7 @@ async fn mux_cancellation_error_for_status(
         const STATUS_CONTROL_C_EXIT: u32 = 0xC000_013A;
         if status
             .code()
-            .is_some_and(|code| code as u32 == STATUS_CONTROL_C_EXIT)
+            .is_some_and(|code| code.cast_unsigned() == STATUS_CONTROL_C_EXIT)
             && let Some(error) = wait_for_mux_signal_cancellation(cancellation).await
         {
             return Some(error);
@@ -5846,6 +5846,8 @@ fn subtitle_dedup_key(url: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use super::path_is_occupied;
     use super::{
         CDN_PUBLIC_PROBE_MAX_BYTES, CDN_SHARD_CHUNK_SIZE, DEFAULT_UPOS_REPLACEMENT_HOST,
         DanmakuUpdateOptions, DanmakuUpdatePolicy, DownloadArchive, DownloadArchiveEntryRecord,
@@ -5858,12 +5860,11 @@ mod tests {
         comparable_output_path, cover_file_name, default_plan_output_dir,
         download_entry_content_key, download_entry_content_key_for_options,
         download_plan_content_key, download_plan_content_key_for_options, entry_dir_name,
-        media_file_name, mux_file_stem, path_is_occupied, probe_media_cdns,
-        remove_mux_output_if_cancelled, render_template_component, safe_file_name,
-        safe_file_name_with_budget, select_audio_stream, select_media_stream, selected_subtitles,
-        subtitle_dedup_key, subtitle_extension, subtitle_file_name, temporary_download_path,
-        temporary_generated_path, temporary_mux_path, temporary_replace_path,
-        write_generated_text_file,
+        media_file_name, mux_file_stem, probe_media_cdns, remove_mux_output_if_cancelled,
+        render_template_component, safe_file_name, safe_file_name_with_budget, select_audio_stream,
+        select_media_stream, selected_subtitles, subtitle_dedup_key, subtitle_extension,
+        subtitle_file_name, temporary_download_path, temporary_generated_path, temporary_mux_path,
+        temporary_replace_path, write_generated_text_file,
     };
     use crate::models::{
         ChapterTrack, DanmakuTrack, DownloadEntry, DownloadPlan, FlvSegment, MediaStream,
