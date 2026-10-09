@@ -240,6 +240,11 @@ debug/error 输出不包含凭据或账号 ID。调用方应将身份留在服�
 `BiliClient::access_key_account_identity_with_keypair(AccessKeyIdentityKeypair::Android)`，
 并选择实际的 `IntlBstar`、`BiliTv`、`Android` 或 `AndroidB`。该方法只使用指定 keypair
 检查一次，而且始终读取 `Credentials::access_key`；即便选择 `BiliTv`，也不读取 TV key。
+BiliTv 签名使用 `EndpointConfig::tv_passport_poll_base`，默认兼容探测回退到该 keypair
+时也遵循该配置。若 TV 地址仍为默认值且只有 `passport_base` 被修改，则与现有 BiliTv
+刷新路由一样使用主地址。其它通用 keypair 使用 `passport_base`。BiliTv 检查失败时不会
+将该 keypair 的请求改发到其它地址；默认兼容方法只会在下述拒绝码出现时尝试下一组
+keypair。
 默认通用身份方法兼容缺少签发信息的旧 key：只在 API 返回 `-663` 或 `-3` 后，按上述
 顺序尝试最多四组 keypair，所有尝试共享 `ClientConfig::request_timeout` 的总预算。
 其它 API 拒绝、网络失败、响应过大或格式异常，以及缺失或非正数账号 ID 都立即终止。

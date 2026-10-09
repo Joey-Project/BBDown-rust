@@ -784,10 +784,16 @@ impl BiliClient {
         keypair: AccessKeyIdentityKeypair,
         request_timeout: Option<Duration>,
     ) -> Result<CredentialAccountIdentity> {
-        let mut url = Self::endpoint_url(
-            &self.config.endpoints.passport_base,
-            "/x/passport-login/oauth2/info",
-        )?;
+        let endpoint_base = match keypair {
+            AccessKeyIdentityKeypair::BiliTv => crate::login::tv_access_key_refresh_base(
+                &self.config.endpoints.passport_base,
+                &self.config.endpoints.tv_passport_poll_base,
+            ),
+            AccessKeyIdentityKeypair::IntlBstar
+            | AccessKeyIdentityKeypair::Android
+            | AccessKeyIdentityKeypair::AndroidB => &self.config.endpoints.passport_base,
+        };
+        let mut url = Self::endpoint_url(endpoint_base, "/x/passport-login/oauth2/info")?;
         for (key, value) in
             access_key_identity_params(keypair, access_key, current_unix_timestamp())?
         {
@@ -6670,6 +6676,240 @@ mod tests {
         }
         for mock in mocks {
             mock.assert_calls(1);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn credential_account_identity_explicit_bili_tv_uses_custom_tv_endpoint()
+    -> anyhow::Result<()> {
+        let main_server = MockServer::start();
+        let tv_server = MockServer::start();
+        assert_ne!(main_server.base_url(), tv_server.base_url());
+        let tv_mock = mock_identity_response(
+            &tv_server,
+            AccessKeyIdentityKeypair::BiliTv,
+            IDENTITY_ACCESS_KEY_FIXTURE,
+            200,
+            serde_json::json!({"code": 0, "data": {"mid": 700_000_001}}).to_string(),
+            None,
+        );
+        let unexpected_requests = [&main_server, &tv_server].map(|server| {
+            server.mock(|when, then| {
+                when.method(GET);
+                then.status(500);
+            })
+        });
+        let mut client = test_client(&main_server);
+        client.config.endpoints.tv_passport_poll_base = tv_server.base_url();
+        client.config.credentials = Credentials::default()
+            .with_cookie(IDENTITY_COOKIE_FIXTURE)
+            .with_access_key(IDENTITY_ACCESS_KEY_FIXTURE)
+            .with_tv_access_key(IDENTITY_TV_ACCESS_KEY_FIXTURE);
+
+        let identity = client
+            .access_key_account_identity_with_keypair(AccessKeyIdentityKeypair::BiliTv)
+            .await?;
+
+        assert_eq!(identity.kind, CredentialKind::AccessKey);
+        assert_eq!(identity.account_id, 700_000_001);
+        tv_mock.assert_calls(1);
+        for mock in unexpected_requests {
+            mock.assert_calls(0);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn credential_account_identity_default_routes_tv_fallback_to_custom_endpoint()
+    -> anyhow::Result<()> {
+        for (target_index, tv_status, tv_code) in [
+            (1, 200, 0),
+            (2, 200, -3),
+            (3, 200, -3),
+            (1, 503, 0),
+            (1, 200, -101),
+        ] {
+            let main_server = MockServer::start();
+            let tv_server = MockServer::start();
+            assert_ne!(main_server.base_url(), tv_server.base_url());
+            let main_mocks: Vec<_> = ACCESS_KEY_IDENTITY_KEYPAIR_FALLBACK_ORDER
+                .iter()
+                .copied()
+                .enumerate()
+                .map(|(index, keypair)| {
+                    let body = if index < target_index {
+                        serde_json::json!({"code": -663})
+                    } else {
+                        serde_json::json!({
+                            "code": 0,
+                            "data": {"mid": 700_000_000 + index as u64},
+                        })
+                    };
+                    mock_identity_response(
+                        &main_server,
+                        keypair,
+                        IDENTITY_ACCESS_KEY_FIXTURE,
+                        200,
+                        body.to_string(),
+                        None,
+                    )
+                })
+                .collect();
+            let tv_mock = mock_identity_response(
+                &tv_server,
+                AccessKeyIdentityKeypair::BiliTv,
+                IDENTITY_ACCESS_KEY_FIXTURE,
+                tv_status,
+                serde_json::json!({"code": tv_code, "data": {"mid": 700_000_001}}).to_string(),
+                None,
+            );
+            let unexpected_requests = [&main_server, &tv_server].map(|server| {
+                server.mock(|when, then| {
+                    when.method(GET);
+                    then.status(500);
+                })
+            });
+            let mut client = test_client(&main_server);
+            client.config.endpoints.tv_passport_poll_base = tv_server.base_url();
+            client.config.credentials = Credentials::default()
+                .with_cookie(IDENTITY_COOKIE_FIXTURE)
+                .with_access_key(IDENTITY_ACCESS_KEY_FIXTURE)
+                .with_tv_access_key(IDENTITY_TV_ACCESS_KEY_FIXTURE);
+
+            let result = client
+                .credential_account_identity(CredentialKind::AccessKey)
+                .await;
+
+            if tv_status == 200 && (tv_code == 0 || target_index > 1) {
+                let identity = result?;
+                assert_eq!(identity.kind, CredentialKind::AccessKey);
+                assert_eq!(identity.account_id, 700_000_000 + target_index as u64);
+            } else {
+                let Err(error) = result else {
+                    return Err(anyhow::anyhow!("non-retryable TV response was accepted"));
+                };
+                if tv_status == 200 {
+                    assert!(matches!(error, Error::Api { code: -101, .. }));
+                }
+            }
+            for (index, mock) in main_mocks.into_iter().enumerate() {
+                mock.assert_calls(usize::from(index != 1 && index <= target_index));
+            }
+            tv_mock.assert_calls(1);
+            for mock in unexpected_requests {
+                mock.assert_calls(0);
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn credential_account_identity_bili_tv_keeps_custom_main_with_default_tv_poll()
+    -> anyhow::Result<()> {
+        let main_server = MockServer::start();
+        let tv_server = MockServer::start();
+        assert_ne!(main_server.base_url(), tv_server.base_url());
+        let bstar_mock = mock_identity_response(
+            &main_server,
+            AccessKeyIdentityKeypair::IntlBstar,
+            IDENTITY_ACCESS_KEY_FIXTURE,
+            200,
+            serde_json::json!({"code": -663}).to_string(),
+            None,
+        );
+        let tv_mock = mock_identity_response(
+            &main_server,
+            AccessKeyIdentityKeypair::BiliTv,
+            IDENTITY_ACCESS_KEY_FIXTURE,
+            200,
+            serde_json::json!({"code": 0, "data": {"mid": 710_000_001}}).to_string(),
+            None,
+        );
+        let unexpected_requests = [&main_server, &tv_server].map(|server| {
+            server.mock(|when, then| {
+                when.method(GET);
+                then.status(500);
+            })
+        });
+        let mut client = test_client(&main_server);
+        client.config.endpoints.tv_passport_base = tv_server.base_url();
+        client.config.endpoints.tv_passport_poll_base =
+            EndpointConfig::default().tv_passport_poll_base;
+        client.config.credentials = Credentials::default()
+            .with_cookie(IDENTITY_COOKIE_FIXTURE)
+            .with_access_key(IDENTITY_ACCESS_KEY_FIXTURE)
+            .with_tv_access_key(IDENTITY_TV_ACCESS_KEY_FIXTURE);
+
+        for identity in [
+            client
+                .access_key_account_identity_with_keypair(AccessKeyIdentityKeypair::BiliTv)
+                .await?,
+            client
+                .credential_account_identity(CredentialKind::AccessKey)
+                .await?,
+        ] {
+            assert_eq!(identity.kind, CredentialKind::AccessKey);
+            assert_eq!(identity.account_id, 710_000_001);
+        }
+        bstar_mock.assert_calls(1);
+        tv_mock.assert_calls(2);
+        for mock in unexpected_requests {
+            mock.assert_calls(0);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn credential_account_identity_other_keypairs_stay_main_with_custom_tv_poll()
+    -> anyhow::Result<()> {
+        let main_server = MockServer::start();
+        let tv_server = MockServer::start();
+        assert_ne!(main_server.base_url(), tv_server.base_url());
+        let keypairs = [
+            AccessKeyIdentityKeypair::IntlBstar,
+            AccessKeyIdentityKeypair::Android,
+            AccessKeyIdentityKeypair::AndroidB,
+        ];
+        let main_mocks: Vec<_> = keypairs
+            .iter()
+            .copied()
+            .map(|keypair| {
+                mock_identity_response(
+                    &main_server,
+                    keypair,
+                    IDENTITY_ACCESS_KEY_FIXTURE,
+                    200,
+                    serde_json::json!({"code": 0, "data": {"mid": 720_000_001}}).to_string(),
+                    None,
+                )
+            })
+            .collect();
+        let unexpected_requests = [&main_server, &tv_server].map(|server| {
+            server.mock(|when, then| {
+                when.method(GET);
+                then.status(500);
+            })
+        });
+        let mut client = test_client(&main_server);
+        client.config.endpoints.tv_passport_poll_base = tv_server.base_url();
+        client.config.credentials = Credentials::default()
+            .with_cookie(IDENTITY_COOKIE_FIXTURE)
+            .with_access_key(IDENTITY_ACCESS_KEY_FIXTURE)
+            .with_tv_access_key(IDENTITY_TV_ACCESS_KEY_FIXTURE);
+
+        for keypair in keypairs {
+            let identity = client
+                .access_key_account_identity_with_keypair(keypair)
+                .await?;
+            assert_eq!(identity.kind, CredentialKind::AccessKey);
+            assert_eq!(identity.account_id, 720_000_001);
+        }
+        for mock in main_mocks {
+            mock.assert_calls(1);
+        }
+        for mock in unexpected_requests {
+            mock.assert_calls(0);
         }
         Ok(())
     }

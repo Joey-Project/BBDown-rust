@@ -262,6 +262,11 @@ For a generic access key whose signing issuer is known, call
 `BiliClient::access_key_account_identity_with_keypair(AccessKeyIdentityKeypair::Android)` and select
 the actual `IntlBstar`, `BiliTv`, `Android`, or `AndroidB` keypair. This method makes one probe with
 that keypair and reads only `Credentials::access_key`, even when the selected keypair is `BiliTv`.
+BiliTv signing uses `EndpointConfig::tv_passport_poll_base`, including when a legacy probe falls
+back to that keypair. If that TV base remains at its default while only `passport_base` is
+overridden, it uses the main override, matching existing BiliTv refresh routing. Other generic
+keypairs use `passport_base`. A BiliTv probe does not fail over to another base; the legacy method
+may continue to a different keypair only for the rejection codes documented below.
 The default generic identity method supports legacy keys without issuer metadata: it tries these
 four keypairs in that order only after API codes `-663` or `-3`, within one aggregate
 `ClientConfig::request_timeout` budget. Other API rejections, transport failures, oversized or

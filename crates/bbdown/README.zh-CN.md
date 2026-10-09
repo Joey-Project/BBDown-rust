@@ -84,6 +84,8 @@ CLI-compatible PCDN fallback 处理时，应显式设置 `MediaHostOptions`。
 也可选择 `IntlBstar`、`BiliTv` 或 `AndroidB`。缺少签发信息时，通用身份方法只会在明确的
 签名或应用鉴权拒绝后，尝试最多四组 keypair；所有尝试共享一次请求超时预算，不会在身份
 响应异常或网络失败后继续探测。
+BiliTv 签名遵循 `tv_passport_poll_base` 配置；若该地址保持默认且只修改了
+`passport_base`，则与原有刷新路由一样，兼容使用主 passport 地址。
 该新增身份 API 目前通过 Git 提供，不包含在此前已发布的 `0.7.0` crate 中；在下次
 crate release 前，请固定包含该 API 的 commit。
 当嵌入应用需要给下游 streaming/cache service 使用的可序列化 DASH video/audio 或 FLV
