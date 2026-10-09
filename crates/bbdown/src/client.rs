@@ -15,8 +15,8 @@ use crate::models::{
 };
 use crate::playback::{PlaybackPlan, header_specs_from_map};
 use crate::{
-    CredentialHealthProbe, CredentialHealthReport, CredentialHealthScope, CredentialKind,
-    Credentials, Error, Input, Result, Selection,
+    CredentialAccountIdentity, CredentialHealthProbe, CredentialHealthReport,
+    CredentialHealthScope, CredentialKind, Credentials, Error, Input, Result, Selection,
 };
 use http_body_util::BodyExt as _;
 use md5::{Digest, Md5};
@@ -38,6 +38,7 @@ const DYNAMIC_FEED_FEATURES: &str = "itemOpusStyle,listOnlyfans,opusBigCover,onl
 const RECOMMENDATION_MIN_PAGE_SIZE: u32 = 20;
 const RECOMMENDATION_MAX_PAGE_SIZE: u32 = 30;
 const RECOMMENDATION_MAX_REFRESH_PAGES: u32 = 10;
+const CREDENTIAL_IDENTITY_RESPONSE_MAX_BYTES: usize = 64 * 1024;
 
 fn request_credential_value(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
@@ -460,6 +461,23 @@ impl BiliClient {
         }
     }
 
+    pub async fn credential_account_identity(
+        &self,
+        kind: CredentialKind,
+    ) -> Result<CredentialAccountIdentity> {
+        match kind {
+            CredentialKind::Cookie => self.fetch_web_account_identity().await,
+            CredentialKind::AccessKey => {
+                self.fetch_oauth_account_identity(kind, CredentialHealthScope::IntlBstar)
+                    .await
+            }
+            CredentialKind::TvAccessKey => {
+                self.fetch_oauth_account_identity(kind, CredentialHealthScope::Tv)
+                    .await
+            }
+        }
+    }
+
     pub async fn resolve_input(
         &self,
         raw: &str,
@@ -656,6 +674,93 @@ impl BiliClient {
             .await
             .map_err(Self::http_error_without_url)?;
         Ok(response.into_data()?.is_login)
+    }
+
+    async fn fetch_web_account_identity(&self) -> Result<CredentialAccountIdentity> {
+        let cookie = request_credential_value(self.config.credentials.cookie.as_deref())
+            .ok_or_else(|| Error::InvalidInput("cookie credential is not configured".to_owned()))?;
+        let url = Self::endpoint_url(&self.config.endpoints.api_base, "/x/web-interface/nav")?;
+        let response = self
+            .get_credential_identity_response(url, Some(cookie))
+            .await?;
+        let data = response.into_data::<WebCredentialIdentityData>()?;
+        if !data.is_login {
+            return Err(Error::InvalidInput(
+                "web credential is not logged in".to_owned(),
+            ));
+        }
+        Ok(CredentialAccountIdentity {
+            kind: CredentialKind::Cookie,
+            account_id: required_credential_account_id(data.mid)?,
+        })
+    }
+
+    async fn fetch_oauth_account_identity(
+        &self,
+        kind: CredentialKind,
+        scope: CredentialHealthScope,
+    ) -> Result<CredentialAccountIdentity> {
+        let access_key = request_credential_value(match kind {
+            CredentialKind::Cookie => None,
+            CredentialKind::AccessKey => self.config.credentials.access_key.as_deref(),
+            CredentialKind::TvAccessKey => self.config.credentials.tv_access_key.as_deref(),
+        })
+        .ok_or_else(|| Error::InvalidInput("OAuth credential is not configured".to_owned()))?;
+        let endpoint_base = match kind {
+            CredentialKind::AccessKey => &self.config.endpoints.passport_base,
+            CredentialKind::TvAccessKey => &self.config.endpoints.tv_passport_poll_base,
+            CredentialKind::Cookie => {
+                return Err(Error::InvalidInput(
+                    "cookie credential cannot use oauth2 info identity".to_owned(),
+                ));
+            }
+        };
+        let mut url = Self::endpoint_url(endpoint_base, "/x/passport-login/oauth2/info")?;
+        for (key, value) in oauth2_info_params(scope, access_key, current_unix_timestamp())? {
+            url.query_pairs_mut().append_pair(key, &value);
+        }
+        let response = self.get_credential_identity_response(url, None).await?;
+        let data = response.into_data::<OAuthCredentialIdentityData>()?;
+        Ok(CredentialAccountIdentity {
+            kind,
+            account_id: required_credential_account_id(data.mid)?,
+        })
+    }
+
+    async fn get_credential_identity_response(
+        &self,
+        url: Url,
+        cookie: Option<&str>,
+    ) -> Result<CredentialIdentityApiResponse> {
+        let mut request = self
+            .http
+            .get(url)
+            .headers(self.headers(false)?)
+            .timeout(self.config.request_timeout);
+        if let Some(cookie) = cookie {
+            let cookie = HeaderValue::from_str(cookie)
+                .map_err(|_| Error::InvalidInput("invalid cookie header".to_owned()))?;
+            request = request.header(COOKIE, cookie);
+        }
+        let response = request.send().await.map_err(Self::http_error_without_url)?;
+        let mut response = response
+            .error_for_status()
+            .map_err(Self::http_error_without_url)?;
+        let mut body = Vec::with_capacity(CREDENTIAL_IDENTITY_RESPONSE_MAX_BYTES);
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(Self::http_error_without_url)?
+        {
+            if chunk.len() > CREDENTIAL_IDENTITY_RESPONSE_MAX_BYTES - body.len() {
+                return Err(Error::InvalidInput(
+                    "credential identity response exceeds 64 KiB".to_owned(),
+                ));
+            }
+            body.extend_from_slice(&chunk);
+        }
+        serde_json::from_slice(&body)
+            .map_err(|_| Error::InvalidInput("malformed credential identity response".to_owned()))
     }
 
     async fn fetch_oauth2_info(
@@ -4304,6 +4409,48 @@ struct NavLoginData {
     is_login: bool,
 }
 
+#[derive(Deserialize)]
+struct CredentialIdentityApiResponse {
+    code: i64,
+    data: Option<serde_json::Value>,
+}
+
+impl CredentialIdentityApiResponse {
+    fn into_data<T>(self) -> Result<T>
+    where
+        T: for<'de> Deserialize<'de>,
+    {
+        if self.code != 0 {
+            return Err(Error::Api {
+                code: self.code,
+                message: "credential identity request rejected".to_owned(),
+            });
+        }
+        let data = self.data.ok_or(Error::MissingField("data"))?;
+        serde_json::from_value(data)
+            .map_err(|_| Error::InvalidInput("malformed credential identity response".to_owned()))
+    }
+}
+
+#[derive(Deserialize)]
+struct WebCredentialIdentityData {
+    #[serde(default, rename = "isLogin")]
+    is_login: bool,
+    #[serde(default)]
+    mid: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct OAuthCredentialIdentityData {
+    #[serde(default)]
+    mid: Option<u64>,
+}
+
+fn required_credential_account_id(mid: Option<u64>) -> Result<u64> {
+    mid.filter(|mid| *mid > 0)
+        .ok_or(Error::MissingField("positive account ID"))
+}
+
 #[derive(Debug, Deserialize)]
 struct WbiImage {
     img_url: Option<String>,
@@ -6163,6 +6310,283 @@ mod tests {
     use std::convert::Infallible;
     use std::time::{Duration, Instant};
     use url::Url;
+
+    // Synthetic fixtures from joey-private-v3: bearer-a and access-a/access-b, all active.
+    const IDENTITY_COOKIE_FIXTURE: &str = "codex_synth_v1_bearer_a";
+    const IDENTITY_ACCESS_KEY_FIXTURE: &str = "codex_synth_v1_access_a";
+    const IDENTITY_TV_ACCESS_KEY_FIXTURE: &str = "codex_synth_v1_access_b";
+
+    #[tokio::test]
+    async fn credential_account_identity_resolves_each_kind_without_crossing_credentials()
+    -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let web_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/nav")
+                .header("cookie", IDENTITY_COOKIE_FIXTURE);
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {"isLogin": true, "mid": 123_456_789}
+            }));
+        });
+        let access_key_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/passport-login/oauth2/info")
+                .query_param("access_key", IDENTITY_ACCESS_KEY_FIXTURE)
+                .query_param("appkey", INTL_OGV_APPKEY)
+                .query_param("build", "1001310")
+                .query_param("mobi_app", "bstar_a")
+                .query_param("platform", "android")
+                .query_param_exists("ts")
+                .query_param_exists("sign")
+                .header_missing("cookie");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {"mid": 223_456_789}
+            }));
+        });
+        let tv_access_key_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/passport-login/oauth2/info")
+                .query_param("access_key", IDENTITY_TV_ACCESS_KEY_FIXTURE)
+                .query_param("appkey", TV_PLAYURL_APPKEY)
+                .query_param("build", "102801")
+                .query_param("mobi_app", "android_tv_yst")
+                .query_param("platform", "android")
+                .query_param_exists("ts")
+                .query_param_exists("sign")
+                .header_missing("cookie");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {"mid": 323_456_789}
+            }));
+        });
+        let mut client = test_client(&server);
+        client.config.credentials = Credentials::default()
+            .with_cookie(IDENTITY_COOKIE_FIXTURE)
+            .with_access_key(IDENTITY_ACCESS_KEY_FIXTURE)
+            .with_tv_access_key(IDENTITY_TV_ACCESS_KEY_FIXTURE);
+
+        let cookie_identity = client
+            .credential_account_identity(CredentialKind::Cookie)
+            .await?;
+        let access_key_identity = client
+            .credential_account_identity(CredentialKind::AccessKey)
+            .await?;
+        let tv_identity = client
+            .credential_account_identity(CredentialKind::TvAccessKey)
+            .await?;
+
+        web_mock.assert();
+        access_key_mock.assert();
+        tv_access_key_mock.assert();
+        assert_eq!(cookie_identity.kind, CredentialKind::Cookie);
+        assert_eq!(cookie_identity.account_id, 123_456_789);
+        assert_eq!(access_key_identity.kind, CredentialKind::AccessKey);
+        assert_eq!(access_key_identity.account_id, 223_456_789);
+        assert_eq!(tv_identity.kind, CredentialKind::TvAccessKey);
+        assert_eq!(tv_identity.account_id, 323_456_789);
+        let debug = format!("{cookie_identity:?}");
+        assert!(debug.contains("<redacted>"));
+        assert!(!debug.contains("123456789"));
+        assert!(!debug.contains(IDENTITY_COOKIE_FIXTURE));
+        assert!(!debug.contains(IDENTITY_ACCESS_KEY_FIXTURE));
+        assert!(!debug.contains(IDENTITY_TV_ACCESS_KEY_FIXTURE));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn credential_account_identity_rejects_missing_and_invalid_ids() -> anyhow::Result<()> {
+        let cases = [
+            (
+                CredentialKind::Cookie,
+                serde_json::json!({"code": 0, "data": {"isLogin": true}}),
+            ),
+            (
+                CredentialKind::Cookie,
+                serde_json::json!({"code": 0, "data": {"isLogin": true, "mid": 0}}),
+            ),
+            (
+                CredentialKind::Cookie,
+                serde_json::json!({"code": 0, "data": {"isLogin": true, "mid": -1}}),
+            ),
+            (
+                CredentialKind::AccessKey,
+                serde_json::json!({"code": 0, "data": {}}),
+            ),
+            (
+                CredentialKind::AccessKey,
+                serde_json::json!({"code": 0, "data": {"mid": 0}}),
+            ),
+            (
+                CredentialKind::AccessKey,
+                serde_json::json!({"code": 0, "data": {"mid": -1}}),
+            ),
+            (
+                CredentialKind::AccessKey,
+                serde_json::json!({"code": 0, "data": {"mid": "not-a-number"}}),
+            ),
+        ];
+
+        for (kind, response_body) in cases {
+            let server = MockServer::start();
+            let mock = server.mock(|when, then| {
+                if kind == CredentialKind::Cookie {
+                    when.method(GET)
+                        .path("/x/web-interface/nav")
+                        .header("cookie", IDENTITY_COOKIE_FIXTURE);
+                } else {
+                    when.method(GET)
+                        .path("/x/passport-login/oauth2/info")
+                        .query_param("access_key", IDENTITY_ACCESS_KEY_FIXTURE)
+                        .header_missing("cookie");
+                }
+                then.status(200).json_body_obj(&response_body);
+            });
+            let mut client = test_client(&server);
+            client.config.credentials = Credentials::default()
+                .with_cookie(IDENTITY_COOKIE_FIXTURE)
+                .with_access_key(IDENTITY_ACCESS_KEY_FIXTURE);
+
+            let Err(error) = client.credential_account_identity(kind).await else {
+                return Err(anyhow::anyhow!("invalid account ID was accepted"));
+            };
+
+            mock.assert();
+            let message = error.to_string();
+            let debug = format!("{error:?}");
+            assert!(!message.contains(IDENTITY_COOKIE_FIXTURE));
+            assert!(!message.contains(IDENTITY_ACCESS_KEY_FIXTURE));
+            assert!(!message.contains("not-a-number"));
+            assert!(!message.contains("-1"));
+            assert!(!debug.contains(IDENTITY_COOKIE_FIXTURE));
+            assert!(!debug.contains(IDENTITY_ACCESS_KEY_FIXTURE));
+            assert!(!debug.contains("not-a-number"));
+            assert!(!debug.contains("-1"));
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn credential_account_identity_rejects_logged_out_and_redacts_api_errors()
+    -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let logged_out_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/nav")
+                .header("cookie", IDENTITY_COOKIE_FIXTURE);
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {"isLogin": false, "mid": 987_654_321}
+            }));
+        });
+        let mut client = test_client(&server);
+        client.config.credentials = Credentials::default().with_cookie(IDENTITY_COOKIE_FIXTURE);
+        let Err(logged_out_error) = client
+            .credential_account_identity(CredentialKind::Cookie)
+            .await
+        else {
+            return Err(anyhow::anyhow!("logged-out web identity was accepted"));
+        };
+        logged_out_mock.assert();
+        assert!(!logged_out_error.to_string().contains("987654321"));
+        assert!(!format!("{logged_out_error:?}").contains("987654321"));
+
+        let api_server = MockServer::start();
+        let api_error_mock = api_server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/passport-login/oauth2/info")
+                .query_param("access_key", IDENTITY_ACCESS_KEY_FIXTURE)
+                .header_missing("cookie");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": -101,
+                "message": format!(
+                    "rejected {} for account 987654321",
+                    IDENTITY_ACCESS_KEY_FIXTURE
+                ),
+                "data": {
+                    "mid": "not-an-account-id",
+                    "echo": IDENTITY_ACCESS_KEY_FIXTURE,
+                    "account_id": 987_654_321
+                }
+            }));
+        });
+        let mut client = test_client(&api_server);
+        client.config.credentials =
+            Credentials::default().with_access_key(IDENTITY_ACCESS_KEY_FIXTURE);
+        let Err(api_error) = client
+            .credential_account_identity(CredentialKind::AccessKey)
+            .await
+        else {
+            return Err(anyhow::anyhow!("nonzero API code was accepted"));
+        };
+        api_error_mock.assert();
+        let message = api_error.to_string();
+        let debug = format!("{api_error:?}");
+        assert!(message.contains("-101"));
+        assert!(!message.contains(IDENTITY_ACCESS_KEY_FIXTURE));
+        assert!(!message.contains("987654321"));
+        assert!(!debug.contains(IDENTITY_ACCESS_KEY_FIXTURE));
+        assert!(!debug.contains("987654321"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn credential_account_identity_caps_streamed_body_and_redacts_http_url()
+    -> anyhow::Result<()> {
+        let oversized_server = MockServer::start();
+        let oversized_body = format!(
+            "{{\"code\":0,\"data\":{{\"mid\":1}},\"padding\":\"{}\"}}",
+            "x".repeat(super::CREDENTIAL_IDENTITY_RESPONSE_MAX_BYTES)
+        );
+        let oversized_mock = oversized_server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/passport-login/oauth2/info")
+                .query_param("access_key", IDENTITY_ACCESS_KEY_FIXTURE)
+                .header_missing("cookie");
+            then.status(200).body(oversized_body);
+        });
+        let mut client = test_client(&oversized_server);
+        client.config.credentials =
+            Credentials::default().with_access_key(IDENTITY_ACCESS_KEY_FIXTURE);
+        let Err(oversized_error) = client
+            .credential_account_identity(CredentialKind::AccessKey)
+            .await
+        else {
+            return Err(anyhow::anyhow!("oversized identity response was accepted"));
+        };
+        oversized_mock.assert();
+        assert!(oversized_error.to_string().contains("64 KiB"));
+        assert!(
+            !oversized_error
+                .to_string()
+                .contains(IDENTITY_ACCESS_KEY_FIXTURE)
+        );
+
+        let status_server = MockServer::start();
+        let status_mock = status_server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/passport-login/oauth2/info")
+                .query_param("access_key", IDENTITY_ACCESS_KEY_FIXTURE)
+                .header_missing("cookie");
+            then.status(500);
+        });
+        let mut client = test_client(&status_server);
+        client.config.credentials =
+            Credentials::default().with_access_key(IDENTITY_ACCESS_KEY_FIXTURE);
+        let Err(status_error) = client
+            .credential_account_identity(CredentialKind::AccessKey)
+            .await
+        else {
+            return Err(anyhow::anyhow!("HTTP error response was accepted"));
+        };
+        status_mock.assert();
+        let message = status_error.to_string();
+        assert!(!message.contains(IDENTITY_ACCESS_KEY_FIXTURE));
+        assert!(!message.contains("access_key"));
+        assert!(!message.contains(&status_server.base_url()));
+        Ok(())
+    }
 
     #[tokio::test]
     async fn credential_health_reports_missing_credentials() {

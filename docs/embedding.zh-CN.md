@@ -229,6 +229,15 @@ profile document 也可以通过 `CredentialProfileMetadata` 和 `CredentialLife
 refresh token，但不会在 metadata map 中保存原始 refresh token 值。旧 flat store 仍保持原形
 态；空 metadata 在序列化 profile document 时会被省略，未知或 malformed 的可选 metadata
 会在加载时被忽略，自动续期仍然属于独立策略层。
+嵌入服务器需要将登录或续期绑定到同一账号时，可调用
+`BiliClient::credential_account_identity(CredentialKind::Cookie)`，或选择
+`AccessKey`/`TvAccessKey` 类型。成功结果包含凭据类型及官方 Web 或签名 OAuth 端点验证的
+正数 `account_id`。它与健康检查不同：未登录、身份缺失、格式错误或被拒绝都会返回错误；
+健康检查成功本身不证明账号身份。响应体限制为 64 KiB，OAuth 检查不转发 Web cookie，
+debug/error 输出不包含凭据或账号 ID。调用方应将身份留在服务器，并在替换 profile 前比较；
+库不会代替调用方授权回调或保存凭据。
+该新增 API 目前通过 Git 提供，不包含在此前已发布的 `0.7.0` crate 中；请固定包含它的
+commit，或等待后续 crate release。
 对于二维码登录，如果下游应用需要稳定的可序列化扫码 URL 和 `qr_payload`，可以把
 `QrLoginTicket` 转换成 `QrLoginTicketOutput`；当前 WEB 和 TV 登录流程会直接使用扫码 URL
 作为 QR payload。兼容方法 `poll_web_qr_login` / `poll_tv_qr_login` 会返回

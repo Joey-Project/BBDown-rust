@@ -82,6 +82,11 @@ archive cards.
 The library default preserves planned media URLs. Set `MediaHostOptions` explicitly when an
 embedding application wants a custom UPOS host, force-replace behavior, or CLI-compatible PCDN
 fallback handling.
+Use `BiliClient::credential_account_identity(CredentialKind::Cookie)` (or `AccessKey`/
+`TvAccessKey`) when a server needs verified same-account login or renewal. The result is private
+account-binding data, not a client-facing health report or permission to overwrite credentials.
+This additive identity API is available from Git; the already published `0.7.0` crate does not
+contain it. Pin a commit containing the API until the next crate release.
 Use `BiliClient::plan_playback` when an embedding application needs serializable DASH video/audio
 or FLV segment request specs for a downstream streaming/cache service. `PlaybackPlan` includes
 primary and backup URLs, media headers, mime/codec metadata, duration, size, entry/variant/media

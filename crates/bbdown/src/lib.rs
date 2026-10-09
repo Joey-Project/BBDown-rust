@@ -33,12 +33,13 @@ pub use credential_preflight::{
 };
 pub use credentials::{
     AccessKeyProvider, AccessKeyProviderSecret, AccessKeyRefreshKeypair, AccessKeyRefreshProvider,
-    CredentialHealthProbe, CredentialHealthReport, CredentialHealthScope, CredentialHealthStatus,
-    CredentialHealthSummary, CredentialHealthSummaryStatus, CredentialKind,
-    CredentialLifecycleCredentialStatus, CredentialLifecycleMetadata, CredentialLifecyclePolicy,
-    CredentialLifecycleSource, CredentialLifecycleStatus, CredentialProfileLifecycleStatus,
-    CredentialProfileMetadata, CredentialProfileSecrets, CredentialProfileSelection,
-    CredentialProfiles, CredentialRefreshSecret, CredentialSource, CredentialStore, Credentials,
+    CredentialAccountIdentity, CredentialHealthProbe, CredentialHealthReport,
+    CredentialHealthScope, CredentialHealthStatus, CredentialHealthSummary,
+    CredentialHealthSummaryStatus, CredentialKind, CredentialLifecycleCredentialStatus,
+    CredentialLifecycleMetadata, CredentialLifecyclePolicy, CredentialLifecycleSource,
+    CredentialLifecycleStatus, CredentialProfileLifecycleStatus, CredentialProfileMetadata,
+    CredentialProfileSecrets, CredentialProfileSelection, CredentialProfiles,
+    CredentialRefreshSecret, CredentialSource, CredentialStore, Credentials,
     DEFAULT_CREDENTIAL_PROFILE,
 };
 pub use danmaku::{DanmakuFormat, DanmakuFormats, DanmakuXmlMerge, merge_xml_append_only};

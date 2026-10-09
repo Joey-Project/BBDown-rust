@@ -249,6 +249,17 @@ whether a refresh token was present without storing raw refresh-token values in 
 Legacy flat stores keep the old shape, empty metadata is omitted from serialized profile documents,
 unknown or malformed optional metadata is ignored on load, and automatic refresh remains a separate
 policy layer.
+When an embedding server must bind login or renewal to the same account, call
+`BiliClient::credential_account_identity(CredentialKind::Cookie)` or the corresponding
+`AccessKey`/`TvAccessKey` kind. A successful result contains the credential kind and a verified,
+positive `account_id` from the official Web or signed OAuth endpoint. Unlike a health check,
+logged-out, missing, malformed, or rejected identities are errors; a successful health probe alone
+does not establish identity. The response body is bounded to 64 KiB, OAuth probes do not forward
+the Web cookie, and debug/error output does not include credentials or account IDs. Keep the returned
+identity on the server and compare it before replacing a profile; the library does not grant callback
+authority or perform credential storage on the caller's behalf.
+This additive API is currently Git-only, not part of the previously published `0.7.0` crate.
+Pin a commit containing it or wait for a later crate release.
 For QR login, convert `QrLoginTicket` to `QrLoginTicketOutput` when a downstream application needs a
 stable serialized scan URL and `qr_payload`; current WEB and TV login flows use the scan URL itself
 as the QR payload. The compatibility `poll_web_qr_login` / `poll_tv_qr_login` methods return
