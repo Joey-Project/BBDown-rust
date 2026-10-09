@@ -472,8 +472,10 @@ leading zeros: the same id remains matched when fetched metadata or text changes
 id is appended even if its text matches. Missing, zero, or invalid ids fall back to the complete
 `p` attribute and decoded text. Only `<d>` elements without a namespace or in the `<i>` root's
 namespace participate in matching and ASS rendering. Existing elements in unrelated namespaces
-remain preserved as unknown XML. XML remains the canonical source. Every selected ASS file is
-regenerated from the complete merged XML, so custom ASS styles and events are not retained. If the
+remain preserved as unknown XML. Appended comments carry required namespace declarations from
+the fetched document; compatible root namespaces can use different prefixes or default declarations.
+Appending between different root namespaces fails. XML remains the canonical source. Every selected
+ASS file is regenerated from the complete merged XML, so custom ASS styles and events are not retained. If the
 archive has no XML baseline, old ASS events are not used as history; output is generated from the
 fetched XML payload. Strict mode stages the selected sidecars and archive JSON as one publication
 group, and its ASS statistics report generated event counts separately from XML comment counts.

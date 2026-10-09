@@ -47,6 +47,10 @@ superseded_by:
   `<i>` root's namespace. Existing elements from unrelated namespaces remain byte-preserved as
   unknown XML and cannot occupy a real comment's ID. Qualified roots still accept legacy
   unqualified comments.
+- Appended comments carry source namespace bindings, including inherited prefixes and default
+  declarations, so equivalent root namespaces can use different declarations. Existing bytes
+  and initialization ranges remain unchanged; appends between different root namespaces are
+  rejected explicitly.
 - The request was transferred from the Telegram-Video-Downloader task. Its bot-side consumer pinned
   BBDown-rust revision `0a94b071bbc1897ec1d1fec9dfcf7883c5754a15`; its dependency update remains a
   downstream follow-up.
