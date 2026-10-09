@@ -57,9 +57,10 @@ impl StagedDanmakuFile {
 
 /// Prepared danmaku outputs. Calling `publish` replaces the complete file group.
 ///
-/// The publisher checks old file contents and resolved destinations again before
-/// replacement. Callers coordinating File Provider or other writers must still
-/// serialize those writers; the filesystem does not provide a multi-file crash-atomic transaction.
+/// The publisher checks old file contents, resolved destinations, and captured basic access
+/// permissions again before replacement. Inode and mtime changes are not mutation signals;
+/// callers coordinating File Provider or other writers must still serialize those writers.
+/// The filesystem does not provide a multi-file crash-atomic transaction.
 #[derive(Clone, Debug)]
 pub struct StagedDanmakuUpdate {
     report: DanmakuUpdateReport,
@@ -406,51 +407,47 @@ where
 
 fn publish_file_group_with_ops<F, R>(
     files: &[StagedDanmakuFile],
-    mut replace: F,
-    mut rollback: R,
+    replace: F,
+    rollback: R,
 ) -> Result<()>
 where
     F: FnMut(&PreparedReplacement) -> std::result::Result<(), ReplaceFailure>,
     R: FnMut(&PreparedReplacement) -> std::io::Result<()>,
+{
+    publish_file_group_with_prepare_hook(files, replace, rollback, || Ok(()))
+}
+
+fn publish_file_group_with_prepare_hook<F, R, H>(
+    files: &[StagedDanmakuFile],
+    mut replace: F,
+    mut rollback: R,
+    mut after_prepare: H,
+) -> Result<()>
+where
+    F: FnMut(&PreparedReplacement) -> std::result::Result<(), ReplaceFailure>,
+    R: FnMut(&PreparedReplacement) -> std::io::Result<()>,
+    H: FnMut() -> Result<()>,
 {
     ensure_unique_destinations(files)?;
     for file in files {
         verify_destination_and_original(file)?;
     }
 
-    let mut prepared = Vec::with_capacity(files.len());
-    for file in files {
-        let parent = file.path.parent().unwrap_or_else(|| Path::new("."));
-        let output_temp =
-            match create_and_write_unique(parent, ".bbdown-preserving-stage", &file.output_bytes) {
-                Ok(path) => path,
-                Err(error) => {
-                    cleanup_prepared(&prepared, true);
-                    return Err(error);
-                }
-            };
-        let recovery = match &file.expected_original_bytes {
-            Some(bytes) => {
-                match create_and_write_unique(parent, ".bbdown-preserving-recovery", bytes) {
-                    Ok(path) => Some(path),
-                    Err(error) => {
-                        let _ = std_fs::remove_file(&output_temp);
-                        cleanup_prepared(&prepared, true);
-                        return Err(error);
-                    }
-                }
-            }
-            None => None,
-        };
-        prepared.push(PreparedReplacement {
-            target: file.path.clone(),
-            output_temp,
-            recovery,
-            had_original: file.expected_original_bytes.is_some(),
-        });
+    // Permission policy is selected at publication time, after staged bytes and the chosen
+    // destination have been checked. Metadata such as inode and mtime is deliberately ignored.
+    let policies = files
+        .iter()
+        .map(capture_destination_policy)
+        .collect::<Result<Vec<_>>>()?;
+    let prepared = prepare_replacements(files, &policies)?;
+    if let Err(error) = after_prepare() {
+        cleanup_prepared(&prepared, true);
+        return Err(error);
     }
-    for file in files {
-        if let Err(error) = verify_destination_and_original(file) {
+    for (file, policy) in files.iter().zip(&policies) {
+        if let Err(error) = verify_destination_and_original(file)
+            .and_then(|()| verify_destination_policy(file, policy.current.as_ref()))
+        {
             cleanup_prepared(&prepared, true);
             return Err(error);
         }
@@ -487,11 +484,11 @@ where
                 }
             }
             for (index, item) in prepared.iter().enumerate() {
-                let _ = std_fs::remove_file(&item.output_temp);
+                remove_owned_temp(&item.output_temp);
                 if !failed_rollbacks.contains(&index)
                     && let Some(recovery) = &item.recovery
                 {
-                    let _ = std_fs::remove_file(recovery);
+                    remove_owned_temp(recovery);
                 }
             }
             if recovery_paths.is_empty() {
@@ -512,11 +509,146 @@ where
     Ok(())
 }
 
+fn prepare_replacements(
+    files: &[StagedDanmakuFile],
+    policies: &[CapturedDestinationPolicy],
+) -> Result<Vec<PreparedReplacement>> {
+    let mut prepared = Vec::with_capacity(files.len());
+    for (file, policy) in files.iter().zip(policies) {
+        let parent = file.path.parent().unwrap_or_else(|| Path::new("."));
+        let output_temp = match create_and_write_unique(
+            parent,
+            ".bbdown-preserving-stage",
+            &file.output_bytes,
+            policy.output,
+        ) {
+            Ok(path) => path,
+            Err(error) => {
+                cleanup_prepared(&prepared, true);
+                return Err(error);
+            }
+        };
+        let recovery = match &file.expected_original_bytes {
+            Some(bytes) => {
+                match create_and_write_unique(
+                    parent,
+                    ".bbdown-preserving-recovery",
+                    bytes,
+                    policy.output,
+                ) {
+                    Ok(path) => Some(path),
+                    Err(error) => {
+                        remove_owned_temp(&output_temp);
+                        cleanup_prepared(&prepared, true);
+                        return Err(error);
+                    }
+                }
+            }
+            None => None,
+        };
+        prepared.push(PreparedReplacement {
+            target: file.path.clone(),
+            output_temp,
+            recovery,
+            had_original: file.expected_original_bytes.is_some(),
+            access_policy: policy.output,
+        });
+    }
+    Ok(prepared)
+}
+
 struct PreparedReplacement {
     target: PathBuf,
     output_temp: PathBuf,
     recovery: Option<PathBuf>,
     had_original: bool,
+    access_policy: AccessPolicy,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct AccessPolicy {
+    #[cfg(unix)]
+    mode: u32,
+    #[cfg(not(unix))]
+    readonly: bool,
+}
+
+struct CapturedDestinationPolicy {
+    current: Option<AccessPolicy>,
+    output: AccessPolicy,
+}
+
+impl AccessPolicy {
+    fn from_metadata(metadata: &std::fs::Metadata) -> Self {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            Self {
+                mode: metadata.permissions().mode() & 0o7777,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            Self {
+                readonly: metadata.permissions().readonly(),
+            }
+        }
+    }
+
+    fn apply(self, path: &Path) -> std::io::Result<()> {
+        let mut permissions = std_fs::metadata(path)?.permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            permissions.set_mode(self.mode);
+        }
+        #[cfg(not(unix))]
+        permissions.set_readonly(self.readonly);
+        std_fs::set_permissions(path, permissions)
+    }
+
+    fn apply_to_file(self, file: &std::fs::File) -> std::io::Result<()> {
+        let mut permissions = file.metadata()?.permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            permissions.set_mode(self.mode);
+        }
+        #[cfg(not(unix))]
+        permissions.set_readonly(self.readonly);
+        file.set_permissions(permissions)
+    }
+}
+
+fn capture_destination_policy(file: &StagedDanmakuFile) -> Result<CapturedDestinationPolicy> {
+    let current = match std_fs::metadata(&file.path) {
+        Ok(metadata) => Some(AccessPolicy::from_metadata(&metadata)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(Error::Io(error)),
+    };
+    let output = match current {
+        Some(policy) => policy,
+        None => default_access_policy(file.path.parent().unwrap_or_else(|| Path::new(".")))?,
+    };
+    Ok(CapturedDestinationPolicy { current, output })
+}
+
+fn verify_destination_policy(
+    file: &StagedDanmakuFile,
+    expected: Option<&AccessPolicy>,
+) -> Result<()> {
+    let current = match std_fs::metadata(&file.path) {
+        Ok(metadata) => Some(AccessPolicy::from_metadata(&metadata)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(Error::Io(error)),
+    };
+    if current.as_ref() != expected {
+        return Err(Error::InvalidInput(format!(
+            "danmaku destination access permissions changed during publication preparation: {}",
+            file.logical_path.display()
+        )));
+    }
+    Ok(())
 }
 
 fn verify_original(file: &StagedDanmakuFile) -> Result<()> {
@@ -592,16 +724,28 @@ fn rollback_target(item: &PreparedReplacement) -> std::io::Result<()> {
         Err(error) => return Err(error),
     }
     std_fs::copy(recovery, &item.target)?;
-    Ok(())
+    item.access_policy.apply(&item.target)
 }
 
 fn cleanup_prepared(prepared: &[PreparedReplacement], include_recovery: bool) {
     for item in prepared {
-        let _ = std_fs::remove_file(&item.output_temp);
+        remove_owned_temp(&item.output_temp);
         if include_recovery && let Some(recovery) = &item.recovery {
-            let _ = std_fs::remove_file(recovery);
+            remove_owned_temp(recovery);
         }
     }
+}
+
+fn remove_owned_temp(path: &Path) {
+    #[cfg(windows)]
+    if let Ok(metadata) = std_fs::metadata(path) {
+        let mut permissions = metadata.permissions();
+        if permissions.readonly() {
+            permissions.set_readonly(false);
+            let _ = std_fs::set_permissions(path, permissions);
+        }
+    }
+    let _ = std_fs::remove_file(path);
 }
 
 fn create_unique_directory(parent: &Path) -> Result<tempfile::TempDir> {
@@ -611,17 +755,53 @@ fn create_unique_directory(parent: &Path) -> Result<tempfile::TempDir> {
         .map_err(Error::Io)
 }
 
-fn create_and_write_unique(parent: &Path, label: &str, bytes: &[u8]) -> Result<PathBuf> {
+fn create_and_write_unique(
+    parent: &Path,
+    label: &str,
+    bytes: &[u8],
+    policy: AccessPolicy,
+) -> Result<PathBuf> {
     loop {
         let path = unique_candidate(parent, label);
-        match OpenOptions::new().write(true).create_new(true).open(&path) {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            // Keep staged output and recovery bytes private until the selected policy is applied.
+            options.mode(0o600);
+        }
+        match options.open(&path) {
             Ok(mut file) => {
-                if let Err(error) = file.write_all(bytes).and_then(|()| file.sync_all()) {
+                if let Err(error) = file
+                    .write_all(bytes)
+                    .and_then(|()| file.sync_all())
+                    .and_then(|()| policy.apply_to_file(&file))
+                {
                     drop(file);
-                    let _ = std_fs::remove_file(&path);
+                    remove_owned_temp(&path);
                     return Err(Error::Io(error));
                 }
+                drop(file);
                 return Ok(path);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(Error::Io(error)),
+        }
+    }
+}
+
+fn default_access_policy(parent: &Path) -> Result<AccessPolicy> {
+    loop {
+        let path = unique_candidate(parent, ".bbdown-preserving-mode-probe");
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(file) => {
+                let result = std_fs::metadata(&path)
+                    .map(|metadata| AccessPolicy::from_metadata(&metadata))
+                    .map_err(Error::Io);
+                drop(file);
+                remove_owned_temp(&path);
+                return result;
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(error) => return Err(Error::Io(error)),
@@ -645,8 +825,8 @@ fn unique_candidate(parent: &Path, label: &str) -> PathBuf {
 mod tests {
     use super::{
         ReplaceFailure, StagedDanmakuFile, create_unique_directory, publish_file_group,
-        publish_file_group_with, publish_file_group_with_ops, replace_target,
-        resolve_destination_path, rollback_target,
+        publish_file_group_with, publish_file_group_with_ops, publish_file_group_with_prepare_hook,
+        replace_target, resolve_destination_path, rollback_target,
     };
     use crate::DownloadFileKind;
     use std::fs;
@@ -678,7 +858,8 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn publisher_accepts_benign_metadata_changes_and_replaces_content() -> anyhow::Result<()> {
+    fn publisher_accepts_prepublication_mode_change_and_preserves_current_policy()
+    -> anyhow::Result<()> {
         let temp = tempfile::tempdir()?;
         let path = temp.path().join("danmaku.xml");
         fs::write(&path, b"old")?;
@@ -689,7 +870,103 @@ mod tests {
 
         publish_file_group(&[file])?;
 
-        assert_eq!(fs::read(path)?, b"new");
+        assert_eq!(fs::read(&path)?, b"new");
+        assert!(fs::metadata(&path)?.permissions().readonly());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn publisher_rejects_access_policy_change_during_preparation() -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("danmaku.xml");
+        fs::write(&path, b"old")?;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o640))?;
+        let file = staged(&path, b"old", b"new")?;
+
+        let error = require_err(
+            publish_file_group_with_prepare_hook(&[file], replace_target, rollback_target, || {
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+                    .map_err(crate::Error::Io)
+            }),
+            "permission changes during preparation must be rejected",
+        )?;
+
+        assert!(error.to_string().contains("access permissions changed"));
+        assert_eq!(fs::read(&path)?, b"old");
+        assert_eq!(fs::metadata(&path)?.permissions().mode() & 0o777, 0o600);
+        assert_eq!(fs::read_dir(temp.path())?.count(), 1);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn publisher_preserves_distinct_existing_target_modes() -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir()?;
+        let paths = ["archive.json", "danmaku.xml", "danmaku.ass", "custom.xml"]
+            .map(|name| temp.path().join(name));
+        let modes = [0o600, 0o640, 0o440, 0o1640];
+        let contents = [
+            b"old archive".as_slice(),
+            b"old xml",
+            b"old ass",
+            b"old custom",
+        ];
+        let outputs = [
+            b"new archive".as_slice(),
+            b"new xml",
+            b"new ass",
+            b"new custom",
+        ];
+        let files = paths
+            .iter()
+            .zip(contents)
+            .zip(outputs)
+            .zip(modes)
+            .map(|(((path, original), output), mode)| {
+                fs::write(path, original)?;
+                fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
+                staged(path, original, output)
+            })
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        publish_file_group(&files)?;
+
+        for ((path, output), mode) in paths.iter().zip(outputs).zip(modes) {
+            assert_eq!(fs::read(path)?, output);
+            assert_eq!(fs::metadata(path)?.permissions().mode() & 0o7777, mode);
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn publisher_keeps_umask_mode_for_new_targets() -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir()?;
+        let mode_probe = temp.path().join("mode-probe");
+        fs::write(&mode_probe, b"")?;
+        let default_mode = fs::metadata(&mode_probe)?.permissions().mode() & 0o777;
+        let target = temp.path().join("new.xml");
+        let file = StagedDanmakuFile {
+            logical_path: target.clone(),
+            path: resolve_destination_path(&target)?,
+            output_bytes: b"new".to_vec(),
+            expected_original_bytes: None,
+            kind: DownloadFileKind::Danmaku,
+        };
+
+        publish_file_group(&[file])?;
+
+        assert_eq!(
+            fs::metadata(target)?.permissions().mode() & 0o777,
+            default_mode
+        );
         Ok(())
     }
 
@@ -708,6 +985,27 @@ mod tests {
 
         assert!(error.to_string().contains("content changed"));
         assert_eq!(fs::read(path)?, b"changed");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn publisher_accepts_inode_replacement_with_equal_content() -> anyhow::Result<()> {
+        use std::os::unix::fs::MetadataExt;
+
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("danmaku.xml");
+        let replacement = temp.path().join("replacement.xml");
+        fs::write(&path, b"old")?;
+        let original_inode = fs::metadata(&path)?.ino();
+        let file = staged(&path, b"old", b"new")?;
+        fs::write(&replacement, b"old")?;
+        fs::rename(replacement, &path)?;
+        assert_ne!(fs::metadata(&path)?.ino(), original_inode);
+
+        publish_file_group(&[file])?;
+
+        assert_eq!(fs::read(path)?, b"new");
         Ok(())
     }
 
@@ -939,11 +1237,19 @@ mod tests {
 
     #[test]
     fn publisher_rolls_back_prior_files_after_nth_replacement_failure() -> anyhow::Result<()> {
+        #[cfg(unix)]
+        use std::os::unix::fs::PermissionsExt;
+
         let temp = tempfile::tempdir()?;
         let first_path = temp.path().join("first.xml");
         let second_path = temp.path().join("second.xml");
         fs::write(&first_path, b"first-old")?;
         fs::write(&second_path, b"second-old")?;
+        #[cfg(unix)]
+        {
+            fs::set_permissions(&first_path, fs::Permissions::from_mode(0o600))?;
+            fs::set_permissions(&second_path, fs::Permissions::from_mode(0o440))?;
+        }
         let files = [
             staged(&first_path, b"first-old", b"first-new")?,
             staged(&second_path, b"second-old", b"second-new")?,
@@ -968,8 +1274,19 @@ mod tests {
         let error = require_err(error, "injected replacement failure must fail the group")?;
 
         assert!(error.to_string().contains("injected replacement failure"));
-        assert_eq!(fs::read(first_path)?, b"first-old");
-        assert_eq!(fs::read(second_path)?, b"second-old");
+        assert_eq!(fs::read(&first_path)?, b"first-old");
+        assert_eq!(fs::read(&second_path)?, b"second-old");
+        #[cfg(unix)]
+        {
+            assert_eq!(
+                fs::metadata(&first_path)?.permissions().mode() & 0o777,
+                0o600
+            );
+            assert_eq!(
+                fs::metadata(&second_path)?.permissions().mode() & 0o777,
+                0o440
+            );
+        }
         let remaining = fs::read_dir(temp.path())?
             .map(|entry| entry.map(|entry| entry.file_name()))
             .collect::<std::io::Result<Vec<_>>>()?;
@@ -983,11 +1300,16 @@ mod tests {
 
     #[test]
     fn publisher_retains_recovery_copy_when_rollback_fails() -> anyhow::Result<()> {
+        #[cfg(unix)]
+        use std::os::unix::fs::PermissionsExt;
+
         let temp = tempfile::tempdir()?;
         let first_path = temp.path().join("first.xml");
         let second_path = temp.path().join("second.xml");
         fs::write(&first_path, b"first-old")?;
         fs::write(&second_path, b"second-old")?;
+        #[cfg(unix)]
+        fs::set_permissions(&second_path, fs::Permissions::from_mode(0o400))?;
         let resolved_second_path = resolve_destination_path(&second_path)?;
         let files = [
             staged(&first_path, b"first-old", b"first-new")?,
@@ -1035,6 +1357,8 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("rollback recovery copy was not retained"))?;
         assert!(error.to_string().contains(&recovery.display().to_string()));
         assert_eq!(fs::read(recovery)?, b"second-old");
+        #[cfg(unix)]
+        assert_eq!(fs::metadata(recovery)?.permissions().mode() & 0o777, 0o400);
         assert_eq!(fs::read(first_path)?, b"first-old");
         assert!(!second_path.exists());
         Ok(())

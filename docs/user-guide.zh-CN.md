@@ -418,7 +418,8 @@ XML 始终是 canonical 更新目标，即使只请求 `--danmaku-format ass` �
 相同也会追加。id 缺失、为零或格式无效时，使用完整 `p` 属性和解码后的文本回退匹配。XML 仍是
 canonical 来源。每次都会从完整合并 XML 重新生成所选 ASS，不保留旧 ASS 自定义样式或事件。如果
 归档没有 XML 基线，旧 ASS 事件不作为历史，输出只根据本次拉取的 XML payload 生成。Strict 模式会把
-所选旁路文件和 archive JSON 一起 stage 并发布；ASS 统计报告生成的事件数，与 XML 弹幕数分开。检测到
+所选旁路文件和 archive JSON 一起 stage 并发布；ASS 统计报告生成的事件数，与 XML 弹幕数分开。
+替换和恢复已有文件时会保留其 Unix 权限位或可移植的只读设置。检测到
 错误时会保留原文件；如果回滚无法完成，会报告恢复文件位置。这不承诺多个文件之间具有崩溃或断电
 原子性。对于 File Provider 等同步目录，请调用方协调 materialization 和并发写入。
 

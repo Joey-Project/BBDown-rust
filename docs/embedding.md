@@ -999,6 +999,9 @@ async fn main() -> bbdown_core::Result<()> {
 The stage captures expected contents before publication and revalidates them before choosing the
 destination. `StagedDanmakuFile::path()` reports the selected destination resolved through
 parent-directory symlinks; publication revalidates logical aliases against that destination.
+Publication preparation captures existing target permissions, applies them to output and recovery
+files, and rechecks them before replacing targets. This covers Unix mode bits or the portable
+read-only setting. New outputs retain the default creation permissions.
 Coordinate File Provider materialization and any concurrent writer around this
 operation; validation detects changes but does not lock external writers. Detected publication
 errors trigger rollback, and errors that prevent complete rollback identify retained recovery
