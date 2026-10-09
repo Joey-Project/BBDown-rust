@@ -584,6 +584,7 @@ impl AccessPolicy {
         {
             use std::os::unix::fs::PermissionsExt;
             Self {
+                // Compare rwx and special mode bits; ignore file type and identity metadata.
                 mode: metadata.permissions().mode() & 0o7777,
             }
         }
