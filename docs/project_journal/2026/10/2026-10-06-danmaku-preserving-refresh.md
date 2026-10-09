@@ -3,7 +3,7 @@ id: 20261006-danmaku-preserving-refresh
 title: Strictly Preserving Danmaku Refresh
 status: completed
 created: 2026-10-06
-updated: 2026-10-08
+updated: 2026-10-09
 branch:
 pr: 87
 supersedes: []
@@ -25,6 +25,10 @@ superseded_by:
   default. The new `Preserve` policy stages XML, optional ASS, and archive JSON before grouped
   publication. The core exposes staged outputs and a group publisher with content/destination
   revalidation, detected-error rollback, and recovery-location reporting.
+- Publication preparation captures existing Unix mode bits or the portable read-only setting,
+  preserves them on replacement and recovery copies, and rejects permission changes detected
+  during preparation. Content and resolved destinations remain separate checks; timestamps and
+  inode identity are not mutation signals. Newly absent outputs retain default creation modes.
 - Current `Preserve` identity prefers a positive ASCII decimal comment id in `p[7]`, canonicalizing
   leading zeros. A matching id remains the same XML comment if fetched metadata or text changes;
   a different id appends even with matching text. Missing, zero, or invalid ids fall back to the
@@ -150,3 +154,9 @@ superseded_by:
   verified 29 files (1.6 MiB uncompressed, 246.4 KiB compressed) and uploaded nothing; it reported
   the existing package-version warning and the existing yanked `spin 0.9.8` dependency. The
   regressions use synthetic/local fixtures; no new live Bilibili source comparison was run.
+- The permission regression first failed four focused cases: restrictive/read-only output modes,
+  distinct target modes, rollback restoration, and retained recovery copies. After the fix,
+  all 16 publisher tests passed, including special Unix bits, permission changes during
+  preparation, benign inode replacement with equal contents, and default modes for new targets.
+  Focused core Clippy with `-D warnings`, formatting, and whitespace checks passed. These checks
+  use local filesystem fixtures and do not request Bilibili credentials or media.
