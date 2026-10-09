@@ -18,7 +18,7 @@ superseded_by:
   preserving danmaku refresh and the credential-account identity API merged in PR #90.
   Preparation is complete; the protected RC and promotion workflows are the publication
   path. Release notes document preserving refresh plus explicit Web and signed-OAuth
-  identity probes, verified UID and available username/issuer metadata, failure and
+  identity probes, verified positive account IDs and credential kinds, failure and
   redaction boundaries, and caller-owned same-account and storage policy.
 - The bilingual embedding guides describe preserving refresh and credential-account identity as
   `0.8.0` source-line additions absent from the `0.7.0` crate, and CDN-transfer features as prior

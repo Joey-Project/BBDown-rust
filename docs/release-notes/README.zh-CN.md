@@ -7,8 +7,9 @@
 
 ## 版本
 
-- [v0.8.0 source line](v0.8.0.zh-CN.md)：可选的 preserving danmaku 刷新，保留 XML、ASS 和 archive
-  文件内容。
+- [v0.8.0 开发线](v0.8.0.zh-CN.md)：可选的弹幕保留更新模式会保留 XML 历史，并从合并后
+  的 XML 重新生成选定的 ASS 文件；所选附加文件与归档变更会先暂存，再成组发布。旧 ASS 中
+  手动添加的样式和弹幕事件不会保留。
 
 - [v0.7.0](v0.7.0.zh-CN.md)：可选 CDN host 选择、限额探测、并行 Range 传输、内置网络目录
   和独立的 PGC Web playurl 路由。

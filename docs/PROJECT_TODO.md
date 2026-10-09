@@ -128,8 +128,9 @@
   history, regenerate selected ASS from merged XML, and publish staged sidecars with the archive as
   a group, with failure preservation and core/CLI regression coverage. See
   `docs/project_journal/2026/10/2026-10-06-danmaku-preserving-refresh.md`.
-- [pending] Publish the prepared `0.8.0` source line through the protected RC and promotion flow
-  after its feature PR merges. See
+- [pending] After the `0.8.0` release-preparation changes merge into `master`, publish the prepared
+  source line through the protected release-candidate and promotion workflows as a GitHub Release
+  and crates.io `bbdown-core` package. See
   `docs/project_journal/2026/10/2026-10-06-v0-8-release-prep.md`.
 - [pending] Continue the remaining BBDown parity backlog after the published `0.4.0` credential and
   danmaku sequence unless reprioritized:
