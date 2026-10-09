@@ -1002,6 +1002,8 @@ parent-directory symlinks; publication revalidates logical aliases against that 
 Publication preparation captures existing target permissions, applies them to output and recovery
 files, and rechecks them before replacing targets. This covers Unix mode bits or the portable
 read-only setting. New outputs retain the default creation permissions.
+Windows deletion temporarily clears read-only attributes on replaced targets. A failed deletion
+restores the original attribute, and rollback restores captured attributes on recovered files.
 Coordinate File Provider materialization and any concurrent writer around this
 operation; validation detects changes but does not lock external writers. Detected publication
 errors trigger rollback, and errors that prevent complete rollback identify retained recovery

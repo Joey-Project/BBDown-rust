@@ -476,6 +476,8 @@ archive has no XML baseline, old ASS events are not used as history; output is g
 fetched XML payload. Strict mode stages the selected sidecars and archive JSON as one publication
 group, and its ASS statistics report generated event counts separately from XML comment counts.
 Replacement and recovery retain existing Unix mode bits or the portable read-only setting.
+On Windows, replacement temporarily clears a target's read-only attribute for deletion and
+restores the captured attribute when recovering from failure.
 Detected errors leave originals in place and identify recovery files when rollback cannot finish.
 This does not promise crash or power-loss atomicity across files. For synchronized folders such as
 File Provider directories, coordinate concurrent writers and materialization around the command.
