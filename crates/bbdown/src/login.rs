@@ -1300,7 +1300,7 @@ fn main_access_key_refresh_base<'a>(
     }
 }
 
-fn tv_access_key_refresh_base<'a>(
+pub(crate) fn tv_access_key_refresh_base<'a>(
     passport_base: &'a str,
     tv_passport_poll_base: &'a str,
 ) -> &'a str {

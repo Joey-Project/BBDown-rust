@@ -231,6 +231,29 @@ profile document 也可以通过 `CredentialProfileMetadata` 和 `CredentialLife
 refresh token，但不会在 metadata map 中保存原始 refresh token 值。旧 flat store 仍保持原形
 态；空 metadata 在序列化 profile document 时会被省略，未知或 malformed 的可选 metadata
 会在加载时被忽略，自动续期仍然属于独立策略层。
+嵌入服务器需要将登录或续期绑定到同一账号时，可调用
+`BiliClient::credential_account_identity(CredentialKind::Cookie)`，或选择
+`AccessKey`/`TvAccessKey` 类型。成功结果包含凭据类型及官方 Web 或签名 OAuth 端点验证的
+正数 `account_id`。它与健康检查不同：未登录、身份缺失、格式错误或被拒绝都会返回错误；
+健康检查成功本身不证明账号身份。响应体限制为 64 KiB，OAuth 检查不转发 Web cookie，
+debug/error 输出不包含凭据或账号 ID。调用方应将身份留在服务器，并在替换 profile 前比较；
+库不会代替调用方授权回调或保存凭据。
+已知通用 access key 的签发 keypair（用于请求签名的应用密钥对）时，可调用
+`BiliClient::access_key_account_identity_with_keypair(AccessKeyIdentityKeypair::Android)`，
+并选择实际的 `IntlBstar`、`BiliTv`、`Android` 或 `AndroidB`。该方法只使用指定 keypair
+检查一次，而且始终读取 `Credentials::access_key`；即便选择 `BiliTv`，也不读取 TV key。
+BiliTv 签名使用 `EndpointConfig::tv_passport_poll_base`，默认兼容探测回退到该 keypair
+时也遵循该配置。若 TV 地址仍为默认值且只有 `passport_base` 被修改，则与现有 BiliTv
+刷新路由一样使用主地址。其它通用 keypair 使用 `passport_base`。BiliTv 检查失败时不会
+将该 keypair 的请求改发到其它地址；默认兼容方法只会在下述拒绝码出现时尝试下一组
+keypair。
+默认通用身份方法兼容缺少签发信息的旧 key：只在 API 返回 `-663` 或 `-3` 后，按上述
+顺序尝试最多四组 keypair，所有尝试共享 `ClientConfig::request_timeout` 的总预算。
+其它 API 拒绝、网络失败、响应过大或格式异常，以及缺失或非正数账号 ID 都立即终止。
+provider 名称或 refresh-keypair 元数据本身不能证明当前 key 的实际签发者。Cookie 与 TV
+身份检查仍使用各自独立的凭据和原有请求路径，健康检查行为也保持不变。
+该新增 API 目前通过 Git 提供，不包含在此前已发布的 `0.7.0` crate 中；请固定包含它的
+commit，或等待后续 crate release。
 对于二维码登录，如果下游应用需要稳定的可序列化扫码 URL 和 `qr_payload`，可以把
 `QrLoginTicket` 转换成 `QrLoginTicketOutput`；当前 WEB 和 TV 登录流程会直接使用扫码 URL
 作为 QR payload。兼容方法 `poll_web_qr_login` / `poll_tv_qr_login` 会返回
