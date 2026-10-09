@@ -29,6 +29,10 @@ superseded_by:
   preserves them on replacement and recovery copies, and rejects permission changes detected
   during preparation. Content and resolved destinations remain separate checks; timestamps and
   inode identity are not mutation signals. Newly absent outputs retain default creation modes.
+- Windows replacement and rollback temporarily clear read-only attributes before deleting
+  targets and restore the captured policy on deletion failure or recovery. Attribute changes
+  and restoration use the same opened object; external writers still require caller coordination.
+  The CI workflow includes a Windows publisher regression job.
 - Current `Preserve` identity prefers a positive ASCII decimal comment id in `p[7]`, canonicalizing
   leading zeros. A matching id remains the same XML comment if fetched metadata or text changes;
   a different id appends even with matching text. Missing, zero, or invalid ids fall back to the

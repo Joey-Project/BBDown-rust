@@ -459,7 +459,7 @@ where
             let mut failed_rollbacks = std::collections::HashSet::new();
             let mut recovery_paths = Vec::new();
             let mut rollback_errors = Vec::new();
-            if failure.original_removed
+            if failure.original_needs_recovery
                 && let Err(rollback_error) = rollback(item)
             {
                 failed_rollbacks.insert(failed_index);
@@ -495,7 +495,8 @@ where
                 return Err(Error::Io(failure.error));
             }
             return Err(Error::InvalidInput(format!(
-                "danmaku replacement failed and rollback was incomplete; recovery copies or affected targets: {}; rollback errors: {}",
+                "danmaku replacement failed: {}; rollback was incomplete; recovery copies or affected targets: {}; rollback errors: {}",
+                failure.error,
                 recovery_paths
                     .iter()
                     .map(|path| path.display().to_string())
@@ -688,41 +689,118 @@ fn verify_destination_and_original(file: &StagedDanmakuFile) -> Result<()> {
 
 struct ReplaceFailure {
     error: std::io::Error,
-    original_removed: bool,
+    original_needs_recovery: bool,
 }
 
 fn replace_target(item: &PreparedReplacement) -> std::result::Result<(), ReplaceFailure> {
     if item.had_original {
-        std_fs::remove_file(&item.target).map_err(|error| ReplaceFailure {
-            error,
-            original_removed: false,
-        })?;
+        remove_target(&item.target, item.access_policy)?;
     }
     match std_fs::rename(&item.output_temp, &item.target) {
         Ok(()) => Ok(()),
         Err(error) => Err(ReplaceFailure {
             error,
-            original_removed: item.had_original,
+            original_needs_recovery: item.had_original,
         }),
+    }
+}
+
+fn remove_target(
+    path: &Path,
+    access_policy: AccessPolicy,
+) -> std::result::Result<(), ReplaceFailure> {
+    #[cfg(not(windows))]
+    let _ = access_policy;
+
+    #[cfg(windows)]
+    if access_policy.readonly {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
+        const FILE_WRITE_ATTRIBUTES: u32 = 0x0000_0100;
+
+        let mut options = OpenOptions::new();
+        // Attribute access is enough for metadata and set_permissions; data access can be
+        // denied independently for an otherwise removable file.
+        let file = options
+            .access_mode(FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES)
+            .open(path)
+            .map_err(|error| ReplaceFailure {
+                error,
+                original_needs_recovery: false,
+            })?;
+        let mut permissions = file
+            .metadata()
+            .map_err(|error| ReplaceFailure {
+                error,
+                original_needs_recovery: false,
+            })?
+            .permissions();
+        if !permissions.readonly() {
+            return Err(ReplaceFailure {
+                error: std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "danmaku target access policy changed before removal",
+                ),
+                original_needs_recovery: false,
+            });
+        }
+
+        permissions.set_readonly(false);
+        if let Err(error) = file.set_permissions(permissions) {
+            return Err(failed_readonly_removal(error, &file, access_policy));
+        }
+        return match std_fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) => Err(failed_readonly_removal(error, &file, access_policy)),
+        };
+    }
+
+    std_fs::remove_file(path).map_err(|error| ReplaceFailure {
+        error,
+        original_needs_recovery: false,
+    })
+}
+
+#[cfg(windows)]
+fn failed_readonly_removal(
+    primary_error: std::io::Error,
+    file: &std::fs::File,
+    access_policy: AccessPolicy,
+) -> ReplaceFailure {
+    match access_policy.apply_to_file(file) {
+        Ok(()) => ReplaceFailure {
+            error: primary_error,
+            original_needs_recovery: false,
+        },
+        Err(restore_error) => ReplaceFailure {
+            error: std::io::Error::new(
+                primary_error.kind(),
+                format!(
+                    "{primary_error}; failed to restore the original read-only attribute: {restore_error}"
+                ),
+            ),
+            original_needs_recovery: true,
+        },
     }
 }
 
 fn rollback_target(item: &PreparedReplacement) -> std::io::Result<()> {
     if !item.had_original {
-        return match std_fs::remove_file(&item.target) {
+        return match remove_target(&item.target, item.access_policy) {
             Ok(()) => Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error),
+            Err(failure) if failure.error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(failure) => Err(failure.error),
         };
     }
     let recovery = item
         .recovery
         .as_ref()
         .ok_or_else(|| std::io::Error::other("missing recovery copy"))?;
-    match std_fs::remove_file(&item.target) {
+    match remove_target(&item.target, item.access_policy) {
         Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
+        Err(failure) if failure.error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(failure) => return Err(failure.error),
     }
     std_fs::copy(recovery, &item.target)?;
     item.access_policy.apply(&item.target)
@@ -824,6 +902,8 @@ fn unique_candidate(parent: &Path, label: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    use super::remove_target;
     use super::{
         ReplaceFailure, StagedDanmakuFile, create_unique_directory, publish_file_group,
         publish_file_group_with, publish_file_group_with_ops, publish_file_group_with_prepare_hook,
@@ -855,6 +935,226 @@ mod tests {
             expected_original_bytes: Some(original.to_vec()),
             kind: DownloadFileKind::Danmaku,
         })
+    }
+
+    #[cfg(windows)]
+    fn clear_readonly_files_in(directory: &Path) -> anyhow::Result<()> {
+        for entry in fs::read_dir(directory)? {
+            let path = entry?.path();
+            let mut permissions = fs::metadata(&path)?.permissions();
+            if permissions.readonly() {
+                permissions.set_readonly(false);
+                fs::set_permissions(&path, permissions)?;
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn publisher_preserves_readonly_policy_for_archive_and_sidecars() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let paths =
+            ["archive.json", "danmaku.xml", "danmaku.ass"].map(|name| temp.path().join(name));
+        let originals = [b"old archive".as_slice(), b"old xml", b"old ass"];
+        let outputs = [b"new archive".as_slice(), b"new xml", b"new ass"];
+        let result = (|| -> anyhow::Result<()> {
+            for (path, original) in paths.iter().zip(originals) {
+                fs::write(path, original)?;
+                let mut permissions = fs::metadata(path)?.permissions();
+                permissions.set_readonly(true);
+                fs::set_permissions(path, permissions)?;
+            }
+            let files = paths
+                .iter()
+                .zip(originals)
+                .zip(outputs)
+                .map(|((path, original), output)| staged(path, original, output))
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+
+            publish_file_group(&files)?;
+
+            for (path, output) in paths.iter().zip(outputs) {
+                anyhow::ensure!(fs::read(path)? == output);
+                anyhow::ensure!(fs::metadata(path)?.permissions().readonly());
+            }
+            anyhow::ensure!(fs::read_dir(temp.path())?.count() == paths.len());
+            Ok(())
+        })();
+        let cleanup_result = clear_readonly_files_in(temp.path());
+        let close_result = temp.close();
+        result?;
+        cleanup_result?;
+        close_result?;
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn publisher_restores_readonly_originals_after_nth_replacement_failure() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let paths = ["first.xml", "second.xml"].map(|name| temp.path().join(name));
+        let originals = [b"first old".as_slice(), b"second old"];
+        let outputs = [b"first new".as_slice(), b"second new"];
+        let result = (|| -> anyhow::Result<()> {
+            for (path, original) in paths.iter().zip(originals) {
+                fs::write(path, original)?;
+                let mut permissions = fs::metadata(path)?.permissions();
+                permissions.set_readonly(true);
+                fs::set_permissions(path, permissions)?;
+            }
+            let files = paths
+                .iter()
+                .zip(originals)
+                .zip(outputs)
+                .map(|((path, original), output)| staged(path, original, output))
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            let mut calls = 0;
+            let error = publish_file_group_with(&files, |replacement| {
+                calls += 1;
+                if calls == 2 {
+                    Err(ReplaceFailure {
+                        error: std::io::Error::other("injected replacement failure"),
+                        original_needs_recovery: false,
+                    })
+                } else {
+                    replace_target(replacement)
+                }
+            });
+            let error = require_err(error, "injected replacement failure must fail the group")?;
+
+            anyhow::ensure!(error.to_string().contains("injected replacement failure"));
+            for (path, original) in paths.iter().zip(originals) {
+                anyhow::ensure!(fs::read(path)? == original);
+                anyhow::ensure!(fs::metadata(path)?.permissions().readonly());
+            }
+            anyhow::ensure!(fs::read_dir(temp.path())?.count() == paths.len());
+            Ok(())
+        })();
+        let cleanup_result = clear_readonly_files_in(temp.path());
+        let close_result = temp.close();
+        result?;
+        cleanup_result?;
+        close_result?;
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn publisher_restores_readonly_after_delete_sharing_failure() -> anyhow::Result<()> {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        const FILE_SHARE_READ: u32 = 0x0000_0001;
+        const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("danmaku.xml");
+        let result = (|| -> anyhow::Result<()> {
+            fs::write(&path, b"old")?;
+            let mut permissions = fs::metadata(&path)?.permissions();
+            permissions.set_readonly(true);
+            fs::set_permissions(&path, permissions)?;
+            let file = staged(&path, b"old", b"new")?;
+
+            // This handle permits attribute changes but denies FILE_SHARE_DELETE, so removal
+            // fails after the publisher temporarily clears the read-only attribute.
+            let blocker = std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+                .open(&path)?;
+            let error = require_err(
+                publish_file_group(&[file]),
+                "a handle denying delete sharing must make publication fail",
+            )?;
+
+            anyhow::ensure!(!error.to_string().contains("rollback was incomplete"));
+            anyhow::ensure!(fs::read(&path)? == b"old");
+            anyhow::ensure!(fs::metadata(&path)?.permissions().readonly());
+            anyhow::ensure!(fs::read_dir(temp.path())?.count() == 1);
+            drop(blocker);
+            Ok(())
+        })();
+        let cleanup_result = clear_readonly_files_in(temp.path());
+        let close_result = temp.close();
+        result?;
+        cleanup_result?;
+        close_result?;
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn publisher_retains_readonly_recovery_when_rollback_fails() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let paths = ["first.xml", "second.xml"].map(|name| temp.path().join(name));
+        let originals = [b"first old".as_slice(), b"second old"];
+        let outputs = [b"first new".as_slice(), b"second new"];
+        let result = (|| -> anyhow::Result<()> {
+            for (path, original) in paths.iter().zip(originals) {
+                fs::write(path, original)?;
+                let mut permissions = fs::metadata(path)?.permissions();
+                permissions.set_readonly(true);
+                fs::set_permissions(path, permissions)?;
+            }
+            let files = paths
+                .iter()
+                .zip(originals)
+                .zip(outputs)
+                .map(|((path, original), output)| staged(path, original, output))
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            let resolved_second_path = resolve_destination_path(&paths[1])?;
+            let mut calls = 0;
+            let error = publish_file_group_with_ops(
+                &files,
+                |replacement| {
+                    calls += 1;
+                    if calls == 2 {
+                        remove_target(&replacement.target, replacement.access_policy)?;
+                        Err(ReplaceFailure {
+                            error: std::io::Error::other("injected replacement failure"),
+                            original_needs_recovery: true,
+                        })
+                    } else {
+                        replace_target(replacement)
+                    }
+                },
+                |replacement| {
+                    if replacement.target == resolved_second_path {
+                        Err(std::io::Error::other("injected rollback failure"))
+                    } else {
+                        rollback_target(replacement)
+                    }
+                },
+            );
+            let error = require_err(error, "rollback failure must be surfaced")?;
+
+            anyhow::ensure!(error.to_string().contains("injected replacement failure"));
+            anyhow::ensure!(error.to_string().contains("injected rollback failure"));
+            let entries = fs::read_dir(temp.path())?
+                .map(|entry| entry.map(|entry| entry.path()))
+                .collect::<std::io::Result<Vec<_>>>()?;
+            let recovery = entries
+                .iter()
+                .find(|path| {
+                    path.file_name()
+                        .is_some_and(|name| name.to_string_lossy().contains("preserving-recovery"))
+                })
+                .ok_or_else(|| anyhow::anyhow!("rollback recovery copy was not retained"))?;
+            anyhow::ensure!(error.to_string().contains(&recovery.display().to_string()));
+            anyhow::ensure!(fs::read(recovery)? == originals[1]);
+            anyhow::ensure!(fs::metadata(recovery)?.permissions().readonly());
+            anyhow::ensure!(fs::read(&paths[0])? == originals[0]);
+            anyhow::ensure!(fs::metadata(&paths[0])?.permissions().readonly());
+            anyhow::ensure!(!paths[1].exists());
+            anyhow::ensure!(entries.len() == 2);
+            Ok(())
+        })();
+        let cleanup_result = clear_readonly_files_in(temp.path());
+        let close_result = temp.close();
+        result?;
+        cleanup_result?;
+        close_result?;
+        Ok(())
     }
 
     #[cfg(unix)]
@@ -1262,11 +1562,11 @@ mod tests {
             if calls == 2 {
                 fs::remove_file(&replacement.target).map_err(|error| ReplaceFailure {
                     error,
-                    original_removed: false,
+                    original_needs_recovery: false,
                 })?;
                 Err(ReplaceFailure {
                     error: std::io::Error::other("injected replacement failure"),
-                    original_removed: true,
+                    original_needs_recovery: true,
                 })
             } else {
                 replace_target(replacement)
@@ -1325,11 +1625,11 @@ mod tests {
                 if calls == 2 {
                     fs::remove_file(&replacement.target).map_err(|error| ReplaceFailure {
                         error,
-                        original_removed: false,
+                        original_needs_recovery: false,
                     })?;
                     Err(ReplaceFailure {
                         error: std::io::Error::other("injected replacement failure"),
-                        original_removed: true,
+                        original_needs_recovery: true,
                     })
                 } else {
                     replace_target(replacement)
