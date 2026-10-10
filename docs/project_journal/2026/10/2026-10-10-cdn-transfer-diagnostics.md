@@ -39,7 +39,8 @@ superseded_by:
 - A byte delta is emitted synchronously for each response-body chunk yielded to the application by
   `reqwest::Response::bytes_stream()`, after status/header checks and before body-length validation
   or writing. A body rejected before its stream is consumed counts as zero; `Content-Length` is not
-  used to estimate bytes.
+  used to estimate bytes. A whole-file HTTP error response such as 404 or 500 rejected before body
+  consumption uses `InvalidResponse` and contributes zero consumed body bytes.
 - Counts follow the client's transparent content-decoding configuration. They represent
   application-visible body chunks, not compressed entity octets or all wire traffic. See the
   [reqwest 0.12.28 gzip builder documentation](https://docs.rs/reqwest/0.12.28/reqwest/struct.ClientBuilder.html#method.gzip).
@@ -78,13 +79,13 @@ superseded_by:
 
 ## Validation And Limits
 
-- The full workspace suite covered the download and range-transfer diagnostic regressions; parallel
-  mock fixtures retain their server lease through the requests they serve, and CLI progress keeps
-  the established one-based `entry_index` convention.
-- `env RUSTUP_TOOLCHAIN=1.99.0 just ci` exited 0 in 62.96 seconds (79,839 bytes). Formatting, strict
+- The workspace suite covers download and range-transfer diagnostics; the HTTP 500 classification
+  regression extends the existing fixture. Parallel mock fixtures retain their server lease through
+  the requests they serve, and CLI progress keeps the established one-based `entry_index` convention.
+- `env RUSTUP_TOOLCHAIN=1.99.0 just ci` exited 0 in 60.44 seconds (79,839 bytes). Formatting, strict
   workspace Clippy, the Rust 1.95.0 MSRV check, and workspace tests passed (807 passed, 0 failed,
-  3 ignored). A separate CLI repeat passed 154 tests. The publish dry run packaged 29 files
-  (1.8 MiB, 272.7 KiB compressed) and performed no upload.
+  3 ignored). A separate CLI repeat passed 154 tests (0 failed, 0 ignored). The publish dry run
+  packaged 29 files (1.8 MiB, 272.8 KiB compressed) and performed no upload.
 - No live-media comparison or measured performance improvement is claimed in this record.
 - A later adaptive-transfer workstream can use these diagnostics while keeping consumed response-
   body bytes distinct from written bytes and total wire traffic.

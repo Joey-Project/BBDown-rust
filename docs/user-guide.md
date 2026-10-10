@@ -253,7 +253,9 @@ The first reports each HTTP response-body chunk delivered to and consumed by the
 status/header checks and before body-length validation or file writing; an unconsumed rejected body counts as zero. Counts
 follow the client's transparent content-decoding configuration, so they are not compressed entity
 bytes or all wire traffic. Sum `bytes_delta` for consumed body bytes, and treat `bytes_received` as a
-request-local cumulative value rather than another delta. These values are not bytes written.
+request-local cumulative value rather than another delta. These values are not bytes written. A
+whole-file HTTP error response such as 404 or 500 that is rejected before body consumption is
+reported with `invalid_response` and zero `bytes_received`.
 Byte-event `request_id` values are scoped to one file-transfer operation. Diagnostic events have
 optional request ID and phase fields because some outcomes are operation-level.
 `transfer_diagnostic` reports typed candidate selections/exclusions, scheduled retries, whole-file

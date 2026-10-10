@@ -562,6 +562,8 @@ async fn main() -> bbdown_core::Result<()> {
 解码配置影响，因此它不是压缩实体字节数或全部网络传输流量。统计已消费的响应体字节时应累加
 `bytes_delta`；
 `bytes_received` 是该请求的累计值，不能再次累加。它与 `FileProgress.bytes_written` 含义不同。
+整文件 HTTP 错误响应（例如 404 或 500）在消费响应体前被拒绝时，请求终态 reason 为 `InvalidResponse`，且
+已接收响应体字节数为 0。
 字节事件的 `request_id` 在一次文件传输操作内从 1 开始，不要仅按 ID
 跨文件或独立探测调用合并请求。操作级诊断的 request ID 和 phase 可以为空。`phase` 区分自动探测、
 分片预检、Range 分片、整文件请求和独立探测。

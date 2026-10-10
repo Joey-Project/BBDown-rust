@@ -3771,6 +3771,9 @@ fn download_transfer_failure_reason(
     match error {
         Error::Cancelled { .. } => DownloadTransferFailureReason::Other,
         Error::Io(_) => DownloadTransferFailureReason::WriteFailed,
+        Error::Http(error) if error.status().is_some() => {
+            DownloadTransferFailureReason::InvalidResponse
+        }
         Error::Http(error) if error.is_timeout() => DownloadTransferFailureReason::TimedOut,
         Error::Http(error) if error.is_body() => DownloadTransferFailureReason::BodyReadFailed,
         Error::Http(error) if error.is_request() => DownloadTransferFailureReason::RequestFailed,
@@ -11740,7 +11743,7 @@ mod tests {
                 let _ = stream.read(&mut buffer)?;
                 if attempt == 0 {
                     stream.write_all(
-                        b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n",
+                        b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 4\r\n\r\nfail",
                     )?;
                 } else {
                     stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 8\r\n\r\nretry-ok")?;
@@ -11768,13 +11771,18 @@ mod tests {
         };
         let request = DownloadFileRequest::new(&entry, &path, DownloadFileKind::Video, None);
         let cancellation = DownloadCancellationToken::new();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress_events = Arc::clone(&events);
+        let progress = move |event: &DownloadProgressEvent| {
+            push_progress_event(&progress_events, event.clone());
+        };
 
         let file = client
             .download_url_to_file(
                 &format!("http://{address}/video.m4s"),
                 &request,
                 &options,
-                &NoopDownloadProgress,
+                &progress,
                 &cancellation,
             )
             .await?;
@@ -11783,6 +11791,44 @@ mod tests {
             .join()
             .map_err(|_| anyhow::anyhow!("server thread panicked"))??;
         assert_eq!(tokio::fs::read_to_string(&file.path).await?, "retry-ok");
+        let events = progress_events_snapshot(&events);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::TransferDiagnostic {
+                request_id: Some(1),
+                phase: Some(DownloadTransferPhase::WholeFile),
+                diagnostic: DownloadTransferDiagnostic::RequestFinished {
+                    outcome: DownloadTransferRequestOutcome::Failed {
+                        reason: DownloadTransferFailureReason::InvalidResponse,
+                    },
+                    bytes_received: 0,
+                },
+                ..
+            }
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::TransferDiagnostic {
+                request_id: Some(2),
+                phase: Some(DownloadTransferPhase::WholeFile),
+                diagnostic: DownloadTransferDiagnostic::RetryScheduled {
+                    reason: DownloadTransferFailureReason::InvalidResponse,
+                },
+                ..
+            }
+        )));
+        assert_eq!(
+            events
+                .iter()
+                .filter_map(|event| match event {
+                    DownloadProgressEvent::TransferBytesReceived { bytes_delta, .. } => {
+                        Some(*bytes_delta)
+                    }
+                    _ => None,
+                })
+                .sum::<u64>(),
+            8
+        );
         Ok(())
     }
 

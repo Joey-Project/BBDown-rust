@@ -606,7 +606,9 @@ writing; a rejected body that is not read contributes zero. Counts follow the cl
 content-decoding configuration,
 so they are not compressed entity bytes or all wire traffic. Sum `bytes_delta` to count consumed
 body bytes; `bytes_received` is the cumulative count for that request and must not be summed
-again. This is distinct from `FileProgress.bytes_written`.
+again. A whole-file HTTP error response such as 404 or 500 that is rejected before body consumption
+finishes with `InvalidResponse` and reports zero received body bytes. This is distinct from
+`FileProgress.bytes_written`.
 Byte-event `request_id` starts at 1 and is scoped to one file-transfer operation; do not combine
 requests across files or standalone probe calls by ID alone. Diagnostic request ID and phase fields
 are optional for operation-level outcomes. The `phase` distinguishes automatic probes, shard probes,
