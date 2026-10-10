@@ -14,7 +14,10 @@ cancellation token。原始输入解析覆盖普
 
 使用 `cargo add bbdown-core` 安装，然后用 `bbdown_core` 导入。
 
-当前 source line 是 `0.8.0`，接续已发布的 `0.7.0` 网络与下载器版本线。
+当前 source line 是 `0.9.0`，接续已发布的 `0.8.0` 版本。该版本线增加类型化 CDN 传输字节和
+诊断 progress event（包括 `probe_media_cdns_with_progress` API），并通过 WBI 签名个人空间动态
+feed 请求，包括 offset 分页。传输字节事件统计应用已消费的响应正文字节，与写入或发布到文件的
+字节不同，也不代表全部线路传输量。
 
 crate 提供 staged XML 历史保留弹幕刷新，按正 comment ID 去重（无效 ID 回退到完整参数与解码文本），
 并从合并 XML 重新生成 ASS，同时包含 CDN 控制和独立 PGC Web 路由 API。PGC 区域与代理解析独立于媒体

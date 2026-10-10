@@ -16,8 +16,12 @@ video feeds, and space dynamic video feeds.
 
 Install with `cargo add bbdown-core`, then import with `bbdown_core`.
 
-The current source line is `0.8.0`, following the published `0.7.0` networking and downloader
-line.
+The current source line is `0.9.0`, following the published `0.8.0` release. This line adds typed
+CDN transfer-byte and diagnostic progress events, including the
+`probe_media_cdns_with_progress` API, and signs personal-space dynamic feed requests with WBI,
+including continuation offsets. Transfer-byte events count response-body bytes consumed by the
+application; they are distinct from bytes written or published and do not represent total wire
+traffic.
 
 The crate provides staged XML-history-preserving danmaku refresh, deduplicates comments by positive
 IDs with a complete-parameter-and-decoded-text fallback, and regenerates ASS from merged XML. It

@@ -3,11 +3,14 @@
 # 版本说明
 
 这个目录保存 Rust 重写版本的人类可读 release notes。GitHub Releases 仍然是下载 assets 和
-自动生成 changelog 的来源；这里的文档总结每条已发布版本线对用户和嵌入方的影响。
+自动生成 changelog 的来源；这里的文档总结各 source line 和已发布版本对用户与嵌入方的影响。
 
 ## 版本
 
-- [v0.8.0 开发线](v0.8.0.zh-CN.md)：可选的弹幕保留更新模式会保留 XML 历史，并从合并后
+- [v0.9.0 source line](v0.9.0.zh-CN.md)：为 progress callback 和 CLI JSON 增加结构化 CDN 传输
+  诊断，并通过 WBI 签名个人空间动态 feed 请求及 offset 分页。
+
+- [v0.8.0（已发布）](v0.8.0.zh-CN.md)：可选的弹幕保留更新模式会保留 XML 历史，并从合并后
   的 XML 重新生成选定的 ASS 文件；所选附加文件与归档变更会先暂存，再成组发布。旧 ASS 中
   手动添加的样式和弹幕事件不会保留。
 
