@@ -2644,10 +2644,24 @@ fn mock_following_collection(server: &MockServer) {
 
 fn mock_space_dynamic_collection(server: &MockServer) {
     server.mock(|when, then| {
+        when.method(GET).path("/x/web-interface/nav");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "wbi_img": {
+                    "img_url": "https://i0.hdslb.com/bfs/wbi/0123456789abcdef0123456789abcdef.png",
+                    "sub_url": "https://i0.hdslb.com/bfs/wbi/fedcba9876543210fedcba9876543210.png"
+                }
+            }
+        }));
+    });
+    server.mock(|when, then| {
         when.method(GET)
             .path("/x/polymer/web-dynamic/v1/feed/space")
             .query_param("host_mid", "123")
-            .query_param("platform", "web");
+            .query_param("platform", "web")
+            .query_param_exists("wts")
+            .query_param_exists("w_rid");
         then.status(200).json_body_obj(&serde_json::json!({
             "code": 0,
             "data": {

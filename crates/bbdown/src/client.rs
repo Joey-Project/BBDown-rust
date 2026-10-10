@@ -2487,11 +2487,15 @@ impl BiliClient {
         kind: DynamicFeedKind,
         fetch_mode: FeedListFetchMode,
     ) -> Result<VideoCollectionMetadata> {
+        let mixin_key = match kind {
+            DynamicFeedKind::Following => None,
+            DynamicFeedKind::Space { .. } => Some(self.fetch_wbi_mixin_key().await?),
+        };
         let mut offset = None;
         let mut items = Vec::new();
         loop {
             let page = self
-                .fetch_dynamic_feed_page(kind, offset.as_deref())
+                .fetch_dynamic_feed_page(kind, offset.as_deref(), mixin_key.as_deref())
                 .await?;
             if page.items.is_empty() {
                 break;
@@ -2544,23 +2548,36 @@ impl BiliClient {
         &self,
         kind: DynamicFeedKind,
         offset: Option<&str>,
+        mixin_key: Option<&str>,
     ) -> Result<DynamicFeedData> {
         let mut url = Self::endpoint_url(&self.config.endpoints.api_base, kind.endpoint_path())?;
-        {
-            let mut query = url.query_pairs_mut();
-            query
-                .append_pair("platform", "web")
-                .append_pair("features", DYNAMIC_FEED_FEATURES);
-            match kind {
-                DynamicFeedKind::Following => {
-                    query.append_pair("type", "video");
-                }
-                DynamicFeedKind::Space { mid } => {
-                    query.append_pair("host_mid", &mid.to_string());
+        match kind {
+            DynamicFeedKind::Following => {
+                let mut query = url.query_pairs_mut();
+                query
+                    .append_pair("platform", "web")
+                    .append_pair("features", DYNAMIC_FEED_FEATURES)
+                    .append_pair("type", "video");
+                if let Some(offset) = offset.filter(|value| !value.is_empty()) {
+                    query.append_pair("offset", offset);
                 }
             }
-            if let Some(offset) = offset.filter(|value| !value.is_empty()) {
-                query.append_pair("offset", offset);
+            DynamicFeedKind::Space { mid } => {
+                let Some(mixin_key) = mixin_key else {
+                    return Err(Error::InvalidInput(
+                        "Space dynamic feed requires a WBI mixin key".to_owned(),
+                    ));
+                };
+                let mut params = vec![
+                    ("platform", "web".to_owned()),
+                    ("features", DYNAMIC_FEED_FEATURES.to_owned()),
+                    ("host_mid", mid.to_string()),
+                ];
+                if let Some(offset) = offset.filter(|value| !value.is_empty()) {
+                    params.push(("offset", offset.to_owned()));
+                }
+                params.push(("wts", current_unix_timestamp().to_string()));
+                url.set_query(Some(&wbi_signed_query(params, mixin_key)));
             }
         }
         let response: ApiData<DynamicFeedData> = self.get_json(url).await?;
@@ -6448,6 +6465,7 @@ mod tests {
     use httpmock::MockServer;
     use httpmock::prelude::*;
     use reqwest::header::{COOKIE, HeaderMap, HeaderValue};
+    use std::collections::HashMap;
     use std::convert::Infallible;
     use std::time::{Duration, Instant};
     use url::Url;
@@ -10638,15 +10656,23 @@ mod tests {
         Ok(())
     }
 
+    // Keep both Following pages and their pagination boundary assertions together.
+    #[allow(clippy::too_many_lines)]
     #[tokio::test]
     async fn dynamic_feed_stops_when_next_offset_is_missing() -> anyhow::Result<()> {
         let server = MockServer::start();
-        server.mock(|when, then| {
+        let nav_mock = server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/nav");
+            then.status(500);
+        });
+        let first_page_mock = server.mock(|when, then| {
             when.method(GET)
                 .path("/x/polymer/web-dynamic/v1/feed/all")
                 .query_param("type", "video")
                 .query_param("platform", "web")
-                .query_param_missing("offset");
+                .query_param_missing("offset")
+                .query_param_missing("wts")
+                .query_param_missing("w_rid");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {
@@ -10667,12 +10693,14 @@ mod tests {
                 }
             }));
         });
-        server.mock(|when, then| {
+        let second_page_mock = server.mock(|when, then| {
             when.method(GET)
                 .path("/x/polymer/web-dynamic/v1/feed/all")
                 .query_param("type", "video")
                 .query_param("platform", "web")
-                .query_param("offset", "offset-1");
+                .query_param("offset", "offset-1")
+                .query_param_missing("wts")
+                .query_param_missing("w_rid");
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {
@@ -10735,17 +10763,229 @@ mod tests {
                 return Err(anyhow::anyhow!("expected collection"));
             }
         }
+        nav_mock.assert_calls(0);
+        first_page_mock.assert_calls(1);
+        second_page_mock.assert_calls(1);
+        Ok(())
+    }
+
+    // Keep the initial and offset page mocks with their signed-query assertions.
+    #[allow(clippy::too_many_lines)]
+    #[tokio::test]
+    async fn resolves_space_dynamic_feed_pages_with_signed_offsets() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let nav_mock = mock_wbi_nav(&server);
+        let mixin_key = super::wbi_mixin_key(
+            "https://i0.hdslb.com/bfs/wbi/0123456789abcdef0123456789abcdef.png",
+            "https://i0.hdslb.com/bfs/wbi/fedcba9876543210fedcba9876543210.png",
+        )?;
+        let initial_mixin_key = mixin_key.clone();
+        let initial_page_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/polymer/web-dynamic/v1/feed/space")
+                .query_param_exists("wts")
+                .query_param_exists("w_rid")
+                .is_true(move |request| {
+                    space_dynamic_feed_query_matches(request, &initial_mixin_key, 123, None)
+                });
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "has_more": true,
+                    "offset": "offset-1",
+                    "items": [{
+                        "type": "DYNAMIC_TYPE_AV",
+                        "visible": true,
+                        "modules": {
+                            "module_dynamic": {
+                                "major": {
+                                    "type": "MAJOR_TYPE_ARCHIVE",
+                                    "archive": {"aid": 170_001}
+                                }
+                            }
+                        }
+                    }]
+                }
+            }));
+        });
+        let offset_mixin_key = mixin_key.clone();
+        let offset_page_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/polymer/web-dynamic/v1/feed/space")
+                .query_param_exists("wts")
+                .query_param_exists("w_rid")
+                .is_true(move |request| {
+                    space_dynamic_feed_query_matches(
+                        request,
+                        &offset_mixin_key,
+                        123,
+                        Some("offset-1"),
+                    )
+                });
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "has_more": false,
+                    "offset": "offset-2",
+                    "items": [{
+                        "type": "DYNAMIC_TYPE_AV",
+                        "visible": true,
+                        "modules": {
+                            "module_dynamic": {
+                                "major": {
+                                    "type": "MAJOR_TYPE_ARCHIVE",
+                                    "archive": {"aid": 170_002}
+                                }
+                            }
+                        }
+                    }]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("aid", "170001");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "aid": 170_001,
+                    "bvid": "BV1xx411c7mD",
+                    "title": "First space dynamic video",
+                    "pages": [{"page": 1, "cid": 9988, "part": "Main", "duration": 3}]
+                }
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("aid", "170002");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "aid": 170_002,
+                    "bvid": "BV1xx411c7mE",
+                    "title": "Second space dynamic video",
+                    "pages": [{"page": 1, "cid": 9989, "part": "Main", "duration": 4}]
+                }
+            }));
+        });
+
+        let resolved = test_client(&server)
+            .resolve_input(
+                "https://space.bilibili.com/123/dynamic",
+                Some(Selection::All),
+            )
+            .await?;
+
+        match resolved {
+            ResolvedContent::Collection(collection) => {
+                assert_eq!(collection.collection.items.len(), 2);
+                assert_eq!(
+                    collection.collection.items[0].title,
+                    "First space dynamic video"
+                );
+                assert_eq!(
+                    collection.collection.items[1].title,
+                    "Second space dynamic video"
+                );
+            }
+            ResolvedContent::Video(_) | ResolvedContent::Season(_) => {
+                return Err(anyhow::anyhow!("expected collection"));
+            }
+        }
+        nav_mock.assert_calls(1);
+        initial_page_mock.assert_calls(1);
+        offset_page_mock.assert_calls(1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn space_dynamic_nav_api_error_stops_before_feed_request() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let nav_mock = server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/nav");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": -412,
+                "message": "WBI nav rejected"
+            }));
+        });
+        let feed_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/polymer/web-dynamic/v1/feed/space");
+            then.status(200)
+                .json_body_obj(&serde_json::json!({"code": 0, "data": {}}));
+        });
+
+        let Err(Error::Api { code, .. }) = test_client(&server)
+            .resolve_input(
+                "https://space.bilibili.com/123/dynamic",
+                Some(Selection::Latest),
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!("expected the WBI nav API error"));
+        };
+
+        assert_eq!(code, -412);
+        nav_mock.assert_calls(1);
+        feed_mock.assert_calls(0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn malformed_space_dynamic_nav_data_stops_before_feed_request() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let nav_mock = server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/nav");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": {
+                    "wbi_img": {
+                        "img_url": "https://i0.hdslb.com/bfs/wbi/0123456789abcdef0123456789abcdef.png"
+                    }
+                }
+            }));
+        });
+        let feed_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/polymer/web-dynamic/v1/feed/space");
+            then.status(200)
+                .json_body_obj(&serde_json::json!({"code": 0, "data": {}}));
+        });
+
+        let Err(Error::MissingField(field)) = test_client(&server)
+            .resolve_input(
+                "https://space.bilibili.com/123/dynamic",
+                Some(Selection::Latest),
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!("expected the missing nav key field"));
+        };
+
+        assert_eq!(field, "data.wbi_img.sub_url");
+        nav_mock.assert_calls(1);
+        feed_mock.assert_calls(0);
         Ok(())
     }
 
     #[tokio::test]
     async fn plans_space_dynamic_latest_as_normal_video_entry() -> anyhow::Result<()> {
         let server = MockServer::start();
+        mock_wbi_nav(&server);
+        let mixin_key = super::wbi_mixin_key(
+            "https://i0.hdslb.com/bfs/wbi/0123456789abcdef0123456789abcdef.png",
+            "https://i0.hdslb.com/bfs/wbi/fedcba9876543210fedcba9876543210.png",
+        )?;
         server.mock(|when, then| {
             when.method(GET)
                 .path("/x/polymer/web-dynamic/v1/feed/space")
-                .query_param("host_mid", "123")
-                .query_param("platform", "web");
+                .query_param_exists("wts")
+                .query_param_exists("w_rid")
+                .is_true(move |request| {
+                    space_dynamic_feed_query_matches(request, &mixin_key, 123, None)
+                });
             then.status(200).json_body_obj(&serde_json::json!({
                 "code": 0,
                 "data": {
@@ -13690,7 +13930,69 @@ mod tests {
         })
     }
 
-    fn mock_wbi_nav(server: &MockServer) {
+    fn space_dynamic_feed_query_matches(
+        request: &httpmock::HttpMockRequest,
+        mixin_key: &str,
+        mid: u64,
+        expected_offset: Option<&str>,
+    ) -> bool {
+        let uri = request.uri();
+        let Some(query) = uri.query() else {
+            return false;
+        };
+        let mut params = HashMap::new();
+        for (key, value) in url::form_urlencoded::parse(query.as_bytes()) {
+            if params
+                .insert(key.into_owned(), value.into_owned())
+                .is_some()
+            {
+                return false;
+            }
+        }
+
+        let mut expected_keys = vec!["platform", "features", "host_mid", "wts", "w_rid"];
+        if expected_offset.is_some() {
+            expected_keys.push("offset");
+        }
+        if params.len() != expected_keys.len()
+            || expected_keys.iter().any(|key| !params.contains_key(*key))
+        {
+            return false;
+        }
+        let expected_mid = mid.to_string();
+        if params.get("platform").map(String::as_str) != Some("web")
+            || params.get("features").map(String::as_str) != Some(super::DYNAMIC_FEED_FEATURES)
+            || params.get("host_mid").map(String::as_str) != Some(expected_mid.as_str())
+        {
+            return false;
+        }
+        let Some(wts) = params.get("wts") else {
+            return false;
+        };
+        if wts.parse::<u64>().is_err() {
+            return false;
+        }
+
+        let mut signed_params = vec![
+            ("platform", "web".to_owned()),
+            ("features", super::DYNAMIC_FEED_FEATURES.to_owned()),
+            ("host_mid", mid.to_string()),
+        ];
+        if let Some(expected_offset) = expected_offset {
+            let Some(offset) = params.get("offset") else {
+                return false;
+            };
+            if offset != expected_offset {
+                return false;
+            }
+            signed_params.push(("offset", offset.clone()));
+        }
+        signed_params.push(("wts", wts.clone()));
+
+        super::wbi_signed_query(signed_params, mixin_key) == query
+    }
+
+    fn mock_wbi_nav(server: &MockServer) -> httpmock::Mock<'_> {
         server.mock(|when, then| {
             when.method(GET).path("/x/web-interface/nav");
             then.status(200).json_body_obj(&serde_json::json!({
@@ -13702,7 +14004,7 @@ mod tests {
                     }
                 }
             }));
-        });
+        })
     }
 
     fn mock_favorite_collection(server: &MockServer) {
