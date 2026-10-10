@@ -53,6 +53,7 @@ pub use download::{
     EntryDanmakuUpdateReport, EntryDownloadReport, EntryDownloadSummary, MediaHostOptions,
     MuxOptions, MuxReport, RetryPolicy, SidecarOptions, StagedDanmakuFile, StagedDanmakuUpdate,
     StreamSelection, SubtitleAiPolicy, archive_entry_allows_danmaku_update, probe_media_cdns,
+    probe_media_cdns_with_progress,
 };
 pub use error::{Error, Result};
 pub use input::Input;
@@ -79,5 +80,9 @@ pub use playback::{
     PlaybackSelectionHint, PlaybackSelectionHints, PlaybackSelectionReason, PlaybackVariant,
     PlaybackVariantCacheKey, PlaybackVariantKind,
 };
-pub use progress::{DownloadProgressEvent, DownloadProgressSink, NoopDownloadProgress};
+pub use progress::{
+    CdnCandidateExclusionReason, DownloadProgressEvent, DownloadProgressSink,
+    DownloadTransferDiagnostic, DownloadTransferFailureReason, DownloadTransferFallbackReason,
+    DownloadTransferPhase, DownloadTransferRequestOutcome, NoopDownloadProgress,
+};
 pub use selection::{IndexSelection, IndexSelector, Selection};

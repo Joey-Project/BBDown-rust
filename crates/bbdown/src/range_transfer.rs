@@ -7,11 +7,24 @@ use std::{
 use futures_util::{FutureExt, StreamExt, future::BoxFuture, stream::FuturesUnordered};
 use reqwest::header::{CONTENT_LENGTH, CONTENT_RANGE, HeaderMap, RANGE};
 
-use crate::{Error, Result};
+#[cfg(test)]
+use crate::progress::NoopDownloadProgress;
+use crate::{
+    Error, Result,
+    progress::{
+        CdnCandidateExclusionReason, DownloadProgressSink, DownloadTransferDiagnostic,
+        DownloadTransferFailureReason, DownloadTransferPhase, DownloadTransferRequestOutcome,
+        TransferReporter, TransferRequestReporter,
+    },
+};
 
 const MAX_RANGE_BYTES: u64 = 8 * 1024 * 1024;
 const CANDIDATE_PROBE_BYTES: u64 = 16 * 1024;
 const MAX_CDN_CANDIDATES: usize = 8;
+#[cfg(not(test))]
+const CANDIDATE_PROBE_TIMEOUT_LIMIT: Duration = Duration::from_secs(2);
+#[cfg(test)]
+const CANDIDATE_PROBE_TIMEOUT_LIMIT: Duration = Duration::from_secs(10);
 
 type ChunkFuture<'a> = BoxFuture<'a, (u64, usize, usize, Result<RangeFetch>)>;
 
@@ -24,6 +37,7 @@ pub(crate) struct RangeFetch {
 
 /// Fetches one bounded byte range and validates the server's complete range claim.
 /// Errors deliberately omit the request URL because media URLs may contain signatures.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)] // Keep the range contract explicit at its call sites.
 pub(crate) async fn fetch_range(
     client: &reqwest::Client,
@@ -35,6 +49,74 @@ pub(crate) async fn fetch_range(
     request_timeout: Duration,
     idle_timeout: Option<Duration>,
 ) -> Result<RangeFetch> {
+    fetch_range_inner::<NoopDownloadProgress>(
+        client,
+        url,
+        headers,
+        start,
+        end_inclusive,
+        expected_total,
+        request_timeout,
+        idle_timeout,
+        None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)] // Keep the complete range request context explicit.
+pub(crate) async fn fetch_range_with_observer<P>(
+    client: &reqwest::Client,
+    url: &str,
+    headers: HeaderMap,
+    start: u64,
+    end_inclusive: u64,
+    expected_total: Option<u64>,
+    request_timeout: Duration,
+    idle_timeout: Option<Duration>,
+    observer: Option<&TransferRequestReporter<'_, P>>,
+) -> Result<RangeFetch>
+where
+    P: DownloadProgressSink + ?Sized,
+{
+    let result = fetch_range_inner(
+        client,
+        url,
+        headers,
+        start,
+        end_inclusive,
+        expected_total,
+        request_timeout,
+        idle_timeout,
+        observer,
+    )
+    .await;
+    if let Some(observer) = observer {
+        observer.finish(match &result {
+            Ok(_) => DownloadTransferRequestOutcome::Succeeded,
+            Err(error) if error.is_cancelled() => DownloadTransferRequestOutcome::Cancelled,
+            Err(error) => DownloadTransferRequestOutcome::Failed {
+                reason: range_failure_reason(error),
+            },
+        });
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)] // Shared validator receives the same explicit request context.
+async fn fetch_range_inner<P>(
+    client: &reqwest::Client,
+    url: &str,
+    headers: HeaderMap,
+    start: u64,
+    end_inclusive: u64,
+    expected_total: Option<u64>,
+    request_timeout: Duration,
+    idle_timeout: Option<Duration>,
+    observer: Option<&TransferRequestReporter<'_, P>>,
+) -> Result<RangeFetch>
+where
+    P: DownloadProgressSink + ?Sized,
+{
     let requested_len = end_inclusive
         .checked_sub(start)
         .and_then(|n| n.checked_add(1))
@@ -92,6 +174,9 @@ pub(crate) async fn fetch_range(
             };
             let Some(chunk) = next else { break };
             let chunk = chunk.map_err(|_| invalid("range response body failed"))?;
+            if let Some(observer) = observer {
+                observer.body_chunk(chunk.len());
+            }
             let new_len = bytes
                 .len()
                 .checked_add(chunk.len())
@@ -113,6 +198,46 @@ pub(crate) async fn fetch_range(
     })
     .await
     .map_err(|_| invalid("range request timed out"))?
+}
+
+fn range_failure_reason(error: &Error) -> DownloadTransferFailureReason {
+    match error {
+        Error::InvalidInput(message) if message == "range request failed" => {
+            DownloadTransferFailureReason::RequestFailed
+        }
+        Error::InvalidInput(message) if message == "range response stalled" => {
+            DownloadTransferFailureReason::BodyStalled
+        }
+        Error::InvalidInput(message) if message == "range request timed out" => {
+            DownloadTransferFailureReason::TimedOut
+        }
+        Error::InvalidInput(message) if message == "range response body failed" => {
+            DownloadTransferFailureReason::BodyReadFailed
+        }
+        Error::InvalidInput(message)
+            if message == "range response exceeds requested length"
+                || message == "range response is too large" =>
+        {
+            DownloadTransferFailureReason::OversizedBody
+        }
+        Error::InvalidInput(message) if message == "range response length is incomplete" => {
+            DownloadTransferFailureReason::IncompleteBody
+        }
+        Error::Io(_) => DownloadTransferFailureReason::WriteFailed,
+        _ => DownloadTransferFailureReason::InvalidResponse,
+    }
+}
+
+fn candidate_exclusion_reason(error: &Error) -> CdnCandidateExclusionReason {
+    match error {
+        Error::InvalidInput(message)
+            if message == "range total size does not match expected size"
+                || message == "Content-Range does not match requested range" =>
+        {
+            CdnCandidateExclusionReason::SizeMismatch
+        }
+        _ => CdnCandidateExclusionReason::ProbeFailed,
+    }
 }
 
 fn parse_content_range(value: &str, expected_start: u64, expected_end: u64) -> Result<u64> {
@@ -148,6 +273,7 @@ fn invalid(message: &str) -> Error {
 /// Candidate URLs are grouped by matching sample bytes and URL path/query. Sample and size checks
 /// reduce accidental mixing but do not prove whole-file equality; each range is fetched once.
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+#[cfg(test)]
 pub(crate) async fn download_sharded_to_temp<F>(
     client: &reqwest::Client,
     urls: &[String],
@@ -158,10 +284,46 @@ pub(crate) async fn download_sharded_to_temp<F>(
     request_timeout: Duration,
     idle_timeout: Option<Duration>,
     dest_dir: &Path,
+    on_chunk: F,
+) -> Result<tempfile::TempPath>
+where
+    F: FnMut(u64, &str),
+{
+    let progress = NoopDownloadProgress;
+    let observer = TransferReporter::new(&progress, None, None, None, None);
+    download_sharded_to_temp_with_progress(
+        client,
+        urls,
+        headers,
+        expected_total,
+        concurrency,
+        chunk_size,
+        request_timeout,
+        idle_timeout,
+        dest_dir,
+        &observer,
+        on_chunk,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+pub(crate) async fn download_sharded_to_temp_with_progress<F, P>(
+    client: &reqwest::Client,
+    urls: &[String],
+    headers: HeaderMap,
+    expected_total: u64,
+    concurrency: usize,
+    chunk_size: u64,
+    request_timeout: Duration,
+    idle_timeout: Option<Duration>,
+    dest_dir: &Path,
+    transfer_reporter: &TransferReporter<'_, P>,
     mut on_chunk: F,
 ) -> Result<tempfile::TempPath>
 where
     F: FnMut(u64, &str),
+    P: DownloadProgressSink + ?Sized,
 {
     if expected_total == 0 {
         return Err(invalid("expected media size must be nonzero"));
@@ -177,12 +339,14 @@ where
     }
 
     let probe_end = CANDIDATE_PROBE_BYTES.min(expected_total) - 1;
-    let probe_timeout = request_timeout.min(Duration::from_secs(2));
+    let probe_timeout = request_timeout.min(CANDIDATE_PROBE_TIMEOUT_LIMIT);
     let mut probes = FuturesUnordered::new();
     for (index, url) in urls.iter().take(MAX_CDN_CANDIDATES).enumerate() {
         let probe_headers = headers.clone();
         probes.push(async move {
-            let result = fetch_range(
+            let observer =
+                transfer_reporter.begin_request(url, DownloadTransferPhase::ShardProbe, None);
+            let result = fetch_range_with_observer(
                 client,
                 url,
                 probe_headers,
@@ -191,31 +355,39 @@ where
                 Some(expected_total),
                 probe_timeout,
                 idle_timeout,
+                observer.as_ref(),
             )
             .await;
-            (index, url.as_str(), result)
+            (index, url.as_str(), result, observer)
         });
     }
     let mut completed_probes = Vec::new();
     while let Some(probe) = probes.next().await {
         completed_probes.push(probe);
     }
-    completed_probes.sort_by_key(|(index, _, _)| *index);
+    completed_probes.sort_by_key(|(index, _, _, _)| *index);
 
-    let mut candidate_groups: Vec<Vec<(&str, Vec<u8>)>> = Vec::new();
-    for (_, url, probe_result) in completed_probes {
+    let mut candidate_groups: Vec<Vec<(usize, &str, Vec<u8>)>> = Vec::new();
+    for (index, url, probe_result, _) in &completed_probes {
         if let Ok(probe) = probe_result {
             if let Some(group) = candidate_groups
                 .iter_mut()
-                .find(|group| group[0].1 == probe.bytes && same_path_query(group[0].0, url))
+                .find(|group| group[0].2 == probe.bytes && same_path_query(group[0].1, url))
             {
-                group.push((url, probe.bytes));
+                group.push((*index, url, probe.bytes.clone()));
             } else {
-                candidate_groups.push(vec![(url, probe.bytes)]);
+                candidate_groups.push(vec![(*index, url, probe.bytes.clone())]);
             }
         }
     }
     if candidate_groups.is_empty() {
+        for (_, _, probe_result, observer) in &completed_probes {
+            if let (Err(error), Some(observer)) = (probe_result, observer) {
+                observer.diagnostic(DownloadTransferDiagnostic::CandidateExcluded {
+                    reason: candidate_exclusion_reason(error),
+                });
+            }
+        }
         return Err(invalid("no CDN candidate passed the range probe"));
     }
     let mut largest_group_index = 0;
@@ -224,11 +396,33 @@ where
             largest_group_index = index;
         }
     }
-    let candidates: Vec<&str> = candidate_groups
-        .swap_remove(largest_group_index)
-        .into_iter()
-        .map(|(url, _)| url)
-        .collect();
+    let winner_group = candidate_groups.swap_remove(largest_group_index);
+    let winner_url = winner_group[0].1;
+    let winner_sample = winner_group[0].2.clone();
+    let winner_indices: Vec<usize> = winner_group.iter().map(|(index, _, _)| *index).collect();
+    let candidates: Vec<&str> = winner_group.into_iter().map(|(_, url, _)| url).collect();
+    for (index, url, probe_result, observer) in &completed_probes {
+        let Some(observer) = observer else { continue };
+        let diagnostic = if winner_indices.contains(index) {
+            DownloadTransferDiagnostic::CandidateSelected
+        } else if let Ok(probe) = probe_result {
+            let reason = if !same_path_query(winner_url, url) {
+                CdnCandidateExclusionReason::PathQueryMismatch
+            } else if probe.bytes != winner_sample {
+                CdnCandidateExclusionReason::SampleMismatch
+            } else {
+                CdnCandidateExclusionReason::OutsideWinningGroup
+            };
+            DownloadTransferDiagnostic::CandidateExcluded { reason }
+        } else if let Err(error) = probe_result {
+            DownloadTransferDiagnostic::CandidateExcluded {
+                reason: candidate_exclusion_reason(error),
+            }
+        } else {
+            continue;
+        };
+        observer.diagnostic(diagnostic);
+    }
 
     let chunk_count = expected_total.div_ceil(chunk_size);
     let concurrency = u64::try_from(concurrency)
@@ -252,6 +446,7 @@ where
             chunk_size,
             request_timeout,
             idle_timeout,
+            transfer_reporter,
             next_chunk,
             lane,
             preferred_source,
@@ -277,6 +472,7 @@ where
                 chunk_size,
                 request_timeout,
                 idle_timeout,
+                transfer_reporter,
                 next_chunk,
                 lane,
                 lane_sources[lane],
@@ -290,7 +486,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)] // This mirrors the explicit Range request context.
-fn schedule_chunk<'a>(
+fn schedule_chunk<'a, 'p, P>(
     client: &'a reqwest::Client,
     candidates: &'a [&'a str],
     headers: HeaderMap,
@@ -298,18 +494,29 @@ fn schedule_chunk<'a>(
     chunk_size: u64,
     request_timeout: Duration,
     idle_timeout: Option<Duration>,
+    transfer_reporter: &'a TransferReporter<'p, P>,
     chunk_index: u64,
     lane: usize,
     preferred_source: usize,
-) -> BoxFuture<'a, (u64, usize, usize, Result<RangeFetch>)> {
+) -> BoxFuture<'a, (u64, usize, usize, Result<RangeFetch>)>
+where
+    P: DownloadProgressSink + ?Sized,
+    'p: 'a,
+{
     async move {
         let start = chunk_index * chunk_size;
         let end = expected_total.min(start.saturating_add(chunk_size)) - 1;
         let candidate_index = preferred_source % candidates.len();
         let mut last_error = None;
+        let mut retry_reason = None;
         for offset in 0..candidates.len() {
             let index = (candidate_index + offset) % candidates.len();
-            match fetch_range(
+            let observer = transfer_reporter.begin_request(
+                candidates[index],
+                DownloadTransferPhase::RangeChunk,
+                retry_reason,
+            );
+            match fetch_range_with_observer(
                 client,
                 candidates[index],
                 headers.clone(),
@@ -318,11 +525,15 @@ fn schedule_chunk<'a>(
                 Some(expected_total),
                 request_timeout,
                 idle_timeout,
+                observer.as_ref(),
             )
             .await
             {
                 Ok(fetched) => return (chunk_index, lane, index, Ok(fetched)),
-                Err(error) => last_error = Some(error),
+                Err(error) => {
+                    retry_reason = Some(range_failure_reason(&error));
+                    last_error = Some(error);
+                }
             }
         }
         (
@@ -344,13 +555,116 @@ fn same_path_query(left: &str, right: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{
+        sync::{
+            atomic::{AtomicBool, AtomicU64, Ordering},
+            mpsc,
+        },
+        time::Duration,
+    };
 
     use httpmock::prelude::*;
     use httpmock::{HttpMockRequest, HttpMockResponse};
     use reqwest::header::{CONTENT_LENGTH, CONTENT_RANGE, HeaderMap};
 
-    use super::fetch_range;
+    use super::{fetch_range, fetch_range_with_observer};
+    use crate::progress::{
+        CdnCandidateExclusionReason, DownloadProgressEvent, DownloadTransferDiagnostic,
+        DownloadTransferFailureReason, DownloadTransferPhase, DownloadTransferRequestOutcome,
+        TransferReporter,
+    };
+
+    fn raw_response_server(
+        response: &'static [u8],
+        body_observed: mpsc::Receiver<()>,
+    ) -> std::io::Result<(String, std::thread::JoinHandle<std::io::Result<()>>)> {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let address = listener.local_addr()?;
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept()?;
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request)?;
+            stream.write_all(response)?;
+            stream.flush()?;
+            body_observed
+                .recv_timeout(Duration::from_secs(10))
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::TimedOut, error))?;
+            Ok(())
+        });
+        Ok((format!("http://{address}/asset"), server))
+    }
+
+    fn read_request_headers(stream: &mut std::net::TcpStream) -> std::io::Result<String> {
+        use std::io::Read;
+
+        let mut request = Vec::new();
+        let mut buffer = [0_u8; 1024];
+        loop {
+            let read = stream.read(&mut buffer)?;
+            if read == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "client closed before sending request headers",
+                ));
+            }
+            request.extend_from_slice(&buffer[..read]);
+            if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                return String::from_utf8(request)
+                    .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error));
+            }
+            if request.len() > 16 * 1024 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "request headers exceeded test limit",
+                ));
+            }
+        }
+    }
+
+    fn observe_partial_body(
+        event: &DownloadProgressEvent,
+        expected_bytes: u64,
+        received: &AtomicU64,
+        acknowledgement_sent: &AtomicBool,
+        acknowledgement: &mpsc::Sender<()>,
+    ) {
+        let DownloadProgressEvent::TransferBytesReceived { bytes_delta, .. } = event else {
+            return;
+        };
+        let total = received
+            .fetch_add(*bytes_delta, Ordering::Relaxed)
+            .saturating_add(*bytes_delta);
+        if total >= expected_bytes && !acknowledgement_sent.swap(true, Ordering::Relaxed) {
+            let _ = acknowledgement.send(());
+        }
+    }
+
+    fn received_bytes(
+        events: &[DownloadProgressEvent],
+    ) -> (u64, Vec<DownloadTransferFailureReason>) {
+        let mut total = 0_u64;
+        let mut reasons = Vec::new();
+        for event in events {
+            match event {
+                DownloadProgressEvent::TransferBytesReceived { bytes_delta, .. } => {
+                    total = total.saturating_add(*bytes_delta);
+                }
+                DownloadProgressEvent::TransferDiagnostic {
+                    diagnostic:
+                        DownloadTransferDiagnostic::RequestFinished {
+                            outcome: DownloadTransferRequestOutcome::Failed { reason },
+                            ..
+                        },
+                    ..
+                } => reasons.push(*reason),
+                _ => {}
+            }
+        }
+        (total, reasons)
+    }
 
     #[derive(Default)]
     struct ChunkOverlapState {
@@ -366,8 +680,8 @@ mod tests {
             2,
             4,
             Some(10),
-            Duration::from_secs(2),
-            Some(Duration::from_secs(2)),
+            Duration::from_secs(10),
+            Some(Duration::from_secs(10)),
         )
         .await
     }
@@ -555,6 +869,115 @@ mod tests {
         Ok(())
     }
 
+    #[allow(clippy::too_many_lines)] // Keep synchronized response fixtures beside byte assertions.
+    #[tokio::test]
+    async fn transfer_events_count_consumed_truncated_oversized_and_stalled_range_bytes()
+    -> anyhow::Result<()> {
+        let cases: [(&'static [u8], u64, DownloadTransferFailureReason); 2] = [
+            (
+                b"HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 2-4/10\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n2\r\nab\r\n0\r\n\r\n",
+                2,
+                DownloadTransferFailureReason::IncompleteBody,
+            ),
+            (
+                b"HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 2-4/10\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n4\r\nabcd\r\n0\r\n\r\n",
+                4,
+                DownloadTransferFailureReason::OversizedBody,
+            ),
+        ];
+        for (response, expected_bytes, expected_reason) in cases {
+            let (body_observed_sender, body_observed_receiver) = mpsc::channel();
+            let (url, server) = raw_response_server(response, body_observed_receiver)?;
+            let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let sink_events = std::sync::Arc::clone(&events);
+            let received = std::sync::Arc::new(AtomicU64::new(0));
+            let observed_total = std::sync::Arc::clone(&received);
+            let acknowledgement_sent = std::sync::Arc::new(AtomicBool::new(false));
+            let acknowledgement_state = std::sync::Arc::clone(&acknowledgement_sent);
+            let sink = move |event: &DownloadProgressEvent| match sink_events.lock() {
+                Ok(mut events) => {
+                    observe_partial_body(
+                        event,
+                        expected_bytes,
+                        &observed_total,
+                        &acknowledgement_state,
+                        &body_observed_sender,
+                    );
+                    events.push(event.clone());
+                }
+                Err(poisoned) => {
+                    observe_partial_body(
+                        event,
+                        expected_bytes,
+                        &observed_total,
+                        &acknowledgement_state,
+                        &body_observed_sender,
+                    );
+                    poisoned.into_inner().push(event.clone());
+                }
+            };
+            let reporter = TransferReporter::new(&sink, None, None, None, None);
+            let observer = reporter.begin_request(&url, DownloadTransferPhase::RangeChunk, None);
+            let result = fetch_range_with_observer(
+                &reqwest::Client::new(),
+                &url,
+                HeaderMap::new(),
+                2,
+                4,
+                Some(10),
+                Duration::from_secs(2),
+                Some(Duration::from_secs(2)),
+                observer.as_ref(),
+            )
+            .await;
+            server
+                .join()
+                .map_err(|_| anyhow::anyhow!("raw response server panicked"))??;
+            assert!(result.is_err());
+            let snapshot = match events.lock() {
+                Ok(events) => events.clone(),
+                Err(poisoned) => poisoned.into_inner().clone(),
+            };
+            let (total, reasons) = received_bytes(&snapshot);
+            assert_eq!(total, expected_bytes);
+            assert_eq!(reasons, vec![expected_reason]);
+        }
+
+        let (url, server) = delayed_body_server(Duration::from_millis(1_100))?;
+        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink_events = std::sync::Arc::clone(&events);
+        let sink = move |event: &DownloadProgressEvent| match sink_events.lock() {
+            Ok(mut events) => events.push(event.clone()),
+            Err(poisoned) => poisoned.into_inner().push(event.clone()),
+        };
+        let reporter = TransferReporter::new(&sink, None, None, None, None);
+        let observer = reporter.begin_request(&url, DownloadTransferPhase::RangeChunk, None);
+        let result = fetch_range_with_observer(
+            &reqwest::Client::new(),
+            &url,
+            HeaderMap::new(),
+            2,
+            4,
+            Some(10),
+            Duration::from_secs(3),
+            Some(Duration::from_millis(100)),
+            observer.as_ref(),
+        )
+        .await;
+        server
+            .join()
+            .map_err(|_| anyhow::anyhow!("delayed response server panicked"))??;
+        assert!(result.is_err());
+        let snapshot = match events.lock() {
+            Ok(events) => events.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        };
+        let (total, reasons) = received_bytes(&snapshot);
+        assert_eq!(total, 1);
+        assert_eq!(reasons, vec![DownloadTransferFailureReason::BodyStalled]);
+        Ok(())
+    }
+
     fn add_media_server(
         server: &MockServer,
         body: String,
@@ -612,12 +1035,30 @@ mod tests {
             expected_total,
             2,
             10_000,
-            Duration::from_secs(2),
-            Some(Duration::from_secs(2)),
+            Duration::from_secs(10),
+            Some(Duration::from_secs(10)),
             dest_dir,
             on_chunk,
         )
         .await
+    }
+
+    fn assert_downloaded_bytes(actual: &[u8], expected: &[u8]) {
+        if actual != expected {
+            let first_difference = actual
+                .iter()
+                .zip(expected)
+                .position(|(actual, expected)| actual != expected)
+                .unwrap_or_else(|| actual.len().min(expected.len()));
+            assert!(
+                actual == expected,
+                "downloaded bytes differ: actual_len={}, expected_len={}, first_difference={first_difference}, actual_byte={:?}, expected_byte={:?}",
+                actual.len(),
+                expected.len(),
+                actual.get(first_difference),
+                expected.get(first_difference),
+            );
+        }
     }
 
     #[tokio::test]
@@ -968,7 +1409,7 @@ mod tests {
             completed.push((bytes, source.to_owned()));
         })
         .await?;
-        assert_eq!(std::fs::read(path)?, body.as_bytes());
+        assert_downloaded_bytes(&std::fs::read(path)?, body.as_bytes());
         assert_eq!(canonical_mock.calls(), 3);
         assert_eq!(alternate_mock.calls(), 2);
         assert_eq!(
@@ -977,6 +1418,282 @@ mod tests {
         );
         assert_eq!(completed.len(), 2);
         assert!(completed.iter().all(|(_, source)| source == &urls[0]));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reports_candidate_compatibility_reasons_with_host_only_context() -> anyhow::Result<()>
+    {
+        let canonical = MockServer::start();
+        let alternate = MockServer::start();
+        let outlier = MockServer::start();
+        let body = "p".repeat(20_000);
+        let different_body = "q".repeat(20_000);
+        add_media_server(&canonical, body.clone(), Vec::new(), None);
+        add_media_server(&alternate, body.clone(), Vec::new(), None);
+        add_media_server(&outlier, different_body, Vec::new(), None);
+        // Keep each lease alive for the whole request sequence. Dropping a MockServer returns
+        // its server to httpmock's shared pool, where another parallel test may reset it.
+        let servers = [canonical, alternate, outlier];
+        let urls = servers
+            .iter()
+            .map(|server| format!("{}?token=codex_synth_v1_bearer_a", server.url("/media")))
+            .collect::<Vec<_>>();
+        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink_events = std::sync::Arc::clone(&events);
+        let sink = move |event: &DownloadProgressEvent| match sink_events.lock() {
+            Ok(mut events) => events.push(event.clone()),
+            Err(poisoned) => poisoned.into_inner().push(event.clone()),
+        };
+        let reporter = TransferReporter::new(&sink, None, None, None, None);
+        let dir = tempfile::tempdir()?;
+        let path = super::download_sharded_to_temp_with_progress(
+            &reqwest::Client::new(),
+            &urls,
+            HeaderMap::new(),
+            20_000,
+            2,
+            10_000,
+            Duration::from_secs(10),
+            Some(Duration::from_secs(10)),
+            dir.path(),
+            &reporter,
+            |_, _| {},
+        )
+        .await?;
+        assert_downloaded_bytes(&std::fs::read(path)?, body.as_bytes());
+        let snapshot = match events.lock() {
+            Ok(events) => events.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        };
+        let selected = snapshot
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    DownloadProgressEvent::TransferDiagnostic {
+                        diagnostic: DownloadTransferDiagnostic::CandidateSelected,
+                        ..
+                    }
+                )
+            })
+            .count();
+        let excluded = snapshot
+            .iter()
+            .filter_map(|event| match event {
+                DownloadProgressEvent::TransferDiagnostic {
+                    diagnostic: DownloadTransferDiagnostic::CandidateExcluded { reason },
+                    host: Some(host),
+                    ..
+                } => Some((*reason, host)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(selected, 2);
+        assert_eq!(excluded.len(), 1);
+        assert_eq!(excluded[0].0, CdnCandidateExclusionReason::SampleMismatch);
+        assert!(excluded[0].1.starts_with("127.0.0.1:"));
+        let serialized = serde_json::to_string(&snapshot)?;
+        assert!(!serialized.contains("codex_synth_v1_bearer_a"));
+        assert!(!serialized.contains("/media"));
+        assert!(serialized.contains("sample_mismatch"));
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_lines)] // One fixture verifies request IDs, partial bytes, and retry ordering.
+    #[tokio::test]
+    async fn partial_range_attempt_counts_before_alternate_candidate_retries() -> anyhow::Result<()>
+    {
+        use std::{io::Write, net::TcpListener};
+
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let address = listener.local_addr()?;
+        let first_host = format!("127.0.0.1:{}", address.port());
+        let body = format!("{}{}", "a".repeat(10_000), "b".repeat(10_000));
+        let body_for_server = body.clone();
+        let (partial_observed_sender, partial_observed_receiver) = mpsc::channel();
+        let first_server = std::thread::spawn(move || -> std::io::Result<()> {
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept()?;
+                let request = read_request_headers(&mut stream)?;
+                let range = request.lines().find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("range")
+                        .then(|| value.trim().to_owned())
+                });
+                match range.as_deref() {
+                    Some("bytes=0-16383") => {
+                        stream.write_all(
+                            b"HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 0-16383/20000\r\nContent-Length: 16384\r\nConnection: close\r\n\r\n",
+                        )?;
+                        stream.write_all(&body_for_server.as_bytes()[..16 * 1024])?;
+                    }
+                    Some("bytes=0-9999") => {
+                        stream.write_all(
+                            b"HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 0-9999/20000\r\nContent-Length: 10000\r\nConnection: close\r\n\r\n",
+                        )?;
+                        stream.write_all(b"aaaaaaa")?;
+                        stream.flush()?;
+                        partial_observed_receiver
+                            .recv_timeout(Duration::from_secs(10))
+                            .map_err(|error| {
+                                std::io::Error::new(std::io::ErrorKind::TimedOut, error)
+                            })?;
+                    }
+                    other => {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("unexpected range request: {other:?}"),
+                        ));
+                    }
+                }
+                stream.flush()?;
+            }
+            Ok(())
+        });
+        let alternate = MockServer::start();
+        let alternate_mock = add_media_server(&alternate, body.clone(), Vec::new(), None);
+        let token = "codex_synth_v1_bearer_a";
+        let urls = vec![
+            format!("http://{address}/media?token={token}"),
+            format!("{}?token={token}", alternate.url("/media")),
+        ];
+        let alternate_parsed = url::Url::parse(&urls[1])?;
+        let alternate_host = format!(
+            "{}:{}",
+            alternate_parsed
+                .host_str()
+                .ok_or_else(|| anyhow::anyhow!("alternate URL has no host"))?,
+            alternate_parsed
+                .port()
+                .ok_or_else(|| anyhow::anyhow!("alternate URL has no port"))?
+        );
+        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink_events = std::sync::Arc::clone(&events);
+        let partial_bytes = std::sync::Arc::new(AtomicU64::new(0));
+        let partial_bytes_seen = std::sync::Arc::clone(&partial_bytes);
+        let acknowledgement_sent = std::sync::Arc::new(AtomicBool::new(false));
+        let acknowledgement_state = std::sync::Arc::clone(&acknowledgement_sent);
+        let sink = move |event: &DownloadProgressEvent| {
+            if let DownloadProgressEvent::TransferBytesReceived {
+                phase: DownloadTransferPhase::RangeChunk,
+                host: Some(host),
+                bytes_delta,
+                ..
+            } = event
+                && host == &first_host
+            {
+                let received = partial_bytes_seen
+                    .fetch_add(*bytes_delta, Ordering::Relaxed)
+                    .saturating_add(*bytes_delta);
+                if received >= 7 && !acknowledgement_state.swap(true, Ordering::Relaxed) {
+                    let _ = partial_observed_sender.send(());
+                }
+            }
+            match sink_events.lock() {
+                Ok(mut events) => events.push(event.clone()),
+                Err(poisoned) => poisoned.into_inner().push(event.clone()),
+            }
+        };
+        let kind = crate::DownloadFileKind::Video;
+        let temp = tempfile::tempdir()?;
+        let output_path = temp.path().join("partial-retry.m4s");
+        let reporter = TransferReporter::new(
+            &sink,
+            Some(3),
+            Some("Partial retry fixture"),
+            Some(&kind),
+            Some(&output_path),
+        );
+        let assembled = super::download_sharded_to_temp_with_progress(
+            &reqwest::Client::new(),
+            &urls,
+            HeaderMap::new(),
+            20_000,
+            2,
+            10_000,
+            Duration::from_secs(10),
+            Some(Duration::from_secs(10)),
+            temp.path(),
+            &reporter,
+            |_, _| {},
+        )
+        .await?;
+        first_server
+            .join()
+            .map_err(|_| anyhow::anyhow!("partial range server panicked"))??;
+        assert_eq!(std::fs::read(assembled)?, body.as_bytes());
+        assert_eq!(alternate_mock.calls(), 3);
+
+        let events = match events.lock() {
+            Ok(events) => events.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        };
+        let received_by_phase = events
+            .iter()
+            .filter_map(|event| match event {
+                DownloadProgressEvent::TransferBytesReceived {
+                    phase, bytes_delta, ..
+                } => Some((*phase, *bytes_delta)),
+                _ => None,
+            })
+            .fold(
+                std::collections::BTreeMap::new(),
+                |mut totals, (phase, bytes)| {
+                    *totals.entry(format!("{phase:?}")).or_insert(0_u64) += bytes;
+                    totals
+                },
+            );
+        assert_eq!(received_by_phase.get("ShardProbe"), Some(&32_768));
+        assert_eq!(received_by_phase.get("RangeChunk"), Some(&20_007));
+        assert_eq!(received_by_phase.values().sum::<u64>(), 52_775);
+        let failed_request_id = events.iter().find_map(|event| match event {
+            DownloadProgressEvent::TransferDiagnostic {
+                request_id: Some(request_id),
+                phase: Some(DownloadTransferPhase::RangeChunk),
+                diagnostic:
+                    DownloadTransferDiagnostic::RequestFinished {
+                        outcome:
+                            DownloadTransferRequestOutcome::Failed {
+                                reason: DownloadTransferFailureReason::BodyReadFailed,
+                            },
+                        bytes_received: 7,
+                    },
+                host: Some(host),
+                ..
+            } if host == &format!("127.0.0.1:{}", address.port()) => Some(*request_id),
+            _ => None,
+        });
+        assert!(failed_request_id.is_some());
+        let retried_request_id = events.iter().find_map(|event| match event {
+            DownloadProgressEvent::TransferDiagnostic {
+                request_id: Some(request_id),
+                phase: Some(DownloadTransferPhase::RangeChunk),
+                diagnostic:
+                    DownloadTransferDiagnostic::RetryScheduled {
+                        reason: DownloadTransferFailureReason::BodyReadFailed,
+                    },
+                host: Some(host),
+                ..
+            } if host == &alternate_host => Some(*request_id),
+            _ => None,
+        });
+        assert!(retried_request_id.is_some());
+        let request_ids = events
+            .iter()
+            .filter_map(|event| match event {
+                DownloadProgressEvent::TransferDiagnostic {
+                    request_id: Some(request_id),
+                    diagnostic: DownloadTransferDiagnostic::RequestFinished { .. },
+                    ..
+                } => Some(*request_id),
+                _ => None,
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(request_ids, (1..=5).collect());
+        let serialized = serde_json::to_string(&events)?;
+        assert!(!serialized.contains(token));
+        assert!(!serialized.contains("/media"));
         Ok(())
     }
 
@@ -993,9 +1710,12 @@ mod tests {
         let urls = vec![canonical.url("/media"), alternate.url("/media")];
 
         let path = sharded(&urls, 20_000, dir.path(), |_, _| {}).await?;
-        let assembled = std::fs::read(path)?;
-        assert_eq!(&assembled[..10_000], &canonical_body.as_bytes()[..10_000]);
-        assert_eq!(&assembled[10_000..], &alternate_body.as_bytes()[10_000..]);
+        let expected = [
+            &canonical_body.as_bytes()[..10_000],
+            &alternate_body.as_bytes()[10_000..],
+        ]
+        .concat();
+        assert_downloaded_bytes(&std::fs::read(path)?, &expected);
         assert_eq!(canonical_mock.calls(), 2);
         assert_eq!(alternate_mock.calls(), 2);
         Ok(())

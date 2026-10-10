@@ -3341,7 +3341,52 @@ fn download_progress_json_writes_events_to_stderr() -> anyhow::Result<()> {
     assert!(events.iter().any(|event| {
         event["type"] == "file_completed" && event["kind"] == "audio" && event["total_bytes"] == 5
     }));
+    let media_host = server_authority(&server)?;
+    let video_body_event = events
+        .iter()
+        .find(|event| {
+            event["type"] == "transfer_bytes_received"
+                && event["kind"] == "video"
+                && event["phase"] == "whole_file"
+                && event["bytes_delta"] == 5
+        })
+        .ok_or_else(|| anyhow::anyhow!("missing video transfer byte event"))?;
+    assert_eq!(video_body_event["bytes_received"], 5);
+    assert_eq!(video_body_event["host"], media_host);
+    assert_eq!(video_body_event["entry_index"], 1);
+    let video_request_id = video_body_event["request_id"].clone();
+    assert!(events.iter().any(|event| {
+        event["type"] == "transfer_diagnostic"
+            && event["request_id"] == video_request_id
+            && event["phase"] == "whole_file"
+            && event["host"] == media_host
+            && event["diagnostic"]["event"] == "request_finished"
+            && event["diagnostic"]["outcome"]["status"] == "succeeded"
+            && event["diagnostic"]["bytes_received"] == 5
+    }));
     assert!(events.iter().any(|event| event["type"] == "plan_completed"));
+
+    let human_output_dir = temp.path().join("human-downloads");
+    let human_output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("download")
+        .arg("av170001")
+        .arg("--output-dir")
+        .arg(&human_output_dir)
+        .arg("--no-subtitles")
+        .arg("--no-danmaku")
+        .arg("--no-mux")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let human_stderr = String::from_utf8(human_output.stderr)?;
+    assert!(!human_stderr.contains("transfer_bytes_received"));
+    assert!(!human_stderr.contains("transfer_diagnostic"));
     Ok(())
 }
 

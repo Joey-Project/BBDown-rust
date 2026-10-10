@@ -3,7 +3,12 @@ use crate::{
     Result, Selection, SubtitleFormat, SubtitleTrack,
     cancellation::DownloadCancellationToken,
     danmaku::{self, DanmakuFormat, DanmakuFormats},
-    progress::{DownloadProgressEvent, DownloadProgressSink, NoopDownloadProgress},
+    progress::{
+        DownloadProgressEvent, DownloadProgressSink, DownloadTransferDiagnostic,
+        DownloadTransferFailureReason, DownloadTransferFallbackReason, DownloadTransferPhase,
+        DownloadTransferRequestOutcome, NoopDownloadProgress, TransferReporter,
+        TransferRequestReporter,
+    },
 };
 use futures_util::StreamExt;
 use md5::{Digest, Md5};
@@ -486,12 +491,16 @@ pub struct CdnProbeResult {
     pub error: Option<String>,
 }
 
-async fn probe_candidate_bytes(
+async fn probe_candidate_bytes<P>(
     client: &BiliClient,
     url: &str,
     headers: &reqwest::header::HeaderMap,
     known_size: Option<u64>,
-) -> Result<(u64, u64, u64, Duration)> {
+    transfer_reporter: &TransferReporter<'_, P>,
+) -> Result<(u64, u64, u64, Duration)>
+where
+    P: DownloadProgressSink + ?Sized,
+{
     if let Some(size) = known_size {
         if size == 0 {
             return Err(Error::InvalidInput(
@@ -499,7 +508,9 @@ async fn probe_candidate_bytes(
             ));
         }
         let end = size.min(CDN_PUBLIC_PROBE_MAX_BYTES) - 1;
-        let sample = crate::range_transfer::fetch_range(
+        let observer =
+            transfer_reporter.begin_request(url, DownloadTransferPhase::StandaloneProbe, None);
+        let sample = crate::range_transfer::fetch_range_with_observer(
             &client.http,
             url,
             headers.clone(),
@@ -508,13 +519,16 @@ async fn probe_candidate_bytes(
             Some(size),
             CDN_PROBE_REQUEST_TIMEOUT,
             Some(CDN_PROBE_IDLE_TIMEOUT),
+            observer.as_ref(),
         )
         .await?;
         let bytes = sample.bytes.len() as u64;
         return Ok((sample.total_size, bytes, bytes, sample.elapsed));
     }
 
-    let discovery = crate::range_transfer::fetch_range(
+    let discovery_observer =
+        transfer_reporter.begin_request(url, DownloadTransferPhase::StandaloneProbe, None);
+    let discovery = crate::range_transfer::fetch_range_with_observer(
         &client.http,
         url,
         headers.clone(),
@@ -523,6 +537,7 @@ async fn probe_candidate_bytes(
         None,
         CDN_PROBE_REQUEST_TIMEOUT,
         Some(CDN_PROBE_IDLE_TIMEOUT),
+        discovery_observer.as_ref(),
     )
     .await?;
     let total_size = discovery.total_size;
@@ -530,7 +545,9 @@ async fn probe_candidate_bytes(
     if sample_end == 0 {
         return Ok((total_size, 1, 0, discovery.elapsed));
     }
-    let sample = crate::range_transfer::fetch_range(
+    let sample_observer =
+        transfer_reporter.begin_request(url, DownloadTransferPhase::StandaloneProbe, None);
+    let sample = crate::range_transfer::fetch_range_with_observer(
         &client.http,
         url,
         headers.clone(),
@@ -539,6 +556,7 @@ async fn probe_candidate_bytes(
         Some(total_size),
         CDN_PROBE_REQUEST_TIMEOUT,
         Some(CDN_PROBE_IDLE_TIMEOUT),
+        sample_observer.as_ref(),
     )
     .await?;
     let measured_bytes = sample.bytes.len() as u64;
@@ -559,8 +577,23 @@ pub async fn probe_media_cdns(
     stream: &MediaStream,
     media_hosts: &MediaHostOptions,
 ) -> Result<Vec<CdnProbeResult>> {
+    probe_media_cdns_with_progress(client, stream, media_hosts, &NoopDownloadProgress).await
+}
+
+/// Measures bounded CDN prefix ranges and reports consumed response-body bytes to a progress sink.
+/// Standalone probe events have no entry or file context; their request IDs are local to this call.
+pub async fn probe_media_cdns_with_progress<P>(
+    client: &BiliClient,
+    stream: &MediaStream,
+    media_hosts: &MediaHostOptions,
+    progress: &P,
+) -> Result<Vec<CdnProbeResult>>
+where
+    P: DownloadProgressSink + ?Sized,
+{
     let urls = candidate_urls(&stream.base_url, &stream.backup_urls, media_hosts);
     let headers = client.media_headers()?;
+    let transfer_reporter = TransferReporter::new(progress, None, None, None, None);
     let mut results = Vec::with_capacity(urls.len().min(CDN_PROBE_MAX_CANDIDATES));
     for url in urls.iter().take(CDN_PROBE_MAX_CANDIDATES) {
         let host = url::Url::parse(url)
@@ -569,7 +602,8 @@ pub async fn probe_media_cdns(
             .unwrap_or_else(|| "invalid URL".to_owned());
         let known_size = stream.size.filter(|size| *size > 0);
         let begin = std::time::Instant::now();
-        let probe = probe_candidate_bytes(client, url, &headers, known_size).await;
+        let probe =
+            probe_candidate_bytes(client, url, &headers, known_size, &transfer_reporter).await;
         match probe {
             Ok((total_size, bytes, measured_bytes, elapsed)) => results.push(CdnProbeResult {
                 host,
@@ -2019,20 +2053,33 @@ impl BiliClient {
         let path = entry_dir.join(media_file_name(label, stream));
         let mut urls = candidate_urls(&stream.base_url, &stream.backup_urls, &options.media_hosts);
         let mut shard_expected_size = stream.size;
+        let request = DownloadFileRequest::new(entry, &path, kind.clone(), stream.size);
+        let transfer_reporter = TransferReporter::new(
+            context.progress,
+            Some(entry.index),
+            Some(&entry.title),
+            Some(&kind),
+            Some(&path),
+        );
         if should_probe_media_candidates(&path, options).await? {
             (urls, shard_expected_size) = self
-                .probe_media_candidates(urls, shard_expected_size, options.download_idle_timeout)
+                .probe_media_candidates_with_progress(
+                    urls,
+                    shard_expected_size,
+                    options.download_idle_timeout,
+                    &transfer_reporter,
+                )
                 .await;
         }
-        let request = DownloadFileRequest::new(entry, &path, kind.clone(), stream.size);
         let shard_request = DownloadFileRequest::new(entry, &path, kind, shard_expected_size);
         if let Some(file) = self
-            .try_download_sharded(
+            .try_download_sharded_with_progress(
                 &urls,
                 &shard_request,
                 options,
                 context.progress,
                 context.cancellation,
+                &transfer_reporter,
             )
             .await?
         {
@@ -2044,10 +2091,12 @@ impl BiliClient {
             options,
             context.progress,
             context.cancellation,
+            &transfer_reporter,
         )
         .await
     }
 
+    #[cfg(test)]
     #[allow(clippy::too_many_lines)]
     async fn probe_media_candidates(
         &self,
@@ -2055,6 +2104,23 @@ impl BiliClient {
         expected_size: Option<u64>,
         idle_timeout: Option<Duration>,
     ) -> (Vec<String>, Option<u64>) {
+        let progress = NoopDownloadProgress;
+        let reporter = TransferReporter::new(&progress, None, None, None, None);
+        self.probe_media_candidates_with_progress(urls, expected_size, idle_timeout, &reporter)
+            .await
+    }
+
+    #[allow(clippy::too_many_lines)]
+    async fn probe_media_candidates_with_progress<P>(
+        &self,
+        urls: Vec<String>,
+        expected_size: Option<u64>,
+        idle_timeout: Option<Duration>,
+        transfer_reporter: &TransferReporter<'_, P>,
+    ) -> (Vec<String>, Option<u64>)
+    where
+        P: DownloadProgressSink + ?Sized,
+    {
         let probe_count = urls.len().min(CDN_PROBE_MAX_CANDIDATES);
         if probe_count == 0 {
             return (urls, expected_size);
@@ -2071,16 +2137,26 @@ impl BiliClient {
         if total_size.is_none() {
             let discoveries =
                 futures_util::future::join_all(urls.iter().take(probe_count).map(|url| {
-                    crate::range_transfer::fetch_range(
-                        &self.http,
+                    let headers = headers.clone();
+                    let observer = transfer_reporter.begin_request(
                         url,
-                        headers.clone(),
-                        0,
-                        0,
+                        DownloadTransferPhase::AutomaticProbe,
                         None,
-                        CDN_PROBE_REQUEST_TIMEOUT,
-                        Some(idle_timeout),
-                    )
+                    );
+                    async move {
+                        crate::range_transfer::fetch_range_with_observer(
+                            &self.http,
+                            url,
+                            headers,
+                            0,
+                            0,
+                            None,
+                            CDN_PROBE_REQUEST_TIMEOUT,
+                            Some(idle_timeout),
+                            observer.as_ref(),
+                        )
+                        .await
+                    }
                 }))
                 .await;
             for (index, result) in discoveries.into_iter().enumerate() {
@@ -2119,7 +2195,12 @@ impl BiliClient {
                                     elapsed: discovery_elapsed,
                                 }))
                             } else {
-                                crate::range_transfer::fetch_range(
+                                let observer = transfer_reporter.begin_request(
+                                    url,
+                                    DownloadTransferPhase::AutomaticProbe,
+                                    None,
+                                );
+                                crate::range_transfer::fetch_range_with_observer(
                                     &self.http,
                                     url,
                                     headers.clone(),
@@ -2128,6 +2209,7 @@ impl BiliClient {
                                     Some(total_size),
                                     CDN_PROBE_REQUEST_TIMEOUT,
                                     Some(idle_timeout),
+                                    observer.as_ref(),
                                 )
                                 .await
                                 .map(|mut result| {
@@ -2144,7 +2226,12 @@ impl BiliClient {
                         } else if discovering_size {
                             None
                         } else {
-                            crate::range_transfer::fetch_range(
+                            let observer = transfer_reporter.begin_request(
+                                url,
+                                DownloadTransferPhase::AutomaticProbe,
+                                None,
+                            );
+                            crate::range_transfer::fetch_range_with_observer(
                                 &self.http,
                                 url,
                                 headers.clone(),
@@ -2153,6 +2240,7 @@ impl BiliClient {
                                 Some(total_size),
                                 CDN_PROBE_REQUEST_TIMEOUT,
                                 Some(idle_timeout),
+                                observer.as_ref(),
                             )
                             .await
                             .into()
@@ -2222,17 +2310,19 @@ impl BiliClient {
         (ordered, Some(total_size))
     }
 
-    #[allow(clippy::too_many_lines)]
-    async fn try_download_sharded<P>(
+    #[allow(clippy::too_many_lines)] // Keep range fallback and publication ordering together.
+    async fn try_download_sharded_with_progress<P, Q>(
         &self,
         urls: &[String],
         request: &DownloadFileRequest<'_>,
         options: &DownloadOptions,
         progress: &P,
         cancellation: &DownloadCancellationToken,
+        transfer_reporter: &TransferReporter<'_, Q>,
     ) -> Result<Option<DownloadedFile>>
     where
         P: DownloadProgressSink + ?Sized,
+        Q: DownloadProgressSink + ?Sized,
     {
         let Some(expected_size) = request.expected_size.filter(|size| *size > 0) else {
             return Ok(None);
@@ -2263,7 +2353,7 @@ impl BiliClient {
         let attempt = DownloadAttempt { current: 1, max: 1 };
         emit_file_started(progress, request, 0, Some(expected_size), attempt);
         let mut staged_progress = Vec::new();
-        let shard_future = crate::range_transfer::download_sharded_to_temp(
+        let shard_future = crate::range_transfer::download_sharded_to_temp_with_progress(
             &self.http,
             urls,
             headers,
@@ -2273,6 +2363,7 @@ impl BiliClient {
             self.config.request_timeout,
             options.download_idle_timeout,
             dest_dir,
+            transfer_reporter,
             |bytes_delta, source_url| {
                 staged_progress.push((bytes_delta, cdn_host_label(source_url)));
             },
@@ -2291,6 +2382,12 @@ impl BiliClient {
                 match target_is_symlink(request.path).await {
                     Ok(true) => {
                         // The ordinary downloader will revalidate and report any final failure.
+                        transfer_reporter.diagnostic(
+                            Some(DownloadTransferPhase::RangeChunk),
+                            DownloadTransferDiagnostic::WholeFileFallback {
+                                reason: DownloadTransferFallbackReason::OutputNotPublished,
+                            },
+                        );
                         return Ok(None);
                     }
                     Ok(false) => {}
@@ -2300,7 +2397,15 @@ impl BiliClient {
                     }
                 }
                 match target_is_non_regular_file(request.path).await {
-                    Ok(true) => return Ok(None),
+                    Ok(true) => {
+                        transfer_reporter.diagnostic(
+                            Some(DownloadTransferPhase::RangeChunk),
+                            DownloadTransferDiagnostic::WholeFileFallback {
+                                reason: DownloadTransferFallbackReason::OutputNotPublished,
+                            },
+                        );
+                        return Ok(None);
+                    }
                     Ok(false) => {}
                     Err(error) => {
                         emit_file_failed(progress, request, attempt, &error);
@@ -2309,6 +2414,12 @@ impl BiliClient {
                 }
                 match target_has_multiple_hard_links(request.path).await {
                     Ok(true) => {
+                        transfer_reporter.diagnostic(
+                            Some(DownloadTransferPhase::RangeChunk),
+                            DownloadTransferDiagnostic::WholeFileFallback {
+                                reason: DownloadTransferFallbackReason::OutputNotPublished,
+                            },
+                        );
                         return Ok(None);
                     }
                     Ok(false) => {}
@@ -2319,6 +2430,12 @@ impl BiliClient {
                 }
                 #[cfg(unix)]
                 if apply_sharded_output_permissions(temp_path.as_ref(), request.path).is_err() {
+                    transfer_reporter.diagnostic(
+                        Some(DownloadTransferPhase::RangeChunk),
+                        DownloadTransferDiagnostic::WholeFileFallback {
+                            reason: DownloadTransferFallbackReason::OutputNotPublished,
+                        },
+                    );
                     return Ok(None);
                 }
                 match replace_file(temp_path.as_ref(), request.path).await {
@@ -2354,14 +2471,36 @@ impl BiliClient {
                             resumed_from: 0,
                         }))
                     }
-                    Err(_error) => Ok(None),
+                    Err(_error) => {
+                        transfer_reporter.diagnostic(
+                            Some(DownloadTransferPhase::RangeChunk),
+                            DownloadTransferDiagnostic::WholeFileFallback {
+                                reason: DownloadTransferFallbackReason::OutputNotPublished,
+                            },
+                        );
+                        Ok(None)
+                    }
                 }
             }
             Err(error) if error.is_cancelled() => {
                 emit_file_failed(progress, request, attempt, &error);
                 Err(error)
             }
-            Err(_error) => Ok(None),
+            Err(error) => {
+                let reason = match &error {
+                    Error::InvalidInput(message)
+                        if message == "no CDN candidate passed the range probe" =>
+                    {
+                        DownloadTransferFallbackReason::NoCompatibleCandidates
+                    }
+                    _ => DownloadTransferFallbackReason::RangeTransferFailed,
+                };
+                transfer_reporter.diagnostic(
+                    Some(DownloadTransferPhase::RangeChunk),
+                    DownloadTransferDiagnostic::WholeFileFallback { reason },
+                );
+                Ok(None)
+            }
         }
     }
 
@@ -2379,13 +2518,25 @@ impl BiliClient {
         let path = entry_dir.join(format!("segment-{:03}.flv", segment.order));
         let mut urls = candidate_urls(&segment.url, &segment.backup_urls, &options.media_hosts);
         let mut shard_expected_size = segment.size;
-        if should_probe_media_candidates(&path, options).await? {
-            (urls, shard_expected_size) = self
-                .probe_media_candidates(urls, shard_expected_size, options.download_idle_timeout)
-                .await;
-        }
         let request =
             DownloadFileRequest::new(entry, &path, DownloadFileKind::FlvSegment, segment.size);
+        let transfer_reporter = TransferReporter::new(
+            context.progress,
+            Some(entry.index),
+            Some(&entry.title),
+            Some(&DownloadFileKind::FlvSegment),
+            Some(&path),
+        );
+        if should_probe_media_candidates(&path, options).await? {
+            (urls, shard_expected_size) = self
+                .probe_media_candidates_with_progress(
+                    urls,
+                    shard_expected_size,
+                    options.download_idle_timeout,
+                    &transfer_reporter,
+                )
+                .await;
+        }
         let shard_request = DownloadFileRequest::new(
             entry,
             &path,
@@ -2393,12 +2544,13 @@ impl BiliClient {
             shard_expected_size,
         );
         if let Some(file) = self
-            .try_download_sharded(
+            .try_download_sharded_with_progress(
                 &urls,
                 &shard_request,
                 options,
                 context.progress,
                 context.cancellation,
+                &transfer_reporter,
             )
             .await?
         {
@@ -2410,6 +2562,7 @@ impl BiliClient {
             options,
             context.progress,
             context.cancellation,
+            &transfer_reporter,
         )
         .await
     }
@@ -2448,8 +2601,23 @@ impl BiliClient {
     where
         P: DownloadProgressSink + ?Sized,
     {
+        let transfer_reporter = TransferReporter::new(
+            progress,
+            Some(request.entry.index),
+            Some(&request.entry.title),
+            Some(&request.kind),
+            Some(request.path),
+        );
         let result = self
-            .download_url_to_file_without_terminal(url, request, options, progress, cancellation)
+            .download_url_to_file_without_terminal(
+                url,
+                request,
+                options,
+                progress,
+                cancellation,
+                &transfer_reporter,
+                None,
+            )
             .await;
         match result {
             Ok(file) => Ok(file),
@@ -2462,6 +2630,7 @@ impl BiliClient {
         }
     }
 
+    #[allow(clippy::too_many_arguments)] // Each retry dependency stays explicit at the call site.
     async fn download_url_to_file_without_terminal<P>(
         &self,
         url: &str,
@@ -2469,12 +2638,15 @@ impl BiliClient {
         options: &DownloadOptions,
         progress: &P,
         cancellation: &DownloadCancellationToken,
+        transfer_reporter: &TransferReporter<'_, P>,
+        first_retry_reason: Option<DownloadTransferFailureReason>,
     ) -> std::result::Result<DownloadedFile, DownloadFileAttemptError>
     where
         P: DownloadProgressSink + ?Sized,
     {
         let attempts = options.retry.max_attempts.max(1);
         let mut last_error = None;
+        let mut retry_reason = first_retry_reason;
         for attempt in 1..=attempts {
             if let Err(error) = cancellation.check() {
                 return Err(DownloadFileAttemptError::new(
@@ -2490,17 +2662,35 @@ impl BiliClient {
                 current: attempt,
                 max: attempts,
             };
-            match self
-                .try_download_url_to_file(url, request, options, attempt, progress, cancellation)
-                .await
-            {
+            let result = self
+                .try_download_url_to_file(
+                    url,
+                    request,
+                    options,
+                    attempt,
+                    progress,
+                    cancellation,
+                    transfer_reporter,
+                    retry_reason.take(),
+                )
+                .await;
+            let failure_reason = result.as_ref().err().map(|error| {
+                error.transfer_failure_reason.unwrap_or_else(|| {
+                    download_transfer_failure_reason(&error.error, 0, request.expected_size)
+                })
+            });
+            match result {
                 Ok(file) => return Ok(file),
                 Err(error) if error.error.is_cancelled() => return Err(error),
                 Err(error) if attempt.current < attempts => {
                     if error.started {
                         emit_file_failed(progress, request, error.attempt, &error.error);
                     }
-                    last_error = Some(error);
+                    let reason = failure_reason.unwrap_or_else(|| {
+                        download_transfer_failure_reason(&error.error, 0, request.expected_size)
+                    });
+                    retry_reason = Some(reason);
+                    last_error = Some(error.with_transfer_failure_reason(reason));
                     if !options.retry.backoff.is_zero() {
                         sleep_or_cancel(options.retry.backoff, cancellation)
                             .await
@@ -2509,7 +2699,12 @@ impl BiliClient {
                             })?;
                     }
                 }
-                Err(error) => return Err(error),
+                Err(error) => {
+                    let reason = failure_reason.unwrap_or_else(|| {
+                        download_transfer_failure_reason(&error.error, 0, request.expected_size)
+                    });
+                    return Err(error.with_transfer_failure_reason(reason));
+                }
             }
         }
         Err(last_error.unwrap_or_else(|| {
@@ -2528,11 +2723,13 @@ impl BiliClient {
         options: &DownloadOptions,
         progress: &P,
         cancellation: &DownloadCancellationToken,
+        transfer_reporter: &TransferReporter<'_, P>,
     ) -> Result<DownloadedFile>
     where
         P: DownloadProgressSink + ?Sized,
     {
         let mut last_error = None;
+        let mut retry_reason = None;
         for (index, url) in urls.iter().enumerate() {
             cancellation.check()?;
             match self
@@ -2542,14 +2739,25 @@ impl BiliClient {
                     options,
                     progress,
                     cancellation,
+                    transfer_reporter,
+                    retry_reason,
                 )
                 .await
             {
                 Ok(file) => return Ok(file),
                 Err(error) => {
+                    if error.error.is_cancelled() {
+                        if error.started {
+                            emit_file_failed(progress, request, error.attempt, &error.error);
+                        }
+                        return Err(error.error);
+                    }
                     if error.started && index + 1 < urls.len() {
                         emit_file_failed(progress, request, error.attempt, &error.error);
                     }
+                    retry_reason = Some(error.transfer_failure_reason.unwrap_or_else(|| {
+                        download_transfer_failure_reason(&error.error, 0, request.expected_size)
+                    }));
                     last_error = Some(error);
                 }
             }
@@ -2567,6 +2775,8 @@ impl BiliClient {
         Err(error.error)
     }
 
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    // Request streaming, cancellation, and retry diagnostics share one response lifecycle.
     async fn try_download_url_to_file<P>(
         &self,
         url: &str,
@@ -2575,6 +2785,8 @@ impl BiliClient {
         attempt: DownloadAttempt,
         progress: &P,
         cancellation: &DownloadCancellationToken,
+        transfer_reporter: &TransferReporter<'_, P>,
+        retry_reason: Option<DownloadTransferFailureReason>,
     ) -> std::result::Result<DownloadedFile, DownloadFileAttemptError>
     where
         P: DownloadProgressSink + ?Sized,
@@ -2592,80 +2804,122 @@ impl BiliClient {
             map_attempt_error(existing_file_len(request.path).await, attempt, started)?;
         let resume_from = if options.resume { existing_len } else { 0 };
         map_attempt_error(cancellation.check(), attempt, started)?;
-        let response = map_attempt_error(
-            await_or_cancel(self.send_download_request(url, resume_from), cancellation).await,
-            attempt,
-            started,
-        )?;
-        let status = response.status();
-        if resume_from > 0 && status == StatusCode::RANGE_NOT_SATISFIABLE {
-            return map_attempt_error(
-                already_complete_resume_result(&response, request, resume_from, attempt, progress),
+        let observer =
+            transfer_reporter.begin_request(url, DownloadTransferPhase::WholeFile, retry_reason);
+        let mut result = async {
+            let response = map_attempt_error(
+                await_or_cancel(self.send_download_request(url, resume_from), cancellation).await,
                 attempt,
                 started,
-            );
-        }
-        let response = map_attempt_error(
-            response
-                .error_for_status()
-                .map_err(BiliClient::http_error_without_url),
-            attempt,
-            started,
-        )?;
-        let has_content_range = response.headers().contains_key(CONTENT_RANGE);
-        let content_range = map_attempt_error(content_range(response.headers()), attempt, started)?;
-        let response_content_len = response.content_length();
-        let append = map_attempt_error(
-            validate_resume_response(status, resume_from, has_content_range, content_range),
-            attempt,
-            started,
-        )?;
-        let start_offset = if append { resume_from } else { 0 };
-        let full_retry_after_ignored_range = resume_from > 0 && !append;
-        let validation_expected_size = validation_size_for_full_retry(
-            request.expected_size,
-            content_range,
-            response_content_len,
-            full_retry_after_ignored_range,
-        );
-        if full_retry_after_ignored_range && validation_expected_size.is_none() {
-            return Err(DownloadFileAttemptError::new(
-                Error::InvalidInput(
-                    "server ignored resume range without a verifiable full response length"
-                        .to_owned(),
-                ),
+            )?;
+            let status = response.status();
+            if resume_from > 0 && status == StatusCode::RANGE_NOT_SATISFIABLE {
+                return map_attempt_error(
+                    already_complete_resume_result(
+                        &response,
+                        request,
+                        resume_from,
+                        attempt,
+                        progress,
+                    ),
+                    attempt,
+                    started,
+                );
+            }
+            let response = map_attempt_error(
+                response
+                    .error_for_status()
+                    .map_err(BiliClient::http_error_without_url),
                 attempt,
                 started,
-            ));
-        }
-        emit_file_started(
-            progress,
-            request,
-            start_offset,
-            validation_expected_size,
-            attempt,
-        );
-        Self::finish_started_download_attempt(
-            request,
-            response,
-            WriteResponseRequest {
+            )?;
+            let has_content_range = response.headers().contains_key(CONTENT_RANGE);
+            let content_range =
+                map_attempt_error(content_range(response.headers()), attempt, started)?;
+            let response_content_len = response.content_length();
+            let append = map_attempt_error(
+                validate_resume_response(status, resume_from, has_content_range, content_range),
+                attempt,
+                started,
+            )?;
+            let start_offset = if append { resume_from } else { 0 };
+            let full_retry_after_ignored_range = resume_from > 0 && !append;
+            let validation_expected_size = validation_size_for_full_retry(
+                request.expected_size,
                 content_range,
-                start_offset,
-                expected_size: validation_expected_size,
-                idle_timeout: options.download_idle_timeout,
-            },
-            existing_len,
-            append,
-            attempt,
-            DownloadExecutionContext {
-                options,
+                response_content_len,
+                full_retry_after_ignored_range,
+            );
+            if full_retry_after_ignored_range && validation_expected_size.is_none() {
+                return Err(DownloadFileAttemptError::new(
+                    Error::InvalidInput(
+                        "server ignored resume range without a verifiable full response length"
+                            .to_owned(),
+                    ),
+                    attempt,
+                    started,
+                ));
+            }
+            emit_file_started(
                 progress,
-                cancellation,
-            },
-        )
-        .await
+                request,
+                start_offset,
+                validation_expected_size,
+                attempt,
+            );
+            Self::finish_started_download_attempt(
+                request,
+                response,
+                WriteResponseRequest {
+                    content_range,
+                    start_offset,
+                    expected_size: validation_expected_size,
+                    idle_timeout: options.download_idle_timeout,
+                },
+                existing_len,
+                append,
+                attempt,
+                DownloadExecutionContext {
+                    options,
+                    progress,
+                    cancellation,
+                },
+                observer.as_ref(),
+            )
+            .await
+        }
+        .await;
+        if let Some(observer) = &observer {
+            let failure_reason = result.as_ref().err().map(|error| {
+                if observer.body_read_failed() {
+                    DownloadTransferFailureReason::BodyReadFailed
+                } else {
+                    download_transfer_failure_reason(
+                        &error.error,
+                        observer.bytes_received(),
+                        request.expected_size,
+                    )
+                }
+            });
+            if let Err(error) = &mut result {
+                error.transfer_failure_reason = failure_reason;
+            }
+            observer.finish(match failure_reason {
+                None => DownloadTransferRequestOutcome::Succeeded,
+                Some(_)
+                    if result
+                        .as_ref()
+                        .is_err_and(|error| error.error.is_cancelled()) =>
+                {
+                    DownloadTransferRequestOutcome::Cancelled
+                }
+                Some(reason) => DownloadTransferRequestOutcome::Failed { reason },
+            });
+        }
+        result
     }
 
+    #[allow(clippy::too_many_arguments)] // This carries the validated response and file context.
     async fn finish_started_download_attempt<P>(
         request: &DownloadFileRequest<'_>,
         response: reqwest::Response,
@@ -2674,6 +2928,7 @@ impl BiliClient {
         append: bool,
         attempt: DownloadAttempt,
         context: DownloadExecutionContext<'_, P>,
+        observer: Option<&TransferRequestReporter<'_, P>>,
     ) -> std::result::Result<DownloadedFile, DownloadFileAttemptError>
     where
         P: DownloadProgressSink + ?Sized,
@@ -2703,6 +2958,7 @@ impl BiliClient {
             context.progress,
             request,
             context.cancellation,
+            observer,
         )
         .await;
         drop(file);
@@ -3138,6 +3394,7 @@ struct DownloadFileAttemptError {
     error: Error,
     attempt: DownloadAttempt,
     started: bool,
+    transfer_failure_reason: Option<DownloadTransferFailureReason>,
 }
 
 impl DownloadFileAttemptError {
@@ -3146,7 +3403,13 @@ impl DownloadFileAttemptError {
             error,
             attempt,
             started,
+            transfer_failure_reason: None,
         }
+    }
+
+    fn with_transfer_failure_reason(mut self, reason: DownloadTransferFailureReason) -> Self {
+        self.transfer_failure_reason = Some(reason);
+        self
     }
 }
 
@@ -3314,6 +3577,7 @@ async fn write_response_body_to_file<P>(
     progress: &P,
     file_request: &DownloadFileRequest<'_>,
     cancellation: &DownloadCancellationToken,
+    observer: Option<&TransferRequestReporter<'_, P>>,
 ) -> Result<u64>
 where
     P: DownloadProgressSink + ?Sized,
@@ -3333,17 +3597,23 @@ where
             return Err(error);
         }
     } {
-        if let Err(error) = cancellation.check() {
-            rollback_download_file(file, write_request.start_offset).await?;
-            return Err(error);
-        }
         let chunk = match chunk {
             Ok(chunk) => chunk,
             Err(error) => {
+                if let Some(observer) = observer {
+                    observer.mark_body_read_failed();
+                }
                 rollback_download_file(file, write_request.start_offset).await?;
                 return Err(BiliClient::http_error_without_url(error));
             }
         };
+        if let Some(observer) = observer {
+            observer.body_chunk(chunk.len());
+        }
+        if let Err(error) = cancellation.check() {
+            rollback_download_file(file, write_request.start_offset).await?;
+            return Err(error);
+        }
         if let Err(error) = file.write_all(&chunk).await {
             rollback_download_file(file, write_request.start_offset).await?;
             return Err(Error::Io(error));
@@ -3485,6 +3755,36 @@ fn terminal_download_attempt(options: &DownloadOptions) -> DownloadAttempt {
     DownloadAttempt {
         current: attempts,
         max: attempts,
+    }
+}
+
+fn download_transfer_failure_reason(
+    error: &Error,
+    bytes_received: u64,
+    expected_size: Option<u64>,
+) -> DownloadTransferFailureReason {
+    match error {
+        Error::Cancelled { .. } => DownloadTransferFailureReason::Other,
+        Error::Io(_) => DownloadTransferFailureReason::WriteFailed,
+        Error::Http(error) if error.is_timeout() => DownloadTransferFailureReason::TimedOut,
+        Error::Http(error) if error.is_body() => DownloadTransferFailureReason::BodyReadFailed,
+        Error::Http(error) if error.is_request() => DownloadTransferFailureReason::RequestFailed,
+        Error::InvalidInput(message) if message == "download idle timeout elapsed" => {
+            DownloadTransferFailureReason::BodyStalled
+        }
+        Error::InvalidInput(message)
+            if message == "download body length did not match Content-Range"
+                || message == "downloaded file length did not match expected media size"
+                || message == "empty media response" =>
+        {
+            if expected_size.is_some_and(|size| bytes_received > size) {
+                DownloadTransferFailureReason::OversizedBody
+            } else {
+                DownloadTransferFailureReason::IncompleteBody
+            }
+        }
+        Error::Http(_) => DownloadTransferFailureReason::RequestFailed,
+        _ => DownloadTransferFailureReason::InvalidResponse,
     }
 }
 
@@ -5870,16 +6170,23 @@ mod tests {
         ChapterTrack, DanmakuTrack, DownloadEntry, DownloadPlan, FlvSegment, MediaStream,
         StreamDiagnostics, StreamQuality, StreamSet, StreamSource, SubtitleFormat, SubtitleTrack,
     };
+    use crate::progress::TransferReporter;
     use crate::{
         BiliClient, ClientConfig, Credentials, DanmakuFormat, DanmakuFormats,
-        DownloadCancellationToken, DownloadFileKind, DownloadProgressEvent, NoopDownloadProgress,
+        DownloadCancellationToken, DownloadFileKind, DownloadProgressEvent,
+        DownloadTransferDiagnostic, DownloadTransferFailureReason, DownloadTransferPhase,
+        DownloadTransferRequestOutcome, NoopDownloadProgress,
     };
     use httpmock::MockServer;
     use httpmock::prelude::*;
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::path::{Path, PathBuf};
-    use std::sync::{Arc, Mutex};
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        mpsc,
+    };
     use std::time::Duration;
     #[cfg(unix)]
     use std::{fs as std_fs, os::unix::fs::PermissionsExt};
@@ -7335,8 +7642,8 @@ mod tests {
         }
         let a_chunk_calls = range_mocks[2].calls() + range_mocks[3].calls();
         let b_chunk_calls = range_mocks[6].calls() + range_mocks[7].calls();
-        assert!(a_chunk_calls > 0, "CDN A must serve a media chunk");
-        assert!(b_chunk_calls > 0, "CDN B must serve a media chunk");
+        assert!(a_chunk_calls > 0);
+        assert!(b_chunk_calls > 0);
         assert_eq!(a_chunk_calls + b_chunk_calls, 2);
         let events = progress_events_snapshot(&events);
         assert_eq!(
@@ -7352,6 +7659,17 @@ mod tests {
                 .count(),
             1
         );
+        assert_eq!(media_file.bytes_written, total_size);
+        let received_bytes = events
+            .iter()
+            .filter_map(|event| match event {
+                DownloadProgressEvent::TransferBytesReceived { bytes_delta, .. } => {
+                    Some(*bytes_delta)
+                }
+                _ => None,
+            })
+            .sum::<u64>();
+        assert_eq!(received_bytes, 2_260_992);
         assert_eq!(
             events
                 .iter()
@@ -7935,44 +8253,73 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::cast_possible_truncation, clippy::too_many_lines)]
     async fn sharded_range_failure_falls_back_without_damaging_target() -> anyhow::Result<()> {
-        let server_a = MockServer::start();
-        let server_b = MockServer::start();
-        let total_size = 2 * CDN_SHARD_CHUNK_SIZE;
-        let mut plan = single_video_plan(format!("{}/asset.m4s?token=shared", server_a.base_url()));
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let address = listener.local_addr()?;
+        let total_size = CDN_SHARD_CHUNK_SIZE;
+        let mut plan = single_video_plan(format!("http://{address}/asset.m4s?token=shared"));
         {
             let stream = &mut plan.entries[0].streams.videos[0];
             stream.size = Some(total_size);
-            stream.backup_urls = vec![format!("{}/asset.m4s?token=shared", server_b.base_url())];
         }
         let target_name = media_file_name("video", &plan.entries[0].streams.videos[0]);
-        let mut prefix_mocks = Vec::new();
         let fallback_body = vec![b'z'; usize::try_from(total_size)?];
-        let mut bad_chunk_mocks = Vec::new();
-        for (server, path) in [(&server_a, "/asset.m4s"), (&server_b, "/asset.m4s")] {
-            for (range, range_end, length) in [
-                ("bytes=0-65535", "65535", 64 * 1024),
-                ("bytes=0-16383", "16383", 16 * 1024),
-            ] {
-                let body = vec![b'p'; length];
-                prefix_mocks.push(server.mock(|when, then| {
-                    when.method(GET).path(path).header("range", range);
-                    then.status(206)
-                        .header("Content-Range", format!("bytes 0-{range_end}/2097152"))
-                        .header("Content-Length", body.len().to_string())
-                        .body(body);
-                }));
+        let expected_body = fallback_body.clone();
+        let (partial_body_consumed, partial_body_observed) = mpsc::channel();
+        let server = std::thread::spawn(move || -> std::io::Result<()> {
+            for _ in 0..4 {
+                let (mut stream, _) = listener.accept()?;
+                let request = read_http_request_headers(&mut stream)?;
+                let range = request.lines().find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("range")
+                        .then(|| value.trim().to_owned())
+                });
+                match range.as_deref() {
+                    Some("bytes=0-65535") => {
+                        stream.write_all(
+                            b"HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 0-65535/1048576\r\nContent-Length: 65536\r\nConnection: close\r\n\r\n",
+                        )?;
+                        stream.write_all(&expected_body[..64 * 1024])?;
+                    }
+                    Some("bytes=0-16383") => {
+                        stream.write_all(
+                            b"HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 0-16383/1048576\r\nContent-Length: 16384\r\nConnection: close\r\n\r\n",
+                        )?;
+                        stream.write_all(&expected_body[..16 * 1024])?;
+                    }
+                    Some("bytes=0-1048575") => {
+                        stream.write_all(
+                            b"HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 0-1048575/1048576\r\nContent-Length: 1048576\r\nConnection: close\r\n\r\n",
+                        )?;
+                        stream.write_all(b"partial!!")?;
+                        stream.flush()?;
+                        partial_body_observed
+                            .recv_timeout(Duration::from_secs(10))
+                            .map_err(|error| {
+                                std::io::Error::new(std::io::ErrorKind::TimedOut, error)
+                            })?;
+                    }
+                    None => {
+                        stream.write_all(
+                            format!(
+                                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                                expected_body.len()
+                            )
+                            .as_bytes(),
+                        )?;
+                        stream.write_all(&expected_body)?;
+                    }
+                    other => {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("unexpected range request: {other:?}"),
+                        ));
+                    }
+                }
+                stream.flush()?;
             }
-            bad_chunk_mocks.push(server.mock(|when, then| {
-                when.method(GET)
-                    .path(path)
-                    .header("range", "bytes=0-1048575");
-                then.status(200).body("range ignored");
-            }));
-            server.mock(|when, then| {
-                when.method(GET).path(path).header_missing("range");
-                then.status(200).body(fallback_body.clone());
-            });
-        }
+            Ok(())
+        });
         let temp = tempfile::tempdir()?;
         let output_dir = test_entry_dir(temp.path(), &plan)?;
         tokio::fs::create_dir_all(&output_dir).await?;
@@ -7981,32 +8328,47 @@ mod tests {
 
         let events = Arc::new(Mutex::new(Vec::new()));
         let progress_events = Arc::clone(&events);
+        let partial_bytes = Arc::new(AtomicU64::new(0));
+        let partial_bytes_seen = Arc::clone(&partial_bytes);
+        let partial_ack_sent = Arc::new(AtomicBool::new(false));
+        let partial_ack_state = Arc::clone(&partial_ack_sent);
+        let expected_host = format!("127.0.0.1:{}", address.port());
         let progress = move |event: &DownloadProgressEvent| {
+            if let DownloadProgressEvent::TransferBytesReceived {
+                phase: DownloadTransferPhase::RangeChunk,
+                host: Some(host),
+                bytes_delta,
+                ..
+            } = event
+                && host == &expected_host
+            {
+                let received = partial_bytes_seen
+                    .fetch_add(*bytes_delta, Ordering::Relaxed)
+                    .saturating_add(*bytes_delta);
+                if received >= 9 && !partial_ack_state.swap(true, Ordering::Relaxed) {
+                    let _ = partial_body_consumed.send(());
+                }
+            }
             push_progress_event(&progress_events, event.clone());
         };
-        BiliClient::new(ClientConfig::default())
+        let report = BiliClient::new(ClientConfig::default())
             .download_plan_with_progress(
                 &plan,
                 DownloadOptions::new(temp.path())
                     .with_retry_policy(RetryPolicy::single_attempt())
                     .with_download_mode(DownloadMode::VideoOnly)
                     .with_cdn_parallelism(2)
+                    .with_cdn_probe(true)
                     .with_mux(MuxOptions::Disabled),
                 &progress,
             )
             .await?;
 
+        server
+            .join()
+            .map_err(|_| anyhow::anyhow!("raw media server panicked"))??;
         let downloaded = tokio::fs::read(&target).await?;
         assert_eq!(downloaded, fallback_body);
-        let prefix_calls = prefix_mocks
-            .iter()
-            .map(httpmock::Mock::calls)
-            .collect::<Vec<_>>();
-        assert!(
-            prefix_calls.iter().all(|calls| *calls == 1),
-            "{prefix_calls:?}"
-        );
-        assert!(bad_chunk_mocks.iter().any(|mock| mock.calls() >= 1));
         let events = progress_events_snapshot(&events);
         assert_eq!(
             events
@@ -8038,6 +8400,68 @@ mod tests {
             total_size,
             "only the published ordinary fallback bytes should be reported"
         );
+        let received_by_phase = events
+            .iter()
+            .filter_map(|event| match event {
+                DownloadProgressEvent::TransferBytesReceived {
+                    phase, bytes_delta, ..
+                } => Some((*phase, *bytes_delta)),
+                _ => None,
+            })
+            .fold(
+                std::collections::BTreeMap::new(),
+                |mut totals, (phase, bytes)| {
+                    *totals.entry(format!("{phase:?}")).or_insert(0_u64) += bytes;
+                    totals
+                },
+            );
+        assert_eq!(received_by_phase.get("AutomaticProbe"), Some(&65_536));
+        assert_eq!(received_by_phase.get("ShardProbe"), Some(&16_384));
+        assert_eq!(received_by_phase.get("RangeChunk"), Some(&9));
+        assert_eq!(received_by_phase.get("WholeFile"), Some(&total_size));
+        assert_eq!(received_by_phase.values().copied().sum::<u64>(), 1_130_505);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    DownloadProgressEvent::TransferDiagnostic {
+                        phase: Some(crate::DownloadTransferPhase::RangeChunk),
+                        diagnostic: crate::DownloadTransferDiagnostic::RequestFinished {
+                            outcome: crate::DownloadTransferRequestOutcome::Failed {
+                                reason: crate::DownloadTransferFailureReason::BodyReadFailed,
+                            },
+                            bytes_received: 9,
+                        },
+                        ..
+                    }
+                ))
+                .count(),
+            1
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::TransferDiagnostic {
+                phase: Some(crate::DownloadTransferPhase::RangeChunk),
+                diagnostic: crate::DownloadTransferDiagnostic::WholeFileFallback {
+                    reason: crate::DownloadTransferFallbackReason::RangeTransferFailed,
+                },
+                ..
+            }
+        )));
+        let request_ids = events
+            .iter()
+            .filter_map(|event| match event {
+                DownloadProgressEvent::TransferDiagnostic {
+                    request_id: Some(request_id),
+                    diagnostic: DownloadTransferDiagnostic::RequestFinished { .. },
+                    ..
+                } => Some(*request_id),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(request_ids, vec![1, 2, 3, 4]);
+        assert_eq!(report.entries[0].files[0].bytes_written, total_size);
         Ok(())
     }
 
@@ -8641,13 +9065,27 @@ mod tests {
             return Err(anyhow::anyhow!("file start event should be emitted"));
         };
         assert!(!started_path.exists());
+        let started_index = events
+            .iter()
+            .position(|event| matches!(event, DownloadProgressEvent::FileStarted { .. }))
+            .ok_or_else(|| anyhow::anyhow!("missing file start event"))?;
+        let failed_index = events
+            .iter()
+            .position(|event| matches!(event, DownloadProgressEvent::FileFailed { .. }))
+            .ok_or_else(|| anyhow::anyhow!("missing file failure event"))?;
+        let cancelled_index = events
+            .iter()
+            .position(|event| matches!(event, DownloadProgressEvent::PlanCancelled { .. }))
+            .ok_or_else(|| anyhow::anyhow!("missing plan cancellation event"))?;
+        assert!(started_index < failed_index && failed_index < cancelled_index);
         assert!(events.iter().any(|event| matches!(
             event,
             DownloadProgressEvent::FileFailed {
+                path,
                 kind: DownloadFileKind::Video,
                 error,
                 ..
-            } if error.contains("test cancellation after file start")
+            } if path == &started_path && error.contains("test cancellation after file start")
         )));
         assert!(
             events
@@ -8671,6 +9109,7 @@ mod tests {
         Ok(())
     }
 
+    #[allow(clippy::too_many_lines)] // Keep cancellation order and the single-file event sequence together.
     #[tokio::test]
     async fn cancelled_started_file_does_not_retry_or_duplicate_file_failed() -> anyhow::Result<()>
     {
@@ -8693,8 +9132,8 @@ mod tests {
         let progress_events = Arc::clone(&events);
         let progress_cancellation = cancellation.clone();
         let progress = move |event: &DownloadProgressEvent| {
-            if matches!(event, DownloadProgressEvent::FileStarted { .. }) {
-                progress_cancellation.cancel_with_reason("test cancellation with default retry");
+            if matches!(event, DownloadProgressEvent::TransferBytesReceived { .. }) {
+                progress_cancellation.cancel_with_reason("test cancellation after body bytes");
             }
             push_progress_event(&progress_events, event.clone());
         };
@@ -8728,6 +9167,29 @@ mod tests {
         assert_eq!(
             events
                 .iter()
+                .filter_map(|event| match event {
+                    DownloadProgressEvent::TransferBytesReceived { bytes_delta, .. } => {
+                        Some(*bytes_delta)
+                    }
+                    _ => None,
+                })
+                .sum::<u64>(),
+            5
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::TransferDiagnostic {
+                phase: Some(crate::DownloadTransferPhase::WholeFile),
+                diagnostic: crate::DownloadTransferDiagnostic::RequestFinished {
+                    outcome: crate::DownloadTransferRequestOutcome::Cancelled,
+                    bytes_received: 5,
+                },
+                ..
+            }
+        )));
+        assert_eq!(
+            events
+                .iter()
                 .filter(|event| matches!(event, DownloadProgressEvent::FileStarted { .. }))
                 .count(),
             1
@@ -8745,12 +9207,38 @@ mod tests {
                 .count(),
             1
         );
+        let started_index = events
+            .iter()
+            .position(|event| matches!(event, DownloadProgressEvent::FileStarted { .. }))
+            .ok_or_else(|| anyhow::anyhow!("missing file start event"))?;
+        let failed_index = events
+            .iter()
+            .position(|event| matches!(event, DownloadProgressEvent::FileFailed { .. }))
+            .ok_or_else(|| anyhow::anyhow!("missing file failure event"))?;
+        let cancelled_index = events
+            .iter()
+            .position(|event| matches!(event, DownloadProgressEvent::PlanCancelled { .. }))
+            .ok_or_else(|| anyhow::anyhow!("missing plan cancellation event"))?;
+        assert!(started_index < failed_index && failed_index < cancelled_index);
+        let started_path = events.iter().find_map(|event| match event {
+            DownloadProgressEvent::FileStarted { path, .. } => Some(path),
+            _ => None,
+        });
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::FileFailed {
+                path,
+                kind: DownloadFileKind::Video,
+                error,
+                ..
+            } if Some(path) == started_path && error.contains("test cancellation after body bytes")
+        )));
         assert!(events.iter().any(|event| matches!(
             event,
             DownloadProgressEvent::PlanCancelled {
                 error,
                 ..
-            } if error.contains("test cancellation with default retry")
+            } if error.contains("test cancellation after body bytes")
         )));
         Ok(())
     }
@@ -11124,6 +11612,175 @@ mod tests {
             .join()
             .map_err(|_| anyhow::anyhow!("server thread panicked"))??;
         assert_eq!(tokio::fs::read_to_string(&file.path).await?, "retry-ok");
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_lines)] // Keep the synchronized partial-body and retry assertions together.
+    #[tokio::test]
+    async fn partial_ordinary_attempt_counts_before_alternate_candidate_succeeds()
+    -> anyhow::Result<()> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let address = listener.local_addr()?;
+        let first_url = format!("http://{address}/video.m4s");
+        let first_host = format!("127.0.0.1:{}", address.port());
+        let (partial_body_consumed, partial_body_observed) = mpsc::channel();
+        let first_server = std::thread::spawn(move || -> std::io::Result<()> {
+            let (mut stream, _) = listener.accept()?;
+            let request = read_http_request_headers(&mut stream)?;
+            if !request.starts_with("GET /video.m4s ") {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "unexpected ordinary download request",
+                ));
+            }
+            stream.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\nbad",
+            )?;
+            stream.flush()?;
+            partial_body_observed
+                .recv_timeout(Duration::from_secs(10))
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::TimedOut, error))?;
+            Ok(())
+        });
+        let alternate_candidate = MockServer::start();
+        let alternate_mock = alternate_candidate.mock(|when, then| {
+            when.method(GET).path("/video.m4s").header_missing("range");
+            then.status(200).body("good");
+        });
+
+        let temp = tempfile::tempdir()?;
+        let entry = single_video_plan(first_url.clone()).entries.remove(0);
+        let path = temp.path().join("video.m4s");
+        let request = DownloadFileRequest::new(&entry, &path, DownloadFileKind::Video, None);
+        let options = DownloadOptions {
+            retry: RetryPolicy::single_attempt(),
+            sidecars: SidecarOptions {
+                danmaku: false,
+                ..SidecarOptions::default()
+            },
+            mux: MuxOptions::Disabled,
+            ..DownloadOptions::default()
+        };
+        let cancellation = DownloadCancellationToken::new();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress_events = Arc::clone(&events);
+        let partial_bytes = Arc::new(AtomicU64::new(0));
+        let partial_bytes_seen = Arc::clone(&partial_bytes);
+        let partial_ack_sent = Arc::new(AtomicBool::new(false));
+        let partial_ack_state = Arc::clone(&partial_ack_sent);
+        let progress = move |event: &DownloadProgressEvent| {
+            if let DownloadProgressEvent::TransferBytesReceived {
+                phase: DownloadTransferPhase::WholeFile,
+                host: Some(host),
+                bytes_delta,
+                ..
+            } = event
+                && host == &first_host
+            {
+                let received = partial_bytes_seen
+                    .fetch_add(*bytes_delta, Ordering::Relaxed)
+                    .saturating_add(*bytes_delta);
+                if received >= 3 && !partial_ack_state.swap(true, Ordering::Relaxed) {
+                    let _ = partial_body_consumed.send(());
+                }
+            }
+            push_progress_event(&progress_events, event.clone());
+        };
+        let transfer_reporter = TransferReporter::new(
+            &progress,
+            Some(entry.index),
+            Some(&entry.title),
+            Some(&request.kind),
+            Some(&path),
+        );
+        let urls = [first_url, alternate_candidate.url("/video.m4s")];
+        let file = BiliClient::new(ClientConfig::default())
+            .download_candidate_urls_to_file(
+                &urls,
+                &request,
+                &options,
+                &progress,
+                &cancellation,
+                &transfer_reporter,
+            )
+            .await?;
+
+        first_server
+            .join()
+            .map_err(|_| anyhow::anyhow!("raw candidate server panicked"))??;
+        assert_eq!(alternate_mock.calls(), 1);
+        assert_eq!(file.bytes_written, 4);
+        assert_eq!(tokio::fs::read(&file.path).await?, b"good");
+        let events = progress_events_snapshot(&events);
+        assert_eq!(
+            events
+                .iter()
+                .filter_map(|event| match event {
+                    DownloadProgressEvent::TransferBytesReceived { bytes_delta, .. } => {
+                        Some(*bytes_delta)
+                    }
+                    _ => None,
+                })
+                .sum::<u64>(),
+            7
+        );
+        let failed_request_id = events.iter().find_map(|event| match event {
+            DownloadProgressEvent::TransferDiagnostic {
+                request_id: Some(request_id),
+                phase: Some(DownloadTransferPhase::WholeFile),
+                diagnostic:
+                    DownloadTransferDiagnostic::RequestFinished {
+                        outcome:
+                            DownloadTransferRequestOutcome::Failed {
+                                reason: DownloadTransferFailureReason::BodyReadFailed,
+                            },
+                        bytes_received: 3,
+                    },
+                ..
+            } => Some(*request_id),
+            _ => None,
+        });
+        assert!(failed_request_id.is_some());
+        let successful_request_id = events.iter().find_map(|event| match event {
+            DownloadProgressEvent::TransferBytesReceived {
+                request_id,
+                host: Some(host),
+                phase: DownloadTransferPhase::WholeFile,
+                bytes_delta,
+                ..
+            } if super::cdn_host_label(&urls[1]).as_deref() == Some(host.as_str())
+                && *bytes_delta == 4 =>
+            {
+                Some(*request_id)
+            }
+            _ => None,
+        });
+        let Some(successful_request_id) = successful_request_id else {
+            return Err(anyhow::anyhow!("missing alternate candidate byte event"));
+        };
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::TransferDiagnostic {
+                request_id: Some(request_id),
+                phase: Some(DownloadTransferPhase::WholeFile),
+                diagnostic: DownloadTransferDiagnostic::RetryScheduled {
+                    reason: DownloadTransferFailureReason::BodyReadFailed,
+                },
+                ..
+            } if *request_id == successful_request_id
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::TransferDiagnostic {
+                request_id: Some(request_id),
+                phase: Some(DownloadTransferPhase::WholeFile),
+                diagnostic: DownloadTransferDiagnostic::RequestFinished {
+                    outcome: DownloadTransferRequestOutcome::Succeeded,
+                    bytes_received: 4,
+                },
+                ..
+            } if *request_id == successful_request_id
+        )));
         Ok(())
     }
 
@@ -13967,6 +14624,31 @@ mod tests {
             companion_audio_url(&plan.entries[0].streams.videos[0].base_url);
         plan.entries[0].subtitles.clear();
         plan
+    }
+
+    fn read_http_request_headers(stream: &mut std::net::TcpStream) -> std::io::Result<String> {
+        let mut request = Vec::new();
+        let mut buffer = [0_u8; 1024];
+        loop {
+            let read = stream.read(&mut buffer)?;
+            if read == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "client closed before sending request headers",
+                ));
+            }
+            request.extend_from_slice(&buffer[..read]);
+            if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                return String::from_utf8(request)
+                    .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error));
+            }
+            if request.len() > 16 * 1024 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "request headers exceeded test limit",
+                ));
+            }
+        }
     }
 
     fn companion_audio_url(video_url: &str) -> String {

@@ -14,11 +14,11 @@ superseded_by:
 
 ## Summary
 
-- Prepare the `0.8.0` workspace package versions and bilingual source-line notes for
+- Prepared and published the `0.8.0` workspace package versions and bilingual source-line notes for
   preserving danmaku refresh and the credential-account identity API merged in PR #90.
-  Preparation is complete; the protected RC and promotion workflows are the publication
-  path. Release notes document preserving refresh plus explicit Web and signed-OAuth
-  identity probes, verified positive account IDs and credential kinds, failure and
+  The protected RC and promotion workflows completed successfully. Release notes document
+  preserving refresh plus explicit Web and signed-OAuth identity probes, verified positive account
+  IDs and credential kinds, failure and
   redaction boundaries, and caller-owned same-account and storage policy.
 - The bilingual embedding guides describe preserving refresh and credential-account identity as
   `0.8.0` source-line additions absent from the `0.7.0` crate, and CDN-transfer features as prior
@@ -103,21 +103,35 @@ superseded_by:
   not any later journal-updated head.
 - The earlier stacked release PR #88 could not be safely reused after its observed base-ref retarget:
   the gate returned `request_clean_generation` with `retry_safe=false` and required a replacement
-  PR. Release preparation continues in PR #91; the closed PR #88 retains the superseded historical
+  PR. Replacement release preparation completed in PR #91; the closed PR #88 retains the superseded historical
   attempt and its resolved documentation findings.
-- No `v0.8.0` GitHub Release or crates.io publication is recorded here. Publication uses the
-  protected release-candidate and promotion workflows.
+- PR #91 merged on 2026-10-10 to `master` at `5dbdbcdc68f7b535908250a93837666bc228e747`; the source
+  tree matches approved source `bbb1341`. RC run
+  [38032349238](https://github.com/Joey-Project/BBDown-rust/actions/runs/38032349238) created
+  `v0.8.0-rc.1`. Promotion run
+  [38033234967](https://github.com/Joey-Project/BBDown-rust/actions/runs/38033234967) completed
+  successfully against that RC and source commit; all 9 jobs succeeded.
+- The final annotated tag is `v0.8.0` (tag object
+  `0489295eddc0193af523df6908812e9a203205d4`) and peels to
+  `5dbdbcdc68f7b535908250a93837666bc228e747`. GitHub Release
+  [v0.8.0](https://github.com/Joey-Project/BBDown-rust/releases/tag/v0.8.0) was published at
+  2026-10-10 17:06:49Z as a non-draft, non-prerelease release with 8 assets.
+- Four small `.sha256` sidecars were read without downloading the archive binaries. Their filenames
+  and hash contents matched the corresponding asset API digests, and each sidecar's own digest also
+  matched its API digest. No claim is made that the archive binaries were downloaded or executed.
+  crates.io reports `bbdown-core 0.8.0` available and not yanked, with checksum
+  `fa803c00f02cae736111bd1db9bdcaa95d4c57a589cd5f93530e021bfa27bb69`.
 
-## Publication Follow-up
+## Publication Result
 
-- After merge, create and promote the protected release candidate, publish the release, and record
-  the actual tag and package evidence here.
+- The protected release-candidate and promotion workflows published GitHub Release `v0.8.0` and
+  crates.io package `bbdown-core 0.8.0`.
 
 ## Evidence
 
 - Feature workstream: `docs/project_journal/2026/10/2026-10-06-danmaku-preserving-refresh.md`.
 - Feature dependency: PR [#87](https://github.com/Joey-Project/BBDown-rust/pull/87).
-- Current replacement release-prep PR: [#91](https://github.com/Joey-Project/BBDown-rust/pull/91).
+- Merged replacement release-prep PR: [#91](https://github.com/Joey-Project/BBDown-rust/pull/91).
 - Superseded stacked release-prep attempt: [#88](https://github.com/Joey-Project/BBDown-rust/pull/88).
 - Bilingual notes: `docs/release-notes/v0.8.0.md` and `docs/release-notes/v0.8.0.zh-CN.md`.
 - Gate evidence: full `just ci` passed; workspace suite counts are recorded above.

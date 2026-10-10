@@ -9,10 +9,12 @@ projects that need typed Bilibili metadata, download plans, media downloads, sub
 danmaku sidecars, QR login state, batch collection parsing, and restricted-area proxy diagnostics
 without shelling out to the CLI.
 
-The `0.8.0` source line adds staged preserving danmaku refresh and explicit credential-account
-identity checks. The earlier `0.7.0` release added explicit CDN host pools, probing, and parallel
-transfer options plus an independent PGC Web playurl route selector. These network actions remain
-caller-selected; the crate does not automatically route requests from the bundled CLI catalogs.
+The published `0.8.0` release includes staged preserving danmaku refresh and explicit
+credential-account identity checks. The earlier `0.7.0` release added explicit CDN host pools,
+probing, and parallel transfer options plus an independent PGC Web playurl route selector. This
+source tree also adds CDN transfer diagnostics after the `0.8.0` tag; they are not in the published
+`0.8.0` crate. These network actions remain caller-selected; the crate does not automatically route
+requests from the bundled CLI catalogs.
 Prefer constructors and builder-style APIs for configuration, and treat metadata and plan
 structs as read-only output surfaces. This keeps embedding code resilient when new fields are added
 while the crate matures.
@@ -592,9 +594,90 @@ async fn main() -> bbdown_core::Result<()> {
 
 Use the `*_with_progress` download methods when an embedding application needs progress callbacks
 without parsing CLI output. `DownloadProgressEvent` is emitted for plan start/completion, entry
-start/completion/failure, file start/chunk/completion/failure, mux start/completion/failure, and
-plan completion/failure/cancellation. The callback is synchronous and should stay lightweight; send
+start/completion/failure, file start/chunk/completion/failure, transfer-byte and transfer-diagnostic
+events, mux start/completion/failure, and plan completion/failure/cancellation. The callback is
+synchronous and should stay lightweight; send
 events into an application channel if UI updates or database writes may block the download task.
+
+The post-`0.8.0` source tree adds `DownloadProgressEvent::TransferBytesReceived` and
+`DownloadProgressEvent::TransferDiagnostic`. The byte event is emitted for each response-body chunk
+consumed from `bytes_stream()` after status/header checks and before body-length validation or
+writing; a rejected body that is not read contributes zero. Counts follow the client's transparent
+content-decoding configuration,
+so they are not compressed entity bytes or all wire traffic. Sum `bytes_delta` to count consumed
+body bytes; `bytes_received` is the cumulative count for that request and must not be summed
+again. This is distinct from `FileProgress.bytes_written`.
+Byte-event `request_id` starts at 1 and is scoped to one file-transfer operation; do not combine
+requests across files or standalone probe calls by ID alone. Diagnostic request ID and phase fields
+are optional for operation-level outcomes. The `phase` distinguishes automatic probes, shard probes,
+range chunks, whole-file requests, and standalone probes. Events include only a parsed host and
+optional file context, never the request URL. Diagnostics carry typed selection/exclusion, retry,
+whole-file fallback, and request-finished outcomes without upstream error strings. Coverage includes
+file responses (media and sidecars) and CDN probes/ranges, not metadata, playurl, or authentication
+API requests. A selected candidate passed compatibility preflight only; selection does not prove
+full-representation identity. A cancelled/dropped request may have no terminal outcome, while its
+earlier byte deltas remain valid. These are source additions after the published `0.8.0` tag, not
+APIs in the published crate.
+
+The sink opts into these events by default. A sink can override `wants_transfer_diagnostics()` to
+return `false`; `NoopDownloadProgress` already does so. For example, the event fields can be handled
+without assuming operation-level diagnostics have a request ID or phase:
+
+```rust,no_run
+use bbdown_core::DownloadProgressEvent;
+
+fn inspect_transfer_event(event: &DownloadProgressEvent) {
+    match event {
+        DownloadProgressEvent::TransferBytesReceived {
+            request_id,
+            phase,
+            host,
+            bytes_delta,
+            bytes_received,
+            ..
+        } => eprintln!("request={request_id} phase={phase:?} host={host:?} +{bytes_delta} ({bytes_received})"),
+        DownloadProgressEvent::TransferDiagnostic {
+            request_id,
+            phase,
+            host,
+            diagnostic,
+            ..
+        } => eprintln!("request={request_id:?} phase={phase:?} host={host:?} {diagnostic:?}"),
+        _ => {}
+    }
+}
+```
+
+For a standalone measurement, `probe_media_cdns_with_progress` accepts the same client, stream, and
+host options as `probe_media_cdns`, plus a progress sink:
+
+This API was added after the published `0.8.0` tag. Compile this example against a source checkout
+that contains the change; the crates.io `0.8.0` package does not include it.
+
+```rust,no_run
+use bbdown_core::{
+    BiliClient, DownloadProgressSink, MediaHostOptions, MediaStream, Result,
+    probe_media_cdns_with_progress,
+};
+
+async fn probe(
+    client: &BiliClient,
+    stream: &MediaStream,
+    progress: &impl DownloadProgressSink,
+) -> Result<()> {
+    let _results = probe_media_cdns_with_progress(
+        client,
+        stream,
+        &MediaHostOptions::default(),
+        progress,
+    )
+    .await?;
+    Ok(())
+}
+```
+
+Standalone events have `None` for entry and file context, and request IDs restart for each call. The
+existing `probe_media_cdns` remains available and runs without transfer events.
 
 ```rust,no_run
 use bbdown_core::{
