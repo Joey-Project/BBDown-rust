@@ -20,10 +20,12 @@ snapshot CDN/public-resolver catalogs with runtime probe commands, and independe
 Web playurl routes; it does not introduce automatic CDN routing. It also supports an
 explicit download archive for duplicate preflight, CLI replace / keep-both / cancel decisions, and
 append-only danmaku sidecar updates for already-downloaded archive entries.
-The project is now on the `0.8.0` source line. Its preserving update policy deduplicates XML comments
-by positive IDs (falling back to complete `p` values and decoded text for invalid IDs), retains XML
-history, and regenerates selected ASS output from the merged XML before publishing staged sidecars
-with the archive.
+The project is now on the `0.9.0` source line. The published `0.8.0` release's preserving update
+policy deduplicates XML comments by positive IDs (falling back to complete `p` values and decoded
+text for invalid IDs), retains XML history, and regenerates selected ASS output from the merged XML
+before publishing staged sidecars with the archive. The `0.9.0` source line adds structured CDN
+transfer diagnostics to progress callbacks and CLI `--progress-json`, and signs personal-space
+dynamic feed requests with WBI, including continuation pages.
 Input parsing covers normal videos, PGC and intl episodes, PUGV/cheese courses, B23 short links,
 favorite lists, space videos, collections, series, homepage recommendations, watch history,
 watch-later lists, following video feeds, and space dynamic video feeds. URL parsing includes canonical

@@ -4,11 +4,14 @@
 
 This directory keeps human-written release notes for the Rust rewrite. GitHub Releases remain the
 source for downloadable assets and generated changelogs; these notes summarize the user-facing and
-embedding-facing shape of each shipped line.
+embedding-facing shape of each source line and shipped release.
 
 ## Versions
 
-- [v0.8.0 source line](v0.8.0.md): opt-in danmaku refresh that preserves XML history, rebuilds
+- [v0.9.0 source line](v0.9.0.md): structured CDN transfer diagnostics for progress callbacks and
+  CLI JSON, plus WBI signing for personal-space dynamic feed requests and continuation pages.
+
+- [v0.8.0 (published)](v0.8.0.md): opt-in danmaku refresh that preserves XML history, rebuilds
   selected ASS outputs from merged XML, and stages generated sidecars with the updated archive for
   publication. Existing custom ASS styles and events are discarded.
 
