@@ -272,6 +272,15 @@ contain only a parsed host and optional port, without URL paths, queries, or cre
 timeouts use `timed_out`; resumed response-body lengths are classified against the remaining
 requested length; span/probe failures use `probe_failed`, while `size_mismatch` is reserved for an
 explicit total-size mismatch.
+Scheme-only candidate differences use `scheme_mismatch`; `path_query_mismatch` is reserved for an
+actual path or query difference. These reasons describe the existing same-scheme compatibility
+policy and do not change which candidates are compatible. For whole-file requests, a successful
+`request_finished` diagnostic is emitted before `file_completed`, after the response body has been
+consumed and flushed, its length has been validated, and any required file replacement has
+succeeded. A resume already complete when the server responds with HTTP 416 uses the same completion
+path, avoiding a duplicate success diagnostic. A file operation that ends in failure or
+cancellation does not emit `file_completed`; cancellation or dropping may still leave a request
+without a terminal diagnostic.
 
 Example `--progress-json` lines:
 

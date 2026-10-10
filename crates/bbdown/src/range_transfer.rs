@@ -408,13 +408,11 @@ where
         let diagnostic = if winner_indices.contains(index) {
             DownloadTransferDiagnostic::CandidateSelected
         } else if let Ok(probe) = probe_result {
-            let reason = if !same_path_query(winner_url, url) {
-                CdnCandidateExclusionReason::PathQueryMismatch
-            } else if probe.bytes != winner_sample {
-                CdnCandidateExclusionReason::SampleMismatch
-            } else {
-                CdnCandidateExclusionReason::OutsideWinningGroup
-            };
+            let reason = candidate_compatibility_exclusion_reason(
+                winner_url,
+                url,
+                probe.bytes == winner_sample,
+            );
             DownloadTransferDiagnostic::CandidateExcluded { reason }
         } else if let Err(error) = probe_result {
             DownloadTransferDiagnostic::CandidateExcluded {
@@ -557,6 +555,26 @@ fn same_path_query(left: &str, right: &str) -> bool {
         return false;
     };
     left.scheme() == right.scheme() && left.path() == right.path() && left.query() == right.query()
+}
+
+fn candidate_compatibility_exclusion_reason(
+    winner_url: &str,
+    candidate_url: &str,
+    samples_match: bool,
+) -> CdnCandidateExclusionReason {
+    let (Ok(winner), Ok(candidate)) = (url::Url::parse(winner_url), url::Url::parse(candidate_url))
+    else {
+        return CdnCandidateExclusionReason::PathQueryMismatch;
+    };
+    if winner.path() != candidate.path() || winner.query() != candidate.query() {
+        CdnCandidateExclusionReason::PathQueryMismatch
+    } else if !samples_match {
+        CdnCandidateExclusionReason::SampleMismatch
+    } else if winner.scheme() != candidate.scheme() {
+        CdnCandidateExclusionReason::SchemeMismatch
+    } else {
+        CdnCandidateExclusionReason::OutsideWinningGroup
+    }
 }
 
 #[cfg(test)]
@@ -1563,6 +1581,42 @@ mod tests {
         assert!(!serialized.contains("codex_synth_v1_bearer_a"));
         assert!(!serialized.contains("/media"));
         assert!(serialized.contains("sample_mismatch"));
+        Ok(())
+    }
+
+    #[test]
+    fn classifies_scheme_only_candidate_exclusions_separately() -> anyhow::Result<()> {
+        let winner = "https://cdn.example/media?format=mp4";
+        let http_variant = "http://cdn.example/media?format=mp4";
+        assert!(!super::same_path_query(winner, http_variant));
+        assert_eq!(
+            super::candidate_compatibility_exclusion_reason(winner, http_variant, true),
+            CdnCandidateExclusionReason::SchemeMismatch
+        );
+        assert_eq!(
+            super::candidate_compatibility_exclusion_reason(winner, http_variant, false),
+            CdnCandidateExclusionReason::SampleMismatch
+        );
+        assert_eq!(
+            super::candidate_compatibility_exclusion_reason(
+                winner,
+                "http://cdn.example/other?format=mp4",
+                true,
+            ),
+            CdnCandidateExclusionReason::PathQueryMismatch
+        );
+        assert_eq!(
+            super::candidate_compatibility_exclusion_reason(
+                winner,
+                "http://cdn.example/media?format=flac",
+                true,
+            ),
+            CdnCandidateExclusionReason::PathQueryMismatch
+        );
+        assert_eq!(
+            serde_json::to_string(&CdnCandidateExclusionReason::SchemeMismatch)?,
+            "\"scheme_mismatch\""
+        );
         Ok(())
     }
 

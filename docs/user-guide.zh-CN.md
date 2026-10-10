@@ -240,6 +240,11 @@ Range 分片、整文件请求或独立探测。取消可能导致请求没有�
 phase 仍是 `shard_probe`。host label 只包含解析出的 host 和可选端口，不包含 URL path、query 或
 credentials。探测超时使用 `timed_out`；续传响应体长度按剩余请求长度分类；span/探测失败使用
 `probe_failed`，只有显式总大小不匹配才使用 `size_mismatch`。
+仅 scheme 不同的候选使用 `scheme_mismatch`；只有实际 path 或 query 不同时才使用
+`path_query_mismatch`。这些 reason 描述既有的 same-scheme 兼容策略，不会改变候选兼容规则。对于整文件请求，
+成功的 `request_finished` 诊断会先于 `file_completed` 发出；只有响应体已读完并 flush、长度校验通过且必要的
+文件替换成功后，才会报告成功。HTTP 416 表示续传内容已完整时，也使用同一完成路径，避免重复成功诊断。
+以失败或取消结束的文件操作不会发出 `file_completed`；取消或 drop 仍可能没有请求终态诊断。
 
 `--progress-json` 输出示例：
 

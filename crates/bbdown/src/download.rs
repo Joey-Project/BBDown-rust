@@ -2925,6 +2925,9 @@ impl BiliClient {
                 Some(reason) => DownloadTransferRequestOutcome::Failed { reason },
             });
         }
+        if let Ok(file) = &result {
+            emit_file_completed(progress, request, file.bytes_written, file.resumed_from);
+        }
         result
     }
 
@@ -2993,12 +2996,6 @@ impl BiliClient {
         if replace_existing {
             map_attempt_error(replace_file(&write_path, request.path).await, attempt, true)?;
         }
-        emit_file_completed(
-            context.progress,
-            request,
-            bytes_written,
-            write_request.start_offset,
-        );
         Ok(DownloadedFile {
             kind: request.kind.clone(),
             path: request.path.to_path_buf(),
@@ -3566,7 +3563,6 @@ where
         && request.expected_size.is_none_or(|size| size == resume_from)
     {
         emit_file_started(progress, request, resume_from, Some(resume_from), attempt);
-        emit_file_completed(progress, request, 0, resume_from);
         return Ok(DownloadedFile {
             kind: request.kind.clone(),
             path: request.path.to_path_buf(),
@@ -11605,6 +11601,7 @@ mod tests {
         Ok(())
     }
 
+    #[allow(clippy::too_many_lines)] // Keep timeout, retry, and request/file event ordering in one fixture.
     #[tokio::test]
     async fn media_download_request_timeout_still_bounds_response_headers() -> anyhow::Result<()> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
@@ -11673,43 +11670,62 @@ mod tests {
             .map_err(|_| anyhow::anyhow!("server thread panicked"))??;
         assert_eq!(tokio::fs::read_to_string(&file.path).await?, "ok");
         let events = progress_events_snapshot(&events);
-        assert!(events.iter().any(|event| matches!(
-            event,
-            DownloadProgressEvent::TransferDiagnostic {
-                request_id: Some(1),
-                phase: Some(DownloadTransferPhase::WholeFile),
-                diagnostic: DownloadTransferDiagnostic::RequestFinished {
-                    outcome: DownloadTransferRequestOutcome::Failed {
+        let failed_finish = events.iter().position(|event| {
+            matches!(
+                event,
+                DownloadProgressEvent::TransferDiagnostic {
+                    request_id: Some(1),
+                    phase: Some(DownloadTransferPhase::WholeFile),
+                    diagnostic: DownloadTransferDiagnostic::RequestFinished {
+                        outcome: DownloadTransferRequestOutcome::Failed {
+                            reason: DownloadTransferFailureReason::TimedOut,
+                        },
+                        bytes_received: 0,
+                    },
+                    ..
+                }
+            )
+        });
+        let retry_scheduled = events.iter().position(|event| {
+            matches!(
+                event,
+                DownloadProgressEvent::TransferDiagnostic {
+                    request_id: Some(2),
+                    phase: Some(DownloadTransferPhase::WholeFile),
+                    diagnostic: DownloadTransferDiagnostic::RetryScheduled {
                         reason: DownloadTransferFailureReason::TimedOut,
                     },
-                    bytes_received: 0,
-                },
-                ..
-            }
-        )));
-        assert!(events.iter().any(|event| matches!(
-            event,
-            DownloadProgressEvent::TransferDiagnostic {
-                request_id: Some(2),
-                phase: Some(DownloadTransferPhase::WholeFile),
-                diagnostic: DownloadTransferDiagnostic::RetryScheduled {
-                    reason: DownloadTransferFailureReason::TimedOut,
-                },
-                ..
-            }
-        )));
-        assert!(events.iter().any(|event| matches!(
-            event,
-            DownloadProgressEvent::TransferDiagnostic {
-                request_id: Some(2),
-                phase: Some(DownloadTransferPhase::WholeFile),
-                diagnostic: DownloadTransferDiagnostic::RequestFinished {
-                    outcome: DownloadTransferRequestOutcome::Succeeded,
-                    bytes_received: 2,
-                },
-                ..
-            }
-        )));
+                    ..
+                }
+            )
+        });
+        let successful_finish = events.iter().position(|event| {
+            matches!(
+                event,
+                DownloadProgressEvent::TransferDiagnostic {
+                    request_id: Some(2),
+                    phase: Some(DownloadTransferPhase::WholeFile),
+                    diagnostic: DownloadTransferDiagnostic::RequestFinished {
+                        outcome: DownloadTransferRequestOutcome::Succeeded,
+                        bytes_received: 2,
+                    },
+                    ..
+                }
+            )
+        });
+        let file_completed = events
+            .iter()
+            .position(|event| matches!(event, DownloadProgressEvent::FileCompleted { .. }));
+        assert!(
+            failed_finish
+                .zip(retry_scheduled)
+                .is_some_and(|(failed, retry)| { failed < retry })
+        );
+        assert!(
+            successful_finish
+                .zip(file_completed)
+                .is_some_and(|(finished, completed)| finished < completed)
+        );
         Ok(())
     }
 

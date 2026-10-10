@@ -573,6 +573,12 @@ CDN 探测/Range 请求，不包括 metadata、playurl 或 authentication API �
 可兼容的候选组、传输随后回退，phase 仍是分片探测。host label 只包含解析出的 host 和可选端口，不包含
 URL path、query 或 credentials。探测超时使用 `TimedOut`；续传响应体长度按剩余请求长度分类；span/探测
 失败使用 `ProbeFailed`，只有显式总大小不匹配才使用 `SizeMismatch`。
+仅 scheme 不同的候选使用 `SchemeMismatch`（`scheme_mismatch`）；只有实际 path 或 query 不同时才使用
+`PathQueryMismatch`（`path_query_mismatch`）。这些 reason 只描述现有的 same-scheme 兼容策略，不会改变
+候选兼容规则。对于整文件请求，成功的 `RequestFinished` 会先于 `FileCompleted` 发出；只有响应体已读完并
+flush、长度校验通过且必要的文件替换成功后，才会发出成功结果。HTTP 416 表示续传内容已完整时，也会走
+相同的完成出口，避免重复成功事件。以失败或取消结束的文件操作不会发出 `FileCompleted`；取消或 drop 仍可能没有
+请求终态诊断。
 取消或 drop 的请求可能没有终态结果，但之前发出的字节增量仍有效。这些 API 是已发布 `0.8.0`
 tag 后的 source additions，不属于已发布 crate。
 

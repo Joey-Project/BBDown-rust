@@ -62,6 +62,14 @@ superseded_by:
   only a parsed host and optional port, never URL paths, queries, or credentials. Probe timeouts use
   `TimedOut`, resume body lengths are classified against the remaining requested length, span/probe
   failures use `ProbeFailed`, and `SizeMismatch` is reserved for an explicit total-size mismatch.
+  Scheme-only differences use `SchemeMismatch` (`scheme_mismatch`), while `PathQueryMismatch`
+  (`path_query_mismatch`) means an actual path or query difference; this records the existing
+  same-scheme compatibility policy without changing it.
+- A successful whole-file `RequestFinished` precedes `FileCompleted` and is emitted only after body
+  consumption and flush, length validation, and any required file replacement succeed. A resume
+  already complete after HTTP 416 uses the same completion path. File operations that end in failure
+  or cancellation do not emit `FileCompleted`; cancellation or dropping may still leave no terminal
+  request diagnostic.
 - Coverage includes instrumented media probes and range transfers, whole-file retries/fallbacks,
   and file responses such as media and sidecars. Metadata, playurl, and authentication API requests
   are outside this accounting.
@@ -70,14 +78,13 @@ superseded_by:
 
 ## Validation And Limits
 
-- Focused download regressions passed 178 tests, and the range-transfer regression suite passed 20.
-  The parallel mock fixtures retain their server lease through the requests they serve, and CLI
-  progress keeps the established
-  one-based `entry_index` convention.
-- `env RUSTUP_TOOLCHAIN=1.99.0 just ci` exited 0 in 62.82 seconds. Formatting, strict workspace
-  Clippy, the Rust 1.95.0 MSRV check, and workspace tests passed (806 passed, 0 failed, 3 ignored).
-  A separate CLI repeat passed 154 tests. The publish dry run packaged 29 files (1.8 MiB,
-  272.1 KiB compressed) and performed no upload.
+- The full workspace suite covered the download and range-transfer diagnostic regressions; parallel
+  mock fixtures retain their server lease through the requests they serve, and CLI progress keeps
+  the established one-based `entry_index` convention.
+- `env RUSTUP_TOOLCHAIN=1.99.0 just ci` exited 0 in 62.96 seconds (79,839 bytes). Formatting, strict
+  workspace Clippy, the Rust 1.95.0 MSRV check, and workspace tests passed (807 passed, 0 failed,
+  3 ignored). A separate CLI repeat passed 154 tests. The publish dry run packaged 29 files
+  (1.8 MiB, 272.7 KiB compressed) and performed no upload.
 - No live-media comparison or measured performance improvement is claimed in this record.
 - A later adaptive-transfer workstream can use these diagnostics while keeping consumed response-
   body bytes distinct from written bytes and total wire traffic.

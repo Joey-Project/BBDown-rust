@@ -156,6 +156,7 @@ pub enum CdnCandidateExclusionReason {
     SizeMismatch,
     SampleMismatch,
     PathQueryMismatch,
+    SchemeMismatch,
     OutsideWinningGroup,
 }
 

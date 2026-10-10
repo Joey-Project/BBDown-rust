@@ -624,6 +624,15 @@ is retained when no compatible group is available and transfer falls back. Host 
 a parsed host and optional port, never a URL path, query, or credentials. Probe timeouts use
 `TimedOut`; resume body lengths are classified against the remaining requested length; span/probe
 failures use `ProbeFailed`, while `SizeMismatch` is reserved for an explicit total-size mismatch.
+Scheme-only candidate differences use `SchemeMismatch` (`scheme_mismatch`); `PathQueryMismatch`
+(`path_query_mismatch`) is reserved for an actual path or query difference. These reasons describe
+the existing same-scheme compatibility policy and do not change candidate compatibility.
+For whole-file requests, a successful `RequestFinished` is emitted before `FileCompleted`, and only
+after the response body is consumed and flushed, its length is validated, and any required file
+replacement succeeds. A resume already complete when the server responds with HTTP 416 follows this
+same completion path to avoid a duplicate success event. A file operation that ends in failure or
+cancellation does not emit `FileCompleted`; cancellation or dropping may still leave a request
+without a terminal diagnostic.
 
 The sink opts into these events by default. A sink can override `wants_transfer_diagnostics()` to
 return `false`; `NoopDownloadProgress` already does so. For example, the event fields can be handled
