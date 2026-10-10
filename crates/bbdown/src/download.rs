@@ -2487,16 +2487,22 @@ impl BiliClient {
                 Err(error)
             }
             Err(error) => {
-                let reason = match &error {
+                let (phase, reason) = match &error {
                     Error::InvalidInput(message)
                         if message == "no CDN candidate passed the range probe" =>
                     {
-                        DownloadTransferFallbackReason::NoCompatibleCandidates
+                        (
+                            DownloadTransferPhase::ShardProbe,
+                            DownloadTransferFallbackReason::NoCompatibleCandidates,
+                        )
                     }
-                    _ => DownloadTransferFallbackReason::RangeTransferFailed,
+                    _ => (
+                        DownloadTransferPhase::RangeChunk,
+                        DownloadTransferFallbackReason::RangeTransferFailed,
+                    ),
                 };
                 transfer_reporter.diagnostic(
-                    Some(DownloadTransferPhase::RangeChunk),
+                    Some(phase),
                     DownloadTransferDiagnostic::WholeFileFallback { reason },
                 );
                 Ok(None)
@@ -2806,6 +2812,7 @@ impl BiliClient {
         map_attempt_error(cancellation.check(), attempt, started)?;
         let observer =
             transfer_reporter.begin_request(url, DownloadTransferPhase::WholeFile, retry_reason);
+        let mut expected_response_body_size = request.expected_size;
         let mut result = async {
             let response = map_attempt_error(
                 await_or_cancel(self.send_download_request(url, resume_from), cancellation).await,
@@ -2850,6 +2857,8 @@ impl BiliClient {
                 response_content_len,
                 full_retry_after_ignored_range,
             );
+            expected_response_body_size =
+                validation_expected_size.map(|size| size.saturating_sub(start_offset));
             if full_retry_after_ignored_range && validation_expected_size.is_none() {
                 return Err(DownloadFileAttemptError::new(
                     Error::InvalidInput(
@@ -2897,7 +2906,7 @@ impl BiliClient {
                     download_transfer_failure_reason(
                         &error.error,
                         observer.bytes_received(),
-                        request.expected_size,
+                        expected_response_body_size,
                     )
                 }
             });
@@ -3771,6 +3780,9 @@ fn download_transfer_failure_reason(
         Error::Http(error) if error.is_request() => DownloadTransferFailureReason::RequestFailed,
         Error::InvalidInput(message) if message == "download idle timeout elapsed" => {
             DownloadTransferFailureReason::BodyStalled
+        }
+        Error::InvalidInput(message) if message == "download request timeout elapsed" => {
+            DownloadTransferFailureReason::TimedOut
         }
         Error::InvalidInput(message)
             if message == "download body length did not match Content-Range"
@@ -8494,14 +8506,20 @@ mod tests {
         });
 
         let temp = tempfile::tempdir()?;
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress_events = Arc::clone(&events);
+        let progress = move |event: &DownloadProgressEvent| {
+            push_progress_event(&progress_events, event.clone());
+        };
         let report = BiliClient::new(ClientConfig::default())
-            .download_plan(
+            .download_plan_with_progress(
                 &plan,
                 DownloadOptions::new(temp.path())
                     .with_retry_policy(RetryPolicy::single_attempt())
                     .with_download_mode(DownloadMode::VideoOnly)
                     .with_cdn_parallelism(2)
                     .with_mux(MuxOptions::Disabled),
+                &progress,
             )
             .await?;
 
@@ -8520,6 +8538,17 @@ mod tests {
             1,
             "ordinary fallback must be a single attempt"
         );
+        let events = progress_events_snapshot(&events);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::TransferDiagnostic {
+                phase: Some(DownloadTransferPhase::ShardProbe),
+                diagnostic: DownloadTransferDiagnostic::WholeFileFallback {
+                    reason: crate::DownloadTransferFallbackReason::NoCompatibleCandidates,
+                },
+                ..
+            }
+        )));
         Ok(())
     }
 
@@ -10377,6 +10406,77 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn resumed_oversized_body_is_classified_against_remaining_length() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let oversized_body = vec![b'x'; 200];
+        let resume_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/video.m4s")
+                .header("range", "bytes=900-");
+            then.status(206)
+                .header("Content-Range", "bytes 900-999/1000")
+                .header("Content-Length", oversized_body.len().to_string())
+                .body(oversized_body.clone());
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let entry = single_video_plan(format!("{}/video.m4s", server.base_url()))
+            .entries
+            .remove(0);
+        let path = temp.path().join("video.m4s");
+        let original_body = vec![b'o'; 900];
+        tokio::fs::write(&path, &original_body).await?;
+        let options = DownloadOptions {
+            retry: RetryPolicy::single_attempt(),
+            sidecars: SidecarOptions {
+                danmaku: false,
+                ..SidecarOptions::default()
+            },
+            mux: MuxOptions::Disabled,
+            ..DownloadOptions::default()
+        };
+        let request = DownloadFileRequest::new(&entry, &path, DownloadFileKind::Video, Some(1000));
+        let cancellation = DownloadCancellationToken::new();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress_events = Arc::clone(&events);
+        let progress = move |event: &DownloadProgressEvent| {
+            push_progress_event(&progress_events, event.clone());
+        };
+
+        let Err(error) = client
+            .download_url_to_file(
+                &format!("{}/video.m4s", server.base_url()),
+                &request,
+                &options,
+                &progress,
+                &cancellation,
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!("oversized resumed body should fail"));
+        };
+
+        assert!(error.to_string().contains("download body length"));
+        assert_eq!(tokio::fs::read(&path).await?, original_body);
+        assert_eq!(resume_mock.calls(), 1);
+        let events = progress_events_snapshot(&events);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::TransferDiagnostic {
+                phase: Some(DownloadTransferPhase::WholeFile),
+                diagnostic: DownloadTransferDiagnostic::RequestFinished {
+                    outcome: DownloadTransferRequestOutcome::Failed {
+                        reason: DownloadTransferFailureReason::OversizedBody,
+                    },
+                    bytes_received: 200,
+                },
+                ..
+            }
+        )));
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn media_download_does_not_send_cookie_header() -> anyhow::Result<()> {
         let server = MockServer::start();
         let cookie_mock = server.mock(|when, then| {
@@ -11510,15 +11610,30 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let address = listener.local_addr()?;
         let handle = std::thread::spawn(move || -> anyhow::Result<()> {
-            let (mut stream, _) = listener.accept()?;
-            let mut buffer = [0; 1024];
-            let _ = stream.read(&mut buffer)?;
-            std::thread::sleep(Duration::from_millis(100));
+            let (mut first_stream, _) = listener.accept()?;
+            let _first_request = read_http_request_headers(&mut first_stream)?;
+            let delayed_first_response = std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(600));
+                let _ = first_stream.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+                );
+            });
+
+            // Keep accepting while the first request's response headers are delayed so the
+            // retry does not spend its own deadline waiting in the listener backlog.
+            let (mut retry_stream, _) = listener.accept()?;
+            let _retry_request = read_http_request_headers(&mut retry_stream)?;
+            retry_stream.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+            )?;
+            delayed_first_response
+                .join()
+                .map_err(|_| anyhow::anyhow!("delayed response thread panicked"))?;
             Ok(())
         });
         let temp = tempfile::tempdir()?;
         let client = BiliClient::new(ClientConfig {
-            request_timeout: Duration::from_millis(20),
+            request_timeout: Duration::from_millis(200),
             ..ClientConfig::default()
         });
         let entry = single_video_plan(format!("http://{address}/video.m4s"))
@@ -11526,7 +11641,7 @@ mod tests {
             .remove(0);
         let path = temp.path().join("video.m4s");
         let options = DownloadOptions {
-            retry: RetryPolicy::single_attempt(),
+            retry: RetryPolicy::new(2, Duration::ZERO),
             sidecars: SidecarOptions {
                 danmaku: false,
                 ..SidecarOptions::default()
@@ -11535,26 +11650,66 @@ mod tests {
             download_idle_timeout: Some(Duration::from_secs(1)),
             ..DownloadOptions::default()
         };
-        let request = DownloadFileRequest::new(&entry, &path, DownloadFileKind::Video, None);
+        let request = DownloadFileRequest::new(&entry, &path, DownloadFileKind::Video, Some(2));
         let cancellation = DownloadCancellationToken::new();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress_events = Arc::clone(&events);
+        let progress = move |event: &DownloadProgressEvent| {
+            push_progress_event(&progress_events, event.clone());
+        };
 
-        let Err(error) = client
+        let file = client
             .download_url_to_file(
                 &format!("http://{address}/video.m4s"),
                 &request,
                 &options,
-                &NoopDownloadProgress,
+                &progress,
                 &cancellation,
             )
-            .await
-        else {
-            return Err(anyhow::anyhow!("hung response headers should time out"));
-        };
+            .await?;
 
         handle
             .join()
             .map_err(|_| anyhow::anyhow!("server thread panicked"))??;
-        assert!(error.to_string().contains("download request timeout"));
+        assert_eq!(tokio::fs::read_to_string(&file.path).await?, "ok");
+        let events = progress_events_snapshot(&events);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::TransferDiagnostic {
+                request_id: Some(1),
+                phase: Some(DownloadTransferPhase::WholeFile),
+                diagnostic: DownloadTransferDiagnostic::RequestFinished {
+                    outcome: DownloadTransferRequestOutcome::Failed {
+                        reason: DownloadTransferFailureReason::TimedOut,
+                    },
+                    bytes_received: 0,
+                },
+                ..
+            }
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::TransferDiagnostic {
+                request_id: Some(2),
+                phase: Some(DownloadTransferPhase::WholeFile),
+                diagnostic: DownloadTransferDiagnostic::RetryScheduled {
+                    reason: DownloadTransferFailureReason::TimedOut,
+                },
+                ..
+            }
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::TransferDiagnostic {
+                request_id: Some(2),
+                phase: Some(DownloadTransferPhase::WholeFile),
+                diagnostic: DownloadTransferDiagnostic::RequestFinished {
+                    outcome: DownloadTransferRequestOutcome::Succeeded,
+                    bytes_received: 2,
+                },
+                ..
+            }
+        )));
         Ok(())
     }
 

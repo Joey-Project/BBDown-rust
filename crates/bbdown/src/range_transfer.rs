@@ -231,8 +231,7 @@ fn range_failure_reason(error: &Error) -> DownloadTransferFailureReason {
 fn candidate_exclusion_reason(error: &Error) -> CdnCandidateExclusionReason {
     match error {
         Error::InvalidInput(message)
-            if message == "range total size does not match expected size"
-                || message == "Content-Range does not match requested range" =>
+            if message == "range total size does not match expected size" =>
         {
             CdnCandidateExclusionReason::SizeMismatch
         }
@@ -358,17 +357,17 @@ where
                 observer.as_ref(),
             )
             .await;
-            (index, url.as_str(), result, observer)
+            (index, url.as_str(), result)
         });
     }
     let mut completed_probes = Vec::new();
     while let Some(probe) = probes.next().await {
         completed_probes.push(probe);
     }
-    completed_probes.sort_by_key(|(index, _, _, _)| *index);
+    completed_probes.sort_by_key(|(index, _, _)| *index);
 
     let mut candidate_groups: Vec<Vec<(usize, &str, Vec<u8>)>> = Vec::new();
-    for (index, url, probe_result, _) in &completed_probes {
+    for (index, url, probe_result) in &completed_probes {
         if let Ok(probe) = probe_result {
             if let Some(group) = candidate_groups
                 .iter_mut()
@@ -381,11 +380,15 @@ where
         }
     }
     if candidate_groups.is_empty() {
-        for (_, _, probe_result, observer) in &completed_probes {
-            if let (Err(error), Some(observer)) = (probe_result, observer) {
-                observer.diagnostic(DownloadTransferDiagnostic::CandidateExcluded {
-                    reason: candidate_exclusion_reason(error),
-                });
+        for (_, url, probe_result) in &completed_probes {
+            if let Err(error) = probe_result {
+                transfer_reporter.diagnostic_for_url(
+                    url,
+                    Some(DownloadTransferPhase::ShardProbe),
+                    DownloadTransferDiagnostic::CandidateExcluded {
+                        reason: candidate_exclusion_reason(error),
+                    },
+                );
             }
         }
         return Err(invalid("no CDN candidate passed the range probe"));
@@ -401,8 +404,7 @@ where
     let winner_sample = winner_group[0].2.clone();
     let winner_indices: Vec<usize> = winner_group.iter().map(|(index, _, _)| *index).collect();
     let candidates: Vec<&str> = winner_group.into_iter().map(|(_, url, _)| url).collect();
-    for (index, url, probe_result, observer) in &completed_probes {
-        let Some(observer) = observer else { continue };
+    for (index, url, probe_result) in &completed_probes {
         let diagnostic = if winner_indices.contains(index) {
             DownloadTransferDiagnostic::CandidateSelected
         } else if let Ok(probe) = probe_result {
@@ -421,7 +423,11 @@ where
         } else {
             continue;
         };
-        observer.diagnostic(diagnostic);
+        transfer_reporter.diagnostic_for_url(
+            url,
+            Some(DownloadTransferPhase::ShardProbe),
+            diagnostic,
+        );
     }
 
     let chunk_count = expected_total.div_ceil(chunk_size);
@@ -697,6 +703,17 @@ mod tests {
             then.status(status)
                 .header(CONTENT_RANGE.as_str(), content_range)
                 .body(body);
+        })
+    }
+
+    fn parsed_host_label(source_url: &str) -> anyhow::Result<String> {
+        let parsed = url::Url::parse(source_url)?;
+        let host = parsed
+            .host_str()
+            .ok_or_else(|| anyhow::anyhow!("test URL has no host"))?;
+        Ok(match parsed.port() {
+            Some(port) => format!("{host}:{port}"),
+            None => host.to_owned(),
         })
     }
 
@@ -1421,9 +1438,9 @@ mod tests {
         Ok(())
     }
 
+    #[allow(clippy::too_many_lines)] // Keep the request lifecycle and operation-scope assertions together.
     #[tokio::test]
-    async fn reports_candidate_compatibility_reasons_with_host_only_context() -> anyhow::Result<()>
-    {
+    async fn reports_candidate_decisions_at_shard_probe_operation_scope() -> anyhow::Result<()> {
         let canonical = MockServer::start();
         let alternate = MockServer::start();
         let outlier = MockServer::start();
@@ -1435,10 +1452,15 @@ mod tests {
         // Keep each lease alive for the whole request sequence. Dropping a MockServer returns
         // its server to httpmock's shared pool, where another parallel test may reset it.
         let servers = [canonical, alternate, outlier];
+        // Reuse catalog fixture bearer-a for the URL redaction assertion below.
         let urls = servers
             .iter()
             .map(|server| format!("{}?token=codex_synth_v1_bearer_a", server.url("/media")))
             .collect::<Vec<_>>();
+        let expected_hosts = urls
+            .iter()
+            .map(|url| parsed_host_label(url))
+            .collect::<anyhow::Result<std::collections::BTreeSet<_>>>()?;
         let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let sink_events = std::sync::Arc::clone(&events);
         let sink = move |event: &DownloadProgressEvent| match sink_events.lock() {
@@ -1466,37 +1488,173 @@ mod tests {
             Ok(events) => events.clone(),
             Err(poisoned) => poisoned.into_inner().clone(),
         };
-        let selected = snapshot
+        let probe_finish_indices = snapshot
             .iter()
-            .filter(|event| {
-                matches!(
-                    event,
-                    DownloadProgressEvent::TransferDiagnostic {
-                        diagnostic: DownloadTransferDiagnostic::CandidateSelected,
-                        ..
-                    }
-                )
-            })
-            .count();
-        let excluded = snapshot
-            .iter()
-            .filter_map(|event| match event {
+            .enumerate()
+            .filter_map(|(index, event)| match event {
                 DownloadProgressEvent::TransferDiagnostic {
-                    diagnostic: DownloadTransferDiagnostic::CandidateExcluded { reason },
-                    host: Some(host),
+                    phase: Some(DownloadTransferPhase::ShardProbe),
+                    diagnostic: DownloadTransferDiagnostic::RequestFinished { .. },
                     ..
-                } => Some((*reason, host)),
+                } => Some(index),
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert_eq!(selected, 2);
-        assert_eq!(excluded.len(), 1);
-        assert_eq!(excluded[0].0, CdnCandidateExclusionReason::SampleMismatch);
-        assert!(excluded[0].1.starts_with("127.0.0.1:"));
+        let candidate_decisions = snapshot
+            .iter()
+            .enumerate()
+            .filter_map(|(index, event)| match event {
+                DownloadProgressEvent::TransferDiagnostic {
+                    request_id,
+                    phase,
+                    diagnostic: DownloadTransferDiagnostic::CandidateExcluded { reason },
+                    host,
+                    ..
+                } => Some((index, *request_id, *phase, host.clone(), Some(*reason))),
+                DownloadProgressEvent::TransferDiagnostic {
+                    request_id,
+                    phase,
+                    diagnostic: DownloadTransferDiagnostic::CandidateSelected,
+                    host,
+                    ..
+                } => Some((index, *request_id, *phase, host.clone(), None)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(probe_finish_indices.len(), 3);
+        assert_eq!(candidate_decisions.len(), 3);
+        assert!(
+            candidate_decisions
+                .iter()
+                .all(|(_, request_id, phase, host, _)| request_id.is_none()
+                    && *phase == Some(DownloadTransferPhase::ShardProbe)
+                    && host
+                        .as_deref()
+                        .is_some_and(|host| host.starts_with("127.0.0.1:") && !host.contains('/')))
+        );
+        let decision_hosts = candidate_decisions
+            .iter()
+            .filter_map(|(_, _, _, host, _)| host.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(decision_hosts, expected_hosts);
+        let last_probe_finish = probe_finish_indices.last().copied();
+        let first_candidate_decision = candidate_decisions
+            .iter()
+            .map(|(index, _, _, _, _)| *index)
+            .min();
+        assert!(last_probe_finish.zip(first_candidate_decision).is_some_and(
+            |(last_probe_finish, first_candidate_decision)| {
+                last_probe_finish < first_candidate_decision
+            }
+        ));
+        assert_eq!(
+            candidate_decisions
+                .iter()
+                .filter(|(_, _, _, _, reason)| reason.is_none())
+                .count(),
+            2
+        );
+        let excluded = candidate_decisions
+            .iter()
+            .filter_map(|(_, _, _, _, reason)| *reason)
+            .collect::<Vec<_>>();
+        assert_eq!(excluded, vec![CdnCandidateExclusionReason::SampleMismatch]);
         let serialized = serde_json::to_string(&snapshot)?;
         assert!(!serialized.contains("codex_synth_v1_bearer_a"));
         assert!(!serialized.contains("/media"));
         assert!(serialized.contains("sample_mismatch"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn classifies_probe_span_and_total_mismatches_separately() -> anyhow::Result<()> {
+        let good = MockServer::start();
+        let shifted_span = MockServer::start();
+        let wrong_total = MockServer::start();
+        let body = "r".repeat(20_000);
+        let good_mock = add_media_server(&good, body.clone(), Vec::new(), None);
+        let shifted_span_mock = shifted_span.mock(|when, then| {
+            when.method(GET).path("/media");
+            then.status(206)
+                .header(CONTENT_RANGE.as_str(), "bytes 1-16384/20000")
+                .body("r".repeat(16_384));
+        });
+        let wrong_total_mock = wrong_total.mock(|when, then| {
+            when.method(GET).path("/media");
+            then.status(206)
+                .header(CONTENT_RANGE.as_str(), "bytes 0-16383/20001")
+                .body("r".repeat(16_384));
+        });
+        // Keep all leases alive through the probe and shard requests.
+        let urls = vec![
+            good.url("/media"),
+            shifted_span.url("/media"),
+            wrong_total.url("/media"),
+        ];
+        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink_events = std::sync::Arc::clone(&events);
+        let sink = move |event: &DownloadProgressEvent| match sink_events.lock() {
+            Ok(mut events) => events.push(event.clone()),
+            Err(poisoned) => poisoned.into_inner().push(event.clone()),
+        };
+        let reporter = TransferReporter::new(&sink, None, None, None, None);
+        let dir = tempfile::tempdir()?;
+        let path = super::download_sharded_to_temp_with_progress(
+            &reqwest::Client::new(),
+            &urls,
+            HeaderMap::new(),
+            20_000,
+            2,
+            10_000,
+            Duration::from_secs(10),
+            Some(Duration::from_secs(10)),
+            dir.path(),
+            &reporter,
+            |_, _| {},
+        )
+        .await?;
+        assert_downloaded_bytes(&std::fs::read(path)?, body.as_bytes());
+        assert_eq!(good_mock.calls(), 3);
+        assert_eq!(shifted_span_mock.calls(), 1);
+        assert_eq!(wrong_total_mock.calls(), 1);
+
+        let snapshot = match events.lock() {
+            Ok(events) => events.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        };
+        let exclusions = snapshot
+            .iter()
+            .filter_map(|event| match event {
+                DownloadProgressEvent::TransferDiagnostic {
+                    request_id: None,
+                    phase: Some(DownloadTransferPhase::ShardProbe),
+                    host: Some(host),
+                    diagnostic: DownloadTransferDiagnostic::CandidateExcluded { reason },
+                    ..
+                } => Some((*reason, host.clone())),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(exclusions.len(), 2);
+        let exclusion_reasons = exclusions
+            .iter()
+            .map(|(reason, _)| *reason)
+            .collect::<Vec<_>>();
+        assert!(exclusion_reasons.contains(&CdnCandidateExclusionReason::ProbeFailed));
+        assert!(exclusion_reasons.contains(&CdnCandidateExclusionReason::SizeMismatch));
+        let exclusion_hosts = exclusions
+            .iter()
+            .map(|(_, host)| host.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        let expected_exclusion_hosts =
+            urls.iter()
+                .skip(1)
+                .map(|url| parsed_host_label(url))
+                .collect::<anyhow::Result<std::collections::BTreeSet<_>>>()?;
+        assert_eq!(exclusion_hosts, expected_exclusion_hosts);
+        assert!(exclusions.iter().all(|(_, host)| {
+            host.starts_with("127.0.0.1:") && !host.contains('/') && !host.contains('?')
+        }));
         Ok(())
     }
 

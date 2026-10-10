@@ -264,6 +264,14 @@ full-representation identity. Phases identify automatic probes, shard probes, ra
 whole-file requests, or standalone probes. Cancellation can leave a
 request without a terminal diagnostic while preserving byte events already emitted. These events
 are source additions after the published `0.8.0` tag and are not included in the published crate.
+Shard candidate selections and exclusions are emitted after all candidate probes complete as
+operation-level diagnostics with `request_id: null` and phase `shard_probe`; they do not reuse
+request IDs whose probe completion events have already been emitted. This phase remains
+`shard_probe` when no compatible group is available and the transfer falls back. Host labels
+contain only a parsed host and optional port, without URL paths, queries, or credentials. Probe
+timeouts use `timed_out`; resumed response-body lengths are classified against the remaining
+requested length; span/probe failures use `probe_failed`, while `size_mismatch` is reserved for an
+explicit total-size mismatch.
 
 Example `--progress-json` lines:
 

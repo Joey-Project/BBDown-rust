@@ -296,6 +296,25 @@ impl<'a, P: DownloadProgressSink + ?Sized> TransferReporter<'a, P> {
         }
         emit_transfer_diagnostic(self.progress, &self.context, None, phase, None, diagnostic);
     }
+
+    pub(crate) fn diagnostic_for_url(
+        &self,
+        source_url: &str,
+        phase: Option<DownloadTransferPhase>,
+        diagnostic: DownloadTransferDiagnostic,
+    ) {
+        if !self.enabled {
+            return;
+        }
+        emit_transfer_diagnostic(
+            self.progress,
+            &self.context,
+            None,
+            phase,
+            transfer_host_label(source_url),
+            diagnostic,
+        );
+    }
 }
 
 pub(crate) struct TransferRequestReporter<'a, P: DownloadProgressSink + ?Sized> {

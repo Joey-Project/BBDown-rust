@@ -5,7 +5,7 @@ status: completed
 created: 2026-10-10
 updated: 2026-10-10
 branch: wip/cdn-transfer-diagnostics
-pr:
+pr: https://github.com/Joey-Project/BBDown-rust/pull/92
 supersedes: []
 superseded_by:
 ---
@@ -56,7 +56,12 @@ superseded_by:
 - Typed diagnostics cover candidate selected/excluded, retry scheduled, whole-file fallback, and
   request completion. Candidate selection means only that sample/size/path-query preflight placed a
   candidate in the winning compatibility group; it does not prove the complete representation is
-  identical.
+  identical. Shard candidate selections/exclusions are emitted after all probes complete with no
+  request ID and phase `ShardProbe`; they do not reuse probe IDs after `RequestFinished`. This phase
+  is retained when no compatible group is selected and transfer falls back. Host labels contain
+  only a parsed host and optional port, never URL paths, queries, or credentials. Probe timeouts use
+  `TimedOut`, resume body lengths are classified against the remaining requested length, span/probe
+  failures use `ProbeFailed`, and `SizeMismatch` is reserved for an explicit total-size mismatch.
 - Coverage includes instrumented media probes and range transfers, whole-file retries/fallbacks,
   and file responses such as media and sidecars. Metadata, playurl, and authentication API requests
   are outside this accounting.
@@ -65,12 +70,14 @@ superseded_by:
 
 ## Validation And Limits
 
-- The default range-transfer regression suite passed 19 tests. The parallel mock fixtures retain
-  their server lease through the requests they serve, and CLI progress keeps the established
+- Focused download regressions passed 178 tests, and the range-transfer regression suite passed 20.
+  The parallel mock fixtures retain their server lease through the requests they serve, and CLI
+  progress keeps the established
   one-based `entry_index` convention.
-- `env RUSTUP_TOOLCHAIN=1.99.0 just ci` exited 0 in 133.82 seconds. Formatting, strict workspace
-  Clippy, the Rust 1.95.0 MSRV check, and workspace tests passed (804 passed, 3 ignored). A separate
-  CLI repeat passed 154 tests. The publish dry run packaged 29 files and performed no upload.
+- `env RUSTUP_TOOLCHAIN=1.99.0 just ci` exited 0 in 62.82 seconds. Formatting, strict workspace
+  Clippy, the Rust 1.95.0 MSRV check, and workspace tests passed (806 passed, 0 failed, 3 ignored).
+  A separate CLI repeat passed 154 tests. The publish dry run packaged 29 files (1.8 MiB,
+  272.1 KiB compressed) and performed no upload.
 - No live-media comparison or measured performance improvement is claimed in this record.
 - A later adaptive-transfer workstream can use these diagnostics while keeping consumed response-
   body bytes distinct from written bytes and total wire traffic.

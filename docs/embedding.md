@@ -617,7 +617,13 @@ file responses (media and sidecars) and CDN probes/ranges, not metadata, playurl
 API requests. A selected candidate passed compatibility preflight only; selection does not prove
 full-representation identity. A cancelled/dropped request may have no terminal outcome, while its
 earlier byte deltas remain valid. These are source additions after the published `0.8.0` tag, not
-APIs in the published crate.
+APIs in the published crate. Shard candidate selection/exclusion is emitted after all candidate
+probes finish as an operation-level diagnostic (`request_id: None`, `phase: ShardProbe`), rather
+than reusing a probe ID whose `RequestFinished` event has already been emitted. The shard-probe phase
+is retained when no compatible group is available and transfer falls back. Host labels contain only
+a parsed host and optional port, never a URL path, query, or credentials. Probe timeouts use
+`TimedOut`; resume body lengths are classified against the remaining requested length; span/probe
+failures use `ProbeFailed`, while `SizeMismatch` is reserved for an explicit total-size mismatch.
 
 The sink opts into these events by default. A sink can override `wants_transfer_diagnostics()` to
 return `false`; `NoopDownloadProgress` already does so. For example, the event fields can be handled

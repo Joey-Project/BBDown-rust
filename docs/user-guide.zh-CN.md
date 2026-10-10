@@ -235,6 +235,11 @@ stdout 上的普通人类输出或 `--json` report。事件覆盖 plan 开始/�
 候选选中只表示通过兼容性预检，不能证明整个表示的内容相同。phase 标识自动探测、分片探测、
 Range 分片、整文件请求或独立探测。取消可能导致请求没有终态诊断，但此前发出的字节
 事件仍有效。这些事件是在已发布 `0.8.0` tag 后加入的 source API，不包含在已发布 crate 中。
+分片候选选中/排除会在全部候选探测结束后作为操作级诊断发出，`request_id` 为 `null`、phase 为
+`shard_probe`；它们不会复用已发出探测完成事件的请求 ID。即使没有可兼容的候选组、传输随后回退，
+phase 仍是 `shard_probe`。host label 只包含解析出的 host 和可选端口，不包含 URL path、query 或
+credentials。探测超时使用 `timed_out`；续传响应体长度按剩余请求长度分类；span/探测失败使用
+`probe_failed`，只有显式总大小不匹配才使用 `size_mismatch`。
 
 `--progress-json` 输出示例：
 

@@ -568,7 +568,11 @@ async fn main() -> bbdown_core::Result<()> {
 事件只带解析出的 host 和可选文件上下文，不包含请求 URL。诊断事件使用类型化信息报告候选选中/排除、
 计划重试、整文件回退和请求结束，不包含上游错误文本。范围包括文件响应（媒体和旁路文件）及
 CDN 探测/Range 请求，不包括 metadata、playurl 或 authentication API 请求。候选选中仅表示通过
-兼容性预检，不能证明整个表示的内容相同。
+兼容性预检，不能证明整个表示的内容相同。分片候选选中/排除会在全部候选探测结束后作为操作级诊断发出
+（`request_id: None`、`phase: ShardProbe`），不会复用已发出 `RequestFinished` 的探测请求 ID。即使没有
+可兼容的候选组、传输随后回退，phase 仍是分片探测。host label 只包含解析出的 host 和可选端口，不包含
+URL path、query 或 credentials。探测超时使用 `TimedOut`；续传响应体长度按剩余请求长度分类；span/探测
+失败使用 `ProbeFailed`，只有显式总大小不匹配才使用 `SizeMismatch`。
 取消或 drop 的请求可能没有终态结果，但之前发出的字节增量仍有效。这些 API 是已发布 `0.8.0`
 tag 后的 source additions，不属于已发布 crate。
 
