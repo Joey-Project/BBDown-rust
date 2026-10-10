@@ -1540,6 +1540,10 @@ impl DownloadProgressSink for CliProgressReporter {
             eprintln!("{line}");
         }
     }
+
+    fn wants_transfer_diagnostics(&self) -> bool {
+        self.json
+    }
 }
 
 #[derive(Debug)]
@@ -1577,6 +1581,10 @@ impl DownloadProgressSink for DeferredPlanCompletedProgress {
             return;
         }
         self.inner.on_download_progress(event);
+    }
+
+    fn wants_transfer_diagnostics(&self) -> bool {
+        self.inner.wants_transfer_diagnostics()
     }
 }
 

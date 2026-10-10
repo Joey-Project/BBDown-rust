@@ -73,12 +73,15 @@
   networking/downloader features and independent PGC web-route API. GitHub Release and crates.io
   publication succeeded on 2026-10-06. See
   `docs/project_journal/2026/10/2026-10-05-v0-7-release-prep.md`.
-- The `0.8.0` source line prepares opt-in preserving danmaku refresh and release documentation;
-  publication remains pending through the protected post-merge RC and promotion flow. See
+- `0.8.0` has shipped through the protected release-candidate and promotion flow with preserving
+  danmaku refresh, credential-account identity APIs, and release documentation. The GitHub Release
+  and crates.io `bbdown-core` package are published. See
   `docs/project_journal/2026/10/2026-10-06-v0-8-release-prep.md`.
-- Automatic routing, persistent route health, and adaptive tuning remain deferred. Candidate
-  exclusion, cross-candidate retry, and HTTP response-body byte diagnostics are future scheduler
-  work; response-body counts do not equal total wire traffic. Feed/page backlog remains deferred.
+- Post-`v0.8.0` source changes add CDN transfer diagnostics for typed candidate exclusions, retries,
+  whole-file fallbacks, and application-consumed HTTP response-body chunks. These counts do not
+  represent all wire traffic or change the published `0.8.0` package.
+  Automatic routing, persistent route health, and adaptive tuning remain deferred. Feed/page backlog
+  remains deferred.
 
 ## Recovery Pointers
 

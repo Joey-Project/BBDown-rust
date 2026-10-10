@@ -117,10 +117,11 @@
 - [completed] Publish `v0.7.0` through the protected release candidate and promotion workflow as a
   GitHub Release and crates.io `bbdown-core` package. See
   `docs/project_journal/2026/10/2026-10-05-v0-7-release-prep.md`.
-- [pending] Before future CDN scheduler tuning, add diagnostics for candidate exclusion,
-  cross-candidate retries, and actual HTTP response-body bytes. These byte counts would still not
-  represent total wire traffic. Keep automatic routing, persistent route health, and adaptive
-  policy as a separate follow-up.
+- [completed] Add typed CDN candidate-exclusion, retry, and whole-file fallback diagnostics plus
+  counters for application-consumed HTTP response-body chunks. These counts do not represent all
+  wire traffic. Keep automatic routing, persistent route health, and adaptive policy as a separate
+  follow-up. See
+  `docs/project_journal/2026/10/2026-10-10-cdn-transfer-diagnostics.md`.
 - [pending] Plan per-video related recommendations and additional Bilibili page-family parsing for
   a later feed/page release; keep this feed/page backlog deferred from `v0.7.0`.
 - [completed] Add the `0.8.0` preserving danmaku refresh API and CLI: deduplicate XML comments by
@@ -128,9 +129,8 @@
   history, regenerate selected ASS from merged XML, and publish staged sidecars with the archive as
   a group, with failure preservation and core/CLI regression coverage. See
   `docs/project_journal/2026/10/2026-10-06-danmaku-preserving-refresh.md`.
-- [pending] After the `0.8.0` release-preparation changes merge into `master`, publish the prepared
-  source line through the protected release-candidate and promotion workflows as a GitHub Release
-  and crates.io `bbdown-core` package. See
+- [completed] Publish `v0.8.0` through the protected release-candidate and promotion workflows as a
+  GitHub Release and crates.io `bbdown-core` package. See
   `docs/project_journal/2026/10/2026-10-06-v0-8-release-prep.md`.
 - [pending] Continue the remaining BBDown parity backlog after the published `0.4.0` credential and
   danmaku sequence unless reprioritized:

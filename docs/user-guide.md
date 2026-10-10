@@ -26,10 +26,11 @@ The crates.io publish target is the reusable `bbdown-core` library package. Use
 `just publish-dry-run` for a local locked dry run that tolerates an uncommitted worktree, and use
 `just publish-dry-run-strict` or `cargo publish --dry-run -p bbdown-core --locked` to reproduce the
 clean CI gate. The `bbdown-cli` package is marked `publish = false`; install or distribute the CLI
-through GitHub release archives instead. The current published release is `0.7.0`, following the
-published `0.6.0` release. The current `0.8.0` source line builds on that release with preserving
-danmaku refresh. The published line focuses on opt-in CDN selection, probing and parallel transfer, bundled
-network catalogs, and independent PGC Web playurl routing. These controls require explicit selection; the
+through GitHub release archives instead. The current published release is `0.8.0`; it adds preserving
+danmaku refresh and credential-account identity APIs to the earlier `0.7.0` networking and downloader
+features. This source tree also includes CDN transfer diagnostics added after the `0.8.0` tag; those
+additions are not in the published `0.8.0` crate. The published networking controls focus on opt-in CDN
+selection, probing and parallel transfer, bundled network catalogs, and independent PGC Web playurl routing. These controls require explicit selection; the
 catalogs are snapshots, and listed endpoints are checked only when a user runs a probe or selects a
 route. Embedding callers should still prefer
 constructors such as `DownloadOptions::new`, `StreamSelection::new`, and
@@ -236,9 +237,9 @@ Explicit stream selection requires DASH media and therefore disables FLV fallbac
 neither shape is complete, the download fails before writing media.
 Pass `--progress-json` to emit `DownloadProgressEvent` JSON Lines on stderr while keeping the
 normal human output or `--json` report on stdout. Events cover plan start/completion, entry
-start/completion/failure, file start/chunk/completion/failure, mux start/completion/failure, and
-plan completion/failure/cancellation, so wrappers can stream progress without scraping the final
-report. Each JSON object uses a snake_case `type` tag such as `file_progress`, `file_failed`, or
+start/completion/failure, file start/chunk/completion/failure, transfer-byte and transfer-diagnostic
+events, mux start/completion/failure, and plan completion/failure/cancellation, so wrappers can
+stream progress without scraping the final report. Each JSON object uses a snake_case `type` tag such as `file_progress`, `file_failed`, or
 `plan_cancelled`; paths are serialized as strings. On failure, stderr can contain both JSON Lines
 and the final CLI error line, so wrappers should parse only JSON object lines. Pressing `Ctrl-C`
 requests a graceful cancellation: the command exits non-zero, emits `plan_cancelled` when
@@ -247,11 +248,51 @@ pre-attempt size, and leaves already completed entries in place. Press `Ctrl-C` 
 immediate process exit. When the CLI is waiting at the interactive archive duplicate prompt,
 `Ctrl-C` exits immediately with status 130; pass `--on-duplicate` for non-interactive wrappers.
 
+The post-`0.8.0` source tree also emits `transfer_bytes_received` and `transfer_diagnostic` events.
+The first reports each HTTP response-body chunk delivered to and consumed by the application after
+status/header checks and before body-length validation or file writing; an unconsumed rejected body counts as zero. Counts
+follow the client's transparent content-decoding configuration, so they are not compressed entity
+bytes or all wire traffic. Sum `bytes_delta` for consumed body bytes, and treat `bytes_received` as a
+request-local cumulative value rather than another delta. These values are not bytes written. A
+whole-file HTTP error response such as 404 or 500 that is rejected before body consumption is
+reported with `invalid_response` and zero `bytes_received`.
+Byte-event `request_id` values are scoped to one file-transfer operation. Diagnostic events have
+optional request ID and phase fields because some outcomes are operation-level.
+`transfer_diagnostic` reports typed candidate selections/exclusions, scheduled retries, whole-file
+fallbacks, and request outcomes without raw URLs or upstream error text. This covers file responses
+(including media and sidecars) and CDN probes/ranges, not metadata, playurl, or authentication API
+requests. Selection means only that a candidate passed compatibility preflight; it does not prove
+full-representation identity. Phases identify automatic probes, shard probes, range chunks,
+whole-file requests, or standalone probes. Cancellation can leave a
+request without a terminal diagnostic while preserving byte events already emitted. These events
+are source additions after the published `0.8.0` tag and are not included in the published crate.
+Shard candidate selections and exclusions are emitted after all candidate probes complete as
+operation-level diagnostics with `request_id: null` and phase `shard_probe`; they do not reuse
+request IDs whose probe completion events have already been emitted. This phase remains
+`shard_probe` when no compatible group is available and the transfer falls back. Host labels
+contain only a parsed host and optional port, without URL paths, queries, or credentials. Probe
+timeouts use `timed_out`; span/probe failures use `probe_failed`, while `size_mismatch` is reserved
+for an explicit total-size mismatch. Byte deltas still count chunks actually consumed. For resumed
+body-length outcomes, `incomplete_body`/`oversized_body` classification uses the declared
+`Content-Range` span when present, or the remaining expected file length otherwise. This diagnostic
+classification does not relax response-length validation or resume rollback.
+Scheme-only candidate differences use `scheme_mismatch`; `path_query_mismatch` is reserved for an
+actual path or query difference. These reasons describe the existing same-scheme compatibility
+policy and do not change which candidates are compatible. For whole-file requests, a successful
+`request_finished` diagnostic is emitted before `file_completed`, after the response body has been
+consumed and flushed, its length has been validated, and any required file replacement has
+succeeded. A resume already complete when the server responds with HTTP 416 uses the same completion
+path, avoiding a duplicate success diagnostic. A file operation that ends in failure or
+cancellation does not emit `file_completed`; cancellation or dropping may still leave a request
+without a terminal diagnostic.
+
 Example `--progress-json` lines:
 
 ```json
 {"type":"file_progress","entry_index":1,"entry_title":"Main","kind":"video","path":"downloads/Mock video/P001-aid-170001-cid-2-Main/video-80-abcd.m4s","bytes_delta":1048576,"bytes_written":1048576,"resumed_from":0,"expected_size":5242880}
 {"type":"file_failed","entry_index":1,"entry_title":"Main","kind":"video","path":"downloads/Mock video/P001-aid-170001-cid-2-Main/video-80-abcd.m4s","attempt":1,"max_attempts":3,"error":"HTTP error: ..."}
+{"type":"transfer_bytes_received","request_id":1,"entry_index":1,"entry_title":"Main","kind":"video","path":"downloads/Mock video/P001-aid-170001-cid-2-Main/video-80-abcd.m4s","phase":"whole_file","host":"cdn.example:8443","bytes_delta":65536,"bytes_received":65536}
+{"type":"transfer_diagnostic","request_id":1,"entry_index":1,"entry_title":"Main","kind":"video","path":"downloads/Mock video/P001-aid-170001-cid-2-Main/video-80-abcd.m4s","phase":"whole_file","host":"cdn.example:8443","diagnostic":{"event":"request_finished","outcome":{"status":"succeeded"},"bytes_received":65536}}
 {"type":"plan_failed","title":"Mock video","output_dir":"downloads/Mock video","completed_entries":0,"error":"HTTP error: ..."}
 {"type":"plan_cancelled","title":"Mock video","output_dir":"downloads/Mock video","completed_entries":0,"error":"download cancelled by Ctrl-C"}
 ```

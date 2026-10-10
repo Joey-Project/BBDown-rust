@@ -8,9 +8,10 @@
 Bilibili 元数据、下载计划、媒体下载、字幕和弹幕旁路文件、二维码登录状态、批量集合解析，以及
 受限区域代理诊断；调用方无需通过 shell 启动 CLI。
 
-`0.8.0` 开发线新增了分阶段暂存并保留历史的弹幕刷新，以及显式账号身份查询。
-更早发布的 `0.7.0` 增加了显式 CDN 主机池、探测和并行传输选项，以及独立的 PGC Web playurl 路由选择器。
-这些网络操作仍由调用方显式选择；crate 不会根据 CLI 内置目录自动路由请求。配置应优先使用构造器和
+已发布的 `0.8.0` 包含分阶段暂存并保留历史的弹幕刷新，以及显式账号身份查询。更早发布的
+`0.7.0` 增加了显式 CDN 主机池、探测和并行传输选项，以及独立的 PGC Web playurl 路由选择器。
+本 source tree 还在 `0.8.0` tag 之后新增了 CDN 传输诊断；这些新增内容不在已发布的
+`0.8.0` crate 中。这些网络操作仍由调用方显式选择；crate 不会根据 CLI 内置目录自动路由请求。配置应优先使用构造器和
 builder 风格 API，并将元数据和 plan 结构体视为只读输出。这样 crate 增加字段时，嵌入代码更不容易
 受到影响。
 
@@ -552,8 +553,97 @@ async fn main() -> bbdown_core::Result<()> {
 
 嵌入应用需要进度 callback、但不想解析 CLI 输出时，使用 `*_with_progress` 下载方法。
 `DownloadProgressEvent` 会覆盖 plan 开始/完成/失败/取消、条目开始/完成/失败、文件
-开始/chunk/完成/失败，以及 mux 开始/完成/失败。callback 是同步调用，应保持轻量；如果 UI
-更新或数据库写入可能阻塞下载任务，请把事件转发到应用自己的 channel。
+开始/chunk/完成/失败、传输字节和传输诊断事件，以及 mux 开始/完成/失败。callback 是同步调用，
+应保持轻量；如果 UI 更新或数据库写入可能阻塞下载任务，请把事件转发到应用自己的 channel。
+
+`0.8.0` 发布后的 source tree 新增了 `DownloadProgressEvent::TransferBytesReceived` 和
+`DownloadProgressEvent::TransferDiagnostic`。每消费一个 `bytes_stream()` 响应体 chunk，都会在
+通过状态码和 header 检查后、响应体长度校验及写盘前发出字节事件；未读取就被拒绝的响应体计为 0。计数受调用方客户端透明内容
+解码配置影响，因此它不是压缩实体字节数或全部网络传输流量。统计已消费的响应体字节时应累加
+`bytes_delta`；
+`bytes_received` 是该请求的累计值，不能再次累加。它与 `FileProgress.bytes_written` 含义不同。
+整文件 HTTP 错误响应（例如 404 或 500）在消费响应体前被拒绝时，请求终态 reason 为 `InvalidResponse`，且
+已接收响应体字节数为 0。
+字节事件的 `request_id` 在一次文件传输操作内从 1 开始，不要仅按 ID
+跨文件或独立探测调用合并请求。操作级诊断的 request ID 和 phase 可以为空。`phase` 区分自动探测、
+分片预检、Range 分片、整文件请求和独立探测。
+事件只带解析出的 host 和可选文件上下文，不包含请求 URL。诊断事件使用类型化信息报告候选选中/排除、
+计划重试、整文件回退和请求结束，不包含上游错误文本。范围包括文件响应（媒体和旁路文件）及
+CDN 探测/Range 请求，不包括 metadata、playurl 或 authentication API 请求。候选选中仅表示通过
+兼容性预检，不能证明整个表示的内容相同。分片候选选中/排除会在全部候选探测结束后作为操作级诊断发出
+（`request_id: None`、`phase: ShardProbe`），不会复用已发出 `RequestFinished` 的探测请求 ID。即使没有
+可兼容的候选组、传输随后回退，phase 仍是分片探测。host label 只包含解析出的 host 和可选端口，不包含
+URL path、query 或 credentials。探测超时使用 `TimedOut`；span/探测失败使用 `ProbeFailed`，只有显式总大小
+不匹配才使用 `SizeMismatch`。字节增量仍只统计实际消费的 chunk。续传响应体的 `IncompleteBody`/
+`OversizedBody` 分类优先采用 `Content-Range` 声明的 span；没有该 span 时采用文件剩余预期长度。此诊断分类
+不会放宽现有的响应长度校验或续传回滚规则。
+仅 scheme 不同的候选使用 `SchemeMismatch`（`scheme_mismatch`）；只有实际 path 或 query 不同时才使用
+`PathQueryMismatch`（`path_query_mismatch`）。这些 reason 只描述现有的 same-scheme 兼容策略，不会改变
+候选兼容规则。对于整文件请求，成功的 `RequestFinished` 会先于 `FileCompleted` 发出；只有响应体已读完并
+flush、长度校验通过且必要的文件替换成功后，才会发出成功结果。HTTP 416 表示续传内容已完整时，也会走
+相同的完成出口，避免重复成功事件。以失败或取消结束的文件操作不会发出 `FileCompleted`；取消或 drop 仍可能没有
+请求终态诊断。
+取消或 drop 的请求可能没有终态结果，但之前发出的字节增量仍有效。这些 API 是已发布 `0.8.0`
+tag 后的 source additions，不属于已发布 crate。
+
+progress sink 默认启用这些事件；可重载 `wants_transfer_diagnostics()` 返回 `false` 关闭它们，
+`NoopDownloadProgress` 已关闭该功能。下面的字段处理不假设操作级诊断一定包含 request ID 或 phase：
+
+```rust,no_run
+use bbdown_core::DownloadProgressEvent;
+
+fn inspect_transfer_event(event: &DownloadProgressEvent) {
+    match event {
+        DownloadProgressEvent::TransferBytesReceived {
+            request_id,
+            phase,
+            host,
+            bytes_delta,
+            bytes_received,
+            ..
+        } => eprintln!("request={request_id} phase={phase:?} host={host:?} +{bytes_delta} ({bytes_received})"),
+        DownloadProgressEvent::TransferDiagnostic {
+            request_id,
+            phase,
+            host,
+            diagnostic,
+            ..
+        } => eprintln!("request={request_id:?} phase={phase:?} host={host:?} {diagnostic:?}"),
+        _ => {}
+    }
+}
+```
+
+独立探测可调用 `probe_media_cdns_with_progress`，参数与旧 `probe_media_cdns` 相同，另加 progress
+sink：
+
+此 API 在已发布的 `0.8.0` tag 之后加入。编译下面的示例时，请使用包含该改动的源码 checkout；
+crates.io 上的 `0.8.0` package 不包含此 API。
+
+```rust,no_run
+use bbdown_core::{
+    probe_media_cdns_with_progress, BiliClient, DownloadProgressSink, MediaHostOptions,
+    MediaStream, Result,
+};
+
+async fn probe(
+    client: &BiliClient,
+    stream: &MediaStream,
+    progress: &impl DownloadProgressSink,
+) -> Result<()> {
+    let _results = probe_media_cdns_with_progress(
+        client,
+        stream,
+        &MediaHostOptions::default(),
+        progress,
+    )
+    .await?;
+    Ok(())
+}
+```
+
+独立探测事件的 entry/file context 均为 `None`，每次调用的 request ID 从头开始。旧
+`probe_media_cdns` 仍可使用，且不会产生传输事件。
 
 ```rust,no_run
 use bbdown_core::{

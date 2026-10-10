@@ -24,8 +24,9 @@ crates.io 发布目标是可复用的 `bbdown-core` library package。使用 `ju
 可以在本地执行锁定版本的 dry run，并允许工作树存在未提交修改；使用
 `just publish-dry-run-strict` 或 `cargo publish --dry-run -p bbdown-core --locked` 可以复现
 干净 CI 门禁。`bbdown-cli` 包标记为 `publish = false`；CLI 应通过 GitHub release 归档安
-装或分发。当前已发布版本是 `0.7.0`，后续 `0.8.0` source line 加入 preserving danmaku 刷新。
-`0.7.0` 重点是可选 CDN 选择、探测和并行传输、内置网络目录，以及独立的 PGC Web playurl 路由。
+装或分发。当前已发布版本是 `0.8.0`，包含 preserving danmaku 刷新和账号身份 API，并延续
+`0.7.0` 的网络与下载器功能。本 source tree 还包含 `0.8.0` tag 之后新增的 CDN 传输诊断；
+这些新增内容不在已发布的 `0.8.0` crate 中。已发布的网络功能包括可选 CDN 选择、探测和并行传输、内置网络目录，以及独立的 PGC Web playurl 路由。
 这些控制都需要显式选择；目录是快照，
 只有用户运行探测或选定路由时才会检查列出的端点。嵌入调用方仍应优先使用
 `DownloadOptions::new`、`StreamSelection::new`、`Default` 等构造器，而不是 public struct 字面量，并把公开的 plan
@@ -213,7 +214,7 @@ bbdown download av170001 --output-dir downloads --no-mux --json --progress-json
 该条目的 FLV 回退。如果两种形态都不完整，下载会在写入媒体前失败。
 传入 `--progress-json` 会把 `DownloadProgressEvent` 以 JSON Lines 写到 stderr，同时保留
 stdout 上的普通人类输出或 `--json` report。事件覆盖 plan 开始/完成、条目开始/完成、文件
-开始/chunk/完成/失败、mux 开始/完成/失败，以及 plan 完成/失败/取消，因此 wrapper 可以
+开始/chunk/完成/失败、传输字节和传输诊断事件、mux 开始/完成/失败，以及 plan 完成/失败/取消，因此 wrapper 可以
 流式展示进度，而不需要抓取最终 report。每个 JSON object 使用 snake_case `type` tag，例如
 `file_progress`、`file_failed` 或 `plan_cancelled`；路径会序列化为字符串。失败时 stderr
 可能同时包含 JSON Lines 和最终 CLI 错误行，因此 wrapper 应只解析 JSON object 行。按下
@@ -222,11 +223,40 @@ stdout 上的普通人类输出或 `--json` report。事件覆盖 plan 开始/�
 成的条目。再次按下 `Ctrl-C` 会强制进程立即退出。当 CLI 正在等待交互式 archive duplicate
 提示输入时，`Ctrl-C` 会立即以 130 退出；非交互 wrapper 应传入 `--on-duplicate`。
 
+`0.8.0` 发布后的 source tree 还会发出 `transfer_bytes_received` 和
+`transfer_diagnostic` 事件。前者逐块报告 reqwest 交付给应用并由应用消费的 HTTP 响应体，在
+状态码和 header 检查后、响应体长度校验及写文件前发出；尚未读取就被拒绝的响应体计为 0。计数受客户端透明内容解码配置影响，
+所以它不是压缩实体字节数，也不是全部网络传输流量。汇总已消费的响应体字节时累加
+`bytes_delta`；`bytes_received` 是单个请求的累计水位，不能再当增量累加。这些值不是已写入文件的字节数。
+整文件 HTTP 错误响应（例如 404 或 500）在消费响应体前被拒绝时，终态 reason 为 `invalid_response`，且该请求的
+`bytes_received` 为 0。
+字节事件的 `request_id` 只在一次文件传输操作内唯一。诊断事件的 request ID 和 phase 字段可为空，
+因为部分结果属于整个操作而不是某个请求。`transfer_diagnostic` 使用类型化信息报告候选选中/排除、
+计划重试、整文件回退和请求结果，不包含原始 URL 或上游错误文本。范围包括文件响应（含媒体和
+旁路文件）及 CDN 探测/Range 请求，不包括 metadata、playurl 或 authentication API 请求。
+候选选中只表示通过兼容性预检，不能证明整个表示的内容相同。phase 标识自动探测、分片探测、
+Range 分片、整文件请求或独立探测。取消可能导致请求没有终态诊断，但此前发出的字节
+事件仍有效。这些事件是在已发布 `0.8.0` tag 后加入的 source API，不包含在已发布 crate 中。
+分片候选选中/排除会在全部候选探测结束后作为操作级诊断发出，`request_id` 为 `null`、phase 为
+`shard_probe`；它们不会复用已发出探测完成事件的请求 ID。即使没有可兼容的候选组、传输随后回退，
+phase 仍是 `shard_probe`。host label 只包含解析出的 host 和可选端口，不包含 URL path、query 或
+credentials。探测超时使用 `timed_out`；span/探测失败使用 `probe_failed`，只有显式总大小不匹配才使用
+`size_mismatch`。字节增量仍只统计实际消费的 chunk。续传响应体的 `incomplete_body`/`oversized_body` 分类优先
+采用 `Content-Range` 声明的 span；没有该 span 时采用文件剩余预期长度。此诊断分类不会放宽现有响应长度
+校验或续传回滚规则。
+仅 scheme 不同的候选使用 `scheme_mismatch`；只有实际 path 或 query 不同时才使用
+`path_query_mismatch`。这些 reason 描述既有的 same-scheme 兼容策略，不会改变候选兼容规则。对于整文件请求，
+成功的 `request_finished` 诊断会先于 `file_completed` 发出；只有响应体已读完并 flush、长度校验通过且必要的
+文件替换成功后，才会报告成功。HTTP 416 表示续传内容已完整时，也使用同一完成路径，避免重复成功诊断。
+以失败或取消结束的文件操作不会发出 `file_completed`；取消或 drop 仍可能没有请求终态诊断。
+
 `--progress-json` 输出示例：
 
 ```json
 {"type":"file_progress","entry_index":1,"entry_title":"Main","kind":"video","path":"downloads/Mock video/P001-aid-170001-cid-2-Main/video-80-abcd.m4s","bytes_delta":1048576,"bytes_written":1048576,"resumed_from":0,"expected_size":5242880}
 {"type":"file_failed","entry_index":1,"entry_title":"Main","kind":"video","path":"downloads/Mock video/P001-aid-170001-cid-2-Main/video-80-abcd.m4s","attempt":1,"max_attempts":3,"error":"HTTP error: ..."}
+{"type":"transfer_bytes_received","request_id":1,"entry_index":1,"entry_title":"Main","kind":"video","path":"downloads/Mock video/P001-aid-170001-cid-2-Main/video-80-abcd.m4s","phase":"whole_file","host":"cdn.example:8443","bytes_delta":65536,"bytes_received":65536}
+{"type":"transfer_diagnostic","request_id":1,"entry_index":1,"entry_title":"Main","kind":"video","path":"downloads/Mock video/P001-aid-170001-cid-2-Main/video-80-abcd.m4s","phase":"whole_file","host":"cdn.example:8443","diagnostic":{"event":"request_finished","outcome":{"status":"succeeded"},"bytes_received":65536}}
 {"type":"plan_failed","title":"Mock video","output_dir":"downloads/Mock video","completed_entries":0,"error":"HTTP error: ..."}
 {"type":"plan_cancelled","title":"Mock video","output_dir":"downloads/Mock video","completed_entries":0,"error":"download cancelled by Ctrl-C"}
 ```
