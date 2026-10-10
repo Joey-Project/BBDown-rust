@@ -2857,8 +2857,9 @@ impl BiliClient {
                 response_content_len,
                 full_retry_after_ignored_range,
             );
-            expected_response_body_size =
-                validation_expected_size.map(|size| size.saturating_sub(start_offset));
+            expected_response_body_size = content_range
+                .and_then(|range| range.body_len().ok())
+                .or_else(|| validation_expected_size.map(|size| size.saturating_sub(start_offset)));
             if full_retry_after_ignored_range && validation_expected_size.is_none() {
                 return Err(DownloadFileAttemptError::new(
                     Error::InvalidInput(
@@ -10472,6 +10473,89 @@ mod tests {
                 ..
             }
         )));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn short_content_range_span_classifies_oversized_body_with_unknown_total_size()
+    -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let oversized_body = vec![b'x'; 60];
+        let response_mock = server.mock(|when, then| {
+            when.method(GET).path("/video.m4s");
+            then.status(206)
+                .header("Content-Range", "bytes 0-49/100")
+                .header("Content-Length", oversized_body.len().to_string())
+                .body(oversized_body.clone());
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let entry = single_video_plan(format!("{}/video.m4s", server.base_url()))
+            .entries
+            .remove(0);
+        let path = temp.path().join("video.m4s");
+        let options = DownloadOptions {
+            retry: RetryPolicy::single_attempt(),
+            sidecars: SidecarOptions {
+                danmaku: false,
+                ..SidecarOptions::default()
+            },
+            mux: MuxOptions::Disabled,
+            ..DownloadOptions::default()
+        };
+        let request = DownloadFileRequest::new(&entry, &path, DownloadFileKind::Video, None);
+        let cancellation = DownloadCancellationToken::new();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress_events = Arc::clone(&events);
+        let progress = move |event: &DownloadProgressEvent| {
+            push_progress_event(&progress_events, event.clone());
+        };
+
+        let Err(error) = client
+            .download_url_to_file(
+                &format!("{}/video.m4s", server.base_url()),
+                &request,
+                &options,
+                &progress,
+                &cancellation,
+            )
+            .await
+        else {
+            return Err(anyhow::anyhow!(
+                "body longer than Content-Range span should fail"
+            ));
+        };
+
+        assert!(error.to_string().contains("download body length"));
+        assert_eq!(response_mock.calls(), 1);
+        assert_eq!(tokio::fs::read(&path).await?, b"");
+        let events = progress_events_snapshot(&events);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::TransferDiagnostic {
+                request_id: Some(1),
+                phase: Some(DownloadTransferPhase::WholeFile),
+                diagnostic: DownloadTransferDiagnostic::RequestFinished {
+                    outcome: DownloadTransferRequestOutcome::Failed {
+                        reason: DownloadTransferFailureReason::OversizedBody,
+                    },
+                    bytes_received: 60,
+                },
+                ..
+            }
+        )));
+        assert_eq!(
+            events
+                .iter()
+                .filter_map(|event| match event {
+                    DownloadProgressEvent::TransferBytesReceived { bytes_delta, .. } => {
+                        Some(*bytes_delta)
+                    }
+                    _ => None,
+                })
+                .sum::<u64>(),
+            60
+        );
         Ok(())
     }
 

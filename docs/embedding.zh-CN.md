@@ -573,8 +573,10 @@ CDN 探测/Range 请求，不包括 metadata、playurl 或 authentication API �
 兼容性预检，不能证明整个表示的内容相同。分片候选选中/排除会在全部候选探测结束后作为操作级诊断发出
 （`request_id: None`、`phase: ShardProbe`），不会复用已发出 `RequestFinished` 的探测请求 ID。即使没有
 可兼容的候选组、传输随后回退，phase 仍是分片探测。host label 只包含解析出的 host 和可选端口，不包含
-URL path、query 或 credentials。探测超时使用 `TimedOut`；续传响应体长度按剩余请求长度分类；span/探测
-失败使用 `ProbeFailed`，只有显式总大小不匹配才使用 `SizeMismatch`。
+URL path、query 或 credentials。探测超时使用 `TimedOut`；span/探测失败使用 `ProbeFailed`，只有显式总大小
+不匹配才使用 `SizeMismatch`。字节增量仍只统计实际消费的 chunk。续传响应体的 `IncompleteBody`/
+`OversizedBody` 分类优先采用 `Content-Range` 声明的 span；没有该 span 时采用文件剩余预期长度。此诊断分类
+不会放宽现有的响应长度校验或续传回滚规则。
 仅 scheme 不同的候选使用 `SchemeMismatch`（`scheme_mismatch`）；只有实际 path 或 query 不同时才使用
 `PathQueryMismatch`（`path_query_mismatch`）。这些 reason 只描述现有的 same-scheme 兼容策略，不会改变
 候选兼容规则。对于整文件请求，成功的 `RequestFinished` 会先于 `FileCompleted` 发出；只有响应体已读完并

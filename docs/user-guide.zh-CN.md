@@ -240,8 +240,10 @@ Range 分片、整文件请求或独立探测。取消可能导致请求没有�
 分片候选选中/排除会在全部候选探测结束后作为操作级诊断发出，`request_id` 为 `null`、phase 为
 `shard_probe`；它们不会复用已发出探测完成事件的请求 ID。即使没有可兼容的候选组、传输随后回退，
 phase 仍是 `shard_probe`。host label 只包含解析出的 host 和可选端口，不包含 URL path、query 或
-credentials。探测超时使用 `timed_out`；续传响应体长度按剩余请求长度分类；span/探测失败使用
-`probe_failed`，只有显式总大小不匹配才使用 `size_mismatch`。
+credentials。探测超时使用 `timed_out`；span/探测失败使用 `probe_failed`，只有显式总大小不匹配才使用
+`size_mismatch`。字节增量仍只统计实际消费的 chunk。续传响应体的 `incomplete_body`/`oversized_body` 分类优先
+采用 `Content-Range` 声明的 span；没有该 span 时采用文件剩余预期长度。此诊断分类不会放宽现有响应长度
+校验或续传回滚规则。
 仅 scheme 不同的候选使用 `scheme_mismatch`；只有实际 path 或 query 不同时才使用
 `path_query_mismatch`。这些 reason 描述既有的 same-scheme 兼容策略，不会改变候选兼容规则。对于整文件请求，
 成功的 `request_finished` 诊断会先于 `file_completed` 发出；只有响应体已读完并 flush、长度校验通过且必要的

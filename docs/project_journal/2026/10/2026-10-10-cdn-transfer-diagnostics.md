@@ -61,8 +61,10 @@ superseded_by:
   request ID and phase `ShardProbe`; they do not reuse probe IDs after `RequestFinished`. This phase
   is retained when no compatible group is selected and transfer falls back. Host labels contain
   only a parsed host and optional port, never URL paths, queries, or credentials. Probe timeouts use
-  `TimedOut`, resume body lengths are classified against the remaining requested length, span/probe
-  failures use `ProbeFailed`, and `SizeMismatch` is reserved for an explicit total-size mismatch.
+  `TimedOut`, span/probe failures use `ProbeFailed`, and `SizeMismatch` is reserved for an explicit
+  total-size mismatch. Byte deltas count consumed chunks; resumed-body `IncompleteBody`/
+  `OversizedBody` classification uses the declared `Content-Range` span when present, otherwise the
+  remaining expected total. This does not relax response-length validation or resume rollback.
   Scheme-only differences use `SchemeMismatch` (`scheme_mismatch`), while `PathQueryMismatch`
   (`path_query_mismatch`) means an actual path or query difference; this records the existing
   same-scheme compatibility policy without changing it.
@@ -79,13 +81,13 @@ superseded_by:
 
 ## Validation And Limits
 
-- The workspace suite covers download and range-transfer diagnostics; the HTTP 500 classification
-  regression extends the existing fixture. Parallel mock fixtures retain their server lease through
+- The workspace suite covers download and range-transfer diagnostics, including HTTP status and
+  declared response-span classification. Parallel mock fixtures retain their server lease through
   the requests they serve, and CLI progress keeps the established one-based `entry_index` convention.
-- `env RUSTUP_TOOLCHAIN=1.99.0 just ci` exited 0 in 60.44 seconds (79,839 bytes). Formatting, strict
-  workspace Clippy, the Rust 1.95.0 MSRV check, and workspace tests passed (807 passed, 0 failed,
-  3 ignored). A separate CLI repeat passed 154 tests (0 failed, 0 ignored). The publish dry run
-  packaged 29 files (1.8 MiB, 272.8 KiB compressed) and performed no upload.
+- `env RUSTUP_TOOLCHAIN=1.99.0 just ci` exited 0 in 58.80 seconds (79,943 bytes). Formatting,
+  strict all-targets Clippy, the Rust 1.95.0 MSRV check, and workspace tests passed (808 passed,
+  0 failed, 3 ignored). A separate CLI repeat passed 154 tests (0 failed, 0 ignored). The publish
+  dry run packaged 29 files (1.8 MiB, 273.0 KiB compressed) and performed no upload.
 - No live-media comparison or measured performance improvement is claimed in this record.
 - A later adaptive-transfer workstream can use these diagnostics while keeping consumed response-
   body bytes distinct from written bytes and total wire traffic.

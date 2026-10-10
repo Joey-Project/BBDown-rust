@@ -271,9 +271,11 @@ operation-level diagnostics with `request_id: null` and phase `shard_probe`; the
 request IDs whose probe completion events have already been emitted. This phase remains
 `shard_probe` when no compatible group is available and the transfer falls back. Host labels
 contain only a parsed host and optional port, without URL paths, queries, or credentials. Probe
-timeouts use `timed_out`; resumed response-body lengths are classified against the remaining
-requested length; span/probe failures use `probe_failed`, while `size_mismatch` is reserved for an
-explicit total-size mismatch.
+timeouts use `timed_out`; span/probe failures use `probe_failed`, while `size_mismatch` is reserved
+for an explicit total-size mismatch. Byte deltas still count chunks actually consumed. For resumed
+body-length outcomes, `incomplete_body`/`oversized_body` classification uses the declared
+`Content-Range` span when present, or the remaining expected file length otherwise. This diagnostic
+classification does not relax response-length validation or resume rollback.
 Scheme-only candidate differences use `scheme_mismatch`; `path_query_mismatch` is reserved for an
 actual path or query difference. These reasons describe the existing same-scheme compatibility
 policy and do not change which candidates are compatible. For whole-file requests, a successful
