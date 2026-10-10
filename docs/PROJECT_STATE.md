@@ -73,6 +73,9 @@
   networking/downloader features and independent PGC web-route API. GitHub Release and crates.io
   publication succeeded on 2026-10-06. See
   `docs/project_journal/2026/10/2026-10-05-v0-7-release-prep.md`.
+- The `0.8.0` source line prepares opt-in preserving danmaku refresh and release documentation;
+  publication remains pending through the protected post-merge RC and promotion flow. See
+  `docs/project_journal/2026/10/2026-10-06-v0-8-release-prep.md`.
 - Automatic routing, persistent route health, and adaptive tuning remain deferred. Candidate
   exclusion, cross-candidate retry, and HTTP response-body byte diagnostics are future scheduler
   work; response-body counts do not equal total wire traffic. Feed/page backlog remains deferred.

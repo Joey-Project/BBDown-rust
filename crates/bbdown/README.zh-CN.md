@@ -14,8 +14,11 @@ cancellation token。原始输入解析覆盖普
 
 使用 `cargo add bbdown-core` 安装，然后用 `bbdown_core` 导入。
 
-crate 提供 staged XML 历史保留弹幕刷新，并从合并 XML 重新生成 ASS，同时包含 CDN 控制和独立
-PGC Web 路由 API。PGC 区域与代理解析独立于媒体 CDN 选择与传输。嵌入项目
+当前 source line 是 `0.8.0`，接续已发布的 `0.7.0` 网络与下载器版本线。
+
+crate 提供 staged XML 历史保留弹幕刷新，按正 comment ID 去重（无效 ID 回退到完整参数与解码文本），
+并从合并 XML 重新生成 ASS，同时包含 CDN 控制和独立 PGC Web 路由 API。PGC 区域与代理解析独立于媒体
+CDN 选择与传输。嵌入项目
 应优先使用 constructor 和 builder 风格 API，例如 `ClientConfig::default().with_*()`、
 `EndpointConfig::default().with_*()`、`RestrictedAreaConfig::default().with_*()`、
 `DownloadOptions::new(...).with_*()`、`RetryPolicy::new(...)` 和
@@ -85,8 +88,7 @@ CLI-compatible PCDN fallback 处理时，应显式设置 `MediaHostOptions`。
 响应异常或网络失败后继续探测。
 BiliTv 签名遵循 `tv_passport_poll_base` 配置；若该地址保持默认且只修改了
 `passport_base`，则与原有刷新路由一样，兼容使用主 passport 地址。
-该新增身份 API 目前通过 Git 提供，不包含在此前已发布的 `0.7.0` crate 中；在下次
-crate release 前，请固定包含该 API 的 commit。
+这些新增身份 API 包含在 `0.8.0` 开发版本线中，`0.7.0` crate 不提供这些 API。
 当嵌入应用需要给下游 streaming/cache service 使用的可序列化 DASH video/audio 或 FLV
 segment 请求规格时，使用 `BiliClient::plan_playback`。`PlaybackPlan` 包含主 URL、备用
 URL、媒体 headers、mime/codec metadata、时长、大小、entry/variant/media cache key，以及

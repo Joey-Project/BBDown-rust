@@ -123,9 +123,15 @@
   policy as a separate follow-up.
 - [pending] Plan per-video related recommendations and additional Bilibili page-family parsing for
   a later feed/page release; keep this feed/page backlog deferred from `v0.7.0`.
-- [completed] Add the preserving danmaku refresh API and CLI: retain XML history, regenerate
-  selected ASS from merged XML, and publish staged sidecars with the archive as a group. See
+- [completed] Add the `0.8.0` preserving danmaku refresh API and CLI: deduplicate XML comments by
+  positive IDs (falling back to complete `p` values and decoded text for invalid IDs), retain XML
+  history, regenerate selected ASS from merged XML, and publish staged sidecars with the archive as
+  a group, with failure preservation and core/CLI regression coverage. See
   `docs/project_journal/2026/10/2026-10-06-danmaku-preserving-refresh.md`.
+- [pending] After the `0.8.0` release-preparation changes merge into `master`, publish the prepared
+  source line through the protected release-candidate and promotion workflows as a GitHub Release
+  and crates.io `bbdown-core` package. See
+  `docs/project_journal/2026/10/2026-10-06-v0-8-release-prep.md`.
 - [pending] Continue the remaining BBDown parity backlog after the published `0.4.0` credential and
   danmaku sequence unless reprioritized:
   aria2 or multi-thread download integration, MP4Box muxing, and subtitle-to-SRT conversion.

@@ -9,9 +9,9 @@ projects that need typed Bilibili metadata, download plans, media downloads, sub
 danmaku sidecars, QR login state, batch collection parsing, and restricted-area proxy diagnostics
 without shelling out to the CLI.
 
-The current published crate line is `0.7.0`; the `0.8.0` source line adds staged preserving
-danmaku refresh. The published line added explicit CDN host pools, probing, and parallel transfer
-options plus an independent PGC Web playurl route selector. These network actions remain
+The `0.8.0` source line adds staged preserving danmaku refresh and explicit credential-account
+identity checks. The earlier `0.7.0` release added explicit CDN host pools, probing, and parallel
+transfer options plus an independent PGC Web playurl route selector. These network actions remain
 caller-selected; the crate does not automatically route requests from the bundled CLI catalogs.
 Prefer constructors and builder-style APIs for configuration, and treat metadata and plan
 structs as read-only output surfaces. This keeps embedding code resilient when new fields are added
@@ -274,8 +274,7 @@ malformed responses, and missing or nonpositive account IDs stop immediately. Pr
 refresh-keypair metadata alone do not prove the issuer of a currently stored key. Cookie and TV
 identity probes retain their separate credentials and existing request paths; health checks are
 unchanged.
-This additive API is currently Git-only, not part of the previously published `0.7.0` crate.
-Pin a commit containing it or wait for a later crate release.
+These additive APIs are included in the `0.8.0` source line and are unavailable in the `0.7.0` crate.
 For QR login, convert `QrLoginTicket` to `QrLoginTicketOutput` when a downstream application needs a
 stable serialized scan URL and `qr_payload`; current WEB and TV login flows use the scan URL itself
 as the QR payload. The compatibility `poll_web_qr_login` / `poll_tv_qr_login` methods return
