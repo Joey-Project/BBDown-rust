@@ -122,6 +122,9 @@
   wire traffic. Keep automatic routing, persistent route health, and adaptive policy as a separate
   follow-up. See
   `docs/project_journal/2026/10/2026-10-10-cdn-transfer-diagnostics.md`.
+- [completed] Sign personal-space dynamic feed pages with the existing WBI key lookup and signer,
+  including continuation offsets, while preserving following-feed behavior. See
+  `docs/project_journal/2026/10/2026-10-10-space-dynamic-wbi-signing.md`.
 - [pending] Plan per-video related recommendations and additional Bilibili page-family parsing for
   a later feed/page release; keep this feed/page backlog deferred from `v0.7.0`.
 - [completed] Add the `0.8.0` preserving danmaku refresh API and CLI: deduplicate XML comments by
