@@ -389,14 +389,21 @@ attempt emits no progress for discarded staging bytes. The event excludes signed
 
 ### Re-running the opt-in live CDN benchmark
 
+See the [CDN benchmark measurement notes](cdn-benchmark.md) for the distinction between consumed
+response-body bytes, published shard bytes, and the limits of the current sample.
+
 The ignored integration harness in `crates/bbdown/tests/cdn_benchmark.rs` makes public HTTP
 requests only when explicitly run. Each invocation resolves one supplied public video fixture and
 compares a fixed-host sequential baseline, four-way ranges on that same host, and four-way ranges
-across multiple hosts.
-Each group gets a fresh output directory, no resume, no mux, and one ordinary download attempt.
-The harness allows representations up to 256 MiB, one to three repetitions, and 300-second
-download requests. If the plan omits size, it uses a donor-only probe capped at 64 KiB. Run from
-the repository root, for example:
+across multiple hosts. Each group uses a fresh output directory, no resume, no mux, and one ordinary
+download attempt; Range chunk retries and whole-file fallback remain observable within it. The harness
+allows representations up to 256 MiB, one to three repetitions, at
+most four candidate hosts, and 300-second download requests. If the plan omits size, it uses one
+shared donor-only probe capped at 64 KiB, with a five-second probe deadline. A 45-minute deadline
+covers resolution and all repetitions; the cumulative consumed-body and observed-request-ID limits
+are 3 GiB and 16,384. Cleanup has a five-second grace period. Crossing or in-flight response chunks
+may exceed the body limit, and cancellation/cleanup can extend elapsed time; these limits do not cap
+wire traffic. Run from the repository root, for example:
 
 ```sh
 BBDOWN_CDN_BENCHMARK_URL='https://www.bilibili.com/video/BV1uW4y1s7zN/' \
@@ -414,12 +421,29 @@ large representation. Set `BBDOWN_CDN_BENCHMARK_ORDER_OFFSET` to 0, 1, or 2 to c
 group: baseline, same-host ranges, or multi-host ranges. Each repetition rotates the order again.
 Each JSON record includes order, `started_at_epoch_ms`, `fixed_host`, `candidate_hosts`,
 `request_timeout_secs`, size source and probe cost, output SHA-256, published shard bytes by host,
-fallback status, and validity reasons. The harness exits unsuccessfully if any three-group sample
-is invalid: outputs must have matching size and digest, both range groups must publish exactly the
-declared size without whole-file fallback, and the multi-host group must use at least two hosts.
-Small fixtures may have fewer actual lanes than requested: the 1,644,777-byte sample has only two
-1 MiB chunks, so four-way mode can use at most two lanes. The reported output size is not total
-network traffic: failed/retried requests and actual HTTP wire bytes are not observable here.
+`transfer_bytes_by_host_phase` and `transfer_activity_by_host_phase`, observed request IDs and
+completed outcomes, typed transfer diagnostics, budget counters, fallback status, and validity
+reasons. The byte and activity fields cover only the current group. When needed, shared size-probe
+measurements appear in separate `size_probe_transfer_*` fields on each record for reference; they
+are excluded from group totals and should not be summed across records. The run-wide budget counts
+that shared probe once. The harness exits unsuccessfully if any three-group sample is invalid:
+outputs must have matching size and digest, both Range groups must publish exactly the declared size
+without whole-file fallback, and the multi-host group must use at least two hosts. Small fixtures
+may have fewer actual lanes than requested: the 1,644,777-byte sample has only two 1 MiB chunks, so
+four-way mode can use at most two lanes.
+
+Transfer byte fields sum application-consumed, decoded media response-body chunks by host and phase;
+they exclude API/auth bodies, headers, and transport framing, so they are not wire-byte counts.
+`RequestFinished.bytes_received` is the request's final watermark, not another increment to add to
+`TransferBytesReceived.bytes_delta`. Published `cdn_shard_completed` bytes are a separate count.
+Diagnostics report candidate selection/exclusion, retries, fallback, and request outcomes. Request
+IDs seen in body or diagnostic events are a lower bound because the harness has no request-start
+event; completed outcomes are reported separately. `transfer_activity_by_host_phase` and
+`observed_at_elapsed_ms` show when body or phase-tagged diagnostic events were observed relative to
+the collector. They omit connection and response-header wait, so they are not full request latency
+and concurrent host spans must not be added. Matching output SHA-256 values establish equality of
+these output samples, while matching sizes and sampled prefixes do not prove whole-file identity
+across hosts.
 The completed comparison covered two representation sizes in two short morning windows and 18
 successful downloads. The observed results varied by host, size, and time; they do not establish a
 stable speedup, an all-day or multi-location performance distribution, or a default route policy.

@@ -341,11 +341,18 @@ DASH/FLV 媒体，要求服务器返回有效字节范围和一致的总长度�
 
 ### 复跑可选的实时 CDN 基准
 
+参见 [CDN 基准测量说明](cdn-benchmark.zh-CN.md)，了解已读取响应正文、已发布分片字节数和当前样本
+限制之间的区别。
+
 `crates/bbdown/tests/cdn_benchmark.rs` 中的 ignored 集成测试只有显式运行时才会发起公开
 HTTP 请求。每次调用只解析一个指定的公开视频样本，并比较固定 host 顺序基线、同 host 四路
-Range，以及多 host 四路 Range。每组使用全新输出目录、关闭续传和封装，并只进行一次普通下载尝试。
-媒体上限为 256 MiB，重复次数为 1 到 3，下载请求超时为 300 秒。若计划未提供大小，则只对
-donor host 执行最多 64 KiB 的有界探测。在仓库根目录运行，例如：
+Range，以及多 host 四路 Range。每组使用独立输出目录，关闭续传和封装，并执行一次普通媒体下载尝试；
+Range 场景仍可产生分片重试和整文件回退诊断。媒体上限为 256 MiB，重复次数为 1 到 3，最多四个候选
+host，每个下载请求超时为 300 秒。若计划未提供大小，
+则只对 donor host 执行一次最多 64 KiB 的共享探测，期限为五秒。覆盖样本解析和所有重复运行的总期限为
+45 分钟；整轮正文和观察请求 ID 上限分别为 3 GiB 和 16,384，清理宽限期为五秒。超限或在途响应块
+可能使正文用量超过上限，取消和清理也可能延长总耗时；这些限制不封顶 wire 流量。在仓库根目录运行，
+例如：
 
 ```sh
 BBDOWN_CDN_BENCHMARK_URL='https://www.bilibili.com/video/BV1uW4y1s7zN/' \
@@ -361,12 +368,23 @@ cargo test -p bbdown-core --test cdn_benchmark -- --ignored --nocapture
 对大文件需单独再运行一次，将 URL 和样本标签改为 `BV1QtjA6BEB8`。将
 `BBDOWN_CDN_BENCHMARK_ORDER_OFFSET` 设为 0、1 或 2，可分别指定基线、同 host Range 或多
 host Range 作为首组；每次重复都会继续轮换顺序。每条 JSON 记录包含顺序、
-`started_at_epoch_ms`、`fixed_host`、`candidate_hosts`、`request_timeout_secs`、大小来源与探测耗时、输出 SHA-256、各 host 已发布的分片
-字节数、回退状态和有效性原因。任一组三组比较
-无效时，测试会以非零状态退出：输出大小和摘要必须一致；两个 Range 组必须恰好发布声明的
-总字节数且没有整文件回退；多 host 组必须实际使用至少两个 host。小文件可能无法达到请求
-的并发数：1,644,777 字节样本只有两个 1 MiB 分片，因此四路模式最多实际使用两路。输出
-文件大小不代表网络总流量；当前无法观测失败或重试请求以及实际 HTTP wire bytes。
+`started_at_epoch_ms`、`fixed_host`、`candidate_hosts`、`request_timeout_secs`、大小来源与探测耗时、输出
+SHA-256、各 host 已发布的分片字节数、`transfer_bytes_by_host_phase` 和
+`transfer_activity_by_host_phase`、观察到的请求 ID 和已结束请求结果、传输诊断、预算计数、回退状态和
+有效性原因。字节和活动时间字段只覆盖当前组。需要时，共享大小探测会在每条记录的独立
+`size_probe_transfer_*` 字段中重复展示，但不计入组总量；汇总多条记录时不要重复相加，整轮预算只计入
+这次共享探测一次。任一组三组比较无效时，测试会以非零状态退出：输出大小和摘要必须一致；两个 Range
+组必须恰好发布声明的总字节数且没有整文件回退；多 host 组必须实际使用至少两个 host。小文件可能无法
+达到请求的并发数：1,644,777 字节样本只有两个 1 MiB 分片，因此四路模式最多实际使用两路。
+
+传输字节字段按 host 和 phase 统计应用读取并解码的媒体响应正文，包括探测和失败请求的正文；不包括
+API/身份认证正文、HTTP headers 或传输层 framing，因此不是 wire bytes。`RequestFinished.bytes_received`
+是请求累计字节的最终水位，不要和 `TransferBytesReceived.bytes_delta` 再相加。成功发布的
+`cdn_shard_completed` 字节数是另一项统计。诊断会报告候选选择或排除、重试、回退和请求结果。正文或诊断
+事件中观察到的请求 ID 只是下界，因为没有请求开始事件；已结束结果另行报告。
+`transfer_activity_by_host_phase` 和 `observed_at_elapsed_ms` 表示相对 collector 起点观察到正文或带 phase
+诊断事件的时间，不含建连及响应头等待，所以不是完整请求时延，并发 host 的时间跨度不能相加。输出 SHA-256
+相同能证明本次输出样本相同，但大小和起始采样相同不能证明不同 host 提供的是同一份完整文件。
 已完成的对比覆盖两种媒体大小、两个较短的上午时段，共有 18 次成功下载。结果随 host、大小和
 时间变化，无法证明稳定提速、全天或多地点性能分布，也不能据此确定默认路由策略。本可选基准
 只请求公开视频，不需要凭据。
