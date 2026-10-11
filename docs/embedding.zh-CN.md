@@ -8,10 +8,10 @@
 Bilibili 元数据、下载计划、媒体下载、字幕和弹幕旁路文件、二维码登录状态、批量集合解析，以及
 受限区域代理诊断；调用方无需通过 shell 启动 CLI。
 
+当前已发布的 `0.9.0` 包含 CDN 传输诊断，以及通过 WBI 签名的个人空间动态 feed 请求（包括分页续页）。
 已发布的 `0.8.0` 包含分阶段暂存并保留历史的弹幕刷新，以及显式账号身份查询。更早发布的
 `0.7.0` 增加了显式 CDN 主机池、探测和并行传输选项，以及独立的 PGC Web playurl 路由选择器。
-本 source tree 还在 `0.8.0` tag 之后新增了 CDN 传输诊断；这些新增内容不在已发布的
-`0.8.0` crate 中。这些网络操作仍由调用方显式选择；crate 不会根据 CLI 内置目录自动路由请求。配置应优先使用构造器和
+这些网络操作仍由调用方显式选择；crate 不会根据 CLI 内置目录自动路由请求。配置应优先使用构造器和
 builder 风格 API，并将元数据和 plan 结构体视为只读输出。这样 crate 增加字段时，嵌入代码更不容易
 受到影响。
 
@@ -556,7 +556,7 @@ async fn main() -> bbdown_core::Result<()> {
 开始/chunk/完成/失败、传输字节和传输诊断事件，以及 mux 开始/完成/失败。callback 是同步调用，
 应保持轻量；如果 UI 更新或数据库写入可能阻塞下载任务，请把事件转发到应用自己的 channel。
 
-`0.8.0` 发布后的 source tree 新增了 `DownloadProgressEvent::TransferBytesReceived` 和
+已发布的 `0.9.0` 新增了 `DownloadProgressEvent::TransferBytesReceived` 和
 `DownloadProgressEvent::TransferDiagnostic`。每消费一个 `bytes_stream()` 响应体 chunk，都会在
 通过状态码和 header 检查后、响应体长度校验及写盘前发出字节事件；未读取就被拒绝的响应体计为 0。计数受调用方客户端透明内容
 解码配置影响，因此它不是压缩实体字节数或全部网络传输流量。统计已消费的响应体字节时应累加
@@ -583,8 +583,8 @@ URL path、query 或 credentials。探测超时使用 `TimedOut`；span/探测�
 flush、长度校验通过且必要的文件替换成功后，才会发出成功结果。HTTP 416 表示续传内容已完整时，也会走
 相同的完成出口，避免重复成功事件。以失败或取消结束的文件操作不会发出 `FileCompleted`；取消或 drop 仍可能没有
 请求终态诊断。
-取消或 drop 的请求可能没有终态结果，但之前发出的字节增量仍有效。这些 API 是已发布 `0.8.0`
-tag 后的 source additions，不属于已发布 crate。
+取消或 drop 的请求可能没有终态结果，但之前发出的字节增量仍有效。这些 API 包含在已发布的
+`0.9.0` crate 中。
 
 progress sink 默认启用这些事件；可重载 `wants_transfer_diagnostics()` 返回 `false` 关闭它们，
 `NoopDownloadProgress` 已关闭该功能。下面的字段处理不假设操作级诊断一定包含 request ID 或 phase：
@@ -617,8 +617,7 @@ fn inspect_transfer_event(event: &DownloadProgressEvent) {
 独立探测可调用 `probe_media_cdns_with_progress`，参数与旧 `probe_media_cdns` 相同，另加 progress
 sink：
 
-此 API 在已发布的 `0.8.0` tag 之后加入。编译下面的示例时，请使用包含该改动的源码 checkout；
-crates.io 上的 `0.8.0` package 不包含此 API。
+此 API 包含在已发布的 `0.9.0` crate 中。
 
 ```rust,no_run
 use bbdown_core::{

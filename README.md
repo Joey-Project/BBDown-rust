@@ -20,10 +20,10 @@ snapshot CDN/public-resolver catalogs with runtime probe commands, and independe
 Web playurl routes; it does not introduce automatic CDN routing. It also supports an
 explicit download archive for duplicate preflight, CLI replace / keep-both / cancel decisions, and
 append-only danmaku sidecar updates for already-downloaded archive entries.
-The project is now on the `0.9.0` source line. The published `0.8.0` release's preserving update
+The current published release is `0.9.0`. The published `0.8.0` release's preserving update
 policy deduplicates XML comments by positive IDs (falling back to complete `p` values and decoded
 text for invalid IDs), retains XML history, and regenerates selected ASS output from the merged XML
-before publishing staged sidecars with the archive. The `0.9.0` source line adds structured CDN
+before publishing staged sidecars with the archive. The `0.9.0` release adds structured CDN
 transfer diagnostics to progress callbacks and CLI `--progress-json`, and signs personal-space
 dynamic feed requests with WBI, including continuation pages.
 Input parsing covers normal videos, PGC and intl episodes, PUGV/cheese courses, B23 short links,
@@ -398,10 +398,10 @@ running, so sample behavior is driven by the manifest rather than shell state.
 
 ## Documentation
 
-- Crate API note: the publishable package is `bbdown-core`, imported as `bbdown_core`. This rewrite
-  is published as the `0.7.0` networking/downloader release after `0.6.0`. It adds
-  opt-in CDN host selection, probing and parallel transfer, bundled network catalogs, and an
-  independent PGC Web playurl route API. The download APIs from `0.5.0` still include
+- Crate API note: the publishable package is `bbdown-core`, imported as `bbdown_core`. The `0.7.0`
+  release added the networking/downloader features described here, including opt-in CDN host
+  selection, probing and parallel transfer, bundled network catalogs, and an independent PGC Web
+  playurl route API. The current published crate is `0.9.0`. The download APIs from `0.5.0` still include
   `DownloadProgressEvent` callbacks,
   `DownloadCancellationToken`-based graceful cancellation, and ffmpeg chapter metadata muxing when
   plan entries expose chapters.

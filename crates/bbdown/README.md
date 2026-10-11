@@ -16,7 +16,8 @@ video feeds, and space dynamic video feeds.
 
 Install with `cargo add bbdown-core`, then import with `bbdown_core`.
 
-The current source line is `0.9.0`, following the published `0.8.0` release. This line adds typed
+The current published crate version and source line are `0.9.0`, following the published `0.8.0`
+release. This release adds typed
 CDN transfer-byte and diagnostic progress events, including the
 `probe_media_cdns_with_progress` API, and signs personal-space dynamic feed requests with WBI,
 including continuation offsets. Transfer-byte events count response-body bytes consumed by the
@@ -99,7 +100,7 @@ four signing keypairs within one request-timeout budget, continuing only after e
 or app-authentication rejection. It does not retry malformed identities or transport failures.
 BiliTv signing respects `tv_passport_poll_base`; when that base is untouched and only
 `passport_base` is customized, it uses the main override as existing refresh routing does.
-These additive identity APIs are included in the `0.8.0` source line and are unavailable in the
+These additive identity APIs are included in the published `0.8.0` release and are unavailable in the
 `0.7.0` crate.
 Use `BiliClient::plan_playback` when an embedding application needs serializable DASH video/audio
 or FLV segment request specs for a downstream streaming/cache service. `PlaybackPlan` includes

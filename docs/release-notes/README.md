@@ -8,7 +8,7 @@ embedding-facing shape of each source line and shipped release.
 
 ## Versions
 
-- [v0.9.0 source line](v0.9.0.md): structured CDN transfer diagnostics for progress callbacks and
+- [v0.9.0 (published)](v0.9.0.md): structured CDN transfer diagnostics for progress callbacks and
   CLI JSON, plus WBI signing for personal-space dynamic feed requests and continuation pages.
 
 - [v0.8.0 (published)](v0.8.0.md): opt-in danmaku refresh that preserves XML history, rebuilds
