@@ -84,16 +84,16 @@ superseded_by:
 - The local gate used Rust/Cargo 1.95.0 on macOS, with a task-specific external build cache,
   incremental compilation disabled, and dev/test debug symbols disabled after the local disk filled.
   It covers the deadline/outcome cases, Clippy assertion updates, and the extended authority
-  regression.
+  regression, after integration with the completed per-video related-recommendations slice.
 - `cargo fmt --all -- --check`, `git diff --check`, `cargo check --workspace --offline --locked`,
   and `cargo clippy --workspace --all-targets --offline --locked -- -D warnings` passed at that
   final local gate.
-- `cargo test --workspace --offline --locked` passed: 821 tests passed and
+- `cargo test --workspace --offline --locked` passed: 832 tests passed and
   three live tests remained ignored. The CDN integration target contributed 13 passing tests and
   one ignored live benchmark.
 - `cargo publish --dry-run -p bbdown-core --locked --allow-dirty --registry crates-io` passed.
   The offline attempt could not read registry HTTP metadata; the successful dry run did not upload.
 - The mock server explicitly restores blocking mode after accept. Its byte comparison counts actual
   body writes rather than assuming that the whole requested response was sent.
-- No new live CDN performance run or Windows runtime test was performed. Local mock correctness
+- No new live CDN performance run or local Windows runtime test was performed. Local mock correctness
   and concurrency coverage do not establish a live speedup.
