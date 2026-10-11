@@ -26,12 +26,13 @@ constructor paths so downstream projects do not need struct literals for ordinar
 The CLI uses the same public builders, which makes it an in-repo integration test surface for the
 crate API.
 
-Output models remain typed data surfaces. The current published crate line is `0.7.0`; the
-`0.8.0` source line adds staged preserving danmaku refresh. The published line added explicit CDN
-host pools, bounded probing, parallel Range transfer, and an independent PGC Web playurl route
-selector. Catalog snapshots are CLI inputs selected by users; they do not implement an automatic
-routing policy. Callers should read fields or serialize output values rather than treating output
-structs as stable construction targets.
+Output models remain typed data surfaces. The current published crate version is `0.9.0`. The
+`0.8.0` release added staged preserving danmaku refresh and credential-account identity APIs, while
+`0.7.0` added explicit CDN host pools, bounded probing, parallel Range transfer, and an independent
+PGC Web playurl route selector. The `0.9.0` release adds typed CDN transfer diagnostics and WBI-signed
+personal-space dynamic feed requests, including continuation pages. Catalog snapshots are CLI inputs
+selected by users; they do not implement an automatic routing policy. Callers should read fields or
+serialize output values rather than treating output structs as stable construction targets.
 
 ## Resolver Model
 

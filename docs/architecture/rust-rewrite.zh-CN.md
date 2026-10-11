@@ -26,10 +26,11 @@
 项目在普通集成代码中不需要结构体字面量。CLI 使用相同 public builder，这让它成为 crate
 API 的仓库内集成测试表面。
 
-输出模型保持为 typed data surfaces。当前已发布 crate 版本为 `0.7.0`，`0.8.0` source line
-增加 staged preserving danmaku 刷新。`0.7.0` 增加显式 CDN host pool、限额探测、并行 Range
-传输和独立的 PGC Web playurl 路由选择器。目录快照由 CLI 用户显式选择，不构成自动路由策略；调用方应读取字段或序列化输出值，
-而不是把输出结构体视为稳定的构造目标。
+输出模型保持为 typed data surfaces。当前已发布 crate 版本为 `0.9.0`。`0.8.0` 增加了分阶段
+暂存并保留历史的弹幕刷新和账号身份 API；更早的 `0.7.0` 增加显式 CDN host pool、限额探测、并行
+Range 传输和独立的 PGC Web playurl 路由选择器。`0.9.0` 增加类型化 CDN 传输诊断，以及通过
+WBI 签名的个人空间动态 feed 请求（包括分页续页）。目录快照由 CLI 用户显式选择，不构成自动路由策略；
+调用方应读取字段或序列化输出值，而不是把输出结构体视为稳定的构造目标。
 
 ## 解析器模型
 

@@ -276,7 +276,7 @@ malformed responses, and missing or nonpositive account IDs stop immediately. Pr
 refresh-keypair metadata alone do not prove the issuer of a currently stored key. Cookie and TV
 identity probes retain their separate credentials and existing request paths; health checks are
 unchanged.
-These additive APIs are included in the `0.8.0` source line and are unavailable in the `0.7.0` crate.
+These additive APIs were introduced in the published `0.8.0` release and are unavailable in the `0.7.0` crate.
 For QR login, convert `QrLoginTicket` to `QrLoginTicketOutput` when a downstream application needs a
 stable serialized scan URL and `qr_payload`; current WEB and TV login flows use the scan URL itself
 as the QR payload. The compatibility `poll_web_qr_login` / `poll_tv_qr_login` methods return

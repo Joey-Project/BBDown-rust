@@ -253,7 +253,7 @@ keypair。
 其它 API 拒绝、网络失败、响应过大或格式异常，以及缺失或非正数账号 ID 都立即终止。
 provider 名称或 refresh-keypair 元数据本身不能证明当前 key 的实际签发者。Cookie 与 TV
 身份检查仍使用各自独立的凭据和原有请求路径，健康检查行为也保持不变。
-这些新增 API 包含在 `0.8.0` 开发线中，`0.7.0` crate 不提供。
+这些新增 API 从已发布的 `0.8.0` 版本开始提供，`0.7.0` crate 不提供。
 对于二维码登录，如果下游应用需要稳定的可序列化扫码 URL 和 `qr_payload`，可以把
 `QrLoginTicket` 转换成 `QrLoginTicketOutput`；当前 WEB 和 TV 登录流程会直接使用扫码 URL
 作为 QR payload。兼容方法 `poll_web_qr_login` / `poll_tv_qr_login` 会返回
