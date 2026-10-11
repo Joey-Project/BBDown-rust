@@ -3,9 +3,8 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     env,
-    fs::File,
     future::Future,
-    io::{Read, Write as _},
+    io::Write as _,
     path::{Path, PathBuf},
     sync::Mutex,
     time::Instant,
@@ -20,6 +19,7 @@ use bbdown_core::{
 use httpmock::{Method::GET, MockServer};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use tokio::io::AsyncReadExt;
 use url::Url;
 
 const DEFAULT_URL: &str = "https://www.bilibili.com/video/BV1QtjA6BEB8/";
@@ -27,6 +27,7 @@ const MAX_REPETITIONS: usize = 3;
 const MAX_MEDIA_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_MULTI_HOSTS: usize = 4;
 const MAX_SIZE_PROBE_SAMPLE_BYTES: u64 = 64 * 1024;
+const HASH_BUFFER_BYTES: usize = 64 * 1024;
 const SIZE_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const DOWNLOAD_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_mins(5);
 const TOTAL_RUN_TIMEOUT: std::time::Duration = std::time::Duration::from_mins(45);
@@ -323,7 +324,6 @@ struct RunObservation {
     result: bbdown_core::Result<DownloadReport>,
     shards: BTreeMap<String, u64>,
     transfer_events: TransferEventCollector,
-    budget: RunBudgetSnapshot,
     cleanup_timed_out: bool,
     error_class: Option<&'static str>,
 }
@@ -1055,11 +1055,12 @@ async fn run_group(
             result,
             shards,
             transfer_events,
-            budget: budget_snapshot,
             cleanup_timed_out,
             error_class,
         },
-    ))
+        budget,
+    )
+    .await)
 }
 
 async fn download_with_budget<P>(
@@ -1127,7 +1128,11 @@ fn configured_cdn_parallelism(group: Group) -> usize {
     clippy::too_many_lines,
     reason = "This assembles the flat serialized benchmark record so every JSON field remains auditable beside the schema."
 )]
-fn make_record(metadata: RunMetadata<'_>, observation: RunObservation) -> Record {
+async fn make_record(
+    metadata: RunMetadata<'_>,
+    observation: RunObservation,
+    run_budget: &RunBudget,
+) -> Record {
     let RunMetadata {
         sample,
         entry_index,
@@ -1144,7 +1149,6 @@ fn make_record(metadata: RunMetadata<'_>, observation: RunObservation) -> Record
         result,
         shards,
         transfer_events,
-        budget,
         cleanup_timed_out,
         error_class,
     } = observation;
@@ -1156,13 +1160,17 @@ fn make_record(metadata: RunMetadata<'_>, observation: RunObservation) -> Record
             .flat_map(|entry| entry.files)
             .find(|file| file.kind == bbdown_core::DownloadFileKind::Video)
     });
-    let (size, sha256) = media
-        .and_then(|file| {
-            let (size, digest) = hash_file(&file.path).ok()?;
-            Some((Some(size), Some(digest)))
-        })
-        .unwrap_or((None, None));
+    let (size, sha256) = if let Some(file) = media {
+        match hash_file(&file.path, run_budget).await {
+            Ok((size, digest)) => (Some(size), Some(digest)),
+            Err(_) => (None, None),
+        }
+    } else {
+        (None, None)
+    };
+    let budget = run_budget.snapshot();
     let budget_exhausted = budget.exhausted_reason;
+    let error_class = group_error_class(budget_exhausted, cleanup_timed_out, error_class);
     let success = size == Some(case.size.size)
         && sha256.is_some()
         && budget_exhausted.is_none()
@@ -1816,20 +1824,127 @@ fn candidate_authorities_validate_host_and_port_and_preserve_the_media_target() 
     Ok(())
 }
 
-fn hash_file(path: &std::path::Path) -> std::io::Result<(u64, String)> {
-    let mut file = File::open(path)?;
+async fn hash_file(path: &std::path::Path, budget: &RunBudget) -> std::io::Result<(u64, String)> {
+    let hashing = async {
+        if budget.exhaustion_reason().is_some() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "benchmark budget exhausted during output hashing",
+            ));
+        }
+        let file = tokio::fs::File::open(path).await?;
+        hash_reader_with_budget(file, budget).await
+    };
+    let Some(result) = run_until_deadline(hashing, budget).await else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "benchmark deadline elapsed during output hashing",
+        ));
+    };
+    result
+}
+
+async fn hash_reader_with_budget(
+    mut reader: impl tokio::io::AsyncRead + Unpin,
+    budget: &RunBudget,
+) -> std::io::Result<(u64, String)> {
     let mut hasher = Sha256::new();
-    let mut buffer = vec![0_u8; 64 * 1024].into_boxed_slice();
+    let mut buffer = vec![0_u8; HASH_BUFFER_BYTES].into_boxed_slice();
     let mut size = 0_u64;
     loop {
-        let read = file.read(&mut buffer)?;
+        if budget.exhaustion_reason().is_some() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "benchmark budget exhausted during output hashing",
+            ));
+        }
+        // Tokio file reads use blocking workers; dropping this future does not promise OS-read
+        // cancellation. Keep at most one 64 KiB read pending and schedule no further reads after
+        // the shared deadline wins.
+        let read = reader.read(&mut buffer).await?;
+        if budget.exhaustion_reason().is_some() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "benchmark budget exhausted during output hashing",
+            ));
+        }
         if read == 0 {
             break;
         }
         hasher.update(&buffer[..read]);
         size = size.saturating_add(u64::try_from(read).unwrap_or(u64::MAX));
+        tokio::task::yield_now().await;
     }
     Ok((size, format!("{:x}", hasher.finalize())))
+}
+
+#[tokio::test]
+async fn hashes_output_within_budget_using_the_expected_sha256() -> anyhow::Result<()> {
+    let mut file = tempfile::NamedTempFile::new()?;
+    file.write_all(b"hello")?;
+    let budget = RunBudget::for_test(std::time::Duration::from_secs(10), u64::MAX, u64::MAX);
+
+    let (size, digest) = hash_file(file.path(), &budget).await?;
+
+    assert_eq!(size, 5);
+    assert_eq!(
+        digest,
+        "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    );
+    assert_eq!(budget.exhaustion_reason(), None);
+    Ok(())
+}
+
+#[tokio::test]
+async fn hashing_drops_a_pending_async_read_when_the_deadline_expires() -> anyhow::Result<()> {
+    use std::{
+        pin::Pin,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+        },
+        task::{Context, Poll},
+    };
+    use tokio::io::ReadBuf;
+
+    struct PendingReader {
+        poll_count: Arc<AtomicUsize>,
+        dropped: Arc<AtomicBool>,
+    }
+    impl tokio::io::AsyncRead for PendingReader {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            _context: &mut Context<'_>,
+            _buffer: &mut ReadBuf<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            self.poll_count.fetch_add(1, Ordering::SeqCst);
+            Poll::Pending
+        }
+    }
+    impl Drop for PendingReader {
+        fn drop(&mut self) {
+            self.dropped.store(true, Ordering::SeqCst);
+        }
+    }
+
+    let budget = RunBudget::for_test(std::time::Duration::from_millis(50), u64::MAX, u64::MAX);
+    let poll_count = Arc::new(AtomicUsize::new(0));
+    let dropped = Arc::new(AtomicBool::new(false));
+    let reader = PendingReader {
+        poll_count: Arc::clone(&poll_count),
+        dropped: Arc::clone(&dropped),
+    };
+    let hashing = hash_reader_with_budget(reader, &budget);
+    let result = run_until_deadline(hashing, &budget).await;
+
+    assert!(result.is_none(), "deadline must stop output hashing");
+    assert!(poll_count.load(Ordering::SeqCst) > 0);
+    assert!(
+        dropped.load(Ordering::SeqCst),
+        "pending reader future is dropped"
+    );
+    assert_eq!(budget.exhaustion_reason(), Some("total_run_deadline"));
+    Ok(())
 }
 
 fn epoch_millis() -> u128 {

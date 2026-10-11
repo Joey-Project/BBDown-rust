@@ -135,19 +135,21 @@ superseded_by:
 
 ## Validation
 
-- `cargo test --offline --locked -p bbdown-core --test cdn_benchmark`: 18 passed, one live test
+- `cargo test --offline --locked -p bbdown-core --test cdn_benchmark`: 20 passed, one live test
   ignored after review corrections. The initial three new tests cover default/lowered limits,
   invalid/zero/over-cap limits, and unique quality/codec selection. Two further regressions cover
   low setup budgets, dropping a pending cancelled probe, and rejecting same-poll over-budget
-  success.
+  success. Two output-verification tests cover the known SHA-256 result and dropping a pending
+  asynchronous read when the run deadline expires.
 - `cargo clippy --offline --locked -p bbdown-core --test cdn_benchmark -- -D warnings`: passed.
 - `cargo fmt --all -- --check`: passed.
 - The just-built live test binary was invoked twice with `--exact cdn_benchmark_harness --ignored
   --nocapture` and the limits above; both invocations passed at the recorded measurement commit,
-  before the setup-cancellation correction. No additional live experiments were run. Neither
+  before the setup-cancellation and output-hashing deadline corrections. No additional live
+  experiments were run. Neither
   measurement exhausted a budget, so it did not exercise the corrected cancellation path; that
-  path is validated by the new local mock/controlled-future regressions. Temporary media was not
-  retained.
+  path is validated by the new local mock/controlled-future regressions; hashing uses local
+  file/controlled-reader tests. Temporary media was not retained.
 - Discussion and coordination used GPT-6.1 Sol Extra High; delegated harness, documentation, and
   measurement processing used GPT-6 Luna High. No local formal reviewer was started.
 
@@ -161,6 +163,15 @@ superseded_by:
 - [Existing probe semantics](https://github.com/Joey-Project/BBDown-rust/pull/98#discussion_r4243095382):
   correct both design languages to preserve the existing probe/parallel-triggered throughput
   reordering and define how later opt-in candidate policy composes with it.
+- [Output hashing deadline](https://github.com/Joey-Project/BBDown-rust/pull/98#discussion_r4243171390):
+  apply the run deadline to asynchronous file open/read, hash in 64 KiB chunks with execution
+  yields, and refresh the budget snapshot before declaring a group successful. Retain
+  failed-group diagnostics and keep transfer elapsed time separate from output verification.
+  Dropping a Tokio read does not guarantee OS-level cancellation: one pending chunk read may
+  complete in the background; no unbounded whole-file blocking task is spawned.
+- [Effective donor eligibility](https://github.com/Joey-Project/BBDown-rust/pull/98#discussion_r4243171394):
+  reserve the donor only after the existing media-host rewrite and eligibility policy. Future
+  auto mode preserves CLI defaults and `allow_pcdn`; it must not restore excluded raw hosts.
 
 ## Next steps
 
