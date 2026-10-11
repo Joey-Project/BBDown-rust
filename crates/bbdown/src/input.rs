@@ -28,6 +28,7 @@ pub enum Input {
         owner_mid: u64,
     },
     RecommendationFeed,
+    RelatedRecommendations(u64),
     FollowingFeed,
     SpaceDynamic(u64),
     History,
@@ -48,6 +49,9 @@ impl Input {
         }
 
         let lower = trimmed.to_ascii_lowercase();
+        if lower.starts_with("related:") {
+            return parse_related_recommendations_input(&trimmed["related:".len()..]);
+        }
         if lower.starts_with("bv") {
             return parse_bvid(trimmed);
         }
@@ -124,6 +128,7 @@ impl Input {
             | Self::SpaceCollectionList { .. }
             | Self::SpaceSeriesList { .. }
             | Self::RecommendationFeed
+            | Self::RelatedRecommendations(_)
             | Self::FollowingFeed
             | Self::SpaceDynamic(_)
             | Self::History
@@ -132,6 +137,43 @@ impl Input {
             | Self::ShortLink(_) => Ok(None),
         }
     }
+}
+
+fn parse_related_recommendations_input(raw_video: &str) -> Result<Input> {
+    let raw_video = raw_video.trim();
+    let lower_video = raw_video.to_ascii_lowercase();
+    let aid = if let Some(id) = lower_video.strip_prefix("av") {
+        parse_number(id, "related video aid")?
+    } else if lower_video.starts_with("bv") {
+        match parse_bvid(raw_video)? {
+            Input::Bvid(bvid) => bv::decode(&bvid)?,
+            _ => unreachable!("parse_bvid always returns a BVID input"),
+        }
+    } else if raw_video.chars().all(|ch| ch.is_ascii_digit()) {
+        parse_number(raw_video, "related video aid")?
+    } else if raw_video.starts_with("http://") || raw_video.starts_with("https://") {
+        let url = Url::parse(raw_video)?;
+        let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+        let is_official_video_url = matches!(host.as_str(), "www.bilibili.com" | "bilibili.com")
+            && url.path_segments().and_then(|mut segments| segments.next()) == Some("video");
+        if !is_official_video_url {
+            return Err(Error::InvalidInput(raw_video.to_owned()));
+        }
+        match parse_url(raw_video)? {
+            Input::Aid(aid) => aid,
+            Input::Bvid(bvid) => bv::decode(&bvid)?,
+            _ => return Err(Error::InvalidInput(raw_video.to_owned())),
+        }
+    } else {
+        return Err(Error::InvalidInput(raw_video.to_owned()));
+    };
+
+    if aid == 0 {
+        return Err(Error::InvalidInput(
+            "related video aid must be greater than zero".to_owned(),
+        ));
+    }
+    Ok(Input::RelatedRecommendations(aid))
 }
 
 impl UgcCollectionReference {
@@ -603,6 +645,42 @@ mod tests {
             Input::parse("https://www.bilibili.com/list/watchlater?bvid=BV1xx411c7mD")?,
             Input::WatchLater
         );
+        Ok(())
+    }
+
+    #[test]
+    fn parses_related_recommendation_inputs() -> anyhow::Result<()> {
+        assert_eq!(
+            Input::parse("RELATED:av170001")?,
+            Input::RelatedRecommendations(170_001)
+        );
+        assert_eq!(
+            Input::parse("related:170001")?,
+            Input::RelatedRecommendations(170_001)
+        );
+        assert_eq!(
+            Input::parse("related:BV1qt4y1X7TW")?,
+            Input::RelatedRecommendations(crate::bv::decode("BV1qt4y1X7TW")?)
+        );
+        assert_eq!(
+            Input::parse("related:https://www.bilibili.com/video/av170001")?,
+            Input::RelatedRecommendations(170_001)
+        );
+        assert_eq!(
+            Input::parse("related:https://www.bilibili.com/video/BV1qt4y1X7TW")?,
+            Input::RelatedRecommendations(crate::bv::decode("BV1qt4y1X7TW")?)
+        );
+
+        for input in [
+            "related:av0",
+            "related:0",
+            "related:https://www.bilibili.com/",
+            "related:https://www.bilibili.com/bangumi/play/ep359333",
+            "related:https://b23.tv/abc123",
+            "related:related:av170001",
+        ] {
+            assert!(Input::parse(input).is_err(), "accepted {input}");
+        }
         Ok(())
     }
 }

@@ -66,7 +66,7 @@ async fn main() -> bbdown_core::Result<()> {
 }
 ```
 
-`fav456`、`mid123`、`collection456`、`series456`、`recommendations`、`history`、
+`fav456`、`mid123`、`collection456`、`series456`、`recommendations`、`related:<video>`、`history`、
 `watch-later`、`following` 和空间动态 URL 等批量输入会通过
 `ResolvedContent::Collection` 返回；
 `resolve_input` 会保留完整解析到的 collection metadata，`selected_items` 则携带当前选中子
@@ -77,6 +77,12 @@ async fn main() -> bbdown_core::Result<()> {
 续请求后续 `fresh_idx` 刷新批次来覆盖过滤后的条目。观看历史、稍后再看和动态 feed 输入
 需要在 client credentials 中提供 cookie；观看历史目前只输出普通视频 `archive` 记录，稍后
 再看会输出该账号稍后再看列表中的普通视频，动态 feed 目前只输出普通视频 archive 卡片。
+单视频相关推荐可通过 `resolve_input("related:<video>", ...)` 查询；Rust 输入/API 分别为
+`Input::RelatedRecommendations(aid)` 和 `BiliClient::resolve_related_recommendations(aid,
+selection)`。它只读取一批有限结果，保留上游顺序，过滤源视频、无效和 OGV 条目，并按 aid
+去重。`Selection` 作用于这份相关推荐列表；接口不会翻页或递归请求。它复用普通 web API
+client，也可能发送已配置的 cookie；上游可能限制匿名请求。
+此功能需要当前源码检出，尚未包含在已发布的 `0.9.0` 中，将随后续版本发布。
 
 library 默认保留 plan 中的媒体 URL。嵌入应用需要自定义 UPOS host、强制替换，或
 CLI-compatible PCDN fallback 处理时，应显式设置 `MediaHostOptions`。

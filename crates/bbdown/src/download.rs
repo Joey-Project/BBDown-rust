@@ -3941,6 +3941,7 @@ fn input_progress_title(input: &Input) -> String {
             format!("space/{owner_mid}/series/{list_id}")
         }
         Input::RecommendationFeed => "recommendations".to_owned(),
+        Input::RelatedRecommendations(aid) => format!("related:av{aid}"),
         Input::FollowingFeed => "following".to_owned(),
         Input::SpaceDynamic(mid) => format!("space/{mid}/dynamic"),
         Input::History => "history".to_owned(),

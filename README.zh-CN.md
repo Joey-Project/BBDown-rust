@@ -23,11 +23,11 @@ ID 去重弹幕；ID 缺失、为零或无效时，会回退到完整 `p` 属性
 XML 重新生成所选 ASS 输出，再将暂存后的旁路文件与归档一起发布。`0.9.0` 为
 progress callback 和 CLI `--progress-json` 增加结构化 CDN 传输诊断，并通过 WBI 签名空间动态
 feed 请求，包括 offset 分页。输入解析覆盖普通视频、PGC 和 intl 分集、PUGV/cheese 课程、B23 短链接、收藏
-夹、空间投稿、合集、系列、首页推荐、观看历史、
+夹、空间投稿、合集、系列、首页推荐、单视频相关推荐、观看历史、
 稍后再看列表、关注视频 feed 和空间动态视频 feed。URL 解析包括 canonical
 `bilibili.com/list/...` 页面、
 path-based medialist 收藏夹 URL，以及带 uploader mid 的空间合集 / 系列 URL，以便使用较
-新的空间 API；同时支持 B 站首页、空间动态页面和需要登录态的
+新的空间 API；同时支持 B 站首页、空间动态页面和普通视频 URL 相关推荐输入，以及需要登录态的
 `bilibili.com/account/history` 观看历史页面，以及 `bilibili.com/watchlater` 和
 `bilibili.com/list/watchlater` 稍后再看页面。
 
@@ -45,6 +45,7 @@ bbdown info https://b23.tv/example --json
 bbdown info cheese/ep101 --json
 bbdown info fav456 --json
 bbdown info recommendations --select latest --json
+bbdown info related:av170001 --select latest --json
 bbdown info history --select latest --json
 bbdown info watch-later --select latest --json
 bbdown info following --select latest --json
@@ -62,6 +63,7 @@ bbdown plan ss26801 --select latest --json
 bbdown plan https://www.bilibili.tv/en/play/34613/341736 --json
 bbdown plan fav456 --select page:1 --json
 bbdown plan recommendations --select latest --json
+bbdown plan related:BV1xx411c7mD --select 1 --json
 bbdown plan history --select latest --json
 bbdown plan watch-later --select latest --json
 bbdown plan following --select latest --json
@@ -187,7 +189,11 @@ bbdown info ss26801 --select page:1
 `recommendations`、
 `recommendation`、`recommend` 或 B 站首页 URL；它会解析首页推荐批次，目前只包含普通视
 频 `av` 卡片，并在显式 index selection 需要时在安全上限内继续请求后续 `fresh_idx` 刷新
-批次来覆盖过滤后的条目。
+批次来覆盖过滤后的条目。单视频相关推荐使用 `related:<video>`，其中 `<video>` 可为 `av`
+或 `BV` 标识、数字 aid 或普通 B 站视频 URL。它只读取该源视频的一批有限相关推荐，不会
+翻页或递归抓取相关推荐；结果按上游顺序排列，排除源视频、无效条目和 OGV 条目，并按 aid
+去重。`--select` 按这份结果列表的序号选择；homepage aliases 和首页 URL 仍表示首页推荐。
+此功能需要当前源码检出，尚未包含在已发布的 `0.9.0` 中，将随后续版本发布。
 观看历史输入可使用 `history` 或 `https://www.bilibili.com/account/history`，需要已认证的
 WEB cookie，目前只包含普通视频 `archive` 历史记录。稍后再看输入可使用 `watchlater`、
 `watch-later`、`watch_later`、`later`、`toview` 或

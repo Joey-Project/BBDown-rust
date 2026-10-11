@@ -27,12 +27,13 @@ before publishing staged sidecars with the archive. The `0.9.0` release adds str
 transfer diagnostics to progress callbacks and CLI `--progress-json`, and signs personal-space
 dynamic feed requests with WBI, including continuation pages.
 Input parsing covers normal videos, PGC and intl episodes, PUGV/cheese courses, B23 short links,
-favorite lists, space videos, collections, series, homepage recommendations, watch history,
-watch-later lists, following video feeds, and space dynamic video feeds. URL parsing includes canonical
-`bilibili.com/list/...` pages, path-based medialist favorite URLs, space collection/series URLs that
-carry the uploader mid needed by newer space APIs, the Bilibili homepage, space dynamic pages, plus
-the authenticated `bilibili.com/account/history` watch-history page plus `bilibili.com/watchlater`
-and `bilibili.com/list/watchlater` watch-later pages.
+favorite lists, space videos, collections, series, homepage recommendations, per-video related
+recommendations, watch history, watch-later lists, following video feeds, and space dynamic video
+feeds. URL parsing includes canonical `bilibili.com/list/...` pages, path-based medialist favorite
+URLs, space collection/series URLs that carry the uploader mid needed by newer space APIs, the
+Bilibili homepage, ordinary video URLs for related recommendations, space dynamic pages, and the
+authenticated `bilibili.com/account/history`, `bilibili.com/watchlater`, and
+`bilibili.com/list/watchlater` pages.
 
 ## Current CLI
 
@@ -48,6 +49,7 @@ bbdown info https://b23.tv/example --json
 bbdown info cheese/ep101 --json
 bbdown info fav456 --json
 bbdown info recommendations --select latest --json
+bbdown info related:av170001 --select latest --json
 bbdown info history --select latest --json
 bbdown info watch-later --select latest --json
 bbdown info following --select latest --json
@@ -65,6 +67,7 @@ bbdown plan ss26801 --select latest --json
 bbdown plan https://www.bilibili.tv/en/play/34613/341736 --json
 bbdown plan fav456 --select page:1 --json
 bbdown plan recommendations --select latest --json
+bbdown plan related:BV1xx411c7mD --select 1 --json
 bbdown plan history --select latest --json
 bbdown plan watch-later --select latest --json
 bbdown plan following --select latest --json
@@ -201,7 +204,13 @@ collections, series, homepage recommendations, watch history, watch-later lists,
 feeds are batch inputs. Recommendation input uses `recommendations`, `recommendation`, `recommend`,
 or the Bilibili homepage URL; it resolves homepage recommendation batches and currently includes
 normal-video `av` cards, walking additional `fresh_idx` refresh batches within a safety cap when
-needed to cover explicit index selection. History input uses `history` or
+needed to cover explicit index selection. Per-video related recommendations use `related:<video>`
+with an `av`/`BV` id, numeric aid, or ordinary Bilibili video URL. They resolve one finite related
+batch for that source video; they do not paginate or recursively fetch recommendations. Results
+exclude the source, invalid entries, and OGV entries, preserve upstream order, and deduplicate by
+aid. `--select` indexes this result list; homepage aliases and homepage URL continue to request the
+homepage recommendation feed. This feature requires the current source checkout and is not included
+in the published `0.9.0` release; it will ship in a future release. History input uses `history` or
 `https://www.bilibili.com/account/history`, requires an authenticated web cookie, and currently
 includes normal-video `archive` history records. Watch-later input uses `watchlater`,
 `watch-later`, `watch_later`, `later`, `toview`, `https://www.bilibili.com/watchlater`, or

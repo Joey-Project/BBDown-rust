@@ -60,6 +60,7 @@ bbdown info mid123 --select 1,3-5 --json
 bbdown info collection456 --json
 bbdown info series456 --select latest --json
 bbdown info recommendations --select latest --json
+bbdown info related:av170001 --select latest --json
 bbdown info history --select latest --json
 bbdown info watch-later --select latest --json
 bbdown info following --select latest --json
@@ -94,6 +95,14 @@ Season、media 和 `cheese/ss...` 输入在非交互模式下需要 `--select`�
 首页推荐批次，目前只输出普通视频 `av` 卡片；非视频推荐卡片会被跳过，显式 index
 selection 需要时会在安全上限内继续请求后续 `fresh_idx` 刷新批次来覆盖过滤后的普通视频卡
 片。
+单视频相关推荐支持 `related:<video>`，其中 `<video>` 可以是数字 aid、`av`/`BV` 标识或普
+通 B 站视频 URL。它从 `/x/web-interface/archive/related` 读取一批有限结果；不会翻页、不
+会递归请求相关推荐，也不会读取源视频 metadata。结果保留上游顺序，排除源视频、无效条目和
+OGV 条目，并按 aid 去重。`--select` 按结果列表序号选择；不带 selector 或使用
+`--select all` 时，`info` 返回整批结果，`plan`/`download` 处理所有选中条目。`latest` 表示
+上游返回的第一条相关推荐。首页 aliases 和首页 URL 仍然表示首页推荐 feed。该端点沿用普通
+WEB API 请求路径，也可能接受已配置的 cookie；上游可能限制匿名请求。
+此功能需要当前源码检出，尚未包含在已发布的 `0.9.0` 中，将随后续版本发布。
 观看历史输入支持 `history` 和 `https://www.bilibili.com/account/history`。它需要已认证的
 WEB cookie，目前只输出普通视频 `archive` 记录；PGC、直播或专栏等其它历史记录 business
 类型会被跳过，直到这些条目形态有专门的 collection planning 支持。
@@ -118,6 +127,7 @@ bbdown plan https://www.bilibili.tv/en/play/34613/341736 --json
 bbdown plan cheese/ep101 --json
 bbdown plan fav456 --select 1,3-5 --json
 bbdown plan recommendations --select latest --json
+bbdown plan related:BV1xx411c7mD --select 1 --json
 bbdown plan history --select latest --json
 bbdown plan watch-later --select latest --json
 bbdown plan following --select latest --json

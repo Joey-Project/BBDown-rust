@@ -66,6 +66,7 @@ bbdown info mid123 --select 1,3-5 --json
 bbdown info collection456 --json
 bbdown info series456 --select latest --json
 bbdown info recommendations --select latest --json
+bbdown info related:av170001 --select latest --json
 bbdown info history --select latest --json
 bbdown info watch-later --select latest --json
 bbdown info following --select latest --json
@@ -102,6 +103,17 @@ Recommendation input accepts `recommendations`, `recommendation`, `recommend`, a
 homepage URL. It fetches homepage recommendation batches and currently emits normal-video `av`
 cards; non-video recommendation cards are skipped, and explicit index selection may walk additional
 `fresh_idx` refresh batches within a safety cap to cover the filtered video cards.
+Per-video related recommendations accept `related:<video>`, where `<video>` is a numeric aid,
+`av`/`BV` id, or ordinary Bilibili video URL. This resolves one finite batch from
+`/x/web-interface/archive/related`; it does not paginate, recursively fetch related videos, or fetch
+the source video's metadata. Results preserve upstream order, exclude the source, invalid records,
+and OGV records, and deduplicate by aid. `--select` indexes the resulting list; without a selector or
+with `--select all`, info returns the full batch, while plan/download process all selected entries.
+`latest` means the first returned related video. Homepage aliases and the homepage URL keep their
+existing homepage-feed meaning. The endpoint uses the ordinary web API request path and may accept
+the configured cookie; anonymous upstream requests may be restricted. This feature requires the
+current source checkout and is not included in the published `0.9.0` release; it will ship in a
+future release.
 Watch-history input accepts `history` and `https://www.bilibili.com/account/history`. It requires an
 authenticated web cookie and currently emits normal-video `archive` records; other history business
 types such as PGC, live, or article records are skipped until those item shapes have dedicated
@@ -129,6 +141,7 @@ bbdown plan https://www.bilibili.tv/en/play/34613/341736 --json
 bbdown plan cheese/ep101 --json
 bbdown plan fav456 --select 1,3-5 --json
 bbdown plan recommendations --select latest --json
+bbdown plan related:BV1xx411c7mD --select 1 --json
 bbdown plan history --select latest --json
 bbdown plan watch-later --select latest --json
 bbdown plan following --select latest --json
