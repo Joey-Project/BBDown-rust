@@ -19,8 +19,8 @@ cancellation token。原始输入解析覆盖普
 feed 请求，包括 offset 分页。传输字节事件统计应用已消费的响应正文字节，与写入或发布到文件的
 字节不同，也不代表全部线路传输量。
 
-crate 提供 staged XML 历史保留弹幕刷新，按正 comment ID 去重（无效 ID 回退到完整参数与解码文本），
-并从合并 XML 重新生成 ASS，同时包含 CDN 控制和独立 PGC Web 路由 API。PGC 区域与代理解析独立于媒体
+crate 提供 staged XML 历史保留弹幕刷新，按有效的正 `p[7]` ID 去重；ID 缺失、为零或无效时，使用完整
+`p` 属性和解码文本作为匹配依据。它从合并 XML 重新生成 ASS，同时包含 CDN 控制和独立 PGC Web 路由 API。PGC 区域与代理解析独立于媒体
 CDN 选择与传输。嵌入项目
 应优先使用 constructor 和 builder 风格 API，例如 `ClientConfig::default().with_*()`、
 `EndpointConfig::default().with_*()`、`RestrictedAreaConfig::default().with_*()`、

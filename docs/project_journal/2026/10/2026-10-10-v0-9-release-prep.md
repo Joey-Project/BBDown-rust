@@ -16,6 +16,8 @@ superseded_by:
 
 - Prepared the bilingual source-line notes, release-note index entries, and current-version
   summaries for the four English and Simplified Chinese root/crate READMEs.
+- Synchronized the root README release/API guidance and preserving-update deduplication rules in
+  both languages, removing duplicate wording from the Chinese feature summary.
 - Prepared the `0.9.0` versions for both workspace crates, kept the CLI core dependency
   path-constrained, and updated the two workspace lock records; third-party dependency resolution
   remained unchanged.
