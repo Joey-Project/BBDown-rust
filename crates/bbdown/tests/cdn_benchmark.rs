@@ -68,6 +68,7 @@ struct Record {
     quality: u32,
     codecs: Option<String>,
     declared_size: u64,
+    max_media_bytes_limit: u64,
     size_source: &'static str,
     size_probe_phase: Option<&'static str>,
     size_probe_sample_bytes: u64,
@@ -209,6 +210,82 @@ struct BenchmarkSettings {
     entry_index: u32,
     repetitions: usize,
     order_offset: usize,
+    limits: BenchmarkLimits,
+    quality: Option<u32>,
+    codec: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BenchmarkLimits {
+    body_budget_bytes: u64,
+    run_timeout_secs: u64,
+    request_budget: u64,
+    max_media_bytes: u64,
+}
+
+impl Default for BenchmarkLimits {
+    fn default() -> Self {
+        Self {
+            body_budget_bytes: MAX_TOTAL_CONSUMED_BODY_BYTES,
+            run_timeout_secs: TOTAL_RUN_TIMEOUT.as_secs(),
+            request_budget: MAX_OBSERVED_REQUESTS,
+            max_media_bytes: MAX_MEDIA_BYTES,
+        }
+    }
+}
+
+impl BenchmarkLimits {
+    fn from_env() -> anyhow::Result<Self> {
+        Self::parse(
+            env::var("BBDOWN_CDN_BENCHMARK_BODY_BUDGET_BYTES")
+                .ok()
+                .as_deref(),
+            env::var("BBDOWN_CDN_BENCHMARK_RUN_TIMEOUT_SECS")
+                .ok()
+                .as_deref(),
+            env::var("BBDOWN_CDN_BENCHMARK_REQUEST_BUDGET")
+                .ok()
+                .as_deref(),
+            env::var("BBDOWN_CDN_BENCHMARK_MAX_MEDIA_BYTES")
+                .ok()
+                .as_deref(),
+        )
+    }
+
+    fn parse(
+        body_budget_bytes: Option<&str>,
+        run_timeout_secs: Option<&str>,
+        request_budget: Option<&str>,
+        max_media_bytes: Option<&str>,
+    ) -> anyhow::Result<Self> {
+        let defaults = Self::default();
+        Ok(Self {
+            body_budget_bytes: parse_bounded_positive(
+                "BBDOWN_CDN_BENCHMARK_BODY_BUDGET_BYTES",
+                body_budget_bytes,
+                defaults.body_budget_bytes,
+                MAX_TOTAL_CONSUMED_BODY_BYTES,
+            )?,
+            run_timeout_secs: parse_bounded_positive(
+                "BBDOWN_CDN_BENCHMARK_RUN_TIMEOUT_SECS",
+                run_timeout_secs,
+                defaults.run_timeout_secs,
+                TOTAL_RUN_TIMEOUT.as_secs(),
+            )?,
+            request_budget: parse_bounded_positive(
+                "BBDOWN_CDN_BENCHMARK_REQUEST_BUDGET",
+                request_budget,
+                defaults.request_budget,
+                MAX_OBSERVED_REQUESTS,
+            )?,
+            max_media_bytes: parse_bounded_positive(
+                "BBDOWN_CDN_BENCHMARK_MAX_MEDIA_BYTES",
+                max_media_bytes,
+                defaults.max_media_bytes,
+                MAX_MEDIA_BYTES,
+            )?,
+        })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -238,6 +315,7 @@ struct RunMetadata<'a> {
     started_at_epoch_ms: u128,
     group: Group,
     case: &'a BenchmarkCase,
+    limits: BenchmarkLimits,
 }
 
 struct RunObservation {
@@ -259,6 +337,7 @@ struct SetupFailureRecord {
     record_type: &'static str,
     sample: String,
     entry_index: u32,
+    max_media_bytes_limit: u64,
     started_at_epoch_ms: u128,
     elapsed_ms: u128,
     success: bool,
@@ -288,7 +367,7 @@ async fn cdn_benchmark_harness() -> anyhow::Result<()> {
     let settings = BenchmarkSettings::from_env()?;
     let started_at_epoch_ms = epoch_millis();
     let benchmark_started = Instant::now();
-    let budget = RunBudget::live();
+    let budget = RunBudget::live(settings.limits);
     let (temp_root, root) = output_root()?;
     let client =
         BiliClient::new(ClientConfig::default().with_request_timeout(DOWNLOAD_REQUEST_TIMEOUT));
@@ -355,6 +434,7 @@ fn emit_setup_failure(
         record_type: "harness_setup_failure",
         sample: settings.sample.clone(),
         entry_index: settings.entry_index,
+        max_media_bytes_limit: settings.limits.max_media_bytes,
         started_at_epoch_ms,
         elapsed_ms,
         success: false,
@@ -466,6 +546,9 @@ impl BenchmarkSettings {
             entry_index: 1,
             repetitions: 1,
             order_offset: 0,
+            limits: BenchmarkLimits::default(),
+            quality: None,
+            codec: None,
         }
     }
 
@@ -490,6 +573,11 @@ impl BenchmarkSettings {
             order_offset < GROUPS.len(),
             "order offset must be between 0 and 2"
         );
+        let codec = env::var("BBDOWN_CDN_BENCHMARK_CODEC").ok();
+        anyhow::ensure!(
+            codec.as_deref().is_none_or(|value| !value.is_empty()),
+            "codec selector must not be empty"
+        );
         Ok(Self {
             raw_url: env::var("BBDOWN_CDN_BENCHMARK_URL")
                 .unwrap_or_else(|_| DEFAULT_URL.to_owned()),
@@ -497,16 +585,26 @@ impl BenchmarkSettings {
             entry_index: parse_env("BBDOWN_CDN_BENCHMARK_ENTRY", 1_u32)?,
             repetitions,
             order_offset,
+            limits: BenchmarkLimits::from_env()?,
+            quality: env::var("BBDOWN_CDN_BENCHMARK_QUALITY")
+                .ok()
+                .map(|value| {
+                    value.parse::<u32>().map_err(|error| {
+                        anyhow::anyhow!("invalid BBDOWN_CDN_BENCHMARK_QUALITY: {error}")
+                    })
+                })
+                .transpose()?,
+            codec,
         })
     }
 }
 
 impl RunBudget {
-    fn live() -> Self {
+    fn live(limits: BenchmarkLimits) -> Self {
         Self::with_limits(
-            TOTAL_RUN_TIMEOUT,
-            MAX_TOTAL_CONSUMED_BODY_BYTES,
-            MAX_OBSERVED_REQUESTS,
+            std::time::Duration::from_secs(limits.run_timeout_secs),
+            limits.body_budget_bytes,
+            limits.request_budget,
         )
     }
 
@@ -788,15 +886,14 @@ async fn resolve_case(
         .position(|entry| entry.index == settings.entry_index)
         .ok_or_else(|| anyhow::anyhow!("entry index is absent from the resolved plan"))?;
     let mut entry = plan.entries.remove(entry_pos);
-    let mut selected = entry
-        .streams
-        .videos
-        .first()
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("selected entry has no video representation"))?;
+    let mut selected = select_representation(
+        &entry.streams.videos,
+        settings.quality,
+        settings.codec.as_deref(),
+    )?;
     let size = discover_selected_size(client, &selected, budget).await?;
     anyhow::ensure!(
-        size.size <= MAX_MEDIA_BYTES,
+        size.size <= settings.limits.max_media_bytes,
         "selected representation exceeds the sample limit"
     );
     selected.size = Some(size.size);
@@ -818,6 +915,30 @@ async fn resolve_case(
         fixed_host,
         candidate_hosts,
     })
+}
+
+fn select_representation(
+    videos: &[MediaStream],
+    quality: Option<u32>,
+    codec: Option<&str>,
+) -> anyhow::Result<MediaStream> {
+    if quality.is_none() && codec.is_none() {
+        return videos
+            .first()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("selected entry has no video representation"));
+    }
+    let matching = videos
+        .iter()
+        .filter(|stream| quality.is_none_or(|id| stream.id == id))
+        .filter(|stream| codec.is_none_or(|requested| stream.codecs.as_deref() == Some(requested)))
+        .collect::<Vec<_>>();
+    anyhow::ensure!(
+        matching.len() == 1,
+        "representation selector matched {} video representations; expected exactly one",
+        matching.len()
+    );
+    Ok(matching[0].clone())
 }
 
 async fn run_repetition(
@@ -927,6 +1048,7 @@ async fn run_group(
             started_at_epoch_ms,
             group,
             case,
+            limits: settings.limits,
         },
         RunObservation {
             elapsed_ms,
@@ -1015,6 +1137,7 @@ fn make_record(metadata: RunMetadata<'_>, observation: RunObservation) -> Record
         started_at_epoch_ms,
         group,
         case,
+        limits,
     } = metadata;
     let RunObservation {
         elapsed_ms,
@@ -1071,6 +1194,7 @@ fn make_record(metadata: RunMetadata<'_>, observation: RunObservation) -> Record
         quality: case.selected.id,
         codecs: case.selected.codecs.clone(),
         declared_size: case.size.size,
+        max_media_bytes_limit: limits.max_media_bytes,
         size_source: case.size.source,
         size_probe_phase: (case.size.source == "probe").then_some("standalone_probe"),
         size_probe_sample_bytes: case.size.sample_bytes,
@@ -1421,6 +1545,7 @@ fn validity_record(group: Group) -> Record {
         quality: 80,
         codecs: Some("avc".to_owned()),
         declared_size: 100,
+        max_media_bytes_limit: MAX_MEDIA_BYTES,
         size_source: "plan",
         size_probe_phase: None,
         size_probe_sample_bytes: 0,
@@ -1836,6 +1961,23 @@ where
     })
 }
 
+fn parse_bounded_positive(
+    name: &str,
+    raw: Option<&str>,
+    default: u64,
+    maximum: u64,
+) -> anyhow::Result<u64> {
+    let Some(raw) = raw else {
+        return Ok(default);
+    };
+    let value = raw
+        .parse::<u64>()
+        .map_err(|error| anyhow::anyhow!("invalid {name}: {error}"))?;
+    anyhow::ensure!(value > 0, "{name} must be greater than zero");
+    anyhow::ensure!(value <= maximum, "{name} must be at most {maximum}");
+    Ok(value)
+}
+
 #[tokio::test]
 async fn discovers_unknown_size_with_a_bounded_single_donor_sample() -> anyhow::Result<()> {
     let server = MockServer::start();
@@ -1884,5 +2026,90 @@ async fn discovers_unknown_size_with_a_bounded_single_donor_sample() -> anyhow::
     );
     assert_eq!(discovery.calls(), 1);
     assert_eq!(sample.calls(), 1);
+    Ok(())
+}
+
+#[test]
+fn benchmark_limits_default_to_existing_caps_and_accept_lower_values() -> anyhow::Result<()> {
+    assert_eq!(
+        BenchmarkLimits::parse(None, None, None, None)?,
+        BenchmarkLimits::default()
+    );
+    assert_eq!(
+        BenchmarkLimits::parse(
+            Some("536870912"),
+            Some("600"),
+            Some("2048"),
+            Some("134217728")
+        )?,
+        BenchmarkLimits {
+            body_budget_bytes: 512 * 1024 * 1024,
+            run_timeout_secs: 600,
+            request_budget: 2048,
+            max_media_bytes: 128 * 1024 * 1024,
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn benchmark_limits_reject_zero_invalid_and_over_cap_values() {
+    let invalid_values = ["0", "invalid"];
+    for value in invalid_values {
+        assert!(BenchmarkLimits::parse(Some(value), None, None, None).is_err());
+        assert!(BenchmarkLimits::parse(None, Some(value), None, None).is_err());
+        assert!(BenchmarkLimits::parse(None, None, Some(value), None).is_err());
+        assert!(BenchmarkLimits::parse(None, None, None, Some(value)).is_err());
+    }
+    assert!(BenchmarkLimits::parse(Some("3221225473"), None, None, None).is_err());
+    assert!(BenchmarkLimits::parse(None, Some("2701"), None, None).is_err());
+    assert!(BenchmarkLimits::parse(None, None, Some("16385"), None).is_err());
+    assert!(BenchmarkLimits::parse(None, None, None, Some("268435457")).is_err());
+}
+
+fn representation_fixture(id: u32, codecs: &str) -> anyhow::Result<MediaStream> {
+    Ok(serde_json::from_value(serde_json::json!({
+        "id": id,
+        "base_url": "https://cdn.example/media?token=fixture",
+        "backup_urls": [],
+        "language": null,
+        "language_doc": null,
+        "codecs": codecs,
+        "codec_family": "h264",
+        "bandwidth": 1_000_000,
+        "width": 1280,
+        "height": 720,
+        "frame_rate": "30",
+        "mime_type": "video/mp4",
+        "size": 1_000_000
+    }))?)
+}
+
+#[test]
+fn representation_selection_preserves_default_and_requires_one_exact_match() -> anyhow::Result<()> {
+    let avc = representation_fixture(80, "avc1.640028")?;
+    let hevc = representation_fixture(80, "hev1.1.6.L120.90")?;
+    let high_quality = representation_fixture(64, "avc1.640028")?;
+    let videos = vec![avc.clone(), hevc.clone(), high_quality.clone()];
+
+    assert_eq!(
+        select_representation(&videos, None, None)?.codecs,
+        avc.codecs
+    );
+    assert_eq!(
+        select_representation(&videos, Some(64), None)?.codecs,
+        high_quality.codecs
+    );
+    assert_eq!(
+        select_representation(&videos, None, Some("hev1.1.6.L120.90"))?.codecs,
+        hevc.codecs
+    );
+    assert_eq!(
+        select_representation(&videos, Some(80), Some("hev1.1.6.L120.90"))?.codecs,
+        hevc.codecs
+    );
+    assert!(select_representation(&videos, Some(80), None).is_err());
+    assert!(select_representation(&videos, Some(99), None).is_err());
+    assert!(select_representation(&videos, Some(80), Some("avc1.640028 ")).is_err());
     Ok(())
 }
