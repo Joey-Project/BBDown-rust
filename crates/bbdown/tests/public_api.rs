@@ -6,6 +6,7 @@ use bbdown_core::{
     DownloadCancellationToken, DownloadOptions, DownloadProgressEvent, DownloadProgressSink,
     DownloadReportSummary, Input, NoopDownloadProgress, PlayurlMode, RestrictedAreaConfig,
     StreamSelection, SubtitleAiPolicy, UgcCollectionKind, UgcCollectionReference,
+    VideoCollectionKind,
 };
 use std::path::PathBuf;
 
@@ -29,6 +30,13 @@ fn embedding_surface_is_reexported() -> anyhow::Result<()> {
             list_id: 167_822,
             owner_mid: 210_798,
         }
+    );
+    let related_input = Input::parse("related:av170001")?;
+    assert_eq!(related_input, Input::RelatedRecommendations(170_001));
+    assert_eq!(related_input.aid_hint()?, None);
+    assert_eq!(
+        serde_json::to_value(VideoCollectionKind::RelatedRecommendation)?,
+        serde_json::json!("related_recommendation")
     );
     let _options = DownloadOptions::new("downloads")
         .with_stream_selection(StreamSelection::audio_language("Japanese"))

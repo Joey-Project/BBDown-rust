@@ -119,7 +119,7 @@ MP4 codec 字符串。多个 APP legacy FLV 分段清晰度会压缩为最高质
 ## 批量和集合输入
 
 `BiliClient::resolve_input` 接受 CLI 风格原始输入，例如 B23 短链接、`fav...`、`mid...`、
-`collection...`、`series...`、`recommendations`、`history`、`watch-later`、`following`、
+`collection...`、`series...`、`recommendations`、`related:<video>`、`history`、`watch-later`、`following`、
 canonical 收藏夹 `/list/ml...` URL、path-based `/medialist/.../ml...` URL、空间合集 URL、
 空间系列 URL、B 站首页、需要登录态的 `/account/history`、`/watchlater` 和
 `/list/watchlater` 页面，以及动态 feed 页面。批量输入会解析为
@@ -134,6 +134,37 @@ API。不带 selector 时，集合类输入会选择全部解析条目；传入 
 shorthand 和 B 站首页 URL。当前实现会输出普通视频 `av` 卡片；非视频推荐卡片会被跳过，
 显式 index selection 需要时会在安全上限内继续请求后续 `fresh_idx` 刷新批次来覆盖过滤后
 的普通视频卡片。
+
+单视频相关推荐可通过 `resolve_input` 使用 `related:<video>`，其中 `<video>` 可以是数字 aid、
+`av`/`BV` 标识或 B 站官方桌面站/移动站视频 URL（包括 `https://m.bilibili.com/video/...`）。
+对应的 typed input 是
+`Input::RelatedRecommendations(aid)`；`BiliClient::resolve_related_recommendations(aid,
+selection)` 则是直接调用的公共 API，返回 `VideoCollectionResolution`。相关推荐端点只返回
+一批有限结果：不会翻页、递归请求相关推荐，也不会读取源视频 metadata。解析器保留上游顺
+序，过滤源视频、无效条目和 OGV 条目，并按 aid 去重。不传 selection 或使用
+`Selection::All` 会返回整批结果，`Selection::Latest` 选择第一条，page/index/range 使用这
+批列表中的 1-based 序号。默认或 all 选择允许空结果。`Current` 和 `Episode` 会在请求端点
+前被拒绝。调用会复用普通 web API client 配置，也可能发送已配置的 cookie；匿名请求可能被
+上游限制。API 错误沿用正常 `Result` 错误返回路径，不需增加 client 配置。
+此功能需要当前源码检出，尚未包含在已发布的 `0.9.0` 中，将随后续版本发布。
+
+```rust,no_run
+use bbdown_core::{BiliClient, ClientConfig, Input, ResolvedContent, Selection};
+
+#[tokio::main]
+async fn main() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let input = Input::RelatedRecommendations(170_001);
+    let resolved = client.resolve(input, Some(Selection::Latest)).await?;
+    if let ResolvedContent::Collection(recommendations) = resolved {
+        println!("{} related videos", recommendations.collection.items.len());
+        println!("selected: {}", recommendations.selected_items.len());
+    }
+
+    let _all = client.resolve_related_recommendations(170_001, None).await?;
+    Ok(())
+}
+```
 
 观看历史输入使用 WEB history cursor 端点，因此需要在 `ClientConfig::credentials` 中提供
 cookie。当前 history collection 只输出普通视频 `archive` 记录，这些记录可以映射回普通视

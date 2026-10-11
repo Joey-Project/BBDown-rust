@@ -541,6 +541,20 @@ impl BiliClient {
         .await
     }
 
+    /// Resolves one batch of ordinary video recommendations related to a source video.
+    ///
+    /// The source aid is stored as the collection id. PGC recommendations are filtered;
+    /// [`Selection::Latest`] selects the first item returned by Bilibili. The request does
+    /// not use WBI signing and includes the configured web cookie only when one is present.
+    pub async fn resolve_related_recommendations(
+        &self,
+        aid: u64,
+        selection: Option<Selection>,
+    ) -> Result<VideoCollectionResolution> {
+        self.fetch_related_recommendation_collection(aid, selection)
+            .await
+    }
+
     pub async fn resolve(
         &self,
         input: Input,
@@ -606,6 +620,10 @@ impl BiliClient {
                     .await
             }
             Input::RecommendationFeed => self.resolve_recommendations(selection).await,
+            Input::RelatedRecommendations(aid) => self
+                .resolve_related_recommendations(aid, selection)
+                .await
+                .map(ResolvedContent::Collection),
             Input::FollowingFeed => {
                 self.resolve_dynamic_feed(DynamicFeedKind::Following, selection)
                     .await
@@ -1082,6 +1100,7 @@ impl BiliClient {
             | Input::SpaceCollectionList { .. }
             | Input::SpaceSeriesList { .. }
             | Input::RecommendationFeed
+            | Input::RelatedRecommendations(_)
             | Input::FollowingFeed
             | Input::SpaceDynamic(_)
             | Input::History
@@ -1194,6 +1213,12 @@ impl BiliClient {
                 let fetch_mode = Self::collection_fetch_mode(selection.as_ref())?;
                 let collection = self
                     .fetch_recommendation_collection(selection, fetch_mode, true)
+                    .await?;
+                self.plan_collection(collection, planning_mode).await
+            }
+            Input::RelatedRecommendations(aid) => {
+                let collection = self
+                    .fetch_related_recommendation_collection(aid, selection)
                     .await?;
                 self.plan_collection(collection, planning_mode).await
             }
@@ -2258,6 +2283,47 @@ impl BiliClient {
         url.set_query(Some(&wbi_signed_query(params, mixin_key)));
         let response: ApiData<RecommendationFeedData> = self.get_json(url).await?;
         response.into_data()
+    }
+
+    async fn fetch_related_recommendation_collection(
+        &self,
+        aid: u64,
+        selection: Option<Selection>,
+    ) -> Result<VideoCollectionResolution> {
+        if aid == 0 {
+            return Err(Error::InvalidInput(
+                "related video aid must be greater than zero".to_owned(),
+            ));
+        }
+        Self::collection_fetch_mode(selection.as_ref())?;
+        let mut url = Self::endpoint_url(
+            &self.config.endpoints.api_base,
+            "/x/web-interface/archive/related",
+        )?;
+        url.query_pairs_mut().append_pair("aid", &aid.to_string());
+        let response: ApiData<Vec<RelatedRecommendationItem>> = self.get_json(url).await?;
+        let related = response.into_data()?;
+        let mut items = Vec::new();
+        for item in related {
+            let Some(item) = related_recommendation_item(item, aid) else {
+                continue;
+            };
+            push_unique_feed_list_item(&mut items, item, |existing, candidate| {
+                existing.aid == candidate.aid
+            });
+        }
+        renumber_collection_items(&mut items);
+        let collection = VideoCollectionMetadata {
+            id: Some(aid),
+            kind: VideoCollectionKind::RelatedRecommendation,
+            title: format!("Related recommendations for av{aid}"),
+            description: format!("Related ordinary video recommendations for av{aid}"),
+            cover_url: items.first().and_then(|item| item.cover_url.clone()),
+            pub_time: items.first().and_then(|item| item.pub_time),
+            owner: None,
+            items,
+        };
+        Self::resolve_collection_selection(collection, selection.as_ref())
     }
 
     async fn fetch_history_collection(
@@ -4233,6 +4299,20 @@ struct RecommendationItem {
 }
 
 #[derive(Debug, Deserialize)]
+struct RelatedRecommendationItem {
+    aid: Option<FlexibleU64>,
+    bvid: Option<String>,
+    cid: Option<FlexibleU64>,
+    title: Option<String>,
+    desc: Option<String>,
+    pic: Option<String>,
+    pubdate: Option<i64>,
+    duration: Option<u32>,
+    owner: Option<FavoriteUpper>,
+    is_ogv: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
 struct DynamicFeedData {
     has_more: Option<bool>,
     offset: Option<String>,
@@ -4867,6 +4947,32 @@ fn recommendation_item(item: RecommendationItem) -> Option<VideoCollectionItem> 
         title: item.title.unwrap_or_else(|| aid.to_string()),
         cover_url: item.pic,
         description: String::new(),
+        pub_time: item.pubdate,
+        owner: item.owner.and_then(FavoriteUpper::into_owner),
+        duration_seconds: item.duration,
+    })
+}
+
+fn related_recommendation_item(
+    item: RelatedRecommendationItem,
+    source_aid: u64,
+) -> Option<VideoCollectionItem> {
+    if item.is_ogv == Some(true) {
+        return None;
+    }
+    let aid = item.aid.and_then(FlexibleU64::into_u64)?;
+    let cid = item.cid.and_then(FlexibleU64::into_u64)?;
+    if aid == 0 || cid == 0 || aid == source_aid {
+        return None;
+    }
+    Some(VideoCollectionItem {
+        index: 0,
+        aid,
+        bvid: item.bvid,
+        cid,
+        title: item.title.unwrap_or_else(|| aid.to_string()),
+        cover_url: item.pic,
+        description: item.desc.unwrap_or_default(),
         pub_time: item.pubdate,
         owner: item.owner.and_then(FavoriteUpper::into_owner),
         duration_seconds: item.duration,
@@ -10653,6 +10759,240 @@ mod tests {
         assert_eq!(plan.entries.len(), 1);
         assert_eq!(plan.entries[0].title, "Recommended video");
         assert_eq!(plan.entries[0].source, StreamSource::NormalWeb);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolves_related_recommendations_and_maps_ordinary_video_metadata()
+    -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/archive/related")
+                .query_param("aid", "170000")
+                .query_param_missing("wts")
+                .query_param_missing("w_rid")
+                .header_missing("cookie");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": [
+                    {
+                        "aid": "170000",
+                        "cid": "9800",
+                        "title": "Source video"
+                    },
+                    {
+                        "aid": "170001",
+                        "bvid": "BV1related001",
+                        "cid": "9801",
+                        "title": "First related video",
+                        "desc": "First description",
+                        "pic": "https://example.invalid/related.jpg",
+                        "pubdate": 1_700_000_001,
+                        "duration": 321,
+                        "owner": {"mid": 42, "name": "Creator"}
+                    },
+                    {
+                        "aid": 170_001,
+                        "cid": 9802,
+                        "title": "Duplicate aid with another cid"
+                    },
+                    {
+                        "aid": 170_002,
+                        "cid": 9803,
+                        "title": "Related PGC",
+                        "is_ogv": true,
+                        "ogv_info": {"season_id": 3}
+                    },
+                    {"aid": 0, "cid": 9804, "title": "Zero aid"},
+                    {"aid": 170_004, "cid": 0, "title": "Zero cid"},
+                    {"aid": 170_005, "cid": "not-a-number", "title": "Invalid cid"},
+                    {"aid": 170_006, "cid": 9806, "title": "Second related video"}
+                ]
+            }));
+        });
+
+        let resolved = test_client(&server)
+            .resolve_related_recommendations(170_000, None)
+            .await?;
+
+        assert_eq!(resolved.collection.id, Some(170_000));
+        assert_eq!(
+            resolved.collection.kind,
+            VideoCollectionKind::RelatedRecommendation
+        );
+        assert_eq!(
+            resolved.collection.title,
+            "Related recommendations for av170000"
+        );
+        assert_eq!(
+            resolved
+                .collection
+                .items
+                .iter()
+                .map(|item| (item.index, item.aid, item.cid))
+                .collect::<Vec<_>>(),
+            [(1, 170_001, 9801), (2, 170_006, 9806)]
+        );
+        assert_eq!(resolved.selected_items[0].title, "First related video");
+        assert_eq!(resolved.selected_items[0].description, "First description");
+        assert_eq!(
+            resolved.selected_items[0].bvid.as_deref(),
+            Some("BV1related001")
+        );
+        assert_eq!(
+            resolved.selected_items[0].cover_url.as_deref(),
+            Some("https://example.invalid/related.jpg")
+        );
+        assert_eq!(resolved.selected_items[0].pub_time, Some(1_700_000_001));
+        assert_eq!(
+            resolved.selected_items[0]
+                .owner
+                .as_ref()
+                .map(|owner| owner.name.as_str()),
+            Some("Creator")
+        );
+        assert_eq!(resolved.selected_items[0].duration_seconds, Some(321));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn related_recommendations_select_first_item_and_allow_empty_all_results()
+    -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/archive/related")
+                .query_param("aid", "170000");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": [
+                    {"aid": 170_001, "cid": 9801, "title": "First related video"},
+                    {"aid": 170_002, "cid": 9802, "title": "Second related video"}
+                ]
+            }));
+        });
+
+        let client = test_client(&server);
+        let latest = client
+            .resolve_related_recommendations(170_000, Some(Selection::Latest))
+            .await?;
+        assert_eq!(latest.collection.items.len(), 2);
+        assert_eq!(latest.selected_items.len(), 1);
+        assert_eq!(latest.selected_items[0].title, "First related video");
+        let page = client
+            .resolve_related_recommendations(170_000, Some(Selection::Page(2)))
+            .await?;
+        assert_eq!(page.selected_items.len(), 1);
+        assert_eq!(page.selected_items[0].title, "Second related video");
+
+        let empty_server = MockServer::start();
+        empty_server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/archive/related")
+                .query_param("aid", "170000");
+            then.status(200)
+                .json_body_obj(&serde_json::json!({"code": 0, "data": []}));
+        });
+        let empty = test_client(&empty_server)
+            .resolve_related_recommendations(170_000, None)
+            .await?;
+        assert_eq!(empty.collection.items, []);
+        assert_eq!(empty.selected_items, []);
+        assert!(matches!(
+            test_client(&empty_server)
+                .resolve_related_recommendations(170_000, Some(Selection::Latest))
+                .await,
+            Err(Error::MissingField("selected collection item"))
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn related_recommendations_reject_invalid_source_and_selection_before_request() {
+        let client = test_client(&MockServer::start());
+        for (aid, selection) in [
+            (0, None),
+            (170_000, Some(Selection::Current)),
+            (170_000, Some(Selection::Episode(1))),
+        ] {
+            assert!(matches!(
+                client.resolve_related_recommendations(aid, selection).await,
+                Err(Error::InvalidInput(_))
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn related_recommendations_preserve_api_http_decode_and_missing_data_errors() {
+        let cases = [
+            (
+                "api",
+                serde_json::json!({"code": -404, "message": "not found", "data": null}).to_string(),
+            ),
+            ("http", String::new()),
+            (
+                "missing",
+                serde_json::json!({"code": 0, "data": null}).to_string(),
+            ),
+            ("decode", "not json".to_owned()),
+        ];
+        for (case, body) in cases {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/x/web-interface/archive/related")
+                    .query_param("aid", "170000");
+                match case {
+                    "http" => {
+                        then.status(503).body("unavailable");
+                    }
+                    _ => {
+                        then.status(200).body(body.clone());
+                    }
+                }
+            });
+            let error = test_client(&server)
+                .resolve_related_recommendations(170_000, None)
+                .await
+                .err();
+            match case {
+                "api" => assert!(matches!(error, Some(Error::Api { code: -404, .. }))),
+                "missing" => assert!(matches!(error, Some(Error::MissingField("data")))),
+                "http" | "decode" => assert!(matches!(error, Some(Error::Http(_)))),
+                _ => unreachable!("known test case"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn plans_only_the_selected_related_recommendation() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/archive/related")
+                .query_param("aid", "170000");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "data": [
+                    {"aid": 170_001, "cid": 9801, "title": "Selected video"},
+                    {"aid": 170_002, "cid": 9802, "title": "Unselected video"}
+                ]
+            }));
+        });
+        server_mock_playurl(&server, 170_001, 9801, "selected-related");
+
+        let plan = test_client(&server)
+            .plan_with_download_mode(
+                Input::RelatedRecommendations(170_000),
+                Some(Selection::Latest),
+                crate::DownloadMode::VideoOnly,
+            )
+            .await?;
+
+        assert_eq!(plan.entries.len(), 1);
+        assert_eq!(plan.entries[0].aid, 170_001);
+        assert_eq!(plan.entries[0].cid, 9801);
         Ok(())
     }
 

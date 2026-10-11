@@ -129,7 +129,7 @@ represents legacy FLV as a single ordered segment list.
 ## Batch And Collection Inputs
 
 `BiliClient::resolve_input` accepts CLI-style raw inputs such as B23 short links, `fav...`,
-`mid...`, `collection...`, `series...`, `recommendations`, `history`, `watch-later`, `following`, canonical
+`mid...`, `collection...`, `series...`, `recommendations`, `related:<video>`, `history`, `watch-later`, `following`, canonical
 favorite `/list/ml...` URLs, path-based `/medialist/.../ml...` URLs, space collection URLs, space
 series URLs, the Bilibili homepage, the authenticated `/account/history`, `/watchlater`, and
 `/list/watchlater` pages, and dynamic feed pages. Batch inputs resolve to
@@ -145,6 +145,40 @@ Recommendation input uses the web homepage recommendation endpoint. It accepts t
 current implementation emits normal-video `av` cards; non-video recommendation cards are skipped,
 and explicit index selection may walk additional `fresh_idx` refresh batches within a safety cap to
 cover the filtered video cards.
+
+Per-video related recommendations accept `related:<video>` in `resolve_input`, where `<video>` can
+be a numeric aid, `av`/`BV` id, or official desktop/mobile Bilibili video URL, including
+`https://m.bilibili.com/video/...`. The typed input is
+`Input::RelatedRecommendations(aid)`, and `BiliClient::resolve_related_recommendations(aid,
+selection)` provides a direct API returning `VideoCollectionResolution`. The related endpoint returns
+one finite batch: it does not paginate, recursively request related videos, or fetch source metadata.
+The resolver preserves upstream order, removes the source, invalid records, and OGV records, and
+deduplicates by aid. Default/`Selection::All` returns the complete batch, `Selection::Latest` selects
+the first result, and page/index/range selections use 1-based indexes within this returned list. An
+empty default/all result is a valid empty collection. `Current` and `Episode` selections are rejected
+before the endpoint request. The call uses the ordinary web API client configuration and may send its
+configured cookie; anonymous requests may be restricted by the upstream service. API errors are
+returned through the normal `Result` error path. No additional client configuration is required.
+This feature requires the current source checkout and is not included in the published `0.9.0`
+release; it will ship in a future release.
+
+```rust,no_run
+use bbdown_core::{BiliClient, ClientConfig, Input, ResolvedContent, Selection};
+
+#[tokio::main]
+async fn main() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let input = Input::RelatedRecommendations(170_001);
+    let resolved = client.resolve(input, Some(Selection::Latest)).await?;
+    if let ResolvedContent::Collection(recommendations) = resolved {
+        println!("{} related videos", recommendations.collection.items.len());
+        println!("selected: {}", recommendations.selected_items.len());
+    }
+
+    let _all = client.resolve_related_recommendations(170_001, None).await?;
+    Ok(())
+}
+```
 
 History input uses the web history cursor endpoint and therefore requires a cookie on
 `ClientConfig::credentials`. The current history collection emits normal-video `archive` records
