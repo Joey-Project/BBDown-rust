@@ -200,8 +200,12 @@ private cookie-context digest; switching the source or authentication context is
 network access. It contains no raw credentials, WBI keys, or signed URLs, has redacted debug
 output, and is not a serialized persistence format. Each continuation call gets fresh budgets;
 callers should also bound the number of calls used for their overall candidate window.
-A call that needs a space-feed request must allow both nav and feed requests; a one-request
-budget can stop after nav without advancing the source.
+When a call needs a space-feed request and has not fetched a WBI key during that call, nav and
+feed require two request slots. If fewer than two remain, it returns `RequestLimit` without
+issuing another nav or feed request. For an initial `SpaceDynamic` call with no buffered records
+and `max_requests = 1`, it stops before any request and `requests_used` is zero.
+After nav and feed consume the budget, a pending video-view request can resume from the cursor
+with a fresh per-call budget without another nav or feed request.
 
 Upstream dynamic feeds provide no stable snapshot token, so `MetadataConsistency::BestEffort`
 is explicit: source changes can cause omissions or reordered results. Repeated, cyclic, or
