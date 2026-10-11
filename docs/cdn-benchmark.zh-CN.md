@@ -28,6 +28,10 @@
 和整文件响应。API 与身份认证响应正文不在统计范围内；HTTP headers 和传输层 framing 也不计入。
 这些字段都不是 wire bytes。
 
+CDN host override 可以显式指定端口。override 省略端口时，继承源 URL 的有效端口；显式指定 80 或 443
+时，仍按该目标端口发起请求。事件中的 host 若没有端口，只能与使用对应 HTTP(S) 默认端口的样本匹配：
+HTTPS 为 443，HTTP 为 80。不同的非默认端口不匹配。这段说明描述的是现有 override 语义，没有新增公开接口。
+
 若媒体计划未提供大小，donor 大小探测是三组共享的前置设置。每条组记录都会重复展示
 `size_probe_transfer_*` 元数据，并设 `size_probe_included_in_group_totals: false`；汇总多条记录时不要
 重复累加这些字段。共享探测只计入整轮 3 GiB 正文预算一次。它使用独立请求 ID 范围和

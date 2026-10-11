@@ -43,6 +43,13 @@ per-group total; `preflight_consumed_body_bytes` covers the two probe phases and
 and authentication response bodies are excluded, as are HTTP headers and
 transport framing. None of these fields measures wire bytes.
 
+CDN host overrides may include an explicit port. If an override omits its port,
+it inherits the source URL's effective port; explicit ports such as 80 or 443
+remain the requested destination port. An event host with no port matches a
+sample URL only at that scheme's default port: 443 for HTTPS or 80 for HTTP.
+Different non-default ports do not match. This documents the existing override
+semantics and does not add a public interface.
+
 If the selected plan has no size, the donor size probe is shared setup for the
 three groups. Its `size_probe_transfer_*` fields are repeated as metadata in
 each group record, with `size_probe_included_in_group_totals: false`; do not

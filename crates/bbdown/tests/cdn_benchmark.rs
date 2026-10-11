@@ -405,7 +405,15 @@ fn finalize_records(
     budget: RunBudgetSnapshot,
     final_elapsed_ms: u128,
 ) {
-    apply_run_budget_status(records, &case.fixed_host, budget.exhausted_reason);
+    let default_port = Url::parse(&case.selected.base_url)
+        .ok()
+        .and_then(|source| scheme_default_port(&source));
+    apply_run_budget_status(
+        records,
+        &case.fixed_host,
+        default_port,
+        budget.exhausted_reason,
+    );
     for record in records.iter_mut() {
         record.benchmark_elapsed_ms = final_elapsed_ms;
         record.budget_observed_body_bytes = budget.consumed_body_bytes;
@@ -419,6 +427,7 @@ fn finalize_records(
 fn apply_run_budget_status(
     records: &mut [Record],
     fixed_host: &str,
+    default_port: Option<u16>,
     exhausted_reason: Option<&'static str>,
 ) {
     if let Some(reason) = exhausted_reason {
@@ -426,7 +435,7 @@ fn apply_run_budget_status(
             record.budget_exhausted = Some(reason);
         }
         for repetition_records in records.chunks_mut(GROUPS.len()) {
-            mark_valid_samples(repetition_records, fixed_host);
+            mark_valid_samples_with_default(repetition_records, fixed_host, default_port);
         }
     }
 }
@@ -829,7 +838,10 @@ async fn run_repetition(
             .await?,
         );
     }
-    mark_valid_samples(&mut records, &case.fixed_host);
+    let default_port = Url::parse(&case.selected.base_url)
+        .ok()
+        .and_then(|source| scheme_default_port(&source));
+    mark_valid_samples_with_default(&mut records, &case.fixed_host, default_port);
     Ok(records)
 }
 
@@ -1196,6 +1208,14 @@ async fn discover_selected_size(
 }
 
 fn mark_valid_samples(records: &mut [Record], fixed_host: &str) {
+    mark_valid_samples_with_default(records, fixed_host, None);
+}
+
+fn mark_valid_samples_with_default(
+    records: &mut [Record],
+    fixed_host: &str,
+    default_port: Option<u16>,
+) {
     let fingerprints = records
         .iter()
         .filter_map(|record| Some((record.size?, record.sha256.as_ref()?)))
@@ -1249,7 +1269,7 @@ fn mark_valid_samples(records: &mut [Record], fixed_host: &str) {
         {
             reasons.push("same_host_shard_incomplete_or_fallback");
         }
-        if hosts.len() != 1 || !host_matches(hosts[0], fixed_host) {
+        if hosts.len() != 1 || !host_matches_with_default(hosts[0], fixed_host, default_port) {
             reasons.push("same_host_shard_host_mismatch");
         }
     }
@@ -1322,6 +1342,7 @@ fn run_budget_invalidates_the_experiment_without_erasing_group_outcomes() {
     apply_run_budget_status(
         &mut records,
         "mirror.example",
+        None,
         Some("cumulative_body_bytes"),
     );
 
@@ -1463,12 +1484,33 @@ fn group_name(group: Group) -> &'static str {
 }
 
 fn host_matches(candidate: &str, fixed_host: &str) -> bool {
+    host_matches_with_default(candidate, fixed_host, None)
+}
+
+fn host_matches_with_default(candidate: &str, fixed_host: &str, default_port: Option<u16>) -> bool {
     match (parse_authority(candidate), parse_authority(fixed_host)) {
         (Some(candidate), Some(fixed)) => {
-            authority_label(&candidate).eq_ignore_ascii_case(&authority_label(&fixed))
+            let hosts_match = candidate
+                .host_str()
+                .zip(fixed.host_str())
+                .is_some_and(|(left, right)| left.eq_ignore_ascii_case(right));
+            // A missing event port stands only for the media URL's scheme default.
+            let ports_match = match (candidate.port(), fixed.port()) {
+                (left, right) if left == right => true,
+                (None, Some(port)) | (Some(port), None) => Some(port) == default_port,
+                _ => false,
+            };
+            hosts_match && ports_match
         }
         _ => false,
     }
+}
+
+fn scheme_default_port(source: &Url) -> Option<u16> {
+    // Event host labels omit only the default port for the source scheme.
+    let mut without_explicit_port = source.clone();
+    without_explicit_port.set_port(None).ok()?;
+    without_explicit_port.port_or_known_default()
 }
 
 fn parse_authority(authority: &str) -> Option<Url> {
@@ -1493,8 +1535,12 @@ fn parse_authority(authority: &str) -> Option<Url> {
 }
 
 fn authority_label(url: &Url) -> String {
+    authority_label_with_port(url, url.port())
+}
+
+fn authority_label_with_port(url: &Url, port: Option<u16>) -> String {
     let host_label = url.host().map_or_else(String::new, |host| host.to_string());
-    match url.port() {
+    match port {
         Some(port) => format!("{host_label}:{port}"),
         None => host_label,
     }
@@ -1502,13 +1548,9 @@ fn authority_label(url: &Url) -> String {
 
 fn canonical_authority_for_source(authority: &str, source: &Url) -> Option<String> {
     let authority = parse_authority(authority)?;
-    let host = authority.host()?.to_string();
-    let mut normalized = source.clone();
-    normalized.set_host(Some(&host)).ok()?;
-    normalized
-        .set_port(authority.port().or(source.port()))
-        .ok()?;
-    Some(authority_label(&normalized))
+    // Preserve an explicit override port even when the source scheme treats it as default.
+    let effective_port = authority.port().or(source.port_or_known_default());
+    Some(authority_label_with_port(&authority, effective_port))
 }
 
 #[test]
@@ -1524,18 +1566,69 @@ fn candidate_authorities_validate_host_and_port_and_preserve_the_media_target() 
     assert_eq!(replaced.query(), Some("token=fixture"));
     let explicit_default_port = Url::parse(&replace_host(&source, "mirror.example:80")?)?;
     assert_eq!(explicit_default_port.port(), Some(80));
+    let explicit_https_default = Url::parse(&replace_host(&source, "mirror.example:443")?)?;
+    assert_eq!(explicit_https_default.port(), None);
+    assert_eq!(
+        explicit_https_default.as_str(),
+        "https://mirror.example/video/part.m4s?token=fixture"
+    );
     let omitted_port = Url::parse(&replace_host(&source, "mirror.example")?)?;
     assert_eq!(omitted_port.port(), source.port());
     assert_eq!(
         canonical_authority_for_source("mirror.example:443", &source).as_deref(),
-        Some("mirror.example")
+        Some("mirror.example:443")
+    );
+    assert_eq!(
+        canonical_authority_for_source("mirror.example", &source).as_deref(),
+        Some("mirror.example:8443")
     );
     assert_eq!(
         canonical_authority_for_source("mirror.example:80", &source).as_deref(),
         Some("mirror.example:80")
     );
+    let http_source = Url::parse("http://cdn.example:8080/video/part.m4s?token=fixture")?;
+    assert_eq!(
+        canonical_authority_for_source("mirror.example:80", &http_source).as_deref(),
+        Some("mirror.example:80")
+    );
+    assert_eq!(
+        replace_host(&http_source, "mirror.example:80")?,
+        "http://mirror.example/video/part.m4s?token=fixture"
+    );
+    let ipv6_override = canonical_authority_for_source("[::1]:443", &source)
+        .ok_or_else(|| anyhow::anyhow!("IPv6 override was rejected"))?;
+    assert_eq!(ipv6_override, "[::1]:443");
+    assert_eq!(
+        replace_host(&source, &ipv6_override)?,
+        "https://[::1]/video/part.m4s?token=fixture"
+    );
     assert!(host_matches("127.0.0.1:43127", "127.0.0.1:43127"));
     assert!(!host_matches("127.0.0.1:43127", "127.0.0.1:43128"));
+    let secure_default_port = scheme_default_port(&source);
+    let cleartext_default_port = scheme_default_port(&http_source);
+    assert_eq!(secure_default_port, Some(443));
+    assert_eq!(cleartext_default_port, Some(80));
+    assert!(host_matches_with_default(
+        "mirror.example:443",
+        "mirror.example",
+        secure_default_port
+    ));
+    assert!(!host_matches_with_default(
+        "mirror.example:80",
+        "mirror.example",
+        secure_default_port
+    ));
+    assert!(host_matches_with_default(
+        "mirror.example:80",
+        "mirror.example",
+        cleartext_default_port
+    ));
+    assert!(!host_matches_with_default(
+        "mirror.example:443",
+        "mirror.example",
+        cleartext_default_port
+    ));
+    assert!(!host_matches("mirror.example:8443", "mirror.example:8444"));
 
     for invalid in [
         "user@cdn.example",

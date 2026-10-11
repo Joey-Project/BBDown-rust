@@ -41,6 +41,11 @@ superseded_by:
   connection and response-header wait, are not full request latency, and concurrent spans are not
   additive. Equal output size and SHA-256 prove equality of the completed sample outputs, while
   matching size and sampled prefixes do not establish whole-representation identity across hosts.
+- A CDN host override may include an explicit port. If omitted, it inherits the source URL's
+  effective port; explicit ports, including 80 or 443, remain the requested destination port. An
+  event host without a port matches a sample URL only at that scheme's default port (HTTPS 443,
+  HTTP 80). Different non-default ports do not match. For example, overriding an HTTPS source on
+  `:8443` to `mirror.example:443` must target port 443, not inherit 8443.
 
 ## Scope and future work
 
@@ -71,15 +76,21 @@ superseded_by:
   priority (`setup_deadline_drops_resolution_before_later_request_stages`,
   `run_budget_invalidates_the_experiment_without_erasing_group_outcomes`, and
   `cleanup_timeout_error_class_takes_priority_over_budget_exhaustion`).
+- The authority regression covers port-aware override and event-host matching: an HTTPS source on
+  `:8443` overridden by `mirror.example:443` targets port 443; host-only event authorities match
+  only the sample's scheme-default port, and differing non-default ports remain distinct.
 - Adjust empty-container assertions for the Rust 1.99 Clippy gate, using `assert_eq!` comparisons
   that preserve observed values in failures.
-- Local validation used Rust/Cargo 1.95.0 on macOS, with a task-specific external build cache,
+- The local gate used Rust/Cargo 1.95.0 on macOS, with a task-specific external build cache,
   incremental compilation disabled, and dev/test debug symbols disabled after the local disk filled.
+  It covers the deadline/outcome cases, Clippy assertion updates, and the extended authority
+  regression.
 - `cargo fmt --all -- --check`, `git diff --check`, `cargo check --workspace --offline --locked`,
-  and `cargo clippy --workspace --all-targets --offline --locked -- -D warnings` passed after the
-  regression cases and assertion updates.
-- `cargo test --workspace --offline --locked` passed: 821 tests passed and three live tests remained
-  ignored. The CDN integration target contributed 13 passing tests and one ignored live benchmark.
+  and `cargo clippy --workspace --all-targets --offline --locked -- -D warnings` passed at that
+  final local gate.
+- `cargo test --workspace --offline --locked` passed: 821 tests passed and
+  three live tests remained ignored. The CDN integration target contributed 13 passing tests and
+  one ignored live benchmark.
 - `cargo publish --dry-run -p bbdown-core --locked --allow-dirty --registry crates-io` passed.
   The offline attempt could not read registry HTTP metadata; the successful dry run did not upload.
 - The mock server explicitly restores blocking mode after accept. Its byte comparison counts actual
