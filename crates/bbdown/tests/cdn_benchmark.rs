@@ -4,6 +4,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     env,
     fs::File,
+    future::Future,
     io::{Read, Write as _},
     path::{Path, PathBuf},
     sync::Mutex,
@@ -291,8 +292,7 @@ async fn cdn_benchmark_harness() -> anyhow::Result<()> {
     let (temp_root, root) = output_root()?;
     let client =
         BiliClient::new(ClientConfig::default().with_request_timeout(DOWNLOAD_REQUEST_TIMEOUT));
-    let (case_result, setup_cleanup_timed_out) =
-        resolve_case_with_budget(&client, &settings, &budget).await;
+    let case_result = resolve_case_with_budget(&client, &settings, &budget).await;
     let case = match case_result {
         Some(Ok(case)) if budget.exhaustion_reason().is_none() => case,
         _ => {
@@ -301,7 +301,6 @@ async fn cdn_benchmark_harness() -> anyhow::Result<()> {
                 started_at_epoch_ms,
                 benchmark_started.elapsed().as_millis(),
                 &budget,
-                setup_cleanup_timed_out,
             );
         }
     };
@@ -322,19 +321,22 @@ async fn resolve_case_with_budget(
     client: &BiliClient,
     settings: &BenchmarkSettings,
     budget: &RunBudget,
-) -> (Option<anyhow::Result<BenchmarkCase>>, bool) {
-    let resolution = resolve_case(client, settings, budget);
-    tokio::pin!(resolution);
+) -> Option<anyhow::Result<BenchmarkCase>> {
+    run_until_deadline(resolve_case(client, settings, budget), budget).await
+}
+
+async fn run_until_deadline<F, T>(operation: F, budget: &RunBudget) -> Option<T>
+where
+    F: Future<Output = T>,
+{
+    tokio::pin!(operation);
     tokio::select! {
         biased;
-        result = &mut resolution => (Some(result), false),
         () = tokio::time::sleep_until(budget.deadline) => {
             budget.exhaust_deadline();
-            match tokio::time::timeout(CLEANUP_GRACE, &mut resolution).await {
-                Ok(result) => (Some(result), false),
-                Err(_) => (None, true),
-            }
+            None
         }
+        result = &mut operation => Some(result),
     }
 }
 
@@ -343,15 +345,11 @@ fn emit_setup_failure(
     started_at_epoch_ms: u128,
     elapsed_ms: u128,
     budget: &RunBudget,
-    cleanup_timed_out: bool,
 ) -> anyhow::Result<()> {
     let budget_snapshot = budget.snapshot();
     let mut validity_reasons = vec!["case_resolution_failed"];
     if budget_snapshot.exhausted_reason.is_some() {
         validity_reasons.push("benchmark_budget_exhausted");
-    }
-    if cleanup_timed_out {
-        validity_reasons.push("bounded_cleanup_timed_out");
     }
     let failure = SetupFailureRecord {
         record_type: "harness_setup_failure",
@@ -362,14 +360,12 @@ fn emit_setup_failure(
         success: false,
         valid_three_way_sample: false,
         validity_reasons,
-        failure_class: if cleanup_timed_out {
-            "bounded_cleanup_timeout"
-        } else if budget_snapshot.exhausted_reason.is_some() {
+        failure_class: if budget_snapshot.exhausted_reason.is_some() {
             "benchmark_budget_exhausted"
         } else {
             "case_resolution_failed"
         },
-        cleanup_timed_out,
+        cleanup_timed_out: false,
         budget_exhausted: budget_snapshot.exhausted_reason,
         budget_body_bytes_limit: budget_snapshot.max_consumed_body_bytes,
         budget_observed_body_bytes: budget_snapshot.consumed_body_bytes,
@@ -409,16 +405,7 @@ fn finalize_records(
     budget: RunBudgetSnapshot,
     final_elapsed_ms: u128,
 ) {
-    if let Some(reason) = budget.exhausted_reason {
-        for record in records.iter_mut() {
-            record.budget_exhausted = Some(reason);
-            record.success = false;
-            record.error_class = Some("benchmark_budget_exhausted");
-        }
-        for repetition_records in records.chunks_mut(GROUPS.len()) {
-            mark_valid_samples(repetition_records, &case.fixed_host);
-        }
-    }
+    apply_run_budget_status(records, &case.fixed_host, budget.exhausted_reason);
     for record in records.iter_mut() {
         record.benchmark_elapsed_ms = final_elapsed_ms;
         record.budget_observed_body_bytes = budget.consumed_body_bytes;
@@ -426,6 +413,21 @@ fn finalize_records(
             .consumed_body_bytes
             .saturating_sub(budget.max_consumed_body_bytes);
         record.budget_observed_request_count_lower_bound = budget.observed_request_count;
+    }
+}
+
+fn apply_run_budget_status(
+    records: &mut [Record],
+    fixed_host: &str,
+    exhausted_reason: Option<&'static str>,
+) {
+    if let Some(reason) = exhausted_reason {
+        for record in records.iter_mut() {
+            record.budget_exhausted = Some(reason);
+        }
+        for repetition_records in records.chunks_mut(GROUPS.len()) {
+            mark_valid_samples(repetition_records, fixed_host);
+        }
     }
 }
 
@@ -882,13 +884,11 @@ async fn run_group(
     };
     let elapsed_ms = began.elapsed().as_millis();
     let budget_snapshot = budget.snapshot();
-    let error_class = if budget_snapshot.exhausted_reason.is_some() {
-        Some("benchmark_budget_exhausted")
-    } else if cleanup_timed_out {
-        Some("bounded_cleanup_timeout")
-    } else {
-        result.as_ref().err().map(classify_error)
-    };
+    let error_class = group_error_class(
+        budget_snapshot.exhausted_reason,
+        cleanup_timed_out,
+        result.as_ref().err().map(classify_error),
+    );
     eprintln!(
         "cdn_benchmark_end sample={} group={} repetition={} at_epoch_ms={} status={} error_class={}",
         settings.sample,
@@ -1313,6 +1313,63 @@ fn validity_requires_complete_range_shards_and_multiple_multi_hosts() {
     );
 }
 
+#[test]
+fn run_budget_invalidates_the_experiment_without_erasing_group_outcomes() {
+    let mut records = validity_fixture();
+    records[1].success = false;
+    records[1].error_class = Some("http_error");
+
+    apply_run_budget_status(
+        &mut records,
+        "mirror.example",
+        Some("cumulative_body_bytes"),
+    );
+
+    assert!(records[0].success);
+    assert_eq!(records[0].error_class, None);
+    assert!(!records[1].success);
+    assert_eq!(records[1].error_class, Some("http_error"));
+    assert!(records.iter().all(|record| {
+        record.budget_exhausted == Some("cumulative_body_bytes")
+            && !record.valid_three_way_sample
+            && record
+                .validity_reasons
+                .contains(&"benchmark_budget_exhausted")
+    }));
+}
+
+#[test]
+fn cleanup_timeout_error_class_takes_priority_over_budget_exhaustion() {
+    assert_eq!(
+        group_error_class(Some("cumulative_body_bytes"), true, Some("http_error")),
+        Some("bounded_cleanup_timeout")
+    );
+    assert_eq!(
+        group_error_class(Some("cumulative_body_bytes"), false, Some("http_error")),
+        Some("benchmark_budget_exhausted")
+    );
+    assert_eq!(
+        group_error_class(None, false, Some("http_error")),
+        Some("http_error")
+    );
+}
+
+#[tokio::test]
+async fn setup_deadline_drops_resolution_before_later_request_stages() {
+    let later_stage_requests = std::cell::Cell::new(0_u8);
+    let setup = async {
+        std::future::pending::<()>().await;
+        later_stage_requests.set(later_stage_requests.get().saturating_add(1));
+    };
+    let budget = RunBudget::for_test(std::time::Duration::from_millis(10), u64::MAX, u64::MAX);
+
+    let result = run_until_deadline(setup, &budget).await;
+
+    assert_eq!(result, None);
+    assert_eq!(later_stage_requests.get(), 0);
+    assert_eq!(budget.exhaustion_reason(), Some("total_run_deadline"));
+}
+
 fn validity_fixture() -> Vec<Record> {
     let mut baseline = validity_record(Group::FixedHostBaseline);
     baseline.whole_file_fallback = Some(false);
@@ -1535,6 +1592,20 @@ fn classify_error(error: &Error) -> &'static str {
         Error::Io(_) => "io_error",
         Error::MuxFailed { .. } => "mux_error",
         Error::Cancelled { .. } => "cancelled",
+    }
+}
+
+fn group_error_class(
+    budget_exhausted: Option<&'static str>,
+    cleanup_timed_out: bool,
+    result_error_class: Option<&'static str>,
+) -> Option<&'static str> {
+    if cleanup_timed_out {
+        Some("bounded_cleanup_timeout")
+    } else if budget_exhausted.is_some() {
+        Some("benchmark_budget_exhausted")
+    } else {
+        result_error_class
     }
 }
 

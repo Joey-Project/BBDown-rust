@@ -114,7 +114,7 @@ fn assert_small_media_results(
         match record.group {
             Group::FixedHostBaseline => {
                 assert_eq!(record.configured_cdn_parallelism, 1);
-                assert!(record.shard_bytes_by_host.is_empty());
+                assert_eq!(record.shard_bytes_by_host.len(), 0);
             }
             Group::FixedHostRange4 | Group::MultiHostRange4 => {
                 assert_eq!(record.configured_cdn_parallelism, 4);
@@ -155,7 +155,7 @@ fn assert_large_media_results(
         match record.group {
             Group::FixedHostBaseline => {
                 assert_eq!(record.configured_cdn_parallelism, 1);
-                assert!(record.shard_bytes_by_host.is_empty());
+                assert_eq!(record.shard_bytes_by_host.len(), 0);
                 assert_eq!(overlap.max_active_range_chunks, 0);
             }
             Group::FixedHostRange4 => {
@@ -338,7 +338,7 @@ async fn exhausted_ranges_fall_back_with_partial_bytes_but_no_published_shards()
 
     assert_valid_file_on_servers(&record, &body, &cluster);
     assert_eq!(record.whole_file_fallback, Some(true));
-    assert!(record.shard_bytes_by_host.is_empty());
+    assert_eq!(record.shard_bytes_by_host.len(), 0);
     assert!(record.media_body_consumed_bytes > body.len() as u64);
     assert!(record.request_outcomes.failed > 0);
     assert!(record.transfer_diagnostics.iter().any(|event| {
@@ -540,7 +540,7 @@ async fn cumulative_budget_counts_restarted_request_ids_across_groups() -> anyho
     .await?;
     assert!(!later.success);
     assert_eq!(later.budget_exhausted, Some("cumulative_body_bytes"));
-    assert!(later.observed_request_ids.is_empty());
+    assert_eq!(later.observed_request_ids, Vec::<u64>::new());
     assert_eq!(later.transfer_total_consumed_body_bytes, 0);
     assert_eq!(
         cluster

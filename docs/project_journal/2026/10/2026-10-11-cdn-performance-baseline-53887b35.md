@@ -5,7 +5,7 @@ status: completed
 created: 2026-10-11
 updated: 2026-10-11
 branch: wip/cdn-performance-baseline
-pr:
+pr: 97
 supersedes: []
 superseded_by:
 ---
@@ -46,9 +46,13 @@ superseded_by:
 
 - Live runs remain explicitly opt-in. Limits are 256 MiB per representation, three repetitions,
   four candidate hosts, a 64 KiB donor size probe with a five-second deadline when needed, and
-  300-second per-download-request timeouts. A 45-minute deadline covers resolution and
-  repetitions; the cumulative body and observed-request-ID budgets are 3 GiB and 16,384. Cleanup
-  has a five-second grace period. Crossing and in-flight chunks can overshoot the body budget, and
+  300-second per-download-request timeouts. A 45-minute deadline covers setup and repetitions. If
+  setup expires during resolution or donor probing, the harness drops that future immediately,
+  emits a setup failure, and does not start later stages or use cleanup grace. The cumulative body
+  and observed-request-ID budgets are 3 GiB and 16,384. Five-second cleanup grace is reserved for a
+  cancelled active group download. Later run-budget exhaustion invalidates the experiment without
+  erasing earlier groups' observed `success` or `error_class`; a cleanup timeout takes priority as
+  `bounded_cleanup_timeout`. Crossing and in-flight chunks can overshoot the body budget, and
   cancellation/cleanup can extend elapsed time; there is no total wire-byte cap.
 - Existing comparisons cover two representation sizes in two short morning windows and 18
   successful downloads. They do not establish stable speedup or justify global default tuning.
@@ -62,13 +66,20 @@ superseded_by:
 - Deterministic local mock scenarios cover small/large bodies, fast and delayed Range responses,
   candidate exclusion, partial-body retry on another host, whole-file fallback, and budget
   cancellation without external services.
+- Three regression cases cover setup-deadline drop before later request stages,
+  run-budget invalidation while preserving prior group outcomes, and cleanup-timeout error-class
+  priority (`setup_deadline_drops_resolution_before_later_request_stages`,
+  `run_budget_invalidates_the_experiment_without_erasing_group_outcomes`, and
+  `cleanup_timeout_error_class_takes_priority_over_budget_exhaustion`).
+- Adjust empty-container assertions for the Rust 1.99 Clippy gate, using `assert_eq!` comparisons
+  that preserve observed values in failures.
 - Local validation used Rust/Cargo 1.95.0 on macOS, with a task-specific external build cache,
   incremental compilation disabled, and dev/test debug symbols disabled after the local disk filled.
-- `cargo fmt --all -- --check` and `git diff --check` passed.
-- `cargo check --workspace --offline --locked` passed.
-- `cargo clippy --workspace --all-targets --offline --locked -- -D warnings` passed.
-- `cargo test --workspace --offline --locked` passed: 818 tests passed and three live tests remained
-  ignored. The CDN integration target contributed ten passing tests and one ignored live benchmark.
+- `cargo fmt --all -- --check`, `git diff --check`, `cargo check --workspace --offline --locked`,
+  and `cargo clippy --workspace --all-targets --offline --locked -- -D warnings` passed after the
+  regression cases and assertion updates.
+- `cargo test --workspace --offline --locked` passed: 821 tests passed and three live tests remained
+  ignored. The CDN integration target contributed 13 passing tests and one ignored live benchmark.
 - `cargo publish --dry-run -p bbdown-core --locked --allow-dirty --registry crates-io` passed.
   The offline attempt could not read registry HTTP metadata; the successful dry run did not upload.
 - The mock server explicitly restores blocking mode after accept. Its byte comparison counts actual

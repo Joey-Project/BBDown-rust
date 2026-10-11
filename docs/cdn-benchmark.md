@@ -13,12 +13,18 @@ not use external services for these scenarios.
 See the `cdn_benchmark` section in the [user guide](user-guide.md#re-running-the-opt-in-live-cdn-benchmark)
 for the command and environment variables. Limits are 256 MiB per representation,
 three repetitions, four candidate hosts, 64 KiB for a needed donor size probe,
-five seconds for that probe, and 300 seconds per download request. A 45-minute
-deadline covers resolution and every repetition. The cumulative consumed-body
-budget is 3 GiB and the observed-request-ID budget is 16,384. Cleanup has a
-five-second grace period. Exceeding a budget cancels the run; an already-read
-crossing chunk and in-flight chunks may overshoot the byte limit, and cancellation
-and cleanup may extend elapsed time. These limits are not a wire-traffic cap.
+five seconds for that probe, and 300 seconds per download request. The 45-minute
+run deadline covers case setup and every repetition. If it expires during setup
+(resolution or the donor probe), the harness drops that future immediately and
+emits a setup failure; it does not spend cleanup grace or start later stages.
+The cumulative consumed-body budget is 3 GiB and the observed-request-ID budget
+is 16,384. The five-second cleanup grace applies only after cancelling an active
+group download. If a run-wide budget later becomes exhausted, the experiment is
+invalid, while earlier groups retain their actual `success` and `error_class`
+outcomes. A cleanup timeout takes priority and is recorded as
+`bounded_cleanup_timeout`. An already-read crossing chunk and in-flight chunks
+may overshoot the byte limit, and cancellation/cleanup may extend elapsed time.
+These limits are not a wire-traffic cap.
 
 ## Reading the measurements
 
