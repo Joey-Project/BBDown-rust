@@ -5,7 +5,7 @@ status: active
 created: 2026-10-11
 updated: 2026-10-11
 branch: wip/dynamic-bounded-metadata
-pr:
+pr: https://github.com/Joey-Project/BBDown-rust/pull/99
 supersedes: []
 superseded_by:
 ---
@@ -25,7 +25,7 @@ superseded_by:
 
 **Status:** diagnosis pending; authenticated consumer acceptance remains blocked.
 
-- This repair session has not sent authenticated requests. A scoped request to reuse the
+- This repair session has not sent authenticated Bilibili requests. A scoped request to reuse the
   consumer's `family-room-new` Web-cookie profile against official Bilibili APIs is awaiting
   Joey's authorization; the earlier episode/proxy authorization does not cover this fixture.
 
@@ -82,7 +82,7 @@ superseded_by:
 - English and Simplified Chinese embedding guides are synchronized, including the candidate
   loading diagram and the distinction between source-only API additions and published 0.9.0.
 - Passed: `cargo clippy --locked --offline -p bbdown-core --all-targets -- -D warnings`
-  and `cargo fmt --all -- --check` on the final source.
+  and `cargo fmt --all -- --check` on the API implementation.
 - Project journal validation and `git diff --check` passed.
 - No live dynamic acceptance is claimed by these mock results. PR checks and current-head
   review evidence belong to the PR rather than changing A's pending acceptance state.

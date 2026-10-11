@@ -973,7 +973,7 @@ mod tests {
         assert_eq!(first.requests_used, 2);
         assert_eq!(first.stop_reason, MetadataStopReason::RequestLimit);
         assert_eq!(first.source_items_examined, 1);
-        assert!(first.items.is_empty());
+        assert_eq!(first.items.len(), 0);
         assert_eq!(view_mock.calls(), 0);
 
         let second = client
@@ -1300,7 +1300,7 @@ mod tests {
         let page = test_client(&server)
             .resolve_metadata_page(Input::FollowingFeed, MetadataPageOptions::default())
             .await?;
-        assert!(page.items.is_empty());
+        assert_eq!(page.items.len(), 0);
         assert_eq!(page.source_items_examined, 1);
         assert_eq!(page.requests_used, 2);
         assert_eq!(page.stop_reason, MetadataStopReason::End);
