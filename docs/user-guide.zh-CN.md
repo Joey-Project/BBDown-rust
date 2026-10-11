@@ -95,8 +95,9 @@ Season、media 和 `cheese/ss...` 输入在非交互模式下需要 `--select`�
 首页推荐批次，目前只输出普通视频 `av` 卡片；非视频推荐卡片会被跳过，显式 index
 selection 需要时会在安全上限内继续请求后续 `fresh_idx` 刷新批次来覆盖过滤后的普通视频卡
 片。
-单视频相关推荐支持 `related:<video>`，其中 `<video>` 可以是数字 aid、`av`/`BV` 标识或普
-通 B 站视频 URL。它从 `/x/web-interface/archive/related` 读取一批有限结果；不会翻页、不
+单视频相关推荐支持 `related:<video>`，其中 `<video>` 可以是数字 aid、`av`/`BV` 标识或 B
+站官方桌面站/移动站视频 URL（包括 `https://m.bilibili.com/video/...`）。它从
+`/x/web-interface/archive/related` 读取一批有限结果；不会翻页、不
 会递归请求相关推荐，也不会读取源视频 metadata。结果保留上游顺序，排除源视频、无效条目和
 OGV 条目，并按 aid 去重。`--select` 按结果列表序号选择；不带 selector 或使用
 `--select all` 时，`info` 返回整批结果，`plan`/`download` 处理所有选中条目。`latest` 表示

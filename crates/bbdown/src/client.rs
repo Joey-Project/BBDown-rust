@@ -10897,8 +10897,8 @@ mod tests {
         let empty = test_client(&empty_server)
             .resolve_related_recommendations(170_000, None)
             .await?;
-        assert!(empty.collection.items.is_empty());
-        assert!(empty.selected_items.is_empty());
+        assert_eq!(empty.collection.items, []);
+        assert_eq!(empty.selected_items, []);
         assert!(matches!(
             test_client(&empty_server)
                 .resolve_related_recommendations(170_000, Some(Selection::Latest))

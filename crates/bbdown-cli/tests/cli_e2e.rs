@@ -329,7 +329,7 @@ fn info_json_resolves_related_recommendations_with_selection() -> anyhow::Result
         .arg("--api-base")
         .arg(server.base_url())
         .arg("info")
-        .arg("related:av170001")
+        .arg("related:https://m.bilibili.com/video/av170001")
         .arg("--select")
         .arg("2,1,2")
         .arg("--json")

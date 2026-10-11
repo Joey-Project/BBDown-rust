@@ -5,7 +5,7 @@ status: completed
 created: 2026-10-11
 updated: 2026-10-11
 branch: wip/per-video-related-recommendations
-pr:
+pr: https://github.com/Joey-Project/BBDown-rust/pull/96
 supersedes: []
 superseded_by:
 ---
@@ -14,7 +14,7 @@ superseded_by:
 
 ## Summary
 
-- Add single-video related recommendations through `Input::RelatedRecommendations(u64)`, JSON kind `related_recommendation`, and the `related:<video>` CLI input, accepting av/BV IDs, numeric aids, or official ordinary-video URLs.
+- Add single-video related recommendations through `Input::RelatedRecommendations(u64)`, JSON kind `related_recommendation`, and the `related:<video>` CLI input, accepting av/BV IDs, numeric aids, or official desktop/mobile ordinary-video URLs.
 - Add the typed `BiliClient::resolve_related_recommendations(aid, Option<Selection>)` API while preserving existing homepage recommendation aliases.
 
 ## Behavior And Boundaries
@@ -39,10 +39,10 @@ superseded_by:
 
 ## Validation
 
-- `just ci` passed on the final candidate with Cargo/Rust stable 1.95.0: format checking, strict all-target Clippy, the locked Rust 1.95 MSRV check, workspace tests, CLI e2e, and crate publish dry run. Workspace tests reported 822 passed, 0 failed, and 3 ignored; the separate CLI e2e run reported 159 passed and 0 failed.
-- Core mock tests cover identity mapping, source/OGV/invalid-item filtering, aid deduplication and ordering, selection, empty results, invalid request rejection, upstream API/HTTP/decode errors, and selected-only planning. Five CLI mock e2e cases exercise info, empty results, invalid input/API errors, selected-only planning, and selected-only media download, including media contents and request counts.
+- `just ci` passed on the final candidate with Cargo/Rust 1.99.0, matching remote CI, with `CARGO_INCREMENTAL=0`, `CARGO_PROFILE_DEV_DEBUG=0`, and `CARGO_PROFILE_TEST_DEBUG=0` to limit disk use. It checked formatting, strict all-target Clippy, the locked Rust 1.95 MSRV check, workspace tests, CLI e2e, and crate publish dry run. Workspace tests reported 822 passed, 0 failed, and 3 ignored; the separate CLI e2e run reported 159 passed and 0 failed.
+- Core unit/mock tests cover official mobile av/BV inputs and deceptive-host rejection, identity mapping, source/OGV/invalid-item filtering, aid deduplication and ordering, selection, empty results, invalid request rejection, upstream API/HTTP/decode errors, and selected-only planning. Five CLI mock e2e cases exercise info through a mobile URL, empty results, invalid input/API errors, selected-only planning, and selected-only media download, including media contents and request counts.
 - The package dry run aborted upload as expected. Existing-version and yanked `spin 0.9.8` warnings were nonblocking; no package was published by this workstream.
-- The tracked candidate diff was unchanged across the successful gate. Journal validation and `git diff --check` passed. English and Simplified Chinese user/API documentation was synchronized, including identical related-recommendation embedding snippets and current-source availability.
+- The implementation and user/API documentation diff was unchanged across the successful gate. Journal validation and `git diff --check` passed. English and Simplified Chinese user/API documentation was synchronized, including identical related-recommendation embedding snippets and current-source availability.
 
 ## Future Scope
 

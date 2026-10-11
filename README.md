@@ -205,7 +205,8 @@ feeds are batch inputs. Recommendation input uses `recommendations`, `recommenda
 or the Bilibili homepage URL; it resolves homepage recommendation batches and currently includes
 normal-video `av` cards, walking additional `fresh_idx` refresh batches within a safety cap when
 needed to cover explicit index selection. Per-video related recommendations use `related:<video>`
-with an `av`/`BV` id, numeric aid, or ordinary Bilibili video URL. They resolve one finite related
+with an `av`/`BV` id, numeric aid, or official desktop/mobile Bilibili video URL, including
+`https://m.bilibili.com/video/...`. They resolve one finite related
 batch for that source video; they do not paginate or recursively fetch recommendations. Results
 exclude the source, invalid entries, and OGV entries, preserve upstream order, and deduplicate by
 aid. `--select` indexes this result list; homepage aliases and homepage URL continue to request the

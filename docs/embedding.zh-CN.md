@@ -136,7 +136,8 @@ shorthand 和 B 站首页 URL。当前实现会输出普通视频 `av` 卡片；
 的普通视频卡片。
 
 单视频相关推荐可通过 `resolve_input` 使用 `related:<video>`，其中 `<video>` 可以是数字 aid、
-`av`/`BV` 标识或普通 B 站视频 URL。对应的 typed input 是
+`av`/`BV` 标识或 B 站官方桌面站/移动站视频 URL（包括 `https://m.bilibili.com/video/...`）。
+对应的 typed input 是
 `Input::RelatedRecommendations(aid)`；`BiliClient::resolve_related_recommendations(aid,
 selection)` 则是直接调用的公共 API，返回 `VideoCollectionResolution`。相关推荐端点只返回
 一批有限结果：不会翻页、递归请求相关推荐，也不会读取源视频 metadata。解析器保留上游顺

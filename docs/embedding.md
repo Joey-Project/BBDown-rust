@@ -147,7 +147,8 @@ and explicit index selection may walk additional `fresh_idx` refresh batches wit
 cover the filtered video cards.
 
 Per-video related recommendations accept `related:<video>` in `resolve_input`, where `<video>` can
-be a numeric aid, `av`/`BV` id, or ordinary Bilibili video URL. The typed input is
+be a numeric aid, `av`/`BV` id, or official desktop/mobile Bilibili video URL, including
+`https://m.bilibili.com/video/...`. The typed input is
 `Input::RelatedRecommendations(aid)`, and `BiliClient::resolve_related_recommendations(aid,
 selection)` provides a direct API returning `VideoCollectionResolution`. The related endpoint returns
 one finite batch: it does not paginate, recursively request related videos, or fetch source metadata.

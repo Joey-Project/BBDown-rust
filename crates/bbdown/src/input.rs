@@ -154,8 +154,11 @@ fn parse_related_recommendations_input(raw_video: &str) -> Result<Input> {
     } else if raw_video.starts_with("http://") || raw_video.starts_with("https://") {
         let url = Url::parse(raw_video)?;
         let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
-        let is_official_video_url = matches!(host.as_str(), "www.bilibili.com" | "bilibili.com")
-            && url.path_segments().and_then(|mut segments| segments.next()) == Some("video");
+        let is_official_video_url =
+            matches!(
+                host.as_str(),
+                "www.bilibili.com" | "bilibili.com" | "m.bilibili.com"
+            ) && url.path_segments().and_then(|mut segments| segments.next()) == Some("video");
         if !is_official_video_url {
             return Err(Error::InvalidInput(raw_video.to_owned()));
         }
@@ -670,6 +673,14 @@ mod tests {
             Input::parse("related:https://www.bilibili.com/video/BV1qt4y1X7TW")?,
             Input::RelatedRecommendations(crate::bv::decode("BV1qt4y1X7TW")?)
         );
+        assert_eq!(
+            Input::parse("related:https://m.bilibili.com/video/BV1xx411c7mD")?,
+            Input::RelatedRecommendations(crate::bv::decode("BV1xx411c7mD")?)
+        );
+        assert_eq!(
+            Input::parse("related:https://m.bilibili.com/video/av170001")?,
+            Input::RelatedRecommendations(170_001)
+        );
 
         for input in [
             "related:av0",
@@ -677,6 +688,8 @@ mod tests {
             "related:https://www.bilibili.com/",
             "related:https://www.bilibili.com/bangumi/play/ep359333",
             "related:https://b23.tv/abc123",
+            "related:https://m.bilibili.com.evil/video/BV1xx411c7mD",
+            "related:https://evil-m.bilibili.com/video/av170001",
             "related:related:av170001",
         ] {
             assert!(Input::parse(input).is_err(), "accepted {input}");

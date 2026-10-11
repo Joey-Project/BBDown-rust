@@ -79,7 +79,8 @@ async fn main() -> bbdown_core::Result<()> {
 再看会输出该账号稍后再看列表中的普通视频，动态 feed 目前只输出普通视频 archive 卡片。
 单视频相关推荐可通过 `resolve_input("related:<video>", ...)` 查询；Rust 输入/API 分别为
 `Input::RelatedRecommendations(aid)` 和 `BiliClient::resolve_related_recommendations(aid,
-selection)`。它只读取一批有限结果，保留上游顺序，过滤源视频、无效和 OGV 条目，并按 aid
+selection)`。`<video>` 可为 aid/`av`/`BV` 标识或 B 站官方桌面站/移动站视频 URL（包括
+`https://m.bilibili.com/video/...`）。它只读取一批有限结果，保留上游顺序，过滤源视频、无效和 OGV 条目，并按 aid
 去重。`Selection` 作用于这份相关推荐列表；接口不会翻页或递归请求。它复用普通 web API
 client，也可能发送已配置的 cookie；上游可能限制匿名请求。
 此功能需要当前源码检出，尚未包含在已发布的 `0.9.0` 中，将随后续版本发布。

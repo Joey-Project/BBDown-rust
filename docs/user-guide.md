@@ -104,7 +104,8 @@ homepage URL. It fetches homepage recommendation batches and currently emits nor
 cards; non-video recommendation cards are skipped, and explicit index selection may walk additional
 `fresh_idx` refresh batches within a safety cap to cover the filtered video cards.
 Per-video related recommendations accept `related:<video>`, where `<video>` is a numeric aid,
-`av`/`BV` id, or ordinary Bilibili video URL. This resolves one finite batch from
+`av`/`BV` id, or official desktop/mobile Bilibili video URL, including
+`https://m.bilibili.com/video/...`. This resolves one finite batch from
 `/x/web-interface/archive/related`; it does not paginate, recursively fetch related videos, or fetch
 the source video's metadata. Results preserve upstream order, exclude the source, invalid records,
 and OGV records, and deduplicate by aid. `--select` indexes the resulting list; without a selector or

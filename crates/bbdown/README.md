@@ -83,10 +83,11 @@ subset. Selected items then plan and download through the normal video pipeline.
 `IndexSelector` when an embedding application needs list and range selection such as `1,3-5`.
 Per-video related recommendations use `related:<video>` through `resolve_input`, or
 `Input::RelatedRecommendations(aid)` / `BiliClient::resolve_related_recommendations(aid, selection)`
-from Rust. They resolve one finite batch, preserve upstream order, filter the source, invalid, and
-OGV items, and deduplicate by aid. Selection indexes this result list; it is not paginated or
-recursive. The endpoint uses the normal web API client and may send its configured cookie, while
-anonymous requests may be restricted upstream.
+from Rust. `<video>` can be an aid/`av`/`BV` id or official desktop/mobile Bilibili video URL,
+including `https://m.bilibili.com/video/...`. They resolve one finite batch, preserve upstream
+order, filter the source, invalid, and OGV items, and deduplicate by aid. Selection indexes this
+result list; it is not paginated or recursive. The endpoint uses the normal web API client and may
+send its configured cookie, while anonymous requests may be restricted upstream.
 This feature requires the current source checkout and is not included in the published `0.9.0`
 release; it will ship in a future release.
 Recommendation input fetches homepage recommendation batches and currently emits normal-video `av`

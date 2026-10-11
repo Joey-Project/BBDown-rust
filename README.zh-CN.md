@@ -27,7 +27,8 @@ feed 请求，包括 offset 分页。输入解析覆盖普通视频、PGC 和 in
 稍后再看列表、关注视频 feed 和空间动态视频 feed。URL 解析包括 canonical
 `bilibili.com/list/...` 页面、
 path-based medialist 收藏夹 URL，以及带 uploader mid 的空间合集 / 系列 URL，以便使用较
-新的空间 API；同时支持 B 站首页、空间动态页面和普通视频 URL 相关推荐输入，以及需要登录态的
+新的空间 API；同时支持 B 站首页、空间动态页面和普通视频 URL 相关推荐输入（包括
+`m.bilibili.com/video/...`），以及需要登录态的
 `bilibili.com/account/history` 观看历史页面，以及 `bilibili.com/watchlater` 和
 `bilibili.com/list/watchlater` 稍后再看页面。
 
@@ -190,7 +191,8 @@ bbdown info ss26801 --select page:1
 `recommendation`、`recommend` 或 B 站首页 URL；它会解析首页推荐批次，目前只包含普通视
 频 `av` 卡片，并在显式 index selection 需要时在安全上限内继续请求后续 `fresh_idx` 刷新
 批次来覆盖过滤后的条目。单视频相关推荐使用 `related:<video>`，其中 `<video>` 可为 `av`
-或 `BV` 标识、数字 aid 或普通 B 站视频 URL。它只读取该源视频的一批有限相关推荐，不会
+或 `BV` 标识、数字 aid 或 B 站官方桌面站/移动站视频 URL（包括
+`https://m.bilibili.com/video/...`）。它只读取该源视频的一批有限相关推荐，不会
 翻页或递归抓取相关推荐；结果按上游顺序排列，排除源视频、无效条目和 OGV 条目，并按 aid
 去重。`--select` 按这份结果列表的序号选择；homepage aliases 和首页 URL 仍表示首页推荐。
 此功能需要当前源码检出，尚未包含在已发布的 `0.9.0` 中，将随后续版本发布。
