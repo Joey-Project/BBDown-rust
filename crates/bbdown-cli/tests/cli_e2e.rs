@@ -317,6 +317,291 @@ fn info_json_resolves_mock_recommendation_collection() -> anyhow::Result<()> {
 }
 
 #[test]
+fn info_json_resolves_related_recommendations_with_selection() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    mock_related_recommendations(&server);
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("info")
+        .arg("related:https://m.bilibili.com/video/av170001")
+        .arg("--select")
+        .arg("2,1,2")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    assert_eq!(
+        json["collection"]["collection"]["kind"],
+        "related_recommendation"
+    );
+    assert_eq!(json["collection"]["collection"]["id"], 170_001);
+    assert_eq!(
+        json["collection"]["collection"]["items"]
+            .as_array()
+            .map(Vec::len),
+        Some(2)
+    );
+    assert_eq!(
+        json["collection"]["selected_items"]
+            .as_array()
+            .map(Vec::len),
+        Some(2)
+    );
+    assert_eq!(
+        json["collection"]["selected_items"][0]["title"],
+        "Related second"
+    );
+    assert_eq!(
+        json["collection"]["selected_items"][1]["title"],
+        "Related first"
+    );
+    Ok(())
+}
+
+#[test]
+fn info_json_related_recommendations_allows_empty_result() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/archive/related")
+            .query_param("aid", "170001");
+        then.status(200)
+            .json_body_obj(&serde_json::json!({"code": 0, "data": []}));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("info")
+        .arg("related:170001")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    assert_eq!(
+        json["collection"]["collection"]["kind"],
+        "related_recommendation"
+    );
+    assert_eq!(
+        json["collection"]["collection"]["items"]
+            .as_array()
+            .map(Vec::len),
+        Some(0)
+    );
+    assert_eq!(
+        json["collection"]["selected_items"]
+            .as_array()
+            .map(Vec::len),
+        Some(0)
+    );
+    Ok(())
+}
+
+#[test]
+fn related_recommendation_invalid_input_and_api_failure_are_reported() -> anyhow::Result<()> {
+    let invalid = bbdown_command()?
+        .arg("info")
+        .arg("related:ep123")
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    assert!(String::from_utf8(invalid.stderr)?.contains("invalid input"));
+
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/archive/related")
+            .query_param("aid", "170001");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -404,
+            "message": "related source unavailable"
+        }));
+    });
+    let failed = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("info")
+        .arg("related:170001")
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    assert!(String::from_utf8(failed.stderr)?.contains("API returned code -404"));
+    Ok(())
+}
+
+#[test]
+fn plan_related_recommendations_resolves_only_selected_video() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    mock_related_recommendations(&server);
+    let unselected_playurl = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/playurl")
+            .query_param("avid", "170002");
+        then.status(500);
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/playurl")
+            .query_param("avid", "170003")
+            .query_param("cid", "3003")
+            .query_param("try_look", "1");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "dash": {
+                    "duration": 3,
+                    "video": [{"id": 80, "baseUrl": "https://video.example/80.m4s"}],
+                    "audio": []
+                }
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/v2")
+            .query_param("aid", "170003")
+            .query_param("cid", "3003");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {"subtitle": {"subtitles": []}}
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("plan")
+        .arg("related:av170001")
+        .arg("--select")
+        .arg("2")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    assert_eq!(json["entries"].as_array().map(Vec::len), Some(1));
+    assert_eq!(json["entries"][0]["aid"], 170_003);
+    assert_eq!(json["entries"][0]["cid"], 3_003);
+    unselected_playurl.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+fn download_related_recommendations_downloads_only_selected_video() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    mock_related_recommendations(&server);
+    let unselected_playurl = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/playurl")
+            .query_param("avid", "170002");
+        then.status(500);
+    });
+    let selected_playurl = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/playurl")
+            .query_param("avid", "170003")
+            .query_param("cid", "3003")
+            .query_param("try_look", "1");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "dash": {
+                    "duration": 3,
+                    "video": [{
+                        "id": 80,
+                        "baseUrl": format!("{}/video.m4s", server.base_url()),
+                        "base_url": format!("{}/video.m4s", server.base_url())
+                    }],
+                    "audio": []
+                }
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/v2")
+            .query_param("aid", "170003")
+            .query_param("cid", "3003");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {"subtitle": {"subtitles": []}}
+        }));
+    });
+    let selected_media = server.mock(|when, then| {
+        when.method(GET).path("/video.m4s");
+        then.status(200).body("related video bytes");
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("download")
+        .arg("related:av170001")
+        .arg("--select")
+        .arg("2")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--no-cover")
+        .arg("--no-subtitles")
+        .arg("--no-danmaku")
+        .arg("--only")
+        .arg("video")
+        .arg("--no-mux")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    assert_eq!(json["entries"].as_array().map(Vec::len), Some(1));
+    assert_eq!(json["entries"][0]["title"], "Related second");
+    assert_eq!(
+        fs::read_to_string(downloaded_file_path(&json, "video")?)?,
+        "related video bytes"
+    );
+    unselected_playurl.assert_calls(0);
+    selected_playurl.assert_calls(1);
+    selected_media.assert_calls(1);
+    Ok(())
+}
+
+#[test]
 fn plan_json_resolves_mock_video_streams() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;
@@ -2736,7 +3021,7 @@ fn mock_recommendation_collection(server: &MockServer) {
                     "goto": "av",
                     "id": 170_001,
                     "bvid": "BV1xx411c7mD",
-                    "cid": 9988,
+                    "cid": 9_988,
                     "pic": "https://example.invalid/recommendation.jpg",
                     "title": "Recommended video",
                     "duration": 3,
@@ -2747,6 +3032,61 @@ fn mock_recommendation_collection(server: &MockServer) {
                     "title": "Skipped live recommendation"
                 }]
             }
+        }));
+    });
+}
+
+fn mock_related_recommendations(server: &MockServer) {
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/archive/related")
+            .query_param("aid", "170001");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": [
+                {
+                    "aid": 170_001,
+                    "bvid": "BV1xx411c7mD",
+                    "cid": 9_988,
+                    "title": "Source video",
+                    "duration": 3
+                },
+                {
+                    "aid": 170_002,
+                    "bvid": "BV1xx411c7mE",
+                    "cid": 3_002,
+                    "title": "Related first",
+                    "duration": 3
+                },
+                {
+                    "aid": 170_003,
+                    "bvid": "BV1xx411c7mF",
+                    "cid": 3_003,
+                    "title": "Related second",
+                    "duration": 3
+                },
+                {
+                    "aid": 170_003,
+                    "bvid": "BV1xx411c7mF",
+                    "cid": 3_003,
+                    "title": "Duplicate related video",
+                    "duration": 3
+                },
+                {
+                    "aid": 170_004,
+                    "bvid": "BV1xx411c7mG",
+                    "cid": 3_004,
+                    "title": "OGV recommendation",
+                    "duration": 3,
+                    "is_ogv": true
+                },
+                {
+                    "aid": 170_005,
+                    "bvid": "BV1xx411c7mH",
+                    "cid": 0,
+                    "title": "Missing cid"
+                }
+            ]
         }));
     });
 }
