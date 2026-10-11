@@ -26,6 +26,12 @@ use std::fmt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use url::Url;
 
+mod metadata_page;
+pub use metadata_page::{
+    MetadataCollectionInfo, MetadataConsistency, MetadataCursor, MetadataPage, MetadataPageOptions,
+    MetadataStopReason,
+};
+
 pub(crate) const TV_PLAYURL_APPKEY: &str = "4409e2ce8ffd12b8";
 pub(crate) const TV_PLAYURL_APP_SECRET: &str = "59b43e04ad6965f34319062b478f83dd";
 pub(crate) const INTL_OGV_APPKEY: &str = "7d089525d3611b1c";
@@ -438,6 +444,7 @@ impl RestrictedAreaProxy {
 pub struct BiliClient {
     pub(crate) http: reqwest::Client,
     pub(crate) config: ClientConfig,
+    json_body_limit: Option<usize>,
 }
 
 impl BiliClient {
@@ -446,7 +453,20 @@ impl BiliClient {
         Self {
             http: reqwest::Client::new(),
             config,
+            json_body_limit: None,
         }
+    }
+
+    /// Resolves one bounded page from a supported dynamic collection input.
+    ///
+    /// The supported inputs are following and per-space dynamic feeds. This metadata
+    /// operation does not invoke playurl, media, subtitle, or tag endpoints.
+    pub async fn resolve_metadata_page(
+        &self,
+        input: Input,
+        options: MetadataPageOptions,
+    ) -> Result<MetadataPage> {
+        metadata_page::resolve_metadata_page(self, input, options).await
     }
 
     pub async fn check_credential_health(&self) -> CredentialHealthReport {
@@ -3493,9 +3513,33 @@ impl BiliClient {
             .send()
             .await
             .map_err(Self::http_error_without_url)?;
-        let response = response
+        let mut response = response
             .error_for_status()
             .map_err(|error| Self::http_json_status_error(error, preserve_status_url))?;
+        if let Some(limit) = self.json_body_limit {
+            if response
+                .content_length()
+                .is_some_and(|content_length| content_length > limit as u64)
+            {
+                return Err(Error::InvalidInput(format!(
+                    "bounded metadata API response exceeded the {limit}-byte limit"
+                )));
+            }
+            let mut body = Vec::new();
+            while let Some(chunk) = response
+                .chunk()
+                .await
+                .map_err(Self::http_error_without_url)?
+            {
+                if body.len().saturating_add(chunk.len()) > limit {
+                    return Err(Error::InvalidInput(format!(
+                        "bounded metadata API response exceeded the {limit}-byte limit"
+                    )));
+                }
+                body.extend_from_slice(&chunk);
+            }
+            return serde_json::from_slice(&body).map_err(Error::from);
+        }
         response
             .json::<T>()
             .await
@@ -4417,7 +4461,7 @@ impl FlexibleU64 {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct DynamicArchiveSeed {
     aid: u64,
     bvid: Option<String>,

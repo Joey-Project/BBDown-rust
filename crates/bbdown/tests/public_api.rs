@@ -4,10 +4,11 @@ use bbdown_core::{
     CredentialLifecycleStatus, CredentialPreflightMode, CredentialPreflightReport,
     CredentialProfileMetadata, CredentialProfiles, DanmakuUpdateOptions, DanmakuUpdatePolicy,
     DownloadCancellationToken, DownloadOptions, DownloadProgressEvent, DownloadProgressSink,
-    DownloadReportSummary, Input, NoopDownloadProgress, PlayurlMode, RestrictedAreaConfig,
-    StreamSelection, SubtitleAiPolicy, UgcCollectionKind, UgcCollectionReference,
-    VideoCollectionKind,
+    DownloadReportSummary, Input, MetadataPageOptions, NoopDownloadProgress, PlayurlMode,
+    RestrictedAreaConfig, StreamSelection, SubtitleAiPolicy, UgcCollectionKind,
+    UgcCollectionReference, VideoCollectionKind,
 };
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
 #[test]
@@ -34,6 +35,14 @@ fn embedding_surface_is_reexported() -> anyhow::Result<()> {
     let related_input = Input::parse("related:av170001")?;
     assert_eq!(related_input, Input::RelatedRecommendations(170_001));
     assert_eq!(related_input.aid_hint()?, None);
+    let metadata_options = MetadataPageOptions::default()
+        .with_max_items(NonZeroUsize::MIN)
+        .with_max_source_items(NonZeroUsize::MIN)
+        .with_max_requests(NonZeroUsize::MIN);
+    assert_eq!(metadata_options.max_items, NonZeroUsize::MIN);
+    assert_eq!(metadata_options.max_source_items, NonZeroUsize::MIN);
+    assert_eq!(metadata_options.max_requests, NonZeroUsize::MIN);
+    assert!(metadata_options.cursor.is_none());
     assert_eq!(
         serde_json::to_value(VideoCollectionKind::RelatedRecommendation)?,
         serde_json::json!("related_recommendation")

@@ -130,6 +130,87 @@ API。不带 selector 时，集合类输入会选择全部解析条目；传入 
 `Selection::Latest` 可选择上游列表顺序中的第一个解析条目。空集合会表示为空 item 列表，
 而不是 missing-field 错误。
 
+### 有界动态元数据分页
+
+通过 `BiliClient::resolve_metadata_page(input, options)`，可从 `Input::FollowingFeed` 或
+`Input::SpaceDynamic(mid)` 获取显式受限的候选窗口。其它输入类型会在发送请求前被拒绝。
+现有 `resolve` / `resolve_input` 和 CLI 信息查询保留全量集合语义；`Selection::Page(n)`
+仍表示选择结果中的第 n 个条目。
+
+`MetadataPageOptions` 提供三个独立、非零的单次调用预算：
+
+| 选项 | 默认值 | 最大值 | 消耗预算的操作 |
+| --- | ---: | ---: | --- |
+| `max_items` | 100 | 4096 | 返回有效且按 `(aid, cid)` 去重的视频分 P |
+| `max_source_items` | 100 | 4096 | 检查动态记录，包括无效、非视频和重复记录 |
+| `max_requests` | 10 | 512 | 尝试 nav、动态页和视频详情 API 请求，包括失败的尝试 |
+
+请求预算耗尽后，操作会在发起下一次请求前停止。空间动态仅在需要请求下一张动态页时
+获取 WBI key；关注动态无需这次 key 查询。视频详情查询提供 cid，并展开多 P 视频。
+此操作只获取元数据，禁止自动重定向，不请求 tags、playurl 或媒体。请求计数统计 API
+调用尝试，不统计传输握手或协议重传。每份 JSON 响应有 1 MiB 字节上限，并在读取响应体
+时执行限制。
+
+`MetadataPage` 返回不含全量 `items` 字段的集合摘要、有界的 `items`、`requests_used`、
+`source_items_examined`、`stop_reason` 和 `next_cursor`。`MetadataStopReason` 区分
+`ItemLimit`、`SourceItemLimit`、`RequestLimit` 和 `End`。空页仍可能携带续页游标，表示
+预算触发了停止，不代表源列表已耗尽。
+
+```rust,no_run
+use std::num::NonZeroUsize;
+use bbdown_core::{BiliClient, ClientConfig, Input, MetadataPageOptions};
+
+#[tokio::main]
+async fn main() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let input = Input::SpaceDynamic(441_167_301);
+    let first = client.resolve_metadata_page(input.clone(), MetadataPageOptions {
+        max_items: NonZeroUsize::MIN,
+        ..Default::default()
+    }).await?;
+    println!("{} items, {} requests", first.items.len(), first.requests_used);
+
+    if let Some(cursor) = first.next_cursor {
+        let next = client.resolve_metadata_page(input, MetadataPageOptions {
+            max_items: NonZeroUsize::MIN,
+            cursor: Some(cursor),
+            ..Default::default()
+        }).await?;
+        println!("{} next items", next.items.len());
+    }
+    Ok(())
+}
+```
+
+`MetadataCursor` 是可克隆、内部字段不公开的内存续页游标。它保存尚未消费的记录和视频
+分 P，静态测试数据续页时不会丢掉批次或视频的剩余部分，也无需重复请求已经缓冲的分 P。
+游标绑定输入、规范化 API 端点，以及私有的 cookie 上下文摘要；更换来源或认证上下文
+会在网络请求前被拒绝。它不保存原始凭据、WBI key 或签名 URL，调试输出会隐藏内部状态，
+也不提供序列化持久化格式。每次续页调用会重新获得预算；调用方还应限制整个候选窗口
+使用的调用次数。
+需要请求空间动态页时，预算必须同时容纳 nav 和动态页请求；预算为一次请求时，可能在
+nav 之后停止，尚未推进源列表。
+
+上游动态接口没有稳定的快照 token，因此明确返回 `MetadataConsistency::BestEffort`：
+源列表变化时可能遗漏或重排结果。重复、循环或缺失的续页 offset 会明确报错，不会无界
+重试。响应和游标状态也有固定上限，超限会报错，不会静默丢弃记录：最多缓冲 4096 条
+源记录、4096 个展开后的视频分 P、4096 个已见条目身份，以及 128 个上游 offset。
+展开的分 P 会从一份缓冲的视频详情按需生成。返回条目的 UTF-8 字符串载荷总计不得超过
+4 MiB，超限会报错，不会截断。
+
+```mermaid
+flowchart TD
+    A[Validate input and cursor] --> B[Consume buffered records and pages]
+    B --> C{Need upstream metadata?}
+    C -->|Yes, quota available| D[Reserve nav, feed, or view request]
+    D --> E[Read bounded JSON and filter records]
+    E --> B
+    C -->|Limit or source end| F[Return items, usage, stop reason, and cursor]
+```
+
+此 API 需要当前源码检出，尚未包含在已发布的 `0.9.0` 中。它不代表上游已经接受真实的
+动态请求；HTTP 412 定位和认证播放验证仍是独立的验收门槛。
+
 推荐输入使用 WEB 首页推荐端点。它支持 `recommendations`、`recommendation`、`recommend`
 shorthand 和 B 站首页 URL。当前实现会输出普通视频 `av` 卡片；非视频推荐卡片会被跳过，
 显式 index selection 需要时会在安全上限内继续请求后续 `fresh_idx` 刷新批次来覆盖过滤后

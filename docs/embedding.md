@@ -140,6 +140,92 @@ and series APIs. Without a selector, collection-like inputs select all parsed it
 `Selection::Latest` for the first parsed item in the upstream list order. Empty collections are
 represented as empty item lists, not as missing-field errors.
 
+### Bounded Dynamic Metadata Pages
+
+Use `BiliClient::resolve_metadata_page(input, options)` for an explicit candidate window from
+`Input::FollowingFeed` or `Input::SpaceDynamic(mid)`. Other input kinds are rejected before any
+request. Existing `resolve`/`resolve_input` and CLI information queries keep their full collection
+semantics; `Selection::Page(n)` continues to select the nth result item.
+
+`MetadataPageOptions` supplies three independent, non-zero per-call budgets:
+
+| Option | Default | Maximum | What consumes it |
+| --- | ---: | ---: | --- |
+| `max_items` | 100 | 4096 | Valid, unique `(aid, cid)` video pages returned |
+| `max_source_items` | 100 | 4096 | Examined dynamic records, including invalid, non-video, and duplicate records |
+| `max_requests` | 10 | 512 | Attempted nav, feed, and video-view API calls, including failed attempts |
+
+The operation stops before starting another request once its request budget is exhausted. Space
+feeds obtain a WBI key only when another feed request is needed; following feeds do not require
+that key lookup. Video-view lookup supplies cid and expands multi-page videos. The operation only
+fetches metadata, with redirects disabled; it does not request tags, playurl, or media. The request
+counter counts API attempts, not transport handshakes or protocol retransmissions. Each response
+has a 1 MiB JSON byte ceiling, enforced while reading the body.
+
+`MetadataPage` contains collection information without an unbounded `items` field, a bounded
+`items` list, `requests_used`, `source_items_examined`, `stop_reason`, and `next_cursor`.
+`MetadataStopReason` distinguishes `ItemLimit`, `SourceItemLimit`, `RequestLimit`, and `End`.
+An empty page with a continuation can be a budget stop; it does not mean the source is exhausted.
+
+```rust,no_run
+use std::num::NonZeroUsize;
+use bbdown_core::{BiliClient, ClientConfig, Input, MetadataPageOptions};
+
+#[tokio::main]
+async fn main() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let input = Input::SpaceDynamic(441_167_301);
+    let first = client.resolve_metadata_page(input.clone(), MetadataPageOptions {
+        max_items: NonZeroUsize::MIN,
+        ..Default::default()
+    }).await?;
+    println!("{} items, {} requests", first.items.len(), first.requests_used);
+
+    if let Some(cursor) = first.next_cursor {
+        let next = client.resolve_metadata_page(input, MetadataPageOptions {
+            max_items: NonZeroUsize::MIN,
+            cursor: Some(cursor),
+            ..Default::default()
+        }).await?;
+        println!("{} next items", next.items.len());
+    }
+    Ok(())
+}
+```
+
+`MetadataCursor` is an opaque, cloneable in-memory continuation. It retains unconsumed records
+and video pages, so a static fixture can continue without losing the remainder of a batch or
+re-fetching already buffered pages. It is bound to the input, normalized API endpoint, and a
+private cookie-context digest; switching the source or authentication context is rejected before
+network access. It contains no raw credentials, WBI keys, or signed URLs, has redacted debug
+output, and is not a serialized persistence format. Each continuation call gets fresh budgets;
+callers should also bound the number of calls used for their overall candidate window.
+A call that needs a space-feed request must allow both nav and feed requests; a one-request
+budget can stop after nav without advancing the source.
+
+Upstream dynamic feeds provide no stable snapshot token, so `MetadataConsistency::BestEffort`
+is explicit: source changes can cause omissions or reordered results. Repeated, cyclic, or
+missing continuation offsets are errors rather than unbounded retries. Fixed response and
+cursor-state ceilings also fail explicitly instead of silently dropping records: at most 4096
+buffered source records, 4096 expanded video pages, 4096 remembered item identities, and 128
+provider offsets.
+Expanded pages are produced lazily from one buffered video-detail model. The total UTF-8 string
+payload of returned items is capped at 4 MiB; exceeding it is an error rather than truncation.
+
+```mermaid
+flowchart TD
+    A[Validate input and cursor] --> B[Consume buffered records and pages]
+    B --> C{Need upstream metadata?}
+    C -->|Yes, quota available| D[Reserve nav, feed, or view request]
+    D --> E[Read bounded JSON and filter records]
+    E --> B
+    C -->|Limit or source end| F[Return items, usage, stop reason, and cursor]
+```
+
+This API requires the current source checkout and is not included in the published `0.9.0`.
+It does not establish that the upstream accepts a live dynamic request; HTTP 412 diagnosis and
+authenticated playback validation are separate gates.
+
 Recommendation input uses the web homepage recommendation endpoint. It accepts the
 `recommendations`, `recommendation`, and `recommend` shorthands plus the Bilibili homepage URL. The
 current implementation emits normal-video `av` cards; non-video recommendation cards are skipped,
