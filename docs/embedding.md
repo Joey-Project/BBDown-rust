@@ -9,12 +9,12 @@ projects that need typed Bilibili metadata, download plans, media downloads, sub
 danmaku sidecars, QR login state, batch collection parsing, and restricted-area proxy diagnostics
 without shelling out to the CLI.
 
-The published `0.8.0` release includes staged preserving danmaku refresh and explicit
-credential-account identity checks. The earlier `0.7.0` release added explicit CDN host pools,
-probing, and parallel transfer options plus an independent PGC Web playurl route selector. This
-source tree also adds CDN transfer diagnostics after the `0.8.0` tag; they are not in the published
-`0.8.0` crate. These network actions remain caller-selected; the crate does not automatically route
-requests from the bundled CLI catalogs.
+The current published `0.9.0` release includes CDN transfer diagnostics and WBI-signed personal-space
+dynamic feed requests, including continuation pages. The published `0.8.0` release includes staged
+preserving danmaku refresh and explicit credential-account identity checks. The earlier `0.7.0`
+release added explicit CDN host pools, probing, and parallel transfer options plus an independent
+PGC Web playurl route selector. These network actions remain caller-selected; the crate does not
+automatically route requests from the bundled CLI catalogs.
 Prefer constructors and builder-style APIs for configuration, and treat metadata and plan
 structs as read-only output surfaces. This keeps embedding code resilient when new fields are added
 while the crate matures.
@@ -276,7 +276,7 @@ malformed responses, and missing or nonpositive account IDs stop immediately. Pr
 refresh-keypair metadata alone do not prove the issuer of a currently stored key. Cookie and TV
 identity probes retain their separate credentials and existing request paths; health checks are
 unchanged.
-These additive APIs are included in the `0.8.0` source line and are unavailable in the `0.7.0` crate.
+These additive APIs were introduced in the published `0.8.0` release and are unavailable in the `0.7.0` crate.
 For QR login, convert `QrLoginTicket` to `QrLoginTicketOutput` when a downstream application needs a
 stable serialized scan URL and `qr_payload`; current WEB and TV login flows use the scan URL itself
 as the QR payload. The compatibility `poll_web_qr_login` / `poll_tv_qr_login` methods return
@@ -599,7 +599,7 @@ events, mux start/completion/failure, and plan completion/failure/cancellation. 
 synchronous and should stay lightweight; send
 events into an application channel if UI updates or database writes may block the download task.
 
-The post-`0.8.0` source tree adds `DownloadProgressEvent::TransferBytesReceived` and
+The published `0.9.0` release adds `DownloadProgressEvent::TransferBytesReceived` and
 `DownloadProgressEvent::TransferDiagnostic`. The byte event is emitted for each response-body chunk
 consumed from `bytes_stream()` after status/header checks and before body-length validation or
 writing; a rejected body that is not read contributes zero. Counts follow the client's transparent
@@ -618,8 +618,8 @@ whole-file fallback, and request-finished outcomes without upstream error string
 file responses (media and sidecars) and CDN probes/ranges, not metadata, playurl, or authentication
 API requests. A selected candidate passed compatibility preflight only; selection does not prove
 full-representation identity. A cancelled/dropped request may have no terminal outcome, while its
-earlier byte deltas remain valid. These are source additions after the published `0.8.0` tag, not
-APIs in the published crate. Shard candidate selection/exclusion is emitted after all candidate
+earlier byte deltas remain valid. These APIs are included in the published `0.9.0` crate. Shard
+candidate selection/exclusion is emitted after all candidate
 probes finish as an operation-level diagnostic (`request_id: None`, `phase: ShardProbe`), rather
 than reusing a probe ID whose `RequestFinished` event has already been emitted. The shard-probe phase
 is retained when no compatible group is available and transfer falls back. Host labels contain only
@@ -671,8 +671,7 @@ fn inspect_transfer_event(event: &DownloadProgressEvent) {
 For a standalone measurement, `probe_media_cdns_with_progress` accepts the same client, stream, and
 host options as `probe_media_cdns`, plus a progress sink:
 
-This API was added after the published `0.8.0` tag. Compile this example against a source checkout
-that contains the change; the crates.io `0.8.0` package does not include it.
+This API is included in the published `0.9.0` crate.
 
 ```rust,no_run
 use bbdown_core::{

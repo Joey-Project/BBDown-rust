@@ -7,7 +7,7 @@
 
 ## 版本
 
-- [v0.9.0 source line](v0.9.0.zh-CN.md)：为 progress callback 和 CLI JSON 增加结构化 CDN 传输
+- [v0.9.0（已发布）](v0.9.0.zh-CN.md)：为 progress callback 和 CLI JSON 增加结构化 CDN 传输
   诊断，并通过 WBI 签名个人空间动态 feed 请求及 offset 分页。
 
 - [v0.8.0（已发布）](v0.8.0.zh-CN.md)：可选的弹幕保留更新模式会保留 XML 历史，并从合并后

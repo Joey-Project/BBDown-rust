@@ -135,6 +135,9 @@
 - [completed] Publish `v0.8.0` through the protected release-candidate and promotion workflows as a
   GitHub Release and crates.io `bbdown-core` package. See
   `docs/project_journal/2026/10/2026-10-06-v0-8-release-prep.md`.
+- [completed] Publish `v0.9.0` as a GitHub Release and crates.io `bbdown-core` package through the
+  protected release-candidate and promotion workflows. See
+  `docs/project_journal/2026/10/2026-10-10-v0-9-release-prep.md`.
 - [pending] Continue the remaining BBDown parity backlog after the published `0.4.0` credential and
   danmaku sequence unless reprioritized:
   aria2 or multi-thread download integration, MP4Box muxing, and subtitle-to-SRT conversion.

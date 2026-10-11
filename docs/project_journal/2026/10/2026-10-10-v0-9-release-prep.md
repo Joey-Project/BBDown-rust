@@ -3,7 +3,7 @@ id: 20261010-v0-9-release-prep
 title: v0.9.0 Release Preparation
 status: completed
 created: 2026-10-10
-updated: 2026-10-10
+updated: 2026-10-11
 branch: wip/release-v0.9.0
 pr:
 supersedes: []
@@ -16,14 +16,16 @@ superseded_by:
 
 - Prepared the bilingual source-line notes, release-note index entries, and current-version
   summaries for the four English and Simplified Chinese root/crate READMEs.
+- Synchronized the root README release/API guidance and preserving-update deduplication rules in
+  both languages, removing duplicate wording from the Chinese feature summary.
 - Prepared the `0.9.0` versions for both workspace crates, kept the CLI core dependency
   path-constrained, and updated the two workspace lock records; third-party dependency resolution
   remained unchanged.
 - The prepared `0.9.0` scope covers structured CDN transfer diagnostics and WBI-signed
   personal-space dynamic feed requests. The previously published `0.8.0` notes remain intact as
   historical documentation.
-- This journal records version and documentation preparation only. It does not record publication
-  of `v0.9.0` or `bbdown-core 0.9.0`.
+- The preparation and package dry run recorded below did not upload anything. Subsequent
+  publication evidence is recorded separately in the Publication Verification checkpoint.
 
 ## Scope And Limits
 
@@ -57,4 +59,25 @@ superseded_by:
 - The package dry run passed with 29 files (1.8 MiB; 274.6 KiB compressed). Upload was aborted;
   no package was uploaded. The existing yanked `spin 0.9.8` dependency produced the only warning.
 - The post-run receipt confirmed all 31 tracked source/config inputs were stable. No authenticated
-  live calls were made. These checks validate release preparation, not publication of `v0.9.0`.
+  live calls were made during this validation. These checks validate release preparation, not the
+  subsequent publication of `v0.9.0`.
+
+## Publication Verification
+
+- PR [#94](https://github.com/Joey-Project/BBDown-rust/pull/94) merged as source commit
+  `e422a159cdf70c5bec72b4120e2a70e5bd749088`. RC run
+  [38089973494](https://github.com/Joey-Project/BBDown-rust/actions/runs/38089973494) created
+  `v0.9.0-rc.1`; promotion run
+  [38127637608](https://github.com/Joey-Project/BBDown-rust/actions/runs/38127637608) completed
+  attempt 1 with all 9 jobs successful and no pending deployments.
+- The annotated `v0.9.0` tag object `a4359013a02287212f510900195a7b9173ef8876` peels to
+  `e422a159cdf70c5bec72b4120e2a70e5bd749088`. The [GitHub Release](https://github.com/Joey-Project/BBDown-rust/releases/tag/v0.9.0)
+  was published on 2026-10-11 at 09:37:30 UTC as a non-draft, non-prerelease release. Its four
+  platform archives and four SHA-256 sidecars were uploaded (21,492,042 bytes total). All archive
+  digests matched their sidecars and GitHub asset digests; each sidecar names only its matching
+  archive basename.
+- The crates.io API confirms `bbdown-core 0.9.0` is not yanked; it was created at
+  `2026-10-11T09:38:53.820950Z`, is 281,164 bytes, and has SHA-256
+  `dce2b8db1d774b0dd394d9272e410bdf37e4bf3f6028729ce7f7c9139ed86e99`.
+  A fresh download of this exact version matched the registry checksum.
+- No released binary was extracted or executed, and no new live tests were run.

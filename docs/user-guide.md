@@ -26,10 +26,10 @@ The crates.io publish target is the reusable `bbdown-core` library package. Use
 `just publish-dry-run` for a local locked dry run that tolerates an uncommitted worktree, and use
 `just publish-dry-run-strict` or `cargo publish --dry-run -p bbdown-core --locked` to reproduce the
 clean CI gate. The `bbdown-cli` package is marked `publish = false`; install or distribute the CLI
-through GitHub release archives instead. The current published release is `0.8.0`; it adds preserving
-danmaku refresh and credential-account identity APIs to the earlier `0.7.0` networking and downloader
-features. This source tree also includes CDN transfer diagnostics added after the `0.8.0` tag; those
-additions are not in the published `0.8.0` crate. The published networking controls focus on opt-in CDN
+through GitHub release archives instead. The current published release is `0.9.0`; it adds typed CDN
+transfer diagnostics and WBI-signed personal-space dynamic feed requests, including continuation pages.
+The `0.8.0` release added preserving danmaku refresh and credential-account identity APIs to the earlier
+`0.7.0` networking and downloader features. The published networking controls focus on opt-in CDN
 selection, probing and parallel transfer, bundled network catalogs, and independent PGC Web playurl routing. These controls require explicit selection; the
 catalogs are snapshots, and listed endpoints are checked only when a user runs a probe or selects a
 route. Embedding callers should still prefer
@@ -114,7 +114,8 @@ Following feed input accepts `following`, `https://t.bilibili.com/`, and
 `https://www.bilibili.com/account/dynamic`. It requires an authenticated web cookie and currently
 emits normal-video archive cards from the authenticated account's following feed. Space dynamic feed
 input accepts `https://space.bilibili.com/<mid>/dynamic`, can run anonymously, and currently emits
-public normal-video archive cards; non-video dynamic cards are skipped.
+public normal-video archive cards; non-video dynamic cards are skipped. Requests, including paginated
+continuations, are signed with WBI.
 
 ## Download Plans
 
@@ -248,7 +249,7 @@ pre-attempt size, and leaves already completed entries in place. Press `Ctrl-C` 
 immediate process exit. When the CLI is waiting at the interactive archive duplicate prompt,
 `Ctrl-C` exits immediately with status 130; pass `--on-duplicate` for non-interactive wrappers.
 
-The post-`0.8.0` source tree also emits `transfer_bytes_received` and `transfer_diagnostic` events.
+The published `0.9.0` release emits `transfer_bytes_received` and `transfer_diagnostic` events.
 The first reports each HTTP response-body chunk delivered to and consumed by the application after
 status/header checks and before body-length validation or file writing; an unconsumed rejected body counts as zero. Counts
 follow the client's transparent content-decoding configuration, so they are not compressed entity
@@ -265,7 +266,7 @@ requests. Selection means only that a candidate passed compatibility preflight; 
 full-representation identity. Phases identify automatic probes, shard probes, range chunks,
 whole-file requests, or standalone probes. Cancellation can leave a
 request without a terminal diagnostic while preserving byte events already emitted. These events
-are source additions after the published `0.8.0` tag and are not included in the published crate.
+are included in the published `0.9.0` crate.
 Shard candidate selections and exclusions are emitted after all candidate probes complete as
 operation-level diagnostics with `request_id: null` and phase `shard_probe`; they do not reuse
 request IDs whose probe completion events have already been emitted. This phase remains

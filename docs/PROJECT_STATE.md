@@ -77,9 +77,12 @@
   danmaku refresh, credential-account identity APIs, and release documentation. The GitHub Release
   and crates.io `bbdown-core` package are published. See
   `docs/project_journal/2026/10/2026-10-06-v0-8-release-prep.md`.
-- Post-`v0.8.0` source changes add CDN transfer diagnostics for typed candidate exclusions, retries,
-  whole-file fallbacks, and application-consumed HTTP response-body chunks. These counts do not
-  represent all wire traffic or change the published `0.8.0` package.
+- `v0.9.0` has shipped as a GitHub Release and crates.io `bbdown-core` package through the protected
+  release-candidate and promotion flow. It includes CDN transfer diagnostics for typed candidate
+  exclusions, retries, whole-file fallbacks, and application-consumed HTTP response-body chunks,
+  plus WBI-signed personal-space dynamic feed pages and continuation offsets. These byte counts do
+  not represent all wire traffic. See
+  `docs/project_journal/2026/10/2026-10-10-v0-9-release-prep.md`.
   Automatic routing, persistent route health, and adaptive tuning remain deferred. Feed/page backlog
   remains deferred.
 

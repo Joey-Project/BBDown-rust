@@ -18,13 +18,13 @@ host 控制，以及 builder 风格的 crate 集成 API。它还支持显式下�
 文件更新。已发布的 `0.7.0` 版本增加显式 CDN host pool、限额 Range 探测、可选并行
 Range 下载、
 内置 CDN/公共 resolver 目录，以及独立的 PGC Web playurl 路由 API；这些功能不会自动选择
-路由。项目当前为 `0.9.0` source line。已发布的 `0.8.0` 版本线保留 XML 历史，并从合并后的
-XML 重新生成所选 ASS 输出，再将暂存后的旁路文件与归档一起发布。`0.9.0` source line 为
+路由。当前已发布版本为 `0.9.0`。已发布的 `0.8.0` 版本的 Preserve 更新策略会按正 `p[7]`
+ID 去重弹幕；ID 缺失、为零或无效时，会回退到完整 `p` 属性和解码后的文本进行匹配。它保留 XML 历史，从合并后的
+XML 重新生成所选 ASS 输出，再将暂存后的旁路文件与归档一起发布。`0.9.0` 为
 progress callback 和 CLI `--progress-json` 增加结构化 CDN 传输诊断，并通过 WBI 签名空间动态
 feed 请求，包括 offset 分页。输入解析覆盖普通视频、PGC 和 intl 分集、PUGV/cheese 课程、B23 短链接、收藏
 夹、空间投稿、合集、系列、首页推荐、观看历史、
-稍后再看列表、关注视频 feed 和空间动态视频 feed。Preserve 更新策略会保留 XML 历史，并从合并后
-的 XML 重新生成所选 ASS，再将暂存后的旁路文件和 archive 一起发布。URL 解析包括 canonical
+稍后再看列表、关注视频 feed 和空间动态视频 feed。URL 解析包括 canonical
 `bilibili.com/list/...` 页面、
 path-based medialist 收藏夹 URL，以及带 uploader mid 的空间合集 / 系列 URL，以便使用较
 新的空间 API；同时支持 B 站首页、空间动态页面和需要登录态的
@@ -368,9 +368,9 @@ just ci
 
 ## 文档
 
-- Crate API 说明：可发布 package 是 `bbdown-core`，导入时使用 `bbdown_core`。此重写已通过
-  `0.7.0` networking/downloader 版本发布，晚于 `0.6.0`，增加可选 CDN host 选择、探测和
-  并行传输、内置网络目录，以及独立的 PGC Web playurl 路由 API。目录不会触发自动 CDN 路由。
+- Crate API 说明：可发布 package 是 `bbdown-core`，导入时使用 `bbdown_core`。`0.7.0` 发布版
+  增加了可选 CDN host 选择、探测和并行传输、内置网络目录，以及独立的 PGC Web playurl 路由
+  API；目录不会触发自动 CDN 路由。当前已发布 crate 版本为 `0.9.0`。
   `0.5.0` 的 download API 仍包含
   `DownloadProgressEvent` callback、基于 `DownloadCancellationToken` 的 graceful
   cancellation，以及当 plan 条目暴露章节时的 ffmpeg 章节 metadata mux；嵌入项目应优先使用
