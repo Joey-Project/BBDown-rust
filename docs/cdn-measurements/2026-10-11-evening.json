@@ -2,6 +2,7 @@
   "metadata": {
     "schema_version": 1,
     "source_base_sha": "e971ee5f15826ce455fd4642e1b886060876af49",
+    "harness_commit_sha": "ad386e1ad7fb4ed99b1bfb189a5e778543e6823f",
     "measurement_date": "2026-10-11",
     "window": "evening",
     "environment": {

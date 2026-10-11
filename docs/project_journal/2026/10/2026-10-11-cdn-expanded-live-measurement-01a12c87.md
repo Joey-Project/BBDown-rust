@@ -5,7 +5,7 @@ status: completed
 created: 2026-10-11
 updated: 2026-10-11
 branch: wip/cdn-expanded-live-measurement
-pr:
+pr: 98
 supersedes: []
 superseded_by:
 ---
@@ -27,7 +27,8 @@ superseded_by:
 ## Environment and protocol
 
 - Source baseline: `e971ee5f15826ce455fd4642e1b886060876af49`, after PRs #96 and #97.
-  Current-source harness built on macOS 26.3, Darwin arm64, Rust/Cargo 1.95.0.
+  Measurement harness commit: `ad386e1ad7fb4ed99b1bfb189a5e778543e6823f`.
+  The harness was built on macOS 26.3, Darwin arm64, Rust/Cargo 1.95.0.
   Task timezone is Europe/London; the physical egress location was not verified.
 - Use `Credentials::default()` through the ignored library test, not the credential-loading CLI.
   No stored credentials or public resolver were used. Ambient HTTP/HTTPS/ALL proxy variables were
@@ -119,9 +120,12 @@ superseded_by:
 - Optional `BBDOWN_CDN_BENCHMARK_QUALITY` and `BBDOWN_CDN_BENCHMARK_CODEC` must uniquely match a
   video representation when either is supplied. Codec strings match exactly. Unset selectors
   preserve first-video selection; zero or ambiguous matches fail setup.
-- Later Stage 1 proposes explicit automatic selection, retaining current defaults, with validated
-  64 KiB/five-second sample ranking and at most four authorities including the donor. Internal
-  shard compatibility probing remains a separate 16 KiB/two-second operation.
+- Later Stage 1 proposes an explicit bounded candidate-pool policy, retaining current defaults
+  and the existing probe/parallel-triggered throughput ranking. It reuses the internal automatic
+  sample pass (up to 64 KiB per candidate, two-second request timeout) once, with at most four
+  candidate URLs/authorities including the donor and a proposed five-second overall ceiling.
+  Public donor-size setup (64 KiB/five seconds) and internal shard compatibility probing
+  (16 KiB/two seconds) remain separate operations.
 - Stage 2 proposes bounded process-memory host health/TTL without URLs, identifiers, sampled
   bytes, or credentials. Persistence and adaptive chunk/concurrency tuning remain later opt-in
   work. API/resolver/PGC policy remains separate from CDN ranking.
@@ -131,16 +135,32 @@ superseded_by:
 
 ## Validation
 
-- `cargo test --offline --locked -p bbdown-core --test cdn_benchmark`: 16 passed, one live test
-  ignored. Three new tests cover default/lowered limits, invalid/zero/over-cap limits, and unique
-  quality/codec selection.
+- `cargo test --offline --locked -p bbdown-core --test cdn_benchmark`: 18 passed, one live test
+  ignored after review corrections. The initial three new tests cover default/lowered limits,
+  invalid/zero/over-cap limits, and unique quality/codec selection. Two further regressions cover
+  low setup budgets, dropping a pending cancelled probe, and rejecting same-poll over-budget
+  success.
 - `cargo clippy --offline --locked -p bbdown-core --test cdn_benchmark -- -D warnings`: passed.
 - `cargo fmt --all -- --check`: passed.
 - The just-built live test binary was invoked twice with `--exact cdn_benchmark_harness --ignored
-  --nocapture` and the limits above; both invocations passed. No additional live experiments were
-  run. Temporary media was not retained.
+  --nocapture` and the limits above; both invocations passed at the recorded measurement commit,
+  before the setup-cancellation correction. No additional live experiments were run. Neither
+  measurement exhausted a budget, so it did not exercise the corrected cancellation path; that
+  path is validated by the new local mock/controlled-future regressions. Temporary media was not
+  retained.
 - Discussion and coordination used GPT-6.1 Sol Extra High; delegated harness, documentation, and
   measurement processing used GPT-6 Luna High. No local formal reviewer was started.
+
+## Review corrections
+
+- [Donor probe budgets](https://github.com/Joey-Project/BBDown-rust/pull/98#discussion_r4243095379):
+  observe setup cancellation as well as deadlines, drop a pending probe future on budget
+  exhaustion, and recheck the budget if the probe returns in the same poll as its crossing
+  callback. Already-consumed crossing chunks/current requests remain observable overshoot;
+  this does not add a request-start event or promise a wire cap.
+- [Existing probe semantics](https://github.com/Joey-Project/BBDown-rust/pull/98#discussion_r4243095382):
+  correct both design languages to preserve the existing probe/parallel-triggered throughput
+  reordering and define how later opt-in candidate policy composes with it.
 
 ## Next steps
 

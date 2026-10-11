@@ -1294,18 +1294,21 @@ async fn discover_selected_size(
             .observe(event, budget, &cancellation);
     };
     let began = Instant::now();
-    let results = tokio::time::timeout(
-        SIZE_PROBE_TIMEOUT,
+    anyhow::ensure!(
+        budget.exhaustion_reason().is_none(),
+        "bounded donor size probe cancelled because benchmark budget is exhausted"
+    );
+    let results = run_bounded_size_probe(
         probe_media_cdns_with_progress(
             client,
             &donor_only,
             &MediaHostOptions::default(),
             &progress,
         ),
+        &cancellation,
+        budget,
     )
-    .await
-    .map_err(|_| anyhow::anyhow!("bounded donor size probe timed out"))?
-    .map_err(|_| anyhow::anyhow!("bounded donor size probe failed"))?;
+    .await?;
     let result = results
         .into_iter()
         .find(|result| result.ok && result.total_size.is_some())
@@ -1329,6 +1332,47 @@ async fn discover_selected_size(
         elapsed_ms: began.elapsed().as_millis(),
         transfer_events,
     })
+}
+
+async fn run_bounded_size_probe<T, F>(
+    probe: F,
+    cancellation: &DownloadCancellationToken,
+    budget: &RunBudget,
+) -> anyhow::Result<T>
+where
+    F: Future<Output = bbdown_core::Result<T>>,
+{
+    anyhow::ensure!(
+        budget.exhaustion_reason().is_none(),
+        "bounded donor size probe cancelled because benchmark budget is exhausted"
+    );
+    tokio::pin!(probe);
+    let probe_timeout = tokio::time::sleep(SIZE_PROBE_TIMEOUT);
+    tokio::pin!(probe_timeout);
+    let result = tokio::select! {
+        biased;
+        () = cancellation.cancelled() => {
+            anyhow::bail!("bounded donor size probe cancelled because benchmark budget is exhausted");
+        }
+        () = tokio::time::sleep_until(budget.deadline) => {
+            budget.exhaust_deadline();
+            cancellation.cancel_with_reason(BUDGET_CANCEL_REASON);
+            anyhow::bail!("bounded donor size probe timed out");
+        }
+        () = &mut probe_timeout => {
+            anyhow::bail!("bounded donor size probe timed out");
+        }
+        result = &mut probe => {
+            result.map_err(|_| anyhow::anyhow!("bounded donor size probe failed"))?
+        }
+    };
+    // A probe can return Ready in the same poll that its progress callback exhausts a budget.
+    // Recheck after select so that result cannot advance setup in that race.
+    anyhow::ensure!(
+        budget.exhaustion_reason().is_none(),
+        "bounded donor size probe cancelled because benchmark budget is exhausted"
+    );
+    Ok(result)
 }
 
 fn mark_valid_samples(records: &mut [Record], fixed_host: &str) {
@@ -1997,21 +2041,7 @@ async fn discovers_unknown_size_with_a_bounded_single_donor_sample() -> anyhow::
             .header("Content-Length", "65535")
             .body(vec![b'x'; 65_535]);
     });
-    let stream: MediaStream = serde_json::from_value(serde_json::json!({
-        "id": 80,
-        "base_url": server.url("/media?fixture=1"),
-        "backup_urls": [],
-        "language": null,
-        "language_doc": null,
-        "codecs": "avc1.640028",
-        "codec_family": "h264",
-        "bandwidth": 1_000_000,
-        "width": 1920,
-        "height": 1080,
-        "frame_rate": "30",
-        "mime_type": "video/mp4",
-        "size": null
-    }))?;
+    let stream = unknown_size_stream(&server)?;
 
     let budget = RunBudget::for_test(std::time::Duration::from_secs(10), u64::MAX, u64::MAX);
     let discovered =
@@ -2027,6 +2057,122 @@ async fn discovers_unknown_size_with_a_bounded_single_donor_sample() -> anyhow::
     assert_eq!(discovery.calls(), 1);
     assert_eq!(sample.calls(), 1);
     Ok(())
+}
+
+#[tokio::test]
+async fn stops_unknown_size_probe_when_body_or_request_budget_is_exhausted() -> anyhow::Result<()> {
+    for (body_limit, request_limit, expected_reason) in [
+        (1, u64::MAX, "cumulative_body_bytes"),
+        (u64::MAX, 1, "observed_request_threshold"),
+    ] {
+        let server = MockServer::start();
+        let discovery = server.mock(|when, then| {
+            when.method(GET).path("/media").header("range", "bytes=0-0");
+            then.status(206)
+                .header("Content-Range", "bytes 0-0/100000")
+                .header("Content-Length", "1")
+                .body("x");
+        });
+        let sample = server.mock(|when, then| {
+            when.method(GET)
+                .path("/media")
+                .header("range", "bytes=1-65535");
+            then.status(206)
+                .header("Content-Range", "bytes 1-65535/100000")
+                .header("Content-Length", "65535")
+                .body(vec![b'x'; 65_535]);
+        });
+        let stream = unknown_size_stream(&server)?;
+        let budget = RunBudget::for_test(
+            std::time::Duration::from_secs(10),
+            body_limit,
+            request_limit,
+        );
+
+        let Err(error) =
+            discover_selected_size(&BiliClient::new(ClientConfig::default()), &stream, &budget)
+                .await
+        else {
+            anyhow::bail!("budget exhaustion must stop donor size discovery");
+        };
+        let snapshot = budget.snapshot();
+
+        assert!(error.to_string().contains("benchmark budget is exhausted"));
+        assert_eq!(snapshot.exhausted_reason, Some(expected_reason));
+        assert_eq!(discovery.calls(), 1);
+        assert_eq!(sample.calls(), 1);
+        assert_eq!(snapshot.observed_request_count, 2);
+        if expected_reason == "cumulative_body_bytes" {
+            assert!(snapshot.consumed_body_bytes > body_limit);
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn bounded_size_probe_drops_cancelled_future_and_rejects_same_poll_success() {
+    struct DropObserver<'a>(&'a std::cell::Cell<bool>);
+    impl Drop for DropObserver<'_> {
+        fn drop(&mut self) {
+            self.0.set(true);
+        }
+    }
+
+    let budget = RunBudget::for_test(std::time::Duration::from_secs(10), u64::MAX, 1);
+    let cancellation = DownloadCancellationToken::new();
+    let dropped = std::cell::Cell::new(false);
+    let pending_probe = {
+        let cancellation = &cancellation;
+        let budget = &budget;
+        let dropped = &dropped;
+        async move {
+            let _drop_observer = DropObserver(dropped);
+            budget.observe_request_id();
+            budget.observe_request_id();
+            cancellation.cancel_with_reason(BUDGET_CANCEL_REASON);
+            std::future::pending::<()>().await;
+            Ok::<(), Error>(())
+        }
+    };
+    let result = run_bounded_size_probe(pending_probe, &cancellation, &budget).await;
+    assert!(result.is_err());
+    assert!(dropped.get(), "cancelled probe future should be dropped");
+
+    let ready_budget = RunBudget::for_test(std::time::Duration::from_secs(10), u64::MAX, 1);
+    let ready_cancellation = DownloadCancellationToken::new();
+    let ready_probe = {
+        let cancellation = &ready_cancellation;
+        let budget = &ready_budget;
+        async move {
+            budget.observe_request_id();
+            budget.observe_request_id();
+            cancellation.cancel_with_reason(BUDGET_CANCEL_REASON);
+            Ok::<(), Error>(())
+        }
+    };
+    let result = run_bounded_size_probe(ready_probe, &ready_cancellation, &ready_budget).await;
+    assert!(
+        result.is_err(),
+        "a probe that crosses a budget while returning Ready must not succeed"
+    );
+}
+
+fn unknown_size_stream(server: &MockServer) -> anyhow::Result<MediaStream> {
+    Ok(serde_json::from_value(serde_json::json!({
+        "id": 80,
+        "base_url": server.url("/media?fixture=1"),
+        "backup_urls": [],
+        "language": null,
+        "language_doc": null,
+        "codecs": "avc1.640028",
+        "codec_family": "h264",
+        "bandwidth": 1_000_000,
+        "width": 1920,
+        "height": 1080,
+        "frame_rate": "30",
+        "mime_type": "video/mp4",
+        "size": null
+    }))?)
 }
 
 #[test]
