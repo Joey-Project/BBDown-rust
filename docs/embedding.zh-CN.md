@@ -143,13 +143,31 @@ API。不带 selector 时，集合类输入会选择全部解析条目；传入 
 | --- | ---: | ---: | --- |
 | `max_items` | 100 | 4096 | 返回有效且按 `(aid, cid)` 去重的视频分 P |
 | `max_source_items` | 100 | 4096 | 检查动态记录，包括无效、非视频和重复记录 |
-| `max_requests` | 10 | 512 | 尝试 nav、动态页和视频详情 API 请求，包括失败的尝试 |
+| `max_requests` | 10 | 512 | 尝试设备 Cookie 初始化、nav、动态页和视频详情 API 请求，包括失败的尝试 |
 
-请求预算耗尽后，操作会在发起下一次请求前停止。空间动态仅在需要请求下一张动态页时
-获取 WBI key；关注动态无需这次 key 查询。视频详情查询提供 cid，并展开多 P 视频。
-此操作只获取元数据，禁止自动重定向，不请求 tags、playurl 或媒体。请求计数统计 API
-调用尝试，不统计传输握手或协议重传。每份 JSON 响应有 1 MiB 字节上限，并在读取响应体
-时执行限制。
+请求预算耗尽后，操作会在发起下一次请求前停止。只有即将请求新的 `SpaceDynamic` 动态
+feed，且配置的 Cookie 缺少 `buvid3` 或 `buvid4`、客户端内存中又没有匹配的初始化缓存时，
+客户端才会向配置的 API base 的 `/x/frontend/finger/spi` 发起匿名请求。它会验证服务器返回的 `data.b_3` 和
+`data.b_4`，只追加原 Cookie 中缺少的名称，并保留已经存在的同名 Cookie 值。验证通过的值
+缓存在客户端内存中，供克隆客户端共享；不会写入 `Credentials` 或 credential store。
+缓存仅保存服务器返回的值，以原始 Cookie、API base 和 user agent 的私有摘要作为上下文键；
+不会本地生成这些值。
+`FollowingFeed` 和其它输入不使用该初始化流程。初始化失败会返回错误，不会继续请求动态
+feed。相同的缺失 Cookie 初始化也适用于现有完整 SpaceDynamic resolver，并发生在 WBI nav
+请求之前；Following 和无关路径保持现有行为。
+
+初始化请求同样消耗 `max_requests`，nav、动态页和视频详情请求也计入预算。发起 Space
+feed 前，操作会检查完整请求组：缓存未命中且 Cookie 缺少设备名称时需要一个 SPI 请求；
+游标未保留 WBI key 时需要一个 nav 请求；此外还需要一个 feed 请求。因此，冷缓存且没有
+待用 key 的初始 SpaceDynamic feed 共需三个额度；少于三个时以 `RequestLimit` 停止，不会
+请求 SPI、nav 或动态 feed。如果游标已保留 WBI key、但初始化仍是冷缓存，请求组是 SPI 加
+feed。如果初始化已缓存（或两个 Cookie 名称原本都存在），且游标没有 WBI key，请求组是
+nav 加 feed。如果初始化和 key 均可用，则只需一个 feed 额度。消费缓冲条目或处理待用的
+视频详情请求时，如果不需要新的 Space feed，就不会触发初始化。关注动态不需要 WBI 查询。
+视频详情查询提供 cid，并展开多 P 视频。此操作只获取元数据，禁止自动重定向，不请求 tags、
+playurl 或媒体。请求计数统计 API 调用尝试，不统计传输握手或协议重传。每份 JSON 响应有
+1 MiB 字节上限，并在读取响应体时执行限制。相同的缺失 Cookie 初始化也适用于现有完整
+SpaceDynamic resolver，并发生在 WBI nav 请求之前；Following 和无关路径保持现有行为。
 
 `MetadataPage` 返回不含全量 `items` 字段的集合摘要、有界的 `items`、`requests_used`、
 `source_items_examined`、`stop_reason` 和 `next_cursor`。`MetadataStopReason` 区分
@@ -187,12 +205,13 @@ async fn main() -> bbdown_core::Result<()> {
 游标绑定输入、规范化 API 端点，以及私有的 cookie 上下文摘要；更换来源或认证上下文
 会在网络请求前被拒绝。它不保存原始凭据、WBI key 或签名 URL，调试输出会隐藏内部状态，
 也不提供序列化持久化格式。每次续页调用会重新获得预算；调用方还应限制整个候选窗口
-使用的调用次数。
-需要请求空间动态页且本次调用尚未获取 WBI key 时，nav 和动态页请求需要两个请求额度。
-若剩余额度不足 2，操作会以 `RequestLimit` 返回，不再发起新的 nav 或动态页请求。对于
-没有待处理缓冲记录的初始 `SpaceDynamic` 调用，若 `max_requests = 1`，操作会在任何请求
-发出前停止，`requests_used` 为 0。nav 和动态页消耗预算后，待处理的视频详情请求可在
-续页调用中使用新的单次调用预算恢复，无需再次请求 nav 或动态页。
+使用的调用次数。没有新的 Space feed 请求时，缓冲记录和待用视频详情不会触发设备 Cookie
+初始化。需要新的 Space feed 时，操作会把必要的 SPI、nav（游标没有 WBI key 时）和 feed
+作为一组预先检查。冷缓存且游标没有 key、Cookie 又缺少设备名称时共需三个额度；只有一
+个或两个额度时会以 `RequestLimit` 停止，`requests_used = 0`。若游标已有 key 但初始化缓存
+未命中，则 SPI 和 feed 需要两个额度；若初始化已缓存但游标没有 key，则 nav 和 feed 需要
+两个额度；若初始化和 key 都可用，则只需一个 feed 额度。nav 和动态页消耗预算后，待处理
+的视频详情请求可在续页调用中使用新的单次调用预算恢复，无需再次请求 nav 或动态页。
 
 上游动态接口没有稳定的快照 token，因此明确返回 `MetadataConsistency::BestEffort`：
 源列表变化时可能遗漏或重排结果。重复、循环或缺失的续页 offset 会明确报错，不会无界
@@ -203,16 +222,27 @@ async fn main() -> bbdown_core::Result<()> {
 
 ```mermaid
 flowchart TD
-    A[Validate input and cursor] --> B[Consume buffered records and pages]
-    B --> C{Need upstream metadata?}
-    C -->|Yes, quota available| D[Reserve nav, feed, or view request]
-    D --> E[Read bounded JSON and filter records]
-    E --> B
-    C -->|Limit or source end| F[Return items, usage, stop reason, and cursor]
+    A[验证输入和游标] --> B[消费已缓冲记录与视频分P]
+    B --> C{需要上游元数据？}
+    C -->|需要| D{下一次源请求是否为 Space feed？}
+    D -->|否| G{能否预留所需 nav、feed 或 view 请求？}
+    D -->|是| E{是否需要未缓存的设备 Cookie 初始化？}
+    E -->|是| F{预算覆盖 SPI、可选 nav 和 feed？}
+    F -->|是| H[匿名请求 SPI；验证、缓存并追加缺少名称]
+    F -->|否| J[返回 RequestLimit，停止下一组请求]
+    E -->|否| G
+    H --> G
+    G -->|能| I[发出所需 nav、feed 或 view 请求]
+    G -->|否| J
+    I --> K[读取有界 JSON 并筛选记录]
+    K --> B
+    C -->|额度耗尽或源结束| L[返回条目、用量、停止原因和游标]
 ```
 
-此 API 需要当前源码检出，尚未包含在已发布的 `0.9.0` 中。它不代表上游已经接受真实的
-动态请求；HTTP 412 定位和认证播放验证仍是独立的验收门槛。
+此 API 需要当前源码检出，尚未包含在已发布的 `0.9.0` 中。认证 actual-core 端到端检查使用
+原始已存 Cookie，由库自动初始化。首次调用用 3 个请求额度，在视频详情前停止；续页用
+2 个请求返回 2 条视频元数据，合计 5 个请求、检查 3 条源记录。这验证了元数据初始化、
+请求计数和续页；完整 V2 consumer 规划与播放仍需独立验收。
 
 推荐输入使用 WEB 首页推荐端点。它支持 `recommendations`、`recommendation`、`recommend`
 shorthand 和 B 站首页 URL。当前实现会输出普通视频 `av` 卡片；非视频推荐卡片会被跳过，

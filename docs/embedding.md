@@ -153,14 +153,34 @@ semantics; `Selection::Page(n)` continues to select the nth result item.
 | --- | ---: | ---: | --- |
 | `max_items` | 100 | 4096 | Valid, unique `(aid, cid)` video pages returned |
 | `max_source_items` | 100 | 4096 | Examined dynamic records, including invalid, non-video, and duplicate records |
-| `max_requests` | 10 | 512 | Attempted nav, feed, and video-view API calls, including failed attempts |
+| `max_requests` | 10 | 512 | Attempted device-cookie initialization, nav, feed, and video-view API calls, including failed attempts |
 
-The operation stops before starting another request once its request budget is exhausted. Space
-feeds obtain a WBI key only when another feed request is needed; following feeds do not require
-that key lookup. Video-view lookup supplies cid and expands multi-page videos. The operation only
-fetches metadata, with redirects disabled; it does not request tags, playurl, or media. The request
-counter counts API attempts, not transport handshakes or protocol retransmissions. Each response
-has a 1 MiB JSON byte ceiling, enforced while reading the body.
+The operation stops before starting another request once its request budget is exhausted. Only
+when a new `SpaceDynamic` feed request is needed, if the configured cookie is missing `buvid3` or
+`buvid4` and no matching in-memory initializer result is cached, the client makes an anonymous
+request to the configured API base's `/x/frontend/finger/spi` endpoint. It validates the server-issued `data.b_3` and
+`data.b_4` values and appends only names that are absent from the configured cookie. Existing named
+cookie values are preserved. The validated server values are cached in client memory shared by
+clones, keyed by a private digest of the original cookie, API base, and user agent; no local values
+are generated. They are never written to `Credentials` or the credential store. `FollowingFeed`
+and other inputs do not use this initializer. If initialization fails, the error is returned and
+no feed request is sent.
+
+The initializer counts toward `max_requests`, as do nav, feed, and video-view calls. Before a
+Space feed, the operation checks the complete required group: one SPI call if initialization is
+uncached and a cookie name is missing, one nav call if the cursor does not retain a WBI key, and
+one feed call. A cold initial SpaceDynamic call with missing device-cookie names therefore needs
+three slots; with fewer than three, it returns `RequestLimit` without contacting SPI, nav, or feed.
+If the cursor retains a WBI key but initialization is still cold, the group is SPI plus feed. If
+initialization is cached (or both names already exist) and the cursor has no WBI key, it is nav
+plus feed. If both are already available, only the feed slot is needed. Buffered items and pending
+video-view calls do not trigger initialization when no new Space feed is needed. Following feeds
+do not require the WBI lookup. Video-view lookup supplies cid and expands multi-page videos.
+The operation only fetches metadata, with redirects disabled; it does not request tags, playurl,
+or media. The request counter counts API attempts, not transport handshakes or protocol
+retransmissions. Each response has a 1 MiB JSON byte ceiling, enforced while reading the body.
+The same missing-cookie initialization applies to the existing full SpaceDynamic resolver before
+its WBI nav request; Following and unrelated paths keep their existing behavior.
 
 `MetadataPage` contains collection information without an unbounded `items` field, a bounded
 `items` list, `requests_used`, `source_items_examined`, `stop_reason`, and `next_cursor`.
@@ -199,13 +219,15 @@ re-fetching already buffered pages. It is bound to the input, normalized API end
 private cookie-context digest; switching the source or authentication context is rejected before
 network access. It contains no raw credentials, WBI keys, or signed URLs, has redacted debug
 output, and is not a serialized persistence format. Each continuation call gets fresh budgets;
-callers should also bound the number of calls used for their overall candidate window.
-When a call needs a space-feed request and has not fetched a WBI key during that call, nav and
-feed require two request slots. If fewer than two remain, it returns `RequestLimit` without
-issuing another nav or feed request. For an initial `SpaceDynamic` call with no buffered records
-and `max_requests = 1`, it stops before any request and `requests_used` is zero.
-After nav and feed consume the budget, a pending video-view request can resume from the cursor
-with a fresh per-call budget without another nav or feed request.
+callers should also bound the number of calls used for their overall candidate window. Buffered
+records and pending video-view calls are consumed without device-cookie initialization when no new
+Space feed request is needed. For a new Space feed, the operation preflights SPI if needed, nav if
+the cursor does not retain a WBI key, and feed as one request group. Thus a cold initial call with
+missing device-cookie names needs three slots; if it has only one or two, it stops with
+`RequestLimit` and `requests_used = 0`. A warm initializer cache without a cursor key needs two
+slots; a retained key with a cold initializer needs SPI plus feed (two); when both cache and key
+are available, one feed slot suffices. After nav and feed consume the budget, a pending video-view
+request can resume from the cursor with a fresh per-call budget without another nav or feed request.
 
 Upstream dynamic feeds provide no stable snapshot token, so `MetadataConsistency::BestEffort`
 is explicit: source changes can cause omissions or reordered results. Repeated, cyclic, or
@@ -220,15 +242,27 @@ payload of returned items is capped at 4 MiB; exceeding it is an error rather th
 flowchart TD
     A[Validate input and cursor] --> B[Consume buffered records and pages]
     B --> C{Need upstream metadata?}
-    C -->|Yes, quota available| D[Reserve nav, feed, or view request]
-    D --> E[Read bounded JSON and filter records]
-    E --> B
-    C -->|Limit or source end| F[Return items, usage, stop reason, and cursor]
+    C -->|Yes| D{Next source call needs a Space feed?}
+    D -->|No| G{Can reserve required nav, feed, or view requests?}
+    D -->|Yes| E{Need uncached device-cookie initialization?}
+    E -->|Yes| F{Budget covers SPI plus optional nav and feed?}
+    F -->|Yes| H[Fetch anonymous SPI values; validate, cache, and apply missing names]
+    F -->|No| J[Return RequestLimit before the next request group]
+    E -->|No| G
+    H --> G
+    G -->|Yes| I[Perform required nav, feed, or view calls]
+    G -->|No| J
+    I --> K[Read bounded JSON and filter records]
+    K --> B
+    C -->|Limit or source end| L[Return items, usage, stop reason, and cursor]
 ```
 
 This API requires the current source checkout and is not included in the published `0.9.0`.
-It does not establish that the upstream accepts a live dynamic request; HTTP 412 diagnosis and
-authenticated playback validation are separate gates.
+An authenticated actual-core end-to-end check used the original stored cookie and automatic
+initialization. Its initial three-request call stopped before video details; a two-request
+continuation returned two video metadata items, with five requests and three examined source
+records in total. This validates metadata initialization, accounting, and continuation; full V2
+consumer planning and playback still require separate acceptance.
 
 Recommendation input uses the web homepage recommendation endpoint. It accepts the
 `recommendations`, `recommendation`, and `recommend` shorthands plus the Bilibili homepage URL. The

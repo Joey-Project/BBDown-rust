@@ -387,6 +387,7 @@ fn prepare_metadata_page(
             .build()?,
         config: client.config.clone(),
         json_body_limit: Some(MAX_RESPONSE_BYTES),
+        dynamic_device_cookie_cache: client.dynamic_device_cookie_cache.clone(),
     };
     Ok(PreparedMetadataPage {
         supported,
@@ -517,13 +518,25 @@ async fn fetch_next_dynamic_page(
     budget: &mut RequestBudget,
     mixin_key: &mut Option<String>,
 ) -> Result<bool> {
-    if let SupportedInput::Space { .. } = supported
-        && mixin_key.is_none()
-    {
-        if budget.remaining() < 2 || !budget.reserve() {
-            return Ok(false);
+    let mut cookie_override = None;
+    if let SupportedInput::Space { .. } = supported {
+        let needs_nav = mixin_key.is_none();
+        let downstream_requests = usize::from(needs_nav) + 1;
+        match client
+            .prepare_space_dynamic_cookie(|| {
+                budget.remaining() >= downstream_requests.saturating_add(1) && budget.reserve()
+            })
+            .await?
+        {
+            super::DynamicDeviceCookiePreparation::Ready(cookie) => cookie_override = cookie,
+            super::DynamicDeviceCookiePreparation::RequestLimit => return Ok(false),
         }
-        *mixin_key = Some(client.fetch_wbi_mixin_key().await?);
+        if needs_nav {
+            if budget.remaining() < 2 || !budget.reserve() {
+                return Ok(false);
+            }
+            *mixin_key = Some(client.fetch_wbi_mixin_key().await?);
+        }
     }
     if !budget.reserve() {
         return Ok(false);
@@ -533,6 +546,7 @@ async fn fetch_next_dynamic_page(
             supported.kind(),
             state.offset.as_deref(),
             mixin_key.as_deref(),
+            cookie_override.as_deref(),
         )
         .await?;
     accept_provider_page(state, page)?;
@@ -832,12 +846,16 @@ fn _provider_item_type_guard(_: DynamicFeedItem) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::client::validate_server_cookie_value;
     use crate::{
         ClientConfig, EndpointConfig, PgcWebPlayurlRoute, PlayurlMode, RestrictedAreaConfig,
         credentials::Credentials,
     };
     use httpmock::{Method::GET, MockServer};
     use serde_json::json;
+
+    // Synthetic auth fixture from joey-private-v3: access-a.
+    const AUTH_VALUE: &str = "codex_synth_v1_access_a";
 
     fn test_client(server: &MockServer) -> BiliClient {
         BiliClient::new(ClientConfig {
@@ -863,6 +881,12 @@ mod tests {
             user_agent: "metadata-test".to_owned(),
             request_timeout: std::time::Duration::from_secs(2),
         })
+    }
+
+    fn test_client_with_cookie(server: &MockServer, cookie: &str) -> BiliClient {
+        let mut client = test_client(server);
+        client.config.credentials.cookie = Some(cookie.to_owned());
+        client
     }
 
     fn archive(aid: u64, _cid: u64, pages: usize) -> serde_json::Value {
@@ -907,6 +931,250 @@ mod tests {
 
     fn nonzero(value: usize) -> NonZeroUsize {
         NonZeroUsize::new(value).unwrap_or(NonZeroUsize::MIN)
+    }
+
+    #[test]
+    fn server_cookie_values_reject_empty_oversized_and_invalid_octets() {
+        for value in [Some(String::new()), Some("bad;value".to_owned())] {
+            assert!(validate_server_cookie_value(value, "data.b_3").is_err());
+        }
+        assert!(validate_server_cookie_value(None, "data.b_3").is_err());
+        assert!(validate_server_cookie_value(Some("x".repeat(257)), "data.b_3").is_err());
+    }
+
+    #[tokio::test]
+    async fn space_device_cookie_init_is_budgeted_and_shared_with_client_clones()
+    -> anyhow::Result<()> {
+        // Synthetic ID fixtures: joey-private-v3 / id-a and id-b.
+        const BUVID3: &str = "codex_synth_v1_id_a";
+        const BUVID4: &str = "codex_synth_v1_id_b";
+        let cookie = format!("SESSDATA={AUTH_VALUE}");
+        let server = MockServer::start();
+        let spi = server.mock(|when, then| {
+            when.method(GET).path("/x/frontend/finger/spi");
+            then.status(200).json_body_obj(&json!({
+                "code": 0,
+                "data": {"b_3": BUVID3, "b_4": BUVID4}
+            }));
+        });
+        let nav = server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/nav");
+            then.status(200).json_body_obj(&nav_response());
+        });
+        let feed = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/polymer/web-dynamic/v1/feed/space")
+                .header(
+                    "cookie",
+                    format!("{cookie}; buvid3={BUVID3}; buvid4={BUVID4}"),
+                );
+            then.status(200)
+                .json_body_obj(&dynamic_page(&[archive(10, 100, 1)], None, false));
+        });
+        let view_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("aid", "10");
+            then.status(200).json_body_obj(&view(10, &[(100, "one")]));
+        });
+        let client = test_client_with_cookie(&server, &cookie);
+
+        let insufficient = client
+            .resolve_metadata_page(
+                Input::SpaceDynamic(7),
+                MetadataPageOptions::default().with_max_requests(nonzero(2)),
+            )
+            .await?;
+        assert_eq!(insufficient.requests_used, 0);
+        assert_eq!(insufficient.stop_reason, MetadataStopReason::RequestLimit);
+        assert_eq!(spi.calls(), 0);
+        assert_eq!(nav.calls(), 0);
+        assert_eq!(feed.calls(), 0);
+
+        let first = client
+            .resolve_metadata_page(
+                Input::SpaceDynamic(7),
+                MetadataPageOptions::default().with_max_requests(nonzero(4)),
+            )
+            .await?;
+        assert_eq!(first.requests_used, 4);
+        assert_eq!(first.items.len(), 1);
+        assert_eq!(spi.calls(), 1);
+        assert_eq!(nav.calls(), 1);
+        assert_eq!(feed.calls(), 1);
+        assert_eq!(view_mock.calls(), 1);
+
+        let clone = client.clone();
+        let second = clone
+            .resolve_metadata_page(
+                Input::SpaceDynamic(7),
+                MetadataPageOptions::default().with_max_requests(nonzero(3)),
+            )
+            .await?;
+        assert_eq!(second.requests_used, 3);
+        assert_eq!(second.items.len(), 1);
+        assert_eq!(spi.calls(), 1);
+        assert_eq!(nav.calls(), 2);
+        assert_eq!(feed.calls(), 2);
+        assert_eq!(view_mock.calls(), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn space_device_cookie_init_preserves_existing_names() -> anyhow::Result<()> {
+        // Synthetic ID fixtures: joey-private-v3 / id-a and id-b.
+        const EXISTING: &str = "codex_synth_v1_id_a";
+        const SERVER_VALUE: &str = "codex_synth_v1_id_b";
+        let cookie = format!("SESSDATA={AUTH_VALUE};buvid3={EXISTING}");
+        let server = MockServer::start();
+        let spi = server.mock(|when, then| {
+            when.method(GET).path("/x/frontend/finger/spi");
+            then.status(200).json_body_obj(&json!({
+                "code": 0,
+                "data": {"b_3": SERVER_VALUE, "b_4": SERVER_VALUE}
+            }));
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/nav");
+            then.status(200).json_body_obj(&nav_response());
+        });
+        let feed = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/polymer/web-dynamic/v1/feed/space")
+                .header("cookie", format!("{cookie}; buvid4={SERVER_VALUE}"));
+            then.status(200)
+                .json_body_obj(&dynamic_page(&[], None, false));
+        });
+        let page = test_client_with_cookie(&server, &cookie)
+            .resolve_metadata_page(
+                Input::SpaceDynamic(7),
+                MetadataPageOptions::default().with_max_requests(nonzero(3)),
+            )
+            .await?;
+        assert_eq!(page.stop_reason, MetadataStopReason::End);
+        assert_eq!(page.requests_used, 3);
+        assert_eq!(spi.calls(), 1);
+        assert_eq!(feed.calls(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn invalid_server_cookie_response_is_not_cached_and_can_be_retried() -> anyhow::Result<()>
+    {
+        // Synthetic ID fixtures: joey-private-v3 / id-a and id-b.
+        const BUVID3: &str = "codex_synth_v1_id_a";
+        const BUVID4: &str = "codex_synth_v1_id_b";
+        let server = MockServer::start();
+        let mut invalid_spi = server.mock(|when, then| {
+            when.method(GET).path("/x/frontend/finger/spi");
+            then.status(200).json_body_obj(&json!({
+                "code": 0,
+                "data": {"b_3": "invalid;value", "b_4": BUVID4}
+            }));
+        });
+        let nav = server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/nav");
+            then.status(200).json_body_obj(&nav_response());
+        });
+        let feed = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/polymer/web-dynamic/v1/feed/space")
+                .header(
+                    "cookie",
+                    format!("SESSDATA={AUTH_VALUE}; buvid3={BUVID3}; buvid4={BUVID4}"),
+                );
+            then.status(200)
+                .json_body_obj(&dynamic_page(&[], None, false));
+        });
+        let client = test_client_with_cookie(&server, &format!("SESSDATA={AUTH_VALUE}"));
+
+        let first_error = client
+            .resolve_metadata_page(Input::SpaceDynamic(7), MetadataPageOptions::default())
+            .await
+            .err()
+            .ok_or_else(|| anyhow::Error::msg("invalid SPI cookie value must fail"))?;
+        assert!(
+            matches!(first_error, Error::InvalidInput(message) if message.contains("not a valid server-issued cookie value"))
+        );
+        assert_eq!(invalid_spi.calls(), 1);
+        assert_eq!(nav.calls(), 0);
+        assert_eq!(feed.calls(), 0);
+
+        invalid_spi.delete();
+        let valid_spi = server.mock(|when, then| {
+            when.method(GET).path("/x/frontend/finger/spi");
+            then.status(200).json_body_obj(&json!({
+                "code": 0,
+                "data": {"b_3": BUVID3, "b_4": BUVID4}
+            }));
+        });
+        let page = client
+            .resolve_metadata_page(Input::SpaceDynamic(7), MetadataPageOptions::default())
+            .await?;
+        assert_eq!(page.stop_reason, MetadataStopReason::End);
+        assert_eq!(page.requests_used, 3);
+        assert_eq!(valid_spi.calls(), 1);
+        assert_eq!(nav.calls(), 1);
+        assert_eq!(feed.calls(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn space_device_cookie_spi_is_bounded_and_does_not_follow_redirects() -> anyhow::Result<()>
+    {
+        let server = MockServer::start();
+        let spi = server.mock(|when, then| {
+            when.method(GET).path("/x/frontend/finger/spi");
+            then.status(302).header("Location", "/x/web-interface/nav");
+        });
+        let nav = server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/nav");
+            then.status(200).json_body_obj(&nav_response());
+        });
+        assert!(
+            test_client_with_cookie(&server, &format!("SESSDATA={AUTH_VALUE}"))
+                .resolve_metadata_page(Input::SpaceDynamic(7), MetadataPageOptions::default(),)
+                .await
+                .is_err()
+        );
+        assert_eq!(spi.calls(), 1);
+        assert_eq!(nav.calls(), 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn space_device_cookie_spi_rejects_oversized_json_before_nav_or_feed()
+    -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let spi = server.mock(|when, then| {
+            when.method(GET).path("/x/frontend/finger/spi");
+            then.status(200).body(format!(
+                "{{\"code\":0,\"data\":{{\"b_3\":\"id\",\"b_4\":\"id\",\"padding\":\"{}\"}}}}",
+                "x".repeat(MAX_RESPONSE_BYTES)
+            ));
+        });
+        let nav = server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/nav");
+            then.status(200).json_body_obj(&nav_response());
+        });
+        let feed = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/polymer/web-dynamic/v1/feed/space");
+            then.status(200)
+                .json_body_obj(&dynamic_page(&[], None, false));
+        });
+        let err = test_client_with_cookie(&server, &format!("SESSDATA={AUTH_VALUE}"))
+            .resolve_metadata_page(Input::SpaceDynamic(7), MetadataPageOptions::default())
+            .await
+            .err()
+            .ok_or_else(|| anyhow::Error::msg("oversized SPI response must be rejected"))?;
+        assert!(
+            matches!(err, Error::InvalidInput(message) if message.contains("1048576-byte limit"))
+        );
+        assert_eq!(spi.calls(), 1);
+        assert_eq!(nav.calls(), 0);
+        assert_eq!(feed.calls(), 0);
+        Ok(())
     }
 
     #[tokio::test]
