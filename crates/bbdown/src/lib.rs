@@ -21,8 +21,10 @@ mod selection;
 
 pub use cancellation::DownloadCancellationToken;
 pub use client::{
-    BiliClient, ClientConfig, EndpointConfig, PgcWebPlayurlRoute, PlayurlMode, RestrictedArea,
-    RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind,
+    BiliClient, ClientConfig, EndpointConfig, MetadataCollectionInfo, MetadataConsistency,
+    MetadataCursor, MetadataPage, MetadataPageOptions, MetadataStopReason, PgcWebPlayurlRoute,
+    PlayurlMode, RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy,
+    RestrictedAreaProxyKind,
 };
 pub use credential_preflight::{
     CredentialPreflightIssue, CredentialPreflightMode, CredentialPreflightReport,

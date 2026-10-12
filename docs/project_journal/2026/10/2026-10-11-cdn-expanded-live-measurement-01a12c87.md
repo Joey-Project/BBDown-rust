@@ -3,7 +3,7 @@ id: 20261011-cdn-expanded-live-measurement-01a12c87
 title: Expanded CDN Live Measurement and Routing Design
 status: completed
 created: 2026-10-11
-updated: 2026-10-11
+updated: 2026-10-12
 branch: wip/cdn-expanded-live-measurement
 pr: 98
 supersedes: []
@@ -135,6 +135,11 @@ superseded_by:
 
 ## Validation
 
+- After integrating master `4648427e81cc822a091e7402671f20dec64fcc36` (PR #99), rerun
+  `cargo test --offline --locked -p bbdown-core --lib --test public_api --test cdn_benchmark`:
+  594 library tests, one public API test, and 20 CDN tests passed; the live test remained ignored.
+  The metadata-page client is separate from the ordinary benchmark client. The recorded live
+  measurements remain bound to their original harness commit; no new live experiment was run.
 - `cargo test --offline --locked -p bbdown-core --test cdn_benchmark`: 20 passed, one live test
   ignored after review corrections. The initial three new tests cover default/lowered limits,
   invalid/zero/over-cap limits, and unique quality/codec selection. Two further regressions cover
