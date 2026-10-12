@@ -86,9 +86,11 @@ or credential-store update was used. Full consumer playback acceptance is still 
   initialization is not cached; values and context are redacted from Debug output. Legacy
   resolution uses the same preparation without changing full collection or page selection.
 - The bounded operation counts initializer, nav, feed, and view attempts. Reservation occurs
-  while holding the initialization cache lock. A cold authenticated SpaceDynamic call without
-  a retained WBI key needs three request slots before starting that group; lower budgets stop
-  without requesting initializer, nav, or feed. Buffered output does not force initialization.
+  while holding the initialization cache lock. Each call starts without a WBI key: its first
+  new Space feed needs nav plus feed, and a cold initializer adds a third request. Lower budgets
+  stop that group before requesting initializer, nav, or feed. Only later feeds within the same
+  call reuse its local key. The cursor stores no signing keys; buffered output does not force
+  initialization.
 - The initializer disables redirects and caps JSON at 1 MiB on both bounded and legacy paths.
   No fingerprint values are fabricated, no CAPTCHA or anti-risk values are replayed, and no
   credential store writes or media requests are part of this fix.
