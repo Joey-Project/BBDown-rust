@@ -3,9 +3,9 @@ id: 20261011-dynamic-request-and-bounded-metadata
 title: Dynamic Request Diagnosis And Bounded Metadata
 status: active
 created: 2026-10-11
-updated: 2026-10-11
-branch: wip/dynamic-bounded-metadata
-pr: https://github.com/Joey-Project/BBDown-rust/pull/99
+updated: 2026-10-12
+branch: wip/dynamic-request-diagnostics
+pr:
 supersedes: []
 superseded_by:
 ---
@@ -18,16 +18,34 @@ superseded_by:
   without changing its completed status.
 - Base: `e971ee5f15826ce455fd4642e1b886060876af49`. Published `0.9.0` already contains
   WBI signing; missing signing is not an established explanation for the reported HTTP 412.
+- The bounded API landed in [PR #99](https://github.com/Joey-Project/BBDown-rust/pull/99),
+  squash commit `4648427e81cc822a091e7402671f20dec64fcc36`. Follow-up diagnosis starts
+  from that merged master state.
 - Release preparation is paused in a separate worktree. This repair does not change versions,
   create release candidates, publish packages, or update release-wide documentation.
 
 ## A. Initial Dynamic Request
 
-**Status:** diagnosis pending; authenticated consumer acceptance remains blocked.
+**Status:** diagnosis active; authenticated consumer acceptance remains blocked.
 
-- This repair session has not sent authenticated Bilibili requests. A scoped request to reuse the
-  consumer's `family-room-new` Web-cookie profile against official Bilibili APIs is awaiting
-  Joey's authorization; the earlier episode/proxy authorization does not cover this fixture.
+- Joey explicitly authorized real-cookie requests for this diagnosis. The selected existing
+  profile was loaded read-only; credential values were neither printed nor retained. Requests
+  used only official `api.bilibili.com`, without proxies, playurl requests, or media downloads.
+- On 2026-10-12, the real bounded Rust core operation returned HTTP 412 without a completed
+  metadata page. Its error output reports a six-request budget, not the actual number used.
+- A separate three-request protocol control returned nav HTTP/2 200, provider code 0,
+  and `isLogin=true`. Both its HTTP/2 and HTTP/1.1 feed requests returned HTTP 412 with
+  non-JSON responses. This batch was bounded by nine API attempts in total.
+- The protocol control did not establish a source-code fix. Source comparison found no proven
+  semantic WBI difference; previous Python success was not contemporaneous.
+- A second three-request comparison ran within `2026-10-12 08:30:34` to `08:30:57 UTC`.
+  Its HTTP helpers used the same signed URL and explicit headers. Python independently
+  recomputed matching signature and query bytes, while both reqwest and urllib feed calls
+  returned HTTP 412 / provider code -412. Nav again reported `isLogin=true`.
+- This helper comparison is not actual-core acceptance or proof of server-side signature
+  validity. It did not isolate a source-code cause. A working official browser request under
+  the same account/network context is still needed; no cause is assigned to IP, TLS, or
+  credential expiry. No further live matrix or media tests have run.
 
 - Consumer fixture: `https://space.bilibili.com/441167301/dynamic`, against `0.9.0`
   commit `e422a159cdf70c5bec72b4120e2a70e5bd749088`.
