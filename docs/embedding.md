@@ -155,26 +155,32 @@ semantics; `Selection::Page(n)` continues to select the nth result item.
 | `max_source_items` | 100 | 4096 | Examined dynamic records, including invalid, non-video, and duplicate records |
 | `max_requests` | 10 | 512 | Attempted device-cookie initialization, nav, feed, and video-view API calls, including failed attempts |
 
-The operation stops before starting another request once its request budget is exhausted. Only
-when a new `SpaceDynamic` feed request is needed, if the configured cookie is missing `buvid3` or
-`buvid4` and no matching in-memory initializer result is cached, the client makes an anonymous
-request to the configured API base's `/x/frontend/finger/spi` endpoint. It validates the server-issued `data.b_3` and
-`data.b_4` values and appends only names that are absent from the configured cookie. Existing named
-cookie values are preserved. The validated server values are cached in client memory shared by
-clones, keyed by a private digest of the original cookie, API base, and user agent; no local values
-are generated. They are never written to `Credentials` or the credential store. `FollowingFeed`
-and other inputs do not use this initializer. If initialization fails, the error is returned and
-no feed request is sent.
+The operation stops before starting another request once its request budget is exhausted. This
+initializer applies only when a non-empty Web cookie is configured. An anonymous Space feed skips
+SPI; its first new feed still needs nav and feed. For a non-empty configured cookie, when a new
+`SpaceDynamic` feed request is needed and either `buvid3` or `buvid4` value is missing, empty, or
+whitespace-only with no matching in-memory initializer result cached, the client makes an
+anonymous request to the configured API base's `/x/frontend/finger/spi` endpoint.
+It validates the server-issued `data.b_3` and `data.b_4` values. The temporary Space feed Cookie
+header removes empty or whitespace-only device-cookie pairs and appends the server value for each
+name that has no non-empty configured value. Existing non-empty values are preserved. If each name
+already has a non-empty value, an empty duplicate is removed from the temporary header without an
+SPI request. This does not modify the original configured cookie or `Credentials`. Validated
+server values are cached in client memory shared by clones, keyed by a private digest of the
+original cookie, API base, and user agent; no local values are generated. They are never written to
+the credential store. `FollowingFeed` and other inputs do not use this initializer. If
+initialization fails, the error is returned and no feed request is sent.
 
 The initializer counts toward `max_requests`, as do nav, feed, and video-view calls. A WBI key is
 loaded at most once per `resolve_metadata_page` call and reused by later Space feed requests in
 that same call. The cursor does not store the key, so the first new Space feed in every call needs
-one nav request and one feed request. If the configured cookie is missing device names and the
-initializer cache is cold, that first feed also needs one SPI request: the group costs three
-requests. With fewer than three slots, a cold first feed returns `RequestLimit` without contacting
-SPI, nav, or feed. If initialization is already cached (or both names were configured), the first
-new feed in the call costs two requests for nav and feed. Later feeds in the same call cost one
-request each because the call-local WBI key and successful initialization are already available.
+one nav request and one feed request. If a non-empty configured cookie has a missing, empty, or
+whitespace-only device value and the initializer cache is cold, that first feed also needs one SPI
+request: the group costs three requests. With fewer than three slots, a cold first feed returns
+`RequestLimit` without contacting SPI, nav, or feed. If initialization is already cached (or both
+names have configured non-empty values), the first new feed in the call costs two requests for nav
+and feed. Later feeds in the same call cost one request each because the call-local WBI key and
+successful initialization are already available.
 If the call has fewer than the required slots, it returns `RequestLimit` before starting that
 request group.
 Buffered items and pending video-view calls do not need initialization, nav, or feed until another
@@ -228,10 +234,11 @@ records and pending video-view calls are consumed without device-cookie initiali
 feed when no new Space feed request is needed. If a continuation needs a new Space feed, it must
 fetch nav again because the cursor does not retain WBI keys; that call then reuses its key for any
 later feeds. Its first feed costs nav plus feed, and also SPI if device initialization is still cold.
-With a client whose initialization cache is warm (or a cookie that already had both device names),
-that group costs two slots. A cold group costs three and preflights all three before contacting
-SPI, nav, or feed. Subsequent feeds in that same call cost one slot each. A view request resumed
-from buffered cursor state needs only its own request budget and does not repeat nav or feed.
+With a client whose initialization cache is warm (or a cookie that already had non-empty values for
+both device names), that group costs two slots. A cold group costs three and preflights all three
+before contacting SPI, nav, or feed. Subsequent feeds in that same call cost one slot each. A view
+request resumed from buffered cursor state needs only its own request budget and does not repeat nav
+or feed.
 
 Upstream dynamic feeds provide no stable snapshot token, so `MetadataConsistency::BestEffort`
 is explicit: source changes can cause omissions or reordered results. Repeated, cyclic, or

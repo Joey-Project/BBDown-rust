@@ -2732,10 +2732,13 @@ impl BiliClient {
         };
         HeaderValue::from_str(cookie)
             .map_err(|_| Error::InvalidInput("invalid dynamic cookie header".to_owned()))?;
-        let has_buvid3 = cookie_has_name(cookie, "buvid3");
-        let has_buvid4 = cookie_has_name(cookie, "buvid4");
+        let mut prepared_cookie = remove_empty_device_cookie_pairs(cookie);
+        let has_buvid3 = cookie_has_nonempty_value(&prepared_cookie, "buvid3");
+        let has_buvid4 = cookie_has_nonempty_value(&prepared_cookie, "buvid4");
         if has_buvid3 && has_buvid4 {
-            return Ok(DynamicDeviceCookiePreparation::Ready(None));
+            return Ok(DynamicDeviceCookiePreparation::Ready(
+                (prepared_cookie != cookie).then_some(prepared_cookie),
+            ));
         }
 
         let context_binding = dynamic_device_cookie_context_binding(
@@ -2761,7 +2764,6 @@ impl BiliClient {
             values
         };
 
-        let mut prepared_cookie = cookie.to_owned();
         if !has_buvid3 {
             append_cookie_pair(&mut prepared_cookie, "buvid3", &values.buvid3);
         }
@@ -3978,11 +3980,35 @@ fn is_rfc6265_cookie_octet(byte: u8) -> bool {
         || (0x5d..=0x7e).contains(&byte)
 }
 
-fn cookie_has_name(cookie: &str, expected_name: &str) -> bool {
+fn cookie_has_nonempty_value(cookie: &str, expected_name: &str) -> bool {
     cookie.split(';').any(|pair| {
         pair.split_once('=')
-            .is_some_and(|(name, _)| name.trim() == expected_name)
+            .is_some_and(|(name, value)| name.trim() == expected_name && !value.trim().is_empty())
     })
+}
+
+fn remove_empty_device_cookie_pairs(cookie: &str) -> String {
+    let retained = cookie
+        .split(';')
+        .enumerate()
+        .filter(|(_, pair)| {
+            !pair.split_once('=').is_some_and(|(name, value)| {
+                matches!(name.trim(), "buvid3" | "buvid4") && value.trim().is_empty()
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut cleaned = String::with_capacity(cookie.len());
+    for (retained_index, (original_index, pair)) in retained.into_iter().enumerate() {
+        if retained_index > 0 {
+            cleaned.push(';');
+        }
+        if retained_index == 0 && original_index > 0 {
+            cleaned.push_str(pair.trim_start_matches([' ', '\t']));
+        } else {
+            cleaned.push_str(pair);
+        }
+    }
+    cleaned
 }
 
 fn append_cookie_pair(cookie: &mut String, name: &str, value: &str) {

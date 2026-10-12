@@ -73,6 +73,7 @@ async fn legacy_space_dynamic_resolve_initializes_device_cookie_and_selects_vide
     tokio::time::timeout(Duration::from_secs(10), async {
         let server = MockServer::start();
         let auth_cookie = format!("SESSDATA={AUTH_VALUE}");
+        let configured_cookie = format!("{auth_cookie}; buvid3=; buvid4=; extra=preserved");
         let spi_mock = server.mock(|when, then| {
             when.method(GET)
                 .path("/x/frontend/finger/spi")
@@ -82,7 +83,7 @@ async fn legacy_space_dynamic_resolve_initializes_device_cookie_and_selects_vide
         let nav_mock = server.mock(|when, then| {
             when.method(GET)
                 .path("/x/web-interface/nav")
-                .header("cookie", auth_cookie.as_str());
+                .header("cookie", configured_cookie.as_str());
             then.status(200).json_body_obj(&nav_response());
         });
         let feed_mock = server.mock(|when, then| {
@@ -93,7 +94,9 @@ async fn legacy_space_dynamic_resolve_initializes_device_cookie_and_selects_vide
                 .query_param_exists("w_rid")
                 .header(
                     "cookie",
-                    format!("{auth_cookie}; buvid3={SERVER_BUVID3}; buvid4={SERVER_BUVID4}"),
+                    format!(
+                        "{auth_cookie}; extra=preserved; buvid3={SERVER_BUVID3}; buvid4={SERVER_BUVID4}"
+                    ),
                 );
             then.status(200).json_body_obj(&feed_response());
         });
@@ -104,7 +107,7 @@ async fn legacy_space_dynamic_resolve_initializes_device_cookie_and_selects_vide
             then.status(200).json_body_obj(&view_response());
         });
 
-        let credentials = Credentials::default().with_cookie(auth_cookie.clone());
+        let credentials = Credentials::default().with_cookie(configured_cookie.clone());
         let config = ClientConfig::default()
             .with_endpoints(EndpointConfig::default().with_api_base(server.base_url()))
             .with_credentials(credentials.clone())
@@ -126,10 +129,13 @@ async fn legacy_space_dynamic_resolve_initializes_device_cookie_and_selects_vide
         assert_eq!(resolution.collection.items[1].cid, 9002);
         assert_eq!(resolution.selected_items.len(), 1);
         assert_eq!(resolution.selected_items[0].cid, 9002);
-        assert_eq!(credentials.cookie.as_deref(), Some(auth_cookie.as_str()));
+        assert_eq!(
+            credentials.cookie.as_deref(),
+            Some(configured_cookie.as_str())
+        );
         assert_eq!(
             config.credentials.cookie.as_deref(),
-            Some(auth_cookie.as_str())
+            Some(configured_cookie.as_str())
         );
 
         spi_mock.assert_calls(1);

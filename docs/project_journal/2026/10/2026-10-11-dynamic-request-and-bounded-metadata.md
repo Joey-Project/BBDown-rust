@@ -77,9 +77,12 @@ or credential-store update was used. Full consumer playback acceptance is still 
   items, three source records examined, four core requests plus one anonymous initializer.
   It stopped at the item limit. This validates the metadata diagnosis; the production
   initialization path and the consumer's V2 smoke have separate acceptance evidence.
-- Authenticated SpaceDynamic now prepares missing device cookies before fetching a new feed.
+- Authenticated SpaceDynamic now prepares missing or empty device cookies before fetching a new feed.
   It requests the configured API's initializer anonymously, validates both server values,
-  and preserves existing cookie names. Only the feed's temporary header is augmented;
+  and preserves existing nonempty cookie values. Empty or whitespace-only device pairs are removed
+  from the temporary feed header before missing values are added, avoiding duplicate-name shadowing.
+  When both device names already have nonempty values, empty duplicates are removed without SPI.
+  Only the feed's temporary header is prepared;
   credentials and configuration are unchanged. Following and other collections keep their
   existing behavior.
 - A clone-shared, context-bound in-memory cache avoids repeated initialization. Failed

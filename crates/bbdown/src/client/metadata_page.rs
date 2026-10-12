@@ -948,7 +948,9 @@ mod tests {
         // Synthetic ID fixtures: joey-private-v3 / id-a and id-b.
         const BUVID3: &str = "codex_synth_v1_id_a";
         const BUVID4: &str = "codex_synth_v1_id_b";
-        let cookie = format!("SESSDATA={AUTH_VALUE}");
+        let configured_cookie = format!("SESSDATA={AUTH_VALUE};buvid3=;buvid4= ;extra=preserved");
+        let expected_feed_cookie =
+            format!("SESSDATA={AUTH_VALUE};extra=preserved; buvid3={BUVID3}; buvid4={BUVID4}");
         let server = MockServer::start();
         let spi = server.mock(|when, then| {
             when.method(GET).path("/x/frontend/finger/spi");
@@ -964,10 +966,7 @@ mod tests {
         let feed = server.mock(|when, then| {
             when.method(GET)
                 .path("/x/polymer/web-dynamic/v1/feed/space")
-                .header(
-                    "cookie",
-                    format!("{cookie}; buvid3={BUVID3}; buvid4={BUVID4}"),
-                );
+                .header("cookie", expected_feed_cookie.as_str());
             then.status(200)
                 .json_body_obj(&dynamic_page(&[archive(10, 100, 1)], None, false));
         });
@@ -977,7 +976,7 @@ mod tests {
                 .query_param("aid", "10");
             then.status(200).json_body_obj(&view(10, &[(100, "one")]));
         });
-        let client = test_client_with_cookie(&server, &cookie);
+        let client = test_client_with_cookie(&server, &configured_cookie);
 
         let insufficient = client
             .resolve_metadata_page(
@@ -1025,7 +1024,9 @@ mod tests {
         // Synthetic ID fixtures: joey-private-v3 / id-a and id-b.
         const EXISTING: &str = "codex_synth_v1_id_a";
         const SERVER_VALUE: &str = "codex_synth_v1_id_b";
-        let cookie = format!("SESSDATA={AUTH_VALUE};buvid3={EXISTING}");
+        let cookie = format!(
+            "buvid4=; SESSDATA={AUTH_VALUE};buvid3= ;buvid3={EXISTING};buvid4=;extra=preserved"
+        );
         let server = MockServer::start();
         let spi = server.mock(|when, then| {
             when.method(GET).path("/x/frontend/finger/spi");
@@ -1041,7 +1042,12 @@ mod tests {
         let feed = server.mock(|when, then| {
             when.method(GET)
                 .path("/x/polymer/web-dynamic/v1/feed/space")
-                .header("cookie", format!("{cookie}; buvid4={SERVER_VALUE}"));
+                .header(
+                    "cookie",
+                    format!(
+                        "SESSDATA={AUTH_VALUE};buvid3={EXISTING};extra=preserved; buvid4={SERVER_VALUE}"
+                    ),
+                );
             then.status(200)
                 .json_body_obj(&dynamic_page(&[], None, false));
         });
@@ -1054,6 +1060,49 @@ mod tests {
         assert_eq!(page.stop_reason, MetadataStopReason::End);
         assert_eq!(page.requests_used, 3);
         assert_eq!(spi.calls(), 1);
+        assert_eq!(feed.calls(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn valid_device_pairs_remove_empty_duplicates_without_spi() -> anyhow::Result<()> {
+        // Synthetic ID fixtures: joey-private-v3 / id-a and id-b.
+        const BUVID3: &str = "codex_synth_v1_id_a";
+        const BUVID4: &str = "codex_synth_v1_id_b";
+        let cookie = format!(
+            "SESSDATA={AUTH_VALUE};buvid3={BUVID3};buvid4={BUVID4};buvid3=;extra=preserved"
+        );
+        let server = MockServer::start();
+        let spi = server.mock(|when, then| {
+            when.method(GET).path("/x/frontend/finger/spi");
+            then.status(500);
+        });
+        let nav = server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/nav");
+            then.status(200).json_body_obj(&nav_response());
+        });
+        let feed = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/polymer/web-dynamic/v1/feed/space")
+                .header(
+                    "cookie",
+                    format!(
+                        "SESSDATA={AUTH_VALUE};buvid3={BUVID3};buvid4={BUVID4};extra=preserved"
+                    ),
+                );
+            then.status(200)
+                .json_body_obj(&dynamic_page(&[], None, false));
+        });
+        let page = test_client_with_cookie(&server, &cookie)
+            .resolve_metadata_page(
+                Input::SpaceDynamic(7),
+                MetadataPageOptions::default().with_max_requests(nonzero(2)),
+            )
+            .await?;
+        assert_eq!(page.requests_used, 2);
+        assert_eq!(page.stop_reason, MetadataStopReason::End);
+        assert_eq!(spi.calls(), 0);
+        assert_eq!(nav.calls(), 1);
         assert_eq!(feed.calls(), 1);
         Ok(())
     }
