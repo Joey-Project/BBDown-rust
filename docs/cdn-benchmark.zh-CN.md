@@ -15,6 +15,19 @@
 `success` 和 `error_class` 结果。清理超时优先记录为 `bounded_cleanup_timeout`。已读取的超限响应块和在途
 响应块可能造成正文用量超额，取消与清理也可能延长总耗时。这些限制不是 wire 流量上限。
 
+可通过以下环境变量下调单次运行的安全预算：
+`BBDOWN_CDN_BENCHMARK_BODY_BUDGET_BYTES`、
+`BBDOWN_CDN_BENCHMARK_RUN_TIMEOUT_SECS`、
+`BBDOWN_CDN_BENCHMARK_REQUEST_BUDGET` 和
+`BBDOWN_CDN_BENCHMARK_MAX_MEDIA_BYTES`。未设置时保留上述默认值；设为零或高于默认值会被拒绝。每次独立调用
+harness 都会重置预算，因此操作者需自行汇总多次调用的预期消耗，并在需要时下调每次调用的限制，保证总量
+符合整体额度。正文预算统计 callback 报告的已读取响应正文；callback 已观察到正文块后才可能触发取消，
+在途响应块也可能造成超额。这仍是应用读取的正文预算，不是 wire 上限。
+
+`BBDOWN_CDN_BENCHMARK_QUALITY` 和 `BBDOWN_CDN_BENCHMARK_CODEC` 用于选择视频表示。两者均未设置时选择第一个
+视频表示；只要设置其中任一项，组合选择器就必须唯一匹配一个表示；codec 按完整字符串精确匹配。零个或
+多个匹配项都会导致 setup 失败，不会静默选择其中一个。
+
 ## 如何读取数据
 
 三组使用同一媒体计划表示，并按文件大小和 SHA-256 校验输出。摘要相同只能证明本次完成的输出文件
@@ -52,11 +65,12 @@ HTTPS 为 443，HTTP 为 80。不同的非默认端口不匹配。这段说明�
 时间只覆盖正文或带 phase 的诊断事件；它们不含建连和等待响应头的时间，因此不是完整请求时延，也不能
 把并发 host 的时间跨度相加。
 
-应跨样本、host、文件大小和运行时段比较耗时与字节分布。现有观测只有两种表示大小、两个较短的上午
+应跨样本、host、文件大小和运行时段比较耗时与字节分布。历史基线观测只有两种表示大小、两个较短的上午
 时段和 18 次成功下载；它们不能确立稳定提速、全天或多地点性能，也不足以设置全局默认路由。未来若要
 自动选择 CDN，应先收集更广的分布，再考虑不含 URL 或凭据的最少 host 健康状态，以及有界的自适应分片
 大小和并发度。必须保留严格 Range 校验、取消、回退和输出目标安全。公共播放地址解析服务器与媒体 CDN
 host 选择是不同的显式选项；受限区域 PGC 解析也单独启用。
+自动 CDN 选路见[后续设计计划](cdn-routing-plan.zh-CN.md)；它是独立的未来设计，目前尚未实现。
 
 ## 验证记录
 
@@ -64,3 +78,13 @@ host 选择是不同的显式选项；受限区域 PGC 解析也单独启用。
 延迟 Range 响应、候选排除、在另一 host 上重试部分响应正文、整文件回退，以及预算取消；这些场景不访问
 公网。验证状态和 gate 结果见[工作流 journal](project_journal/2026/10/2026-10-11-cdn-performance-baseline-53887b35.md)。
 本地 mock 结果不能说明实时性能。
+
+## 当前运行状态
+
+匿名 raw 预检的两个样本请求官方 metadata endpoint 均收到 HTTP 412。随后项目实际运行的 live harness 完成了
+两次有效的三组样本，因此 raw 预检失败不代表项目不可用。六组均报告 `valid_three_way_sample=true`，两次输出大小
+分别为 106,436,100 和 1,644,777 bytes，各次三组对照的 hash 均一致。两次调用累计读取解码后的媒体 response
+body 共 324,799,687 bytes。完整扩展
+live 记录见[测量 journal](project_journal/2026/10/2026-10-11-cdn-expanded-live-measurement-01a12c87.md)。
+两个独立样本中顺序下载都快于两种 Range 对照。这些短时观察不能证明稳定提速，也不能据此推荐默认 host；
+journal 记录了运行顺序、探测成本和测量限制。

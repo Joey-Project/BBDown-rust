@@ -26,6 +26,25 @@ outcomes. A cleanup timeout takes priority and is recorded as
 may overshoot the byte limit, and cancellation/cleanup may extend elapsed time.
 These limits are not a wire-traffic cap.
 
+The safety budgets can only be lowered for an invocation with
+`BBDOWN_CDN_BENCHMARK_BODY_BUDGET_BYTES`,
+`BBDOWN_CDN_BENCHMARK_RUN_TIMEOUT_SECS`,
+`BBDOWN_CDN_BENCHMARK_REQUEST_BUDGET`, and
+`BBDOWN_CDN_BENCHMARK_MAX_MEDIA_BYTES`. Unset values retain the defaults above;
+zero and values above the defaults are rejected. Each independent harness
+invocation starts with fresh budgets, so operators running multiple invocations
+must aggregate their expected use themselves and lower per-invocation limits as
+needed to stay within a combined allowance. The body budget counts callback-
+reported consumed response-body bytes; a callback that has already observed a
+body chunk may trigger cancellation only after that chunk, and in-flight chunks
+may also overshoot. This remains an application-body budget, not a wire cap.
+
+`BBDOWN_CDN_BENCHMARK_QUALITY` and `BBDOWN_CDN_BENCHMARK_CODEC` select the video
+representation. If both are unset, the first video representation is selected.
+If either is set, the combined selector must match exactly one representation;
+codec matching is exact. Zero or multiple matches fail setup rather than
+silently choosing one.
+
 ## Reading the measurements
 
 The groups compare the same planned representation and each output is checked
@@ -81,7 +100,7 @@ they omit connection and response-header wait, so they are neither full request
 latency nor durations that can be added across concurrent hosts.
 
 Compare elapsed time and byte distributions across samples, hosts, sizes, and
-run windows. Existing observations cover two representation sizes, two short
+run windows. Historical baseline observations cover two representation sizes, two short
 morning windows, and 18 successful downloads. They do not establish stable
 speedup, all-day or multi-location performance, or a global default route.
 Future automatic CDN selection should start with broader distributions, then
@@ -90,6 +109,9 @@ adaptive chunk size/concurrency. Exact Range validation, cancellation,
 fallback, and destination safety must remain intact. Public playurl resolvers
 are a separate explicit choice from media CDN host selection; restricted-area
 PGC resolution is also separate and opt-in.
+
+See the proposed [automatic CDN routing plan](cdn-routing-plan.md); it is a
+separate future design, not an implemented policy.
 
 ## Validation record
 
@@ -100,3 +122,17 @@ partial-body retry on another host, whole-file fallback, and budget
 cancellation without public network access. The [workstream journal](project_journal/2026/10/2026-10-11-cdn-performance-baseline-53887b35.md)
 records validation status and gate results. These mock results do not establish
 live performance.
+
+## Current run status
+
+An anonymous raw preflight received HTTP 412 from the official metadata endpoint
+for both attempted samples. The project's live harness subsequently completed
+two valid three-group samples, so the raw-preflight failures do not mean the
+project is unavailable. All six groups reported `valid_three_way_sample=true`.
+The two output sizes were 106,436,100 and 1,644,777 bytes, with matching hashes
+within each three-way comparison. The invocations together consumed 324,799,687
+decoded media response-body bytes. The expanded live record is
+in the [measurement journal](project_journal/2026/10/2026-10-11-cdn-expanded-live-measurement-01a12c87.md).
+Sequential was faster than either Range control in both individual samples.
+These short observations do not establish stable speedup or a recommended
+default host; the journal records order, probe costs, and measurement limits.
