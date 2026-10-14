@@ -8,8 +8,8 @@ BBDown Rust currently exposes a reusable `bbdown-core` package / `bbdown_core` c
 deterministic metadata, download-plan resolution, media download execution, sidecar downloads, and
 append-only danmaku sidecar updates, plus optional ffmpeg muxing. Supported input families include
 normal videos, PGC and intl episodes, PUGV/cheese courses, B23 short links, favorite lists, space
-videos, collections, series, homepage recommendations, watch history, watch-later lists, following
-feeds, and space dynamic feeds.
+videos, collections, series, homepage recommendations, per-video related recommendations, watch
+history, watch-later lists, following feeds, and space dynamic feeds.
 
 ## Release Archives
 
@@ -28,6 +28,8 @@ The crates.io publish target is the reusable `bbdown-core` library package. Use
 clean CI gate. The `bbdown-cli` package is marked `publish = false`; install or distribute the CLI
 through GitHub release archives instead. The current published release is `0.9.0`; it adds typed CDN
 transfer diagnostics and WBI-signed personal-space dynamic feed requests, including continuation pages.
+The unreleased `0.10.0` source line adds per-video related recommendations and records a reproducible
+CDN performance baseline. The latest published release and crate remain `0.9.0`.
 The `0.8.0` release added preserving danmaku refresh and credential-account identity APIs to the earlier
 `0.7.0` networking and downloader features. The published networking controls focus on opt-in CDN
 selection, probing and parallel transfer, bundled network catalogs, and independent PGC Web playurl routing. These controls require explicit selection; the
@@ -112,9 +114,9 @@ and OGV records, and deduplicate by aid. `--select` indexes the resulting list; 
 with `--select all`, info returns the full batch, while plan/download process all selected entries.
 `latest` means the first returned related video. Homepage aliases and the homepage URL keep their
 existing homepage-feed meaning. The endpoint uses the ordinary web API request path and may accept
-the configured cookie; anonymous upstream requests may be restricted. This feature requires the
-current source checkout and is not included in the published `0.9.0` release; it will ship in a
-future release.
+the configured cookie; anonymous upstream requests may be restricted. This feature is available
+from the current unreleased `0.10.0` source line and requires that source checkout; it is not
+included in the latest published `0.9.0` release.
 Watch-history input accepts `history` and `https://www.bilibili.com/account/history`. It requires an
 authenticated web cookie and currently emits normal-video `archive` records; other history business
 types such as PGC, live, or article records are skipped until those item shapes have dedicated
@@ -476,9 +478,9 @@ flowchart TD
     E --> F{--cdn-probe enabled or --cdn-parallel greater than 1?}
     F -->|Yes| G[Probe up to eight candidates: up to 64 KiB each]
     F -->|No| H[Keep configured candidate order]
-    G --> I{Parallel enabled, media eligible, and at least two compatible CDNs?}
+    G --> I{Parallel enabled, media eligible, and at least one compatible CDN host?}
     H --> J[Regular download or resume]
-    I -->|Yes| K[Download 1 MiB shards over 2–8 lanes after 16 KiB compatibility samples]
+    I -->|Yes| K[Download 1 MiB shards over 2–8 lanes after 16 KiB samples; cross-CDN only if multiple hosts qualify]
     I -->|No| J
     K -->|Recoverable failure| J
     K -->|Cancelled or fatal target error| X[Stop with error]

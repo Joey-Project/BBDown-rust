@@ -15,6 +15,9 @@ preserving danmaku refresh and explicit credential-account identity checks. The 
 release added explicit CDN host pools, probing, and parallel transfer options plus an independent
 PGC Web playurl route selector. These network actions remain caller-selected; the crate does not
 automatically route requests from the bundled CLI catalogs.
+The workspace `bbdown-core` package is preparing version `0.10.0`, which is not yet published; the
+latest published crate remains `0.9.0`. Related-recommendation APIs below require the current source
+checkout.
 Prefer constructors and builder-style APIs for configuration, and treat metadata and plan
 structs as read-only output surfaces. This keeps embedding code resilient when new fields are added
 while the crate matures.
@@ -159,8 +162,8 @@ empty default/all result is a valid empty collection. `Current` and `Episode` se
 before the endpoint request. The call uses the ordinary web API client configuration and may send its
 configured cookie; anonymous requests may be restricted by the upstream service. API errors are
 returned through the normal `Result` error path. No additional client configuration is required.
-This feature requires the current source checkout and is not included in the published `0.9.0`
-release; it will ship in a future release.
+This feature is available in the current unreleased `0.10.0` source line and requires that source
+checkout. It is not included in the latest published `0.9.0` crate.
 
 ```rust,no_run
 use bbdown_core::{BiliClient, ClientConfig, Input, ResolvedContent, Selection};

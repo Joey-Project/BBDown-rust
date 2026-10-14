@@ -11,13 +11,16 @@ replacement or BBDown-like PCDN avoidance through `MediaHostOptions`, and the
 `*_with_progress` / `*_with_cancellation` download methods emit typed progress callbacks and accept
 explicit cancellation tokens for embedding UIs. Raw input parsing covers
 normal videos, PGC and intl episodes, PUGV/cheese courses, B23 short links, favorite lists, space
-videos, collections, series, homepage recommendations, watch history, watch-later lists, following
-video feeds, and space dynamic video feeds.
+videos, collections, series, homepage recommendations, per-video related recommendations, watch
+history, watch-later lists, following video feeds, and space dynamic video feeds.
 
-Install with `cargo add bbdown-core`, then import with `bbdown_core`.
+Install the latest published crate with `cargo add bbdown-core`, then import it as `bbdown_core`.
+During `0.10.0` release preparation, the workspace package and CLI dependency are `0.10.0`, while
+the latest published crate remains `0.9.0`. Related-recommendation APIs described below require the
+current `0.10.0` source checkout.
 
-The current published crate version and source line are `0.9.0`, following the published `0.8.0`
-release. This release adds typed
+The current source line is preparing unreleased `0.10.0`. The latest published crate is `0.9.0`,
+following the published `0.8.0` release. That release adds typed
 CDN transfer-byte and diagnostic progress events, including the
 `probe_media_cdns_with_progress` API, and signs personal-space dynamic feed requests with WBI,
 including continuation offsets. Transfer-byte events count response-body bytes consumed by the
@@ -88,8 +91,8 @@ including `https://m.bilibili.com/video/...`. They resolve one finite batch, pre
 order, filter the source, invalid, and OGV items, and deduplicate by aid. Selection indexes this
 result list; it is not paginated or recursive. The endpoint uses the normal web API client and may
 send its configured cookie, while anonymous requests may be restricted upstream.
-This feature requires the current source checkout and is not included in the published `0.9.0`
-release; it will ship in a future release.
+This feature is available in the current unreleased `0.10.0` source line and requires that source
+checkout. It is not included in the latest published `0.9.0` crate.
 Recommendation input fetches homepage recommendation batches and currently emits normal-video `av`
 cards, walking additional `fresh_idx` refresh batches within a safety cap when needed to cover
 explicit index selection. History, watch-later, and dynamic feed inputs require a cookie in client

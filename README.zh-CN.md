@@ -32,6 +32,9 @@ path-based medialist 收藏夹 URL，以及带 uploader mid 的空间合集 / �
 `bilibili.com/account/history` 观看历史页面，以及 `bilibili.com/watchlater` 和
 `bilibili.com/list/watchlater` 稍后再看页面。
 
+尚未发布的 `0.10.0` source line 增加单视频相关推荐，并记录可复现的 CDN 性能 baseline。当前最新已发布的
+CLI release 与 `bbdown-core` crate 仍为 `0.9.0`。
+
 ## 当前 CLI
 
 解析元数据并输出 JSON：
@@ -195,7 +198,7 @@ bbdown info ss26801 --select page:1
 `https://m.bilibili.com/video/...`）。它只读取该源视频的一批有限相关推荐，不会
 翻页或递归抓取相关推荐；结果按上游顺序排列，排除源视频、无效条目和 OGV 条目，并按 aid
 去重。`--select` 按这份结果列表的序号选择；homepage aliases 和首页 URL 仍表示首页推荐。
-此功能需要当前源码检出，尚未包含在已发布的 `0.9.0` 中，将随后续版本发布。
+此功能属于尚未发布的 `0.10.0` source line，需要当前源码检出；最新已发布的 `0.9.0` 尚不包含此功能。
 观看历史输入可使用 `history` 或 `https://www.bilibili.com/account/history`，需要已认证的
 WEB cookie，目前只包含普通视频 `archive` 历史记录。稍后再看输入可使用 `watchlater`、
 `watch-later`、`watch_later`、`later`、`toview` 或
@@ -378,7 +381,8 @@ just ci
 
 - Crate API 说明：可发布 package 是 `bbdown-core`，导入时使用 `bbdown_core`。`0.7.0` 发布版
   增加了可选 CDN host 选择、探测和并行传输、内置网络目录，以及独立的 PGC Web playurl 路由
-  API；目录不会触发自动 CDN 路由。当前已发布 crate 版本为 `0.9.0`。
+  API；目录不会触发自动 CDN 路由。当前 source line 正在准备尚未发布的 `0.10.0`；最新已发布 crate
+  仍为 `0.9.0`，其中不包含单视频相关推荐功能。
   `0.5.0` 的 download API 仍包含
   `DownloadProgressEvent` callback、基于 `DownloadCancellationToken` 的 graceful
   cancellation，以及当 plan 条目暴露章节时的 ffmpeg 章节 metadata mux；嵌入项目应优先使用

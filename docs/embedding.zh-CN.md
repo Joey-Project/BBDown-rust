@@ -14,6 +14,8 @@ Bilibili 元数据、下载计划、媒体下载、字幕和弹幕旁路文件�
 这些网络操作仍由调用方显式选择；crate 不会根据 CLI 内置目录自动路由请求。配置应优先使用构造器和
 builder 风格 API，并将元数据和 plan 结构体视为只读输出。这样 crate 增加字段时，嵌入代码更不容易
 受到影响。
+工作区中的 `bbdown-core` package 正在准备 `0.10.0`，尚未发布；最新已发布 crate 仍为 `0.9.0`。
+下文的相关推荐 API 需要当前源码检出。
 
 ## 仅规划
 
@@ -146,7 +148,7 @@ selection)` 则是直接调用的公共 API，返回 `VideoCollectionResolution`
 批列表中的 1-based 序号。默认或 all 选择允许空结果。`Current` 和 `Episode` 会在请求端点
 前被拒绝。调用会复用普通 web API client 配置，也可能发送已配置的 cookie；匿名请求可能被
 上游限制。API 错误沿用正常 `Result` 错误返回路径，不需增加 client 配置。
-此功能需要当前源码检出，尚未包含在已发布的 `0.9.0` 中，将随后续版本发布。
+此功能属于当前尚未发布的 `0.10.0` source line，需要当前源码检出；最新已发布的 `0.9.0` crate 尚不包含此功能。
 
 ```rust,no_run
 use bbdown_core::{BiliClient, ClientConfig, Input, ResolvedContent, Selection};

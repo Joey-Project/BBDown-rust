@@ -26,6 +26,8 @@ text for invalid IDs), retains XML history, and regenerates selected ASS output 
 before publishing staged sidecars with the archive. The `0.9.0` release adds structured CDN
 transfer diagnostics to progress callbacks and CLI `--progress-json`, and signs personal-space
 dynamic feed requests with WBI, including continuation pages.
+The unreleased `0.10.0` source line adds per-video related recommendations and records a reproducible
+CDN performance baseline. The latest published CLI release and `bbdown-core` crate remain `0.9.0`.
 Input parsing covers normal videos, PGC and intl episodes, PUGV/cheese courses, B23 short links,
 favorite lists, space videos, collections, series, homepage recommendations, per-video related
 recommendations, watch history, watch-later lists, following video feeds, and space dynamic video
@@ -211,7 +213,8 @@ batch for that source video; they do not paginate or recursively fetch recommend
 exclude the source, invalid entries, and OGV entries, preserve upstream order, and deduplicate by
 aid. `--select` indexes this result list; homepage aliases and homepage URL continue to request the
 homepage recommendation feed. This feature requires the current source checkout and is not included
-in the published `0.9.0` release; it will ship in a future release. History input uses `history` or
+in the latest published `0.9.0` release; it is part of the unreleased `0.10.0` source line. History
+input uses `history` or
 `https://www.bilibili.com/account/history`, requires an authenticated web cookie, and currently
 includes normal-video `archive` history records. Watch-later input uses `watchlater`,
 `watch-later`, `watch_later`, `later`, `toview`, `https://www.bilibili.com/watchlater`, or
@@ -411,7 +414,9 @@ running, so sample behavior is driven by the manifest rather than shell state.
 - Crate API note: the publishable package is `bbdown-core`, imported as `bbdown_core`. The `0.7.0`
   release added the networking/downloader features described here, including opt-in CDN host
   selection, probing and parallel transfer, bundled network catalogs, and an independent PGC Web
-  playurl route API. The current published crate is `0.9.0`. The download APIs from `0.5.0` still include
+  playurl route API. The current source line is preparing unreleased `0.10.0`; the latest published
+  crate remains `0.9.0`, which does not include per-video related recommendations. The download APIs
+  from `0.5.0` still include
   `DownloadProgressEvent` callbacks,
   `DownloadCancellationToken`-based graceful cancellation, and ffmpeg chapter metadata muxing when
   plan entries expose chapters.

@@ -10,12 +10,15 @@
 `*_with_cancellation` 下载方法会为嵌入 UI 发出 typed progress callback，并接收显式
 cancellation token。原始输入解析覆盖普
 通视频、PGC 和 intl 分集、PUGV/cheese 课程、B23 短链接、收藏夹、空间投稿、合集、系列、
-首页推荐、观看历史、稍后再看列表、关注视频 feed 和空间动态视频 feed。
+首页推荐、单视频相关推荐、观看历史、稍后再看列表、关注视频 feed 和空间动态视频 feed。
 
-使用 `cargo add bbdown-core` 安装，然后用 `bbdown_core` 导入。
+使用 `cargo add bbdown-core` 安装最新已发布 crate，然后以 `bbdown_core` 导入。
+在 `0.10.0` release prep 期间，工作区 package 及 CLI dependency 为 `0.10.0`，最新已发布 crate
+仍为 `0.9.0`。下文的相关推荐 API 需要当前 `0.10.0` source checkout。
 
-当前已发布 crate 版本及 source line 是 `0.9.0`，接续已发布的 `0.8.0` 版本。该版本增加类型化 CDN 传输字节和
-诊断 progress event（包括 `probe_media_cdns_with_progress` API），并通过 WBI 签名个人空间动态
+当前 source line 正在准备尚未发布的 `0.10.0`。最新已发布 crate 为 `0.9.0`，接续已发布的 `0.8.0`。
+`0.9.0` 增加类型化 CDN 传输字节和诊断 progress event（包括 `probe_media_cdns_with_progress` API），并通过 WBI
+签名个人空间动态
 feed 请求，包括 offset 分页。传输字节事件统计应用已消费的响应正文字节，与写入或发布到文件的
 字节不同，也不代表全部线路传输量。
 
@@ -83,7 +86,7 @@ selection)`。`<video>` 可为 aid/`av`/`BV` 标识或 B 站官方桌面站/移�
 `https://m.bilibili.com/video/...`）。它只读取一批有限结果，保留上游顺序，过滤源视频、无效和 OGV 条目，并按 aid
 去重。`Selection` 作用于这份相关推荐列表；接口不会翻页或递归请求。它复用普通 web API
 client，也可能发送已配置的 cookie；上游可能限制匿名请求。
-此功能需要当前源码检出，尚未包含在已发布的 `0.9.0` 中，将随后续版本发布。
+此功能属于当前尚未发布的 `0.10.0` source line，需要该源码检出；最新已发布的 `0.9.0` crate 尚不包含此功能。
 
 library 默认保留 plan 中的媒体 URL。嵌入应用需要自定义 UPOS host、强制替换，或
 CLI-compatible PCDN fallback 处理时，应显式设置 `MediaHostOptions`。

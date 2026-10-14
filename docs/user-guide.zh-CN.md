@@ -7,8 +7,8 @@
 BBDown Rust 当前提供可复用的 `bbdown-core` package / `bbdown_core` crate 和一个 CLI，用
 于确定性的元数据解析、下载计划解析、媒体下载执行、旁路文件下载、append-only 弹幕旁路文
 件更新，以及可选 `ffmpeg` 封装。支持的输入家族包括普通视频、PGC 和 intl 分集、PUGV/cheese
-课程、B23 短链接、收藏夹、空间投稿、合集、系列、首页推荐、观看历史、稍后再看列表、关
-注 feed 和空间动态 feed。
+课程、B23 短链接、收藏夹、空间投稿、合集、系列、首页推荐、单视频相关推荐、观看历史、
+稍后再看列表、关注 feed 和空间动态 feed。
 
 ## 发布归档
 
@@ -25,7 +25,8 @@ crates.io 发布目标是可复用的 `bbdown-core` library package。使用 `ju
 `just publish-dry-run-strict` 或 `cargo publish --dry-run -p bbdown-core --locked` 可以复现
 干净 CI 门禁。`bbdown-cli` 包标记为 `publish = false`；CLI 应通过 GitHub release 归档安
 装或分发。当前已发布版本是 `0.9.0`，新增类型化 CDN 传输诊断，以及通过 WBI 签名的个人空间
-动态 feed 请求（包括分页请求）。`0.8.0` 增加了保留历史的弹幕刷新和账号身份 API，并延续
+动态 feed 请求（包括分页请求）。尚未发布的 `0.10.0` source line 增加单视频相关推荐，并记录可复现的 CDN
+性能 baseline；当前最新已发布的 release 与 crate 仍为 `0.9.0`。`0.8.0` 增加了保留历史的弹幕刷新和账号身份 API，并延续
 `0.7.0` 的网络与下载器功能。已发布的网络功能包括可选 CDN 选择、探测和并行传输、内置网络目录，以及独立的 PGC Web playurl 路由。
 这些控制都需要显式选择；目录是快照，
 只有用户运行探测或选定路由时才会检查列出的端点。嵌入调用方仍应优先使用
@@ -103,7 +104,7 @@ OGV 条目，并按 aid 去重。`--select` 按结果列表序号选择；不带
 `--select all` 时，`info` 返回整批结果，`plan`/`download` 处理所有选中条目。`latest` 表示
 上游返回的第一条相关推荐。首页 aliases 和首页 URL 仍然表示首页推荐 feed。该端点沿用普通
 WEB API 请求路径，也可能接受已配置的 cookie；上游可能限制匿名请求。
-此功能需要当前源码检出，尚未包含在已发布的 `0.9.0` 中，将随后续版本发布。
+此功能属于当前尚未发布的 `0.10.0` source line，需要当前源码检出；最新已发布的 `0.9.0` 尚不包含此功能。
 观看历史输入支持 `history` 和 `https://www.bilibili.com/account/history`。它需要已认证的
 WEB cookie，目前只输出普通视频 `archive` 记录；PGC、直播或专栏等其它历史记录 business
 类型会被跳过，直到这些条目形态有专门的 collection planning 支持。
@@ -413,9 +414,9 @@ flowchart TD
     E --> F{启用 --cdn-probe 或 --cdn-parallel 大于 1?}
     F -->|是| G[探测最多 8 个候选：每个最多采样 64 KiB]
     F -->|否| H[保留已配置的候选顺序]
-    G --> I{已启用并行、媒体符合条件且至少有 2 个兼容 CDN?}
+    G --> I{已启用并行、媒体符合条件且至少有 1 个兼容 CDN host?}
     H --> J[常规下载或续传]
-    I -->|是| K[先采样 16 KiB 检查兼容性，再用 2–8 路下载 1 MiB 分片]
+    I -->|是| K[先采样 16 KiB 检查兼容性，再用 2–8 路下载 1 MiB 分片；多个 host 符合条件时才跨 CDN]
     I -->|否| J
     K -->|可恢复的失败| J
     K -->|已取消或目标错误不可恢复| X[报错停止]
