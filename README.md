@@ -26,8 +26,12 @@ text for invalid IDs), retains XML history, and regenerates selected ASS output 
 before publishing staged sidecars with the archive. The `0.9.0` release adds structured CDN
 transfer diagnostics to progress callbacks and CLI `--progress-json`, and signs personal-space
 dynamic feed requests with WBI, including continuation pages.
-The unreleased `0.10.0` source line adds per-video related recommendations and records a reproducible
-CDN performance baseline. The latest published CLI release and `bbdown-core` crate remain `0.9.0`.
+The unreleased `0.10.0` source line adds per-video related recommendations, a bounded metadata-page
+API for following and space-dynamic feeds, and authenticated SpaceDynamic initialization for missing
+device-cookie values. It also records a reproducible CDN performance baseline; in both added sample
+invocations, sequential download was faster than either Range control for that fixture. This does
+not add automatic CDN routing or adaptive policy. The latest published CLI release and `bbdown-core`
+crate remain `0.9.0`.
 Input parsing covers normal videos, PGC and intl episodes, PUGV/cheese courses, B23 short links,
 favorite lists, space videos, collections, series, homepage recommendations, per-video related
 recommendations, watch history, watch-later lists, following video feeds, and space dynamic video

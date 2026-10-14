@@ -86,12 +86,17 @@
   Automatic routing, persistent route health, and adaptive tuning remain deferred from that release.
   Per-video related recommendations are complete on the current source line; additional feed/page
   families remain deferred.
-- The unreleased `0.10.0` source line prepares single-video related recommendations and an opt-in,
-  reproducible CDN comparison with deterministic local transfer scenarios. The latest published
-  release and crate remain `0.9.0`; no automatic CDN routing, persistent host-health state, or
-  adaptive tuning is included. See
-  `docs/project_journal/2026/10/2026-10-11-related-recommendations-01a12ad8.md` and
-  `docs/project_journal/2026/10/2026-10-11-cdn-performance-baseline-53887b35.md`.
+- The unreleased `0.10.0` source line includes per-video related recommendations, a bounded
+  metadata-page API for Following and SpaceDynamic, authenticated SpaceDynamic device-cookie
+  initialization, and reproducible CDN baseline work. In the two added live sample invocations,
+  sequential was faster than either Range control for each fixture; this short sample is not a
+  general performance claim. Automatic CDN routing, persistent host-health state, and adaptive
+  tuning are not implemented. The latest published release and crate remain `0.9.0`. See
+  `docs/project_journal/2026/10/2026-10-11-related-recommendations-01a12ad8.md`,
+  `docs/project_journal/2026/10/2026-10-11-page-family-roadmap.md`,
+  `docs/project_journal/2026/10/2026-10-11-cdn-performance-baseline-53887b35.md`,
+  `docs/project_journal/2026/10/2026-10-11-cdn-expanded-live-measurement-01a12c87.md`, and
+  `docs/project_journal/2026/10/2026-10-11-dynamic-request-and-bounded-metadata.md`.
 
 ## Recovery Pointers
 
@@ -116,10 +121,6 @@
 
 ## Global Blockers
 
-- At Joey's request, `v0.10.0` release preparation and publication are on hold until the initial
-  Space dynamic HTTP 412 and bounded metadata-only API fixes land. Preserve the draft work and
-  refresh both language versions and validation when preparation resumes. See
-  `docs/project_journal/2026/10/2026-10-11-v0-10-release-prep.md`.
 - No known blocker affects deterministic release validation. A consumer-specific real Rust
   playback-candidate check remains blocked before candidate production: the initial Space dynamic
   request returned HTTP 412, and V2 resolution also failed before producing a candidate. The

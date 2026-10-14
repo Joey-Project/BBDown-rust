@@ -3,7 +3,7 @@ id: 20261011-dynamic-request-and-bounded-metadata
 title: Dynamic Request Diagnosis And Bounded Metadata
 status: active
 created: 2026-10-11
-updated: 2026-10-12
+updated: 2026-10-14
 branch: wip/dynamic-request-diagnostics
 pr:
 supersedes: []
@@ -21,8 +21,9 @@ superseded_by:
 - The bounded API landed in [PR #99](https://github.com/Joey-Project/BBDown-rust/pull/99),
   squash commit `4648427e81cc822a091e7402671f20dec64fcc36`. Follow-up diagnosis starts
   from that merged master state.
-- Release preparation is paused in a separate worktree. This repair does not change versions,
-  create release candidates, publish packages, or update release-wide documentation.
+- Release preparation resumed in its separate worktree after PRs #99 and #100 merged. This repair
+  left version changes and release-wide documentation to that workstream; it did not create
+  release candidates or publish packages. Consumer playback acceptance remains separate below.
 
 ## A. Initial Dynamic Request
 

@@ -32,8 +32,10 @@ path-based medialist 收藏夹 URL，以及带 uploader mid 的空间合集 / �
 `bilibili.com/account/history` 观看历史页面，以及 `bilibili.com/watchlater` 和
 `bilibili.com/list/watchlater` 稍后再看页面。
 
-尚未发布的 `0.10.0` source line 增加单视频相关推荐，并记录可复现的 CDN 性能 baseline。当前最新已发布的
-CLI release 与 `bbdown-core` crate 仍为 `0.9.0`。
+尚未发布的 `0.10.0` source line 增加单视频相关推荐、适用于关注与空间动态 feed 的有界元数据分页 API，以及认证
+SpaceDynamic 请求缺少设备 Cookie 值时的初始化逻辑。它还记录了可复现的 CDN 性能 baseline；两次新增样本中，
+各自的顺序下载都快于对应的 Range 对照组。这不表示已实现自动 CDN 路由或自适应策略。当前最新已发布的 CLI
+release 与 `bbdown-core` crate 仍为 `0.9.0`。
 
 ## 当前 CLI
 

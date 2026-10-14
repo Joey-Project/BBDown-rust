@@ -8,8 +8,8 @@ embedding-facing shape of each source line and shipped release.
 
 ## Versions
 
-- [v0.10.0 source preparation (unpublished)](v0.10.0.md): per-video related recommendations and
-  a bounded, opt-in CDN transfer comparison baseline.
+- [v0.10.0 source preparation (unpublished)](v0.10.0.md): related recommendations, bounded
+  metadata pages and SpaceDynamic cookie initialization, plus expanded opt-in CDN measurements.
 - [v0.9.0 (published)](v0.9.0.md): structured CDN transfer diagnostics for progress callbacks and
   CLI JSON, plus WBI signing for personal-space dynamic feed requests and continuation pages.
 

@@ -16,8 +16,8 @@ release added explicit CDN host pools, probing, and parallel transfer options pl
 PGC Web playurl route selector. These network actions remain caller-selected; the crate does not
 automatically route requests from the bundled CLI catalogs.
 The workspace `bbdown-core` package is preparing version `0.10.0`, which is not yet published; the
-latest published crate remains `0.9.0`. Related-recommendation APIs below require the current source
-checkout.
+latest published crate remains `0.9.0`. Related-recommendation and bounded metadata-page APIs below
+require the current source checkout.
 Prefer constructors and builder-style APIs for configuration, and treat metadata and plan
 structs as read-only output surfaces. This keeps embedding code resilient when new fields are added
 while the crate matures.

@@ -7,8 +7,8 @@
 
 ## 版本
 
-- [v0.10.0 源码准备（尚未发布）](v0.10.0.zh-CN.md)：单视频相关推荐，以及有明确限额的可选 CDN
-  传输对比基线。
+- [v0.10.0 源码准备（尚未发布）](v0.10.0.zh-CN.md)：单视频相关推荐、有界 metadata 页面和
+  SpaceDynamic Cookie 初始化，以及扩展的可选 CDN 测量。
 - [v0.9.0（已发布）](v0.9.0.zh-CN.md)：为 progress callback 和 CLI JSON 增加结构化 CDN 传输
   诊断，并通过 WBI 签名个人空间动态 feed 请求及 offset 分页。
 

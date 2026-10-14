@@ -25,8 +25,10 @@ crates.io 发布目标是可复用的 `bbdown-core` library package。使用 `ju
 `just publish-dry-run-strict` 或 `cargo publish --dry-run -p bbdown-core --locked` 可以复现
 干净 CI 门禁。`bbdown-cli` 包标记为 `publish = false`；CLI 应通过 GitHub release 归档安
 装或分发。当前已发布版本是 `0.9.0`，新增类型化 CDN 传输诊断，以及通过 WBI 签名的个人空间
-动态 feed 请求（包括分页请求）。尚未发布的 `0.10.0` source line 增加单视频相关推荐，并记录可复现的 CDN
-性能 baseline；当前最新已发布的 release 与 crate 仍为 `0.9.0`。`0.8.0` 增加了保留历史的弹幕刷新和账号身份 API，并延续
+动态 feed 请求（包括分页请求）。尚未发布的 `0.10.0` source line 增加单视频相关推荐、适用于关注与空间动态 feed 的
+有界元数据分页 API，以及设备 Cookie 缺少值时的认证 SpaceDynamic 初始化。它还记录可复现的 CDN 性能 baseline；
+两次新增样本中，各自的顺序下载都快于对应的 Range 对照组。这不表示已实现自动 CDN 路由或自适应策略；当前最新已发布的
+release 与 crate 仍为 `0.9.0`。`0.8.0` 增加了保留历史的弹幕刷新和账号身份 API，并延续
 `0.7.0` 的网络与下载器功能。已发布的网络功能包括可选 CDN 选择、探测和并行传输、内置网络目录，以及独立的 PGC Web playurl 路由。
 这些控制都需要显式选择；目录是快照，
 只有用户运行探测或选定路由时才会检查列出的端点。嵌入调用方仍应优先使用
@@ -116,6 +118,9 @@ WEB cookie，目前只输出普通视频 `archive` 记录；PGC、直播或专�
 注 feed 中的普通视频 archive 卡片。空间动态 feed 输入支持
 `https://space.bilibili.com/<mid>/dynamic`，可以匿名访问，目前输出公开普通视频 archive 卡
 片；非视频动态卡片会被跳过。请求（包括分页续页）使用 WBI 签名。
+在尚未发布的 `0.10.0` source line 中，认证 SpaceDynamic 请求若要获取新 feed、且配置 Cookie 对 `buvid3` 或
+`buvid4` 没有非空值，会获取服务器签发的设备 Cookie 值。值只用于临时请求 header，并缓存在克隆共享的客户端内存中；
+不会修改已配置凭据。Following feed 不使用此初始化流程。
 
 ## 下载计划
 

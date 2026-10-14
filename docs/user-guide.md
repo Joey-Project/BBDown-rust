@@ -28,8 +28,12 @@ The crates.io publish target is the reusable `bbdown-core` library package. Use
 clean CI gate. The `bbdown-cli` package is marked `publish = false`; install or distribute the CLI
 through GitHub release archives instead. The current published release is `0.9.0`; it adds typed CDN
 transfer diagnostics and WBI-signed personal-space dynamic feed requests, including continuation pages.
-The unreleased `0.10.0` source line adds per-video related recommendations and records a reproducible
-CDN performance baseline. The latest published release and crate remain `0.9.0`.
+The unreleased `0.10.0` source line adds per-video related recommendations, a bounded metadata-page
+API for following and space-dynamic feeds, and authenticated SpaceDynamic initialization when device
+cookie values are missing. It also records a reproducible CDN performance baseline; in both added
+sample invocations, sequential download was faster than either Range control for that fixture. This
+does not add automatic CDN routing or adaptive policy. The latest published release and crate remain
+`0.9.0`.
 The `0.8.0` release added preserving danmaku refresh and credential-account identity APIs to the earlier
 `0.7.0` networking and downloader features. The published networking controls focus on opt-in CDN
 selection, probing and parallel transfer, bundled network catalogs, and independent PGC Web playurl routing. These controls require explicit selection; the
@@ -131,6 +135,10 @@ emits normal-video archive cards from the authenticated account's following feed
 input accepts `https://space.bilibili.com/<mid>/dynamic`, can run anonymously, and currently emits
 public normal-video archive cards; non-video dynamic cards are skipped. Requests, including paginated
 continuations, are signed with WBI.
+For authenticated SpaceDynamic requests, the unreleased `0.10.0` source line obtains server-issued
+device-cookie values when a new feed request needs `buvid3` or `buvid4` and the configured cookie has
+no non-empty value for that name. It uses a temporary request header and a clone-shared in-memory
+cache; configured credentials are not changed. Following feeds do not use this initializer.
 
 ## Download Plans
 

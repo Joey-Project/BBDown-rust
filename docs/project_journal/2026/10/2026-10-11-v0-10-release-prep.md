@@ -1,9 +1,9 @@
 ---
 id: 20261011-v0-10-release-prep
 title: v0.10.0 Release Preparation
-status: active
+status: completed
 created: 2026-10-11
-updated: 2026-10-11
+updated: 2026-10-14
 branch: wip/release-v0.10.0
 pr:
 supersedes: []
@@ -16,8 +16,9 @@ superseded_by:
 
 - Prepare `bbdown-core` and `bbdown-cli` version `0.10.0`, the CLI's path-constrained core
   dependency, and the two local package lock records without changing third-party resolution.
-- Add bilingual release notes and index entries for single-video related recommendations and
-  the reproducible CDN measurement/test baseline. Synchronize root/crate README, user, and
+- Add bilingual release notes and index entries for single-video related recommendations,
+  reproducible and expanded CDN measurements, bounded dynamic metadata, and device-cookie
+  initialization. Synchronize root/crate README, user, and
   embedding guidance while retaining `0.9.0` as the latest published version.
 - Refresh the stable project state and TODO entrypoints. Correct both download flow diagrams
   to allow parallel Range transfer with one compatible host, and cross-host transfer with
@@ -25,8 +26,11 @@ superseded_by:
 - Synchronize the release runbooks with the current `master` required-check configuration:
   `Rust` and `codex/github-review-gate`, with Code Owner review. Do not require v2 on unsupported
   fork-head or `release/*` PRs.
-- Record the separate pending [Space dynamic request and bounded metadata API follow-ups](2026-10-11-space-dynamic-request-and-bounded-metadata-followup.md).
-  The completed WBI signing workstream remains completed.
+- Synchronize the [dynamic follow-up record](2026-10-11-space-dynamic-request-and-bounded-metadata-followup.md)
+  with the implemented #99/#100 scope while keeping consumer V2 acceptance separate. The completed
+  WBI signing workstream remains completed.
+- Incorporate the explicitly assigned page-family planning documents from the coordinator's
+  checkout. Their priorities and resolver capability boundaries remain pending roadmap work.
 
 ## Scope And Limits
 
@@ -39,45 +43,44 @@ superseded_by:
   change no production CDN API or routing policy. Consumed response-body counters are not total
   wire traffic, sample compatibility is not whole-representation identity, and output hashes
   verify the produced samples rather than every CDN edge.
-- Automatic routing, persistent route health, adaptive sizing/concurrency, additional page
-  families, and the new metadata-only API remain follow-ups. Parallel new CDN measurements are
-  not part of this release-preparation record.
-- Consumer-supplied initial dynamic HTTP 412 evidence has not been reproduced by this thread;
-  the cause is undetermined and the consumer-focused dynamic live gate has not passed. This
-  does not invalidate deterministic release verification or establish failure for every fixture.
+- PR [#98](https://github.com/Joey-Project/BBDown-rust/pull/98) added two bounded benchmark
+  invocations and six valid downloads. Sequential transfer was faster in these two samples.
+  Harness budget/representation controls and bilingual routing proposals do not implement
+  automatic routing, persistent host health, or adaptive chunk/concurrency policy.
+- PR [#99](https://github.com/Joey-Project/BBDown-rust/pull/99) added explicit bounded metadata
+  pages only for Following and SpaceDynamic, preserving full `resolve`/`info` defaults. PR
+  [#100](https://github.com/Joey-Project/BBDown-rust/pull/100) added in-memory missing/empty device
+  cookie initialization, context-bound cache reuse, and accurate request accounting.
+- The repair thread verified actual-core metadata plus continuation: five requests returned two
+  video metadata items. Consumer V2 planning/focused smoke, download, HLS, and native playback
+  still have no successful acceptance evidence. This release-preparation thread ran no new live
+  requests and did not reuse the repair thread's credentials.
+- Additional page families and broader bounded metadata support remain future work.
 - This preparation does not create a tag, start RC/promotion workflows, or publish a GitHub
   Release/crate. Publication requires a separate approved step after the preparation PR lands.
 
 ## Source Validation
 
-- The source-feature journals record their original gates. The combined `master` source CI
-  [38168314709](https://github.com/Joey-Project/BBDown-rust/actions/runs/38168314709) completed
-  successfully at `e971ee5f15826ce455fd4642e1b886060876af49`. These are source validation
-  records, not validation of the version change or publication.
+- The source-feature journals record their original gates. The preparation resumed from merged
+  `master` `58038b3032067b82e074b7cf813f87d569be8fa5`, including #96–#100. Their historical tests
+  and live observations do not validate the release-preparation version change or publication.
 
 ## Release Preparation Validation
 
-- This workstream is on hold at Joey's request until the Space dynamic initial HTTP 412 and
-  bounded metadata-only API fixes land. The version and documentation edits remain uncommitted
-  on `wip/release-v0.10.0`; this thread has not created a PR or started publication.
-- Lightweight checks passed: `git diff --check`, project journal validation, local manifest/version metadata using
-  `cargo metadata --locked --offline --no-deps`, and the validation runner's Python syntax check.
-  Full offline dependency metadata could not complete because `anstyle-wincon 3.0.11` was absent
-  from the local cache. This does not establish a lockfile inconsistency.
-- The bounded `just ci` runner is prepared but has not been started. No release-preparation build,
-  test suite, package dry run, remote review, tag, RC, or promotion ran in this thread.
-
-## Resume Checkpoint
-
-- Preserve the checkout at `/Users/joey/.codex/worktrees/4268/BBDown-rust`, branch
-  `wip/release-v0.10.0`, and starting base `e971ee5f15826ce455fd4642e1b886060876af49`.
-- Preserve the task-scoped validation runner and recovery materials under
-  `/private/tmp/bbdown-v010-prep-01a12c87`. No Cargo build was started by the prepared runner.
-- After the fix PRs merge and the coordinating task authorizes resumption, update the base,
-  incorporate the implemented APIs and acceptance evidence into both language versions, and run
-  the necessary release-preparation gate before creating the independent PR.
-- The latest published version remains `0.9.0`. Release notes are a draft source-preparation
-  record and must be refreshed after the fixes; they do not announce publication.
+- Passed the bounded `just ci` gate with Rust/Cargo 1.95.0 on 2026-10-14: formatting, strict
+  workspace Clippy, MSRV installation/check, workspace tests, CLI e2e, and core package dry run.
+  Workspace tests: 858 passed, 3 ignored, 0 failed. The separate CLI e2e step: 159 passed,
+  0 ignored, 0 failed. No live/Bilibili tests ran.
+- The recorded producer exit was `0`; elapsed time was 31.450 seconds using the isolated warm
+  build cache. Whole-input and code/package digests were unchanged during the successful gate.
+- The first gate's producer log reached package dry-run completion, but a temporary runner's
+  summary error prevented persistence of its exit code. It is not counted as a passed gate.
+  The runner was repaired and checked against that saved log before the successful rerun;
+  no repository source changed between those attempts.
+- After the gate, only this validation record and two release-note clarifications changed:
+  omit a stale test-count label and distinguish the prior consumer V2 failure from absent
+  post-fix acceptance. Final documentation checks and code/package digest revalidation cover
+  those edits. No tag, RC, promotion, or publication is authorized by this workstream.
 
 ## Publication Handoff
 

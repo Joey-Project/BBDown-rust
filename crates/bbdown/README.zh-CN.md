@@ -14,13 +14,16 @@ cancellation token。原始输入解析覆盖普
 
 使用 `cargo add bbdown-core` 安装最新已发布 crate，然后以 `bbdown_core` 导入。
 在 `0.10.0` release prep 期间，工作区 package 及 CLI dependency 为 `0.10.0`，最新已发布 crate
-仍为 `0.9.0`。下文的相关推荐 API 需要当前 `0.10.0` source checkout。
+仍为 `0.9.0`。下文的相关推荐与有界元数据分页 API 需要当前 `0.10.0` source checkout。
 
 当前 source line 正在准备尚未发布的 `0.10.0`。最新已发布 crate 为 `0.9.0`，接续已发布的 `0.8.0`。
 `0.9.0` 增加类型化 CDN 传输字节和诊断 progress event（包括 `probe_media_cdns_with_progress` API），并通过 WBI
 签名个人空间动态
 feed 请求，包括 offset 分页。传输字节事件统计应用已消费的响应正文字节，与写入或发布到文件的
 字节不同，也不代表全部线路传输量。
+尚未发布的 source line 还提供仅支持 `FollowingFeed` 和 `SpaceDynamic` 的
+`resolve_metadata_page`，同时保持完整 `resolve`/`info` 行为；认证 SpaceDynamic feed 请求缺少设备 Cookie 时也会
+进行初始化。这些功能尚未包含在已发布的 `0.9.0` crate 中。
 
 crate 提供 staged XML 历史保留弹幕刷新，按有效的正 `p[7]` ID 去重；ID 缺失、为零或无效时，使用完整
 `p` 属性和解码文本作为匹配依据。它从合并 XML 重新生成 ASS，同时包含 CDN 控制和独立 PGC Web 路由 API。PGC 区域与代理解析独立于媒体

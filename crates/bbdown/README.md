@@ -16,8 +16,8 @@ history, watch-later lists, following video feeds, and space dynamic video feeds
 
 Install the latest published crate with `cargo add bbdown-core`, then import it as `bbdown_core`.
 During `0.10.0` release preparation, the workspace package and CLI dependency are `0.10.0`, while
-the latest published crate remains `0.9.0`. Related-recommendation APIs described below require the
-current `0.10.0` source checkout.
+the latest published crate remains `0.9.0`. Related-recommendation and bounded metadata-page APIs
+described below require the current `0.10.0` source checkout.
 
 The current source line is preparing unreleased `0.10.0`. The latest published crate is `0.9.0`,
 following the published `0.8.0` release. That release adds typed
@@ -26,6 +26,10 @@ CDN transfer-byte and diagnostic progress events, including the
 including continuation offsets. Transfer-byte events count response-body bytes consumed by the
 application; they are distinct from bytes written or published and do not represent total wire
 traffic.
+The unreleased source line also provides `resolve_metadata_page` for `FollowingFeed` and
+`SpaceDynamic`, preserving full `resolve`/`info` behavior, and initializes missing device-cookie
+values for authenticated SpaceDynamic feed requests. These additions are not in the published
+`0.9.0` crate.
 
 The crate provides staged XML-history-preserving danmaku refresh, deduplicates comments by positive
 IDs with a complete-parameter-and-decoded-text fallback, and regenerates ASS from merged XML. It
