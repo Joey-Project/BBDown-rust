@@ -26,11 +26,15 @@
 项目在普通集成代码中不需要结构体字面量。CLI 使用相同 public builder，这让它成为 crate
 API 的仓库内集成测试表面。
 
-输出模型保持为 typed data surfaces。当前已发布 crate 版本为 `0.9.0`。`0.8.0` 增加了分阶段
-暂存并保留历史的弹幕刷新和账号身份 API；更早的 `0.7.0` 增加显式 CDN host pool、限额探测、并行
-Range 传输和独立的 PGC Web playurl 路由选择器。`0.9.0` 增加类型化 CDN 传输诊断，以及通过
-WBI 签名的个人空间动态 feed 请求（包括分页续页）。目录快照由 CLI 用户显式选择，不构成自动路由策略；
-调用方应读取字段或序列化输出值，而不是把输出结构体视为稳定的构造目标。
+输出模型保持为 typed data surfaces。`0.8.0` 增加了分阶段暂存并保留历史的弹幕刷新和账号身份
+API；更早的 `0.7.0` 增加显式 CDN host pool、限额探测、并行 Range 传输和独立的 PGC Web
+playurl 路由选择器。`0.9.0` 增加类型化 CDN 传输诊断，以及通过 WBI 签名的个人空间动态 feed
+请求（包括分页续页）。`0.10.0` 引入单视频相关推荐和仅支持 `FollowingFeed`、`SpaceDynamic`
+的有界元数据分页 API；该 API 保持完整 `resolve`/`info` 行为不变。此版本的认证 SpaceDynamic
+解析可为临时请求 header 初始化缺失的设备 Cookie 值。使用这些功能需要 `bbdown-core` `0.10`
+依赖版本线；`0.9.0` 不包含这些功能。如果 registry 中尚无 `0.10.0` package，请使用匹配的源码检出
+或本地 path dependency。目录快照由 CLI 用户显式选择，不构成自动路由策略；调用方应读取字段或序列化
+输出值，而不是把输出结构体视为稳定的构造目标。
 
 ## 解析器模型
 

@@ -26,13 +26,18 @@ constructor paths so downstream projects do not need struct literals for ordinar
 The CLI uses the same public builders, which makes it an in-repo integration test surface for the
 crate API.
 
-Output models remain typed data surfaces. The current published crate version is `0.9.0`. The
-`0.8.0` release added staged preserving danmaku refresh and credential-account identity APIs, while
-`0.7.0` added explicit CDN host pools, bounded probing, parallel Range transfer, and an independent
-PGC Web playurl route selector. The `0.9.0` release adds typed CDN transfer diagnostics and WBI-signed
-personal-space dynamic feed requests, including continuation pages. Catalog snapshots are CLI inputs
-selected by users; they do not implement an automatic routing policy. Callers should read fields or
-serialize output values rather than treating output structs as stable construction targets.
+Output models remain typed data surfaces. Version `0.8.0` added staged preserving danmaku refresh and
+credential-account identity APIs, while `0.7.0` added explicit CDN host pools, bounded probing,
+parallel Range transfer, and an independent PGC Web playurl route selector. Version `0.9.0` added
+typed CDN transfer diagnostics and WBI-signed personal-space dynamic feed requests, including
+continuation pages. Version `0.10.0` introduces per-video related recommendations and a bounded
+metadata-page API for `FollowingFeed` and `SpaceDynamic`; this API preserves full `resolve`/`info`
+behavior. Authenticated SpaceDynamic resolution in this version can initialize missing device-cookie
+values for a temporary request header. These additions require the `bbdown-core` `0.10` dependency
+line; version `0.9.0` does not include them. If the `0.10.0` registry package is unavailable, use the
+matching source checkout or a local path dependency. Catalog snapshots are CLI inputs selected by
+users; they do not implement an automatic routing policy. Callers should read fields or serialize
+output values rather than treating output structs as stable construction targets.
 
 ## Resolver Model
 

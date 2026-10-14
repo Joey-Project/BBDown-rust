@@ -70,6 +70,8 @@ superseded_by:
 - Make packaged README and guide content describe versioned API capabilities without freezing an
   unpublished/latest-version claim into immutable artifacts. Date preparation-status records and
   link current release status; synchronize both languages.
+- Synchronize both packaged architecture guides with the versioned API boundary and the 0.10
+  additions, including explicit bounded metadata and in-memory device-cookie initialization.
 - Name the actual cookie configuration API in both release notes, and link consumer follow-up
   guidance to its dedicated record.
 - Use repository-hosted links for documents absent from binary archives; keep links between
@@ -93,6 +95,10 @@ superseded_by:
   seconds. Workspace tests: 858 passed, 3 ignored, 0 failed. The separate CLI e2e step: 159 passed,
   0 ignored, 0 failed. Whole-input and code/package digests remained stable during that gate;
   no live/Bilibili tests ran.
+- After synchronizing the packaged architecture guides, another `just ci` rerun passed all seven
+  stages with producer exit `0` in 36.002 seconds and the same test counts. Its whole-input digest,
+  including `docs/`, remained stable; code/core-package inputs and both architecture-guide content
+  digests were rechecked before the signed commit. No live/Bilibili tests ran.
 - Documentation checks and code/package digest revalidation accompany the validation-journal
   update before the signed correction commit. No tag, RC, promotion, or publication is authorized
   by this workstream.
