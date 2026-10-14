@@ -5,7 +5,7 @@ status: completed
 created: 2026-10-11
 updated: 2026-10-14
 branch: wip/release-v0.10.0
-pr:
+pr: https://github.com/Joey-Project/BBDown-rust/pull/101
 supersedes: []
 superseded_by:
 ---
@@ -24,8 +24,8 @@ superseded_by:
   to allow parallel Range transfer with one compatible host, and cross-host transfer with
   multiple compatible hosts.
 - Synchronize the release runbooks with the current `master` required-check configuration:
-  `Rust` and `codex/github-review-gate`, with Code Owner review. Do not require v2 on unsupported
-  fork-head or `release/*` PRs.
+  `Rust` and `codex/github-review-gate`, with Code Owner review. Document the maintainer integration
+  handoff for fork contributions; `release/*` is not a PR target and has no v2 requirement.
 - Synchronize the [dynamic follow-up record](2026-10-11-space-dynamic-request-and-bounded-metadata-followup.md)
   with the implemented #99/#100 scope while keeping consumer V2 acceptance separate. The completed
   WBI signing workstream remains completed.
@@ -65,9 +65,21 @@ superseded_by:
   `master` `58038b3032067b82e074b7cf813f87d569be8fa5`, including #96–#100. Their historical tests
   and live observations do not validate the release-preparation version change or publication.
 
+## Review Corrections
+
+- Make packaged README and guide content describe versioned API capabilities without freezing an
+  unpublished/latest-version claim into immutable artifacts. Date preparation-status records and
+  link current release status; synchronize both languages.
+- Name the actual cookie configuration API in both release notes, and link consumer follow-up
+  guidance to its dedicated record.
+- Use repository-hosted links for documents absent from binary archives; keep links between
+  bundled release notes local and synchronize language-specific destinations.
+- Explain that target-branch required checks also apply to fork-head PRs. Preserve `master`
+  protections and document reviewed integration through a same-repository PR; no ruleset changed.
+
 ## Release Preparation Validation
 
-- Passed the bounded `just ci` gate with Rust/Cargo 1.95.0 on 2026-10-14: formatting, strict
+- The initial pre-review bounded `just ci` gate passed with Rust/Cargo 1.95.0 on 2026-10-14: formatting, strict
   workspace Clippy, MSRV installation/check, workspace tests, CLI e2e, and core package dry run.
   Workspace tests: 858 passed, 3 ignored, 0 failed. The separate CLI e2e step: 159 passed,
   0 ignored, 0 failed. No live/Bilibili tests ran.
@@ -77,10 +89,13 @@ superseded_by:
   summary error prevented persistence of its exit code. It is not counted as a passed gate.
   The runner was repaired and checked against that saved log before the successful rerun;
   no repository source changed between those attempts.
-- After the gate, only this validation record and two release-note clarifications changed:
-  omit a stale test-count label and distinguish the prior consumer V2 failure from absent
-  post-fix acceptance. Final documentation checks and code/package digest revalidation cover
-  those edits. No tag, RC, promotion, or publication is authorized by this workstream.
+- The review-correction `just ci` rerun passed all seven stages with producer exit `0` in 38.024
+  seconds. Workspace tests: 858 passed, 3 ignored, 0 failed. The separate CLI e2e step: 159 passed,
+  0 ignored, 0 failed. Whole-input and code/package digests remained stable during that gate;
+  no live/Bilibili tests ran.
+- Documentation checks and code/package digest revalidation accompany the validation-journal
+  update before the signed correction commit. No tag, RC, promotion, or publication is authorized
+  by this workstream.
 
 ## Publication Handoff
 

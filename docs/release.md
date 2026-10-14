@@ -48,8 +48,14 @@ ruleset, then retire the old requirement. Do not bypass a missing required check
 ruleset as migrated before that readback.
 
 The installed v2 consumer supports same-repository ordinary PRs targeting the default branch.
-Fork-head PRs and PRs targeting `release/*` are outside its supported boundary; do not require the v2
-context on those branches until a separately reviewed capability exists.
+Required checks apply to the target branch, so fork-head PRs targeting `master` cannot satisfy the
+current required v2 gate. For fork contributions, a maintainer first reviews the intended changes,
+copies the reviewed changes to a same-repository branch, and opens a same-repository PR targeting
+`master`. Retain the original fork PR link and contribution attribution, and run the normal CI,
+Codex, Code Owner, and conversation gates on that integration PR with `master` protections intact.
+This is the supported contribution handoff until separately reviewed fork-head support exists.
+The project does not open PRs targeting `release/*`; those branches have no v2 requirement.
+
 - RC tags: target `v*-rc.*`; restrict creation, updates, and deletion; allow creation only through
   the release GitHub App.
 - Final release tags: target `v*` and exclude `v*-rc.*` when the UI supports excludes; otherwise use

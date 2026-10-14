@@ -26,14 +26,16 @@ The crates.io publish target is the reusable `bbdown-core` library package. Use
 `just publish-dry-run` for a local locked dry run that tolerates an uncommitted worktree, and use
 `just publish-dry-run-strict` or `cargo publish --dry-run -p bbdown-core --locked` to reproduce the
 clean CI gate. The `bbdown-cli` package is marked `publish = false`; install or distribute the CLI
-through GitHub release archives instead. The current published release is `0.9.0`; it adds typed CDN
+through GitHub release archives instead. Version `0.9.0` adds typed CDN
 transfer diagnostics and WBI-signed personal-space dynamic feed requests, including continuation pages.
-The unreleased `0.10.0` source line adds per-video related recommendations, a bounded metadata-page
+Version `0.10.0` introduces per-video related recommendations, a bounded metadata-page
 API for following and space-dynamic feeds, and authenticated SpaceDynamic initialization when device
 cookie values are missing. It also records a reproducible CDN performance baseline; in both added
-sample invocations, sequential download was faster than either Range control for that fixture. This
-does not add automatic CDN routing or adaptive policy. The latest published release and crate remain
-`0.9.0`.
+sample invocations, sequential download was faster than either Range control for that fixture. The
+`0.10.0` line does not implement automatic CDN routing or adaptive policy. Use the `0.10.0` CLI for
+its related-recommendation input and `bbdown-core = "0.10"` for its new library APIs; `0.9.0` does
+not include them. If a matching `0.10.0` binary or crate package is not available, use the matching
+source checkout or a local path dependency.
 The `0.8.0` release added preserving danmaku refresh and credential-account identity APIs to the earlier
 `0.7.0` networking and downloader features. The published networking controls focus on opt-in CDN
 selection, probing and parallel transfer, bundled network catalogs, and independent PGC Web playurl routing. These controls require explicit selection; the
@@ -118,9 +120,9 @@ and OGV records, and deduplicate by aid. `--select` indexes the resulting list; 
 with `--select all`, info returns the full batch, while plan/download process all selected entries.
 `latest` means the first returned related video. Homepage aliases and the homepage URL keep their
 existing homepage-feed meaning. The endpoint uses the ordinary web API request path and may accept
-the configured cookie; anonymous upstream requests may be restricted. This feature is available
-from the current unreleased `0.10.0` source line and requires that source checkout; it is not
-included in the latest published `0.9.0` release.
+the configured cookie; anonymous upstream requests may be restricted. Related recommendations were
+introduced in `0.10.0`; version `0.9.0` does not include this input. Use the `0.10.0` CLI, or a
+matching source checkout if its release archive is not available.
 Watch-history input accepts `history` and `https://www.bilibili.com/account/history`. It requires an
 authenticated web cookie and currently emits normal-video `archive` records; other history business
 types such as PGC, live, or article records are skipped until those item shapes have dedicated
@@ -135,7 +137,7 @@ emits normal-video archive cards from the authenticated account's following feed
 input accepts `https://space.bilibili.com/<mid>/dynamic`, can run anonymously, and currently emits
 public normal-video archive cards; non-video dynamic cards are skipped. Requests, including paginated
 continuations, are signed with WBI.
-For authenticated SpaceDynamic requests, the unreleased `0.10.0` source line obtains server-issued
+For authenticated SpaceDynamic requests, version `0.10.0` obtains server-issued
 device-cookie values when a new feed request needs `buvid3` or `buvid4` and the configured cookie has
 no non-empty value for that name. It uses a temporary request header and a clone-shared in-memory
 cache; configured credentials are not changed. Following feeds do not use this initializer.

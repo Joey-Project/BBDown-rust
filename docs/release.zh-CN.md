@@ -45,9 +45,13 @@ rulesets 应只允许这个 App 作为非人工 actor 写 tag。
 由 coordinator 激活它并回读确认精确 ruleset；然后才退役旧要求。不得绕过缺失的 required
 check，也不得在回读前宣称 ruleset 已迁移。
 
-已安装的 v2 consumer 支持同仓库、目标为 default branch 的普通 PR。Fork-head PR 和目标为
-`release/*` 的 PR 不在支持范围内；除非另有独立审查的能力实现，不要在这些分支要求 v2
-context。
+已安装的 v2 consumer 支持同仓库、目标为 default branch 的普通 PR。Required checks 按目标分支
+生效，因此 fork-head PR 以 `master` 为目标时无法满足当前必需的 v2 gate。接收 fork 贡献时，
+maintainer 先审查拟接收的修改，将已审查的修改复制到同仓库分支，再开启以 `master` 为目标的
+同仓库 PR。新 PR 保留原 fork PR 链接及贡献归属，并在保留 `master` 保护规则的情况下完成正常
+CI、Codex、Code Owner 和 conversation gates。这是独立审查通过 fork-head 支持前的贡献交接路径。
+本项目不开以 `release/*` 为目标的 PR，这些分支不要求 v2。
+
 - RC tags：target `v*-rc.*`；限制创建、更新和删除；只允许 release GitHub App 创建。
 - 正式 release tags：target `v*`，如果 UI 支持 exclude，则排除 `v*-rc.*`；否则使用不会匹配
   RC tag 的单独正式 tag pattern。限制创建、更新和删除；只允许 release GitHub App 创建。

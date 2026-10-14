@@ -7,10 +7,13 @@
 
 ## 版本
 
-- [v0.10.0 源码准备（尚未发布）](v0.10.0.zh-CN.md)：单视频相关推荐、有界 metadata 页面和
-  SpaceDynamic Cookie 初始化，以及扩展的可选 CDN 测量。
-- [v0.9.0（已发布）](v0.9.0.zh-CN.md)：为 progress callback 和 CLI JSON 增加结构化 CDN 传输
-  诊断，并通过 WBI 签名个人空间动态 feed 请求及 offset 分页。
+- [v0.10.0 源码准备（截至 2026-10-14 尚未发布）](v0.10.0.zh-CN.md)：单视频相关推荐、有界 metadata
+  页面和 SpaceDynamic Cookie 初始化，以及扩展的可选 CDN 测量。
+- [v0.9.0（截至 2026-10-14 已发布）](v0.9.0.zh-CN.md)：为 progress callback 和 CLI JSON 增加结构化
+  CDN 传输诊断，并通过 WBI 签名个人空间动态 feed 请求及 offset 分页。
+
+当前发布状态请查看
+[GitHub Releases 官方页面](https://github.com/Joey-Project/BBDown-rust/releases)。
 
 - [v0.8.0（已发布）](v0.8.0.zh-CN.md)：可选的弹幕保留更新模式会保留 XML 历史，并从合并后
   的 XML 重新生成选定的 ASS 文件；所选附加文件与归档变更会先暂存，再成组发布。旧 ASS 中

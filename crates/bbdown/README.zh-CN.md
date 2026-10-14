@@ -12,18 +12,15 @@ cancellation token。原始输入解析覆盖普
 通视频、PGC 和 intl 分集、PUGV/cheese 课程、B23 短链接、收藏夹、空间投稿、合集、系列、
 首页推荐、单视频相关推荐、观看历史、稍后再看列表、关注视频 feed 和空间动态视频 feed。
 
-使用 `cargo add bbdown-core` 安装最新已发布 crate，然后以 `bbdown_core` 导入。
-在 `0.10.0` release prep 期间，工作区 package 及 CLI dependency 为 `0.10.0`，最新已发布 crate
-仍为 `0.9.0`。下文的相关推荐与有界元数据分页 API 需要当前 `0.10.0` source checkout。
+使用 `cargo add bbdown-core` 从 crates.io 安装 crate，然后以 `bbdown_core` 导入。
+`0.8.0` 增加了保留历史的弹幕刷新和账号身份 API。`0.9.0` 增加了类型化 CDN 传输字节和诊断 progress event（包括
+`probe_media_cdns_with_progress` API），以及带 offset 续页的 WBI 签名个人空间动态 feed 请求。
+传输字节事件统计应用已消费的响应正文，与写入或发布到文件的字节不同，也不代表全部线路传输量。
 
-当前 source line 正在准备尚未发布的 `0.10.0`。最新已发布 crate 为 `0.9.0`，接续已发布的 `0.8.0`。
-`0.9.0` 增加类型化 CDN 传输字节和诊断 progress event（包括 `probe_media_cdns_with_progress` API），并通过 WBI
-签名个人空间动态
-feed 请求，包括 offset 分页。传输字节事件统计应用已消费的响应正文字节，与写入或发布到文件的
-字节不同，也不代表全部线路传输量。
-尚未发布的 source line 还提供仅支持 `FollowingFeed` 和 `SpaceDynamic` 的
-`resolve_metadata_page`，同时保持完整 `resolve`/`info` 行为；认证 SpaceDynamic feed 请求缺少设备 Cookie 时也会
-进行初始化。这些功能尚未包含在已发布的 `0.9.0` crate 中。
+单视频相关推荐 API 和仅支持 `FollowingFeed`、`SpaceDynamic` 的有界元数据分页 API 于
+`bbdown-core` `0.10.0` 引入。此版本的认证 SpaceDynamic feed 解析可为临时请求 header 初始化缺失的设备
+Cookie 值。元数据分页不改变完整 `resolve`/`info` 行为。使用这些 API 需要 `0.10` 依赖版本线；`0.9` 依赖不包含这些
+API。如果 registry 中尚无 `0.10.0` package，请使用对应的源码检出或本地 path dependency。
 
 crate 提供 staged XML 历史保留弹幕刷新，按有效的正 `p[7]` ID 去重；ID 缺失、为零或无效时，使用完整
 `p` 属性和解码文本作为匹配依据。它从合并 XML 重新生成 ASS，同时包含 CDN 控制和独立 PGC Web 路由 API。PGC 区域与代理解析独立于媒体
@@ -89,7 +86,7 @@ selection)`。`<video>` 可为 aid/`av`/`BV` 标识或 B 站官方桌面站/移�
 `https://m.bilibili.com/video/...`）。它只读取一批有限结果，保留上游顺序，过滤源视频、无效和 OGV 条目，并按 aid
 去重。`Selection` 作用于这份相关推荐列表；接口不会翻页或递归请求。它复用普通 web API
 client，也可能发送已配置的 cookie；上游可能限制匿名请求。
-此功能属于当前尚未发布的 `0.10.0` source line，需要该源码检出；最新已发布的 `0.9.0` crate 尚不包含此功能。
+单视频相关推荐 API 于 `bbdown-core` `0.10.0` 引入；使用 `0.10` 依赖版本线即可调用。`0.9.0` 不包含此 API。
 
 library 默认保留 plan 中的媒体 URL。嵌入应用需要自定义 UPOS host、强制替换，或
 CLI-compatible PCDN fallback 处理时，应显式设置 `MediaHostOptions`。

@@ -8,14 +8,14 @@
 Bilibili 元数据、下载计划、媒体下载、字幕和弹幕旁路文件、二维码登录状态、批量集合解析，以及
 受限区域代理诊断；调用方无需通过 shell 启动 CLI。
 
-当前已发布的 `0.9.0` 包含 CDN 传输诊断，以及通过 WBI 签名的个人空间动态 feed 请求（包括分页续页）。
+`0.9.0` 包含 CDN 传输诊断，以及通过 WBI 签名的个人空间动态 feed 请求（包括分页续页）。
 已发布的 `0.8.0` 包含分阶段暂存并保留历史的弹幕刷新，以及显式账号身份查询。更早发布的
 `0.7.0` 增加了显式 CDN 主机池、探测和并行传输选项，以及独立的 PGC Web playurl 路由选择器。
 这些网络操作仍由调用方显式选择；crate 不会根据 CLI 内置目录自动路由请求。配置应优先使用构造器和
 builder 风格 API，并将元数据和 plan 结构体视为只读输出。这样 crate 增加字段时，嵌入代码更不容易
 受到影响。
-工作区中的 `bbdown-core` package 正在准备 `0.10.0`，尚未发布；最新已发布 crate 仍为 `0.9.0`。
-下文的相关推荐与有界元数据分页 API 需要当前源码检出。
+单视频相关推荐和有界元数据分页 API 于 `bbdown-core` `0.10.0` 引入。使用这些 API 需要 `0.10`
+依赖版本线；`0.9.0` 不包含这些 API。如果 registry 中尚无 `0.10.0` package，请使用对应的源码检出或本地 path dependency。
 
 ## 仅规划
 
@@ -245,7 +245,7 @@ flowchart TD
     C -->|额度耗尽或源结束| K[返回条目、用量、停止原因和游标]
 ```
 
-此 API 需要当前源码检出，尚未包含在已发布的 `0.9.0` 中。认证 actual-core 端到端检查使用
+此 API 于 `bbdown-core` `0.10.0` 引入；`0.9.0` 不包含此 API。使用 `0.10` 依赖版本线；registry package 尚不可用时，可用匹配的源码检出。认证 actual-core 端到端检查使用
 原始已存 Cookie，由库自动初始化。首次调用用 3 个请求额度，在视频详情前停止；续页用
 2 个请求返回 2 条视频元数据，合计 5 个请求、检查 3 条源记录。这验证了元数据初始化、
 请求计数和续页。续页消费了缓冲的源记录并请求其视频详情，没有请求新的动态 feed，因此
@@ -267,7 +267,7 @@ selection)` 则是直接调用的公共 API，返回 `VideoCollectionResolution`
 批列表中的 1-based 序号。默认或 all 选择允许空结果。`Current` 和 `Episode` 会在请求端点
 前被拒绝。调用会复用普通 web API client 配置，也可能发送已配置的 cookie；匿名请求可能被
 上游限制。API 错误沿用正常 `Result` 错误返回路径，不需增加 client 配置。
-此功能属于当前尚未发布的 `0.10.0` source line，需要当前源码检出；最新已发布的 `0.9.0` crate 尚不包含此功能。
+此功能于 `bbdown-core` `0.10.0` 引入；`0.9.0` 不包含此功能。使用 `0.10` 依赖版本线；registry package 尚不可用时，可用匹配的源码检出。
 
 ```rust,no_run
 use bbdown_core::{BiliClient, ClientConfig, Input, ResolvedContent, Selection};
