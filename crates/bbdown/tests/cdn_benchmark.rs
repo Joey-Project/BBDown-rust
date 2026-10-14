@@ -3,9 +3,8 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     env,
-    fs::File,
     future::Future,
-    io::{Read, Write as _},
+    io::Write as _,
     path::{Path, PathBuf},
     sync::Mutex,
     time::Instant,
@@ -20,6 +19,7 @@ use bbdown_core::{
 use httpmock::{Method::GET, MockServer};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use tokio::io::AsyncReadExt;
 use url::Url;
 
 const DEFAULT_URL: &str = "https://www.bilibili.com/video/BV1QtjA6BEB8/";
@@ -27,6 +27,7 @@ const MAX_REPETITIONS: usize = 3;
 const MAX_MEDIA_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_MULTI_HOSTS: usize = 4;
 const MAX_SIZE_PROBE_SAMPLE_BYTES: u64 = 64 * 1024;
+const HASH_BUFFER_BYTES: usize = 64 * 1024;
 const SIZE_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const DOWNLOAD_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_mins(5);
 const TOTAL_RUN_TIMEOUT: std::time::Duration = std::time::Duration::from_mins(45);
@@ -68,6 +69,7 @@ struct Record {
     quality: u32,
     codecs: Option<String>,
     declared_size: u64,
+    max_media_bytes_limit: u64,
     size_source: &'static str,
     size_probe_phase: Option<&'static str>,
     size_probe_sample_bytes: u64,
@@ -209,6 +211,82 @@ struct BenchmarkSettings {
     entry_index: u32,
     repetitions: usize,
     order_offset: usize,
+    limits: BenchmarkLimits,
+    quality: Option<u32>,
+    codec: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BenchmarkLimits {
+    body_budget_bytes: u64,
+    run_timeout_secs: u64,
+    request_budget: u64,
+    max_media_bytes: u64,
+}
+
+impl Default for BenchmarkLimits {
+    fn default() -> Self {
+        Self {
+            body_budget_bytes: MAX_TOTAL_CONSUMED_BODY_BYTES,
+            run_timeout_secs: TOTAL_RUN_TIMEOUT.as_secs(),
+            request_budget: MAX_OBSERVED_REQUESTS,
+            max_media_bytes: MAX_MEDIA_BYTES,
+        }
+    }
+}
+
+impl BenchmarkLimits {
+    fn from_env() -> anyhow::Result<Self> {
+        Self::parse(
+            env::var("BBDOWN_CDN_BENCHMARK_BODY_BUDGET_BYTES")
+                .ok()
+                .as_deref(),
+            env::var("BBDOWN_CDN_BENCHMARK_RUN_TIMEOUT_SECS")
+                .ok()
+                .as_deref(),
+            env::var("BBDOWN_CDN_BENCHMARK_REQUEST_BUDGET")
+                .ok()
+                .as_deref(),
+            env::var("BBDOWN_CDN_BENCHMARK_MAX_MEDIA_BYTES")
+                .ok()
+                .as_deref(),
+        )
+    }
+
+    fn parse(
+        body_budget_bytes: Option<&str>,
+        run_timeout_secs: Option<&str>,
+        request_budget: Option<&str>,
+        max_media_bytes: Option<&str>,
+    ) -> anyhow::Result<Self> {
+        let defaults = Self::default();
+        Ok(Self {
+            body_budget_bytes: parse_bounded_positive(
+                "BBDOWN_CDN_BENCHMARK_BODY_BUDGET_BYTES",
+                body_budget_bytes,
+                defaults.body_budget_bytes,
+                MAX_TOTAL_CONSUMED_BODY_BYTES,
+            )?,
+            run_timeout_secs: parse_bounded_positive(
+                "BBDOWN_CDN_BENCHMARK_RUN_TIMEOUT_SECS",
+                run_timeout_secs,
+                defaults.run_timeout_secs,
+                TOTAL_RUN_TIMEOUT.as_secs(),
+            )?,
+            request_budget: parse_bounded_positive(
+                "BBDOWN_CDN_BENCHMARK_REQUEST_BUDGET",
+                request_budget,
+                defaults.request_budget,
+                MAX_OBSERVED_REQUESTS,
+            )?,
+            max_media_bytes: parse_bounded_positive(
+                "BBDOWN_CDN_BENCHMARK_MAX_MEDIA_BYTES",
+                max_media_bytes,
+                defaults.max_media_bytes,
+                MAX_MEDIA_BYTES,
+            )?,
+        })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -238,6 +316,7 @@ struct RunMetadata<'a> {
     started_at_epoch_ms: u128,
     group: Group,
     case: &'a BenchmarkCase,
+    limits: BenchmarkLimits,
 }
 
 struct RunObservation {
@@ -245,7 +324,6 @@ struct RunObservation {
     result: bbdown_core::Result<DownloadReport>,
     shards: BTreeMap<String, u64>,
     transfer_events: TransferEventCollector,
-    budget: RunBudgetSnapshot,
     cleanup_timed_out: bool,
     error_class: Option<&'static str>,
 }
@@ -259,6 +337,7 @@ struct SetupFailureRecord {
     record_type: &'static str,
     sample: String,
     entry_index: u32,
+    max_media_bytes_limit: u64,
     started_at_epoch_ms: u128,
     elapsed_ms: u128,
     success: bool,
@@ -288,7 +367,7 @@ async fn cdn_benchmark_harness() -> anyhow::Result<()> {
     let settings = BenchmarkSettings::from_env()?;
     let started_at_epoch_ms = epoch_millis();
     let benchmark_started = Instant::now();
-    let budget = RunBudget::live();
+    let budget = RunBudget::live(settings.limits);
     let (temp_root, root) = output_root()?;
     let client =
         BiliClient::new(ClientConfig::default().with_request_timeout(DOWNLOAD_REQUEST_TIMEOUT));
@@ -355,6 +434,7 @@ fn emit_setup_failure(
         record_type: "harness_setup_failure",
         sample: settings.sample.clone(),
         entry_index: settings.entry_index,
+        max_media_bytes_limit: settings.limits.max_media_bytes,
         started_at_epoch_ms,
         elapsed_ms,
         success: false,
@@ -466,6 +546,9 @@ impl BenchmarkSettings {
             entry_index: 1,
             repetitions: 1,
             order_offset: 0,
+            limits: BenchmarkLimits::default(),
+            quality: None,
+            codec: None,
         }
     }
 
@@ -490,6 +573,11 @@ impl BenchmarkSettings {
             order_offset < GROUPS.len(),
             "order offset must be between 0 and 2"
         );
+        let codec = env::var("BBDOWN_CDN_BENCHMARK_CODEC").ok();
+        anyhow::ensure!(
+            codec.as_deref().is_none_or(|value| !value.is_empty()),
+            "codec selector must not be empty"
+        );
         Ok(Self {
             raw_url: env::var("BBDOWN_CDN_BENCHMARK_URL")
                 .unwrap_or_else(|_| DEFAULT_URL.to_owned()),
@@ -497,16 +585,26 @@ impl BenchmarkSettings {
             entry_index: parse_env("BBDOWN_CDN_BENCHMARK_ENTRY", 1_u32)?,
             repetitions,
             order_offset,
+            limits: BenchmarkLimits::from_env()?,
+            quality: env::var("BBDOWN_CDN_BENCHMARK_QUALITY")
+                .ok()
+                .map(|value| {
+                    value.parse::<u32>().map_err(|error| {
+                        anyhow::anyhow!("invalid BBDOWN_CDN_BENCHMARK_QUALITY: {error}")
+                    })
+                })
+                .transpose()?,
+            codec,
         })
     }
 }
 
 impl RunBudget {
-    fn live() -> Self {
+    fn live(limits: BenchmarkLimits) -> Self {
         Self::with_limits(
-            TOTAL_RUN_TIMEOUT,
-            MAX_TOTAL_CONSUMED_BODY_BYTES,
-            MAX_OBSERVED_REQUESTS,
+            std::time::Duration::from_secs(limits.run_timeout_secs),
+            limits.body_budget_bytes,
+            limits.request_budget,
         )
     }
 
@@ -788,15 +886,14 @@ async fn resolve_case(
         .position(|entry| entry.index == settings.entry_index)
         .ok_or_else(|| anyhow::anyhow!("entry index is absent from the resolved plan"))?;
     let mut entry = plan.entries.remove(entry_pos);
-    let mut selected = entry
-        .streams
-        .videos
-        .first()
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("selected entry has no video representation"))?;
+    let mut selected = select_representation(
+        &entry.streams.videos,
+        settings.quality,
+        settings.codec.as_deref(),
+    )?;
     let size = discover_selected_size(client, &selected, budget).await?;
     anyhow::ensure!(
-        size.size <= MAX_MEDIA_BYTES,
+        size.size <= settings.limits.max_media_bytes,
         "selected representation exceeds the sample limit"
     );
     selected.size = Some(size.size);
@@ -818,6 +915,30 @@ async fn resolve_case(
         fixed_host,
         candidate_hosts,
     })
+}
+
+fn select_representation(
+    videos: &[MediaStream],
+    quality: Option<u32>,
+    codec: Option<&str>,
+) -> anyhow::Result<MediaStream> {
+    if quality.is_none() && codec.is_none() {
+        return videos
+            .first()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("selected entry has no video representation"));
+    }
+    let matching = videos
+        .iter()
+        .filter(|stream| quality.is_none_or(|id| stream.id == id))
+        .filter(|stream| codec.is_none_or(|requested| stream.codecs.as_deref() == Some(requested)))
+        .collect::<Vec<_>>();
+    anyhow::ensure!(
+        matching.len() == 1,
+        "representation selector matched {} video representations; expected exactly one",
+        matching.len()
+    );
+    Ok(matching[0].clone())
 }
 
 async fn run_repetition(
@@ -927,17 +1048,19 @@ async fn run_group(
             started_at_epoch_ms,
             group,
             case,
+            limits: settings.limits,
         },
         RunObservation {
             elapsed_ms,
             result,
             shards,
             transfer_events,
-            budget: budget_snapshot,
             cleanup_timed_out,
             error_class,
         },
-    ))
+        budget,
+    )
+    .await)
 }
 
 async fn download_with_budget<P>(
@@ -1005,7 +1128,11 @@ fn configured_cdn_parallelism(group: Group) -> usize {
     clippy::too_many_lines,
     reason = "This assembles the flat serialized benchmark record so every JSON field remains auditable beside the schema."
 )]
-fn make_record(metadata: RunMetadata<'_>, observation: RunObservation) -> Record {
+async fn make_record(
+    metadata: RunMetadata<'_>,
+    observation: RunObservation,
+    run_budget: &RunBudget,
+) -> Record {
     let RunMetadata {
         sample,
         entry_index,
@@ -1015,13 +1142,13 @@ fn make_record(metadata: RunMetadata<'_>, observation: RunObservation) -> Record
         started_at_epoch_ms,
         group,
         case,
+        limits,
     } = metadata;
     let RunObservation {
         elapsed_ms,
         result,
         shards,
         transfer_events,
-        budget,
         cleanup_timed_out,
         error_class,
     } = observation;
@@ -1033,13 +1160,17 @@ fn make_record(metadata: RunMetadata<'_>, observation: RunObservation) -> Record
             .flat_map(|entry| entry.files)
             .find(|file| file.kind == bbdown_core::DownloadFileKind::Video)
     });
-    let (size, sha256) = media
-        .and_then(|file| {
-            let (size, digest) = hash_file(&file.path).ok()?;
-            Some((Some(size), Some(digest)))
-        })
-        .unwrap_or((None, None));
+    let (size, sha256) = if let Some(file) = media {
+        match hash_file(&file.path, run_budget).await {
+            Ok((size, digest)) => (Some(size), Some(digest)),
+            Err(_) => (None, None),
+        }
+    } else {
+        (None, None)
+    };
+    let budget = run_budget.snapshot();
     let budget_exhausted = budget.exhausted_reason;
+    let error_class = group_error_class(budget_exhausted, cleanup_timed_out, error_class);
     let success = size == Some(case.size.size)
         && sha256.is_some()
         && budget_exhausted.is_none()
@@ -1071,6 +1202,7 @@ fn make_record(metadata: RunMetadata<'_>, observation: RunObservation) -> Record
         quality: case.selected.id,
         codecs: case.selected.codecs.clone(),
         declared_size: case.size.size,
+        max_media_bytes_limit: limits.max_media_bytes,
         size_source: case.size.source,
         size_probe_phase: (case.size.source == "probe").then_some("standalone_probe"),
         size_probe_sample_bytes: case.size.sample_bytes,
@@ -1170,18 +1302,21 @@ async fn discover_selected_size(
             .observe(event, budget, &cancellation);
     };
     let began = Instant::now();
-    let results = tokio::time::timeout(
-        SIZE_PROBE_TIMEOUT,
+    anyhow::ensure!(
+        budget.exhaustion_reason().is_none(),
+        "bounded donor size probe cancelled because benchmark budget is exhausted"
+    );
+    let results = run_bounded_size_probe(
         probe_media_cdns_with_progress(
             client,
             &donor_only,
             &MediaHostOptions::default(),
             &progress,
         ),
+        &cancellation,
+        budget,
     )
-    .await
-    .map_err(|_| anyhow::anyhow!("bounded donor size probe timed out"))?
-    .map_err(|_| anyhow::anyhow!("bounded donor size probe failed"))?;
+    .await?;
     let result = results
         .into_iter()
         .find(|result| result.ok && result.total_size.is_some())
@@ -1205,6 +1340,47 @@ async fn discover_selected_size(
         elapsed_ms: began.elapsed().as_millis(),
         transfer_events,
     })
+}
+
+async fn run_bounded_size_probe<T, F>(
+    probe: F,
+    cancellation: &DownloadCancellationToken,
+    budget: &RunBudget,
+) -> anyhow::Result<T>
+where
+    F: Future<Output = bbdown_core::Result<T>>,
+{
+    anyhow::ensure!(
+        budget.exhaustion_reason().is_none(),
+        "bounded donor size probe cancelled because benchmark budget is exhausted"
+    );
+    tokio::pin!(probe);
+    let probe_timeout = tokio::time::sleep(SIZE_PROBE_TIMEOUT);
+    tokio::pin!(probe_timeout);
+    let result = tokio::select! {
+        biased;
+        () = cancellation.cancelled() => {
+            anyhow::bail!("bounded donor size probe cancelled because benchmark budget is exhausted");
+        }
+        () = tokio::time::sleep_until(budget.deadline) => {
+            budget.exhaust_deadline();
+            cancellation.cancel_with_reason(BUDGET_CANCEL_REASON);
+            anyhow::bail!("bounded donor size probe timed out");
+        }
+        () = &mut probe_timeout => {
+            anyhow::bail!("bounded donor size probe timed out");
+        }
+        result = &mut probe => {
+            result.map_err(|_| anyhow::anyhow!("bounded donor size probe failed"))?
+        }
+    };
+    // A probe can return Ready in the same poll that its progress callback exhausts a budget.
+    // Recheck after select so that result cannot advance setup in that race.
+    anyhow::ensure!(
+        budget.exhaustion_reason().is_none(),
+        "bounded donor size probe cancelled because benchmark budget is exhausted"
+    );
+    Ok(result)
 }
 
 fn mark_valid_samples(records: &mut [Record], fixed_host: &str) {
@@ -1421,6 +1597,7 @@ fn validity_record(group: Group) -> Record {
         quality: 80,
         codecs: Some("avc".to_owned()),
         declared_size: 100,
+        max_media_bytes_limit: MAX_MEDIA_BYTES,
         size_source: "plan",
         size_probe_phase: None,
         size_probe_sample_bytes: 0,
@@ -1647,20 +1824,127 @@ fn candidate_authorities_validate_host_and_port_and_preserve_the_media_target() 
     Ok(())
 }
 
-fn hash_file(path: &std::path::Path) -> std::io::Result<(u64, String)> {
-    let mut file = File::open(path)?;
+async fn hash_file(path: &std::path::Path, budget: &RunBudget) -> std::io::Result<(u64, String)> {
+    let hashing = async {
+        if budget.exhaustion_reason().is_some() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "benchmark budget exhausted during output hashing",
+            ));
+        }
+        let file = tokio::fs::File::open(path).await?;
+        hash_reader_with_budget(file, budget).await
+    };
+    let Some(result) = run_until_deadline(hashing, budget).await else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "benchmark deadline elapsed during output hashing",
+        ));
+    };
+    result
+}
+
+async fn hash_reader_with_budget(
+    mut reader: impl tokio::io::AsyncRead + Unpin,
+    budget: &RunBudget,
+) -> std::io::Result<(u64, String)> {
     let mut hasher = Sha256::new();
-    let mut buffer = vec![0_u8; 64 * 1024].into_boxed_slice();
+    let mut buffer = vec![0_u8; HASH_BUFFER_BYTES].into_boxed_slice();
     let mut size = 0_u64;
     loop {
-        let read = file.read(&mut buffer)?;
+        if budget.exhaustion_reason().is_some() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "benchmark budget exhausted during output hashing",
+            ));
+        }
+        // Tokio file reads use blocking workers; dropping this future does not promise OS-read
+        // cancellation. Keep at most one 64 KiB read pending and schedule no further reads after
+        // the shared deadline wins.
+        let read = reader.read(&mut buffer).await?;
+        if budget.exhaustion_reason().is_some() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "benchmark budget exhausted during output hashing",
+            ));
+        }
         if read == 0 {
             break;
         }
         hasher.update(&buffer[..read]);
         size = size.saturating_add(u64::try_from(read).unwrap_or(u64::MAX));
+        tokio::task::yield_now().await;
     }
     Ok((size, format!("{:x}", hasher.finalize())))
+}
+
+#[tokio::test]
+async fn hashes_output_within_budget_using_the_expected_sha256() -> anyhow::Result<()> {
+    let mut file = tempfile::NamedTempFile::new()?;
+    file.write_all(b"hello")?;
+    let budget = RunBudget::for_test(std::time::Duration::from_secs(10), u64::MAX, u64::MAX);
+
+    let (size, digest) = hash_file(file.path(), &budget).await?;
+
+    assert_eq!(size, 5);
+    assert_eq!(
+        digest,
+        "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    );
+    assert_eq!(budget.exhaustion_reason(), None);
+    Ok(())
+}
+
+#[tokio::test]
+async fn hashing_drops_a_pending_async_read_when_the_deadline_expires() -> anyhow::Result<()> {
+    use std::{
+        pin::Pin,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+        },
+        task::{Context, Poll},
+    };
+    use tokio::io::ReadBuf;
+
+    struct PendingReader {
+        poll_count: Arc<AtomicUsize>,
+        dropped: Arc<AtomicBool>,
+    }
+    impl tokio::io::AsyncRead for PendingReader {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            _context: &mut Context<'_>,
+            _buffer: &mut ReadBuf<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            self.poll_count.fetch_add(1, Ordering::SeqCst);
+            Poll::Pending
+        }
+    }
+    impl Drop for PendingReader {
+        fn drop(&mut self) {
+            self.dropped.store(true, Ordering::SeqCst);
+        }
+    }
+
+    let budget = RunBudget::for_test(std::time::Duration::from_millis(50), u64::MAX, u64::MAX);
+    let poll_count = Arc::new(AtomicUsize::new(0));
+    let dropped = Arc::new(AtomicBool::new(false));
+    let reader = PendingReader {
+        poll_count: Arc::clone(&poll_count),
+        dropped: Arc::clone(&dropped),
+    };
+    let hashing = hash_reader_with_budget(reader, &budget);
+    let result = run_until_deadline(hashing, &budget).await;
+
+    assert!(result.is_none(), "deadline must stop output hashing");
+    assert!(poll_count.load(Ordering::SeqCst) > 0);
+    assert!(
+        dropped.load(Ordering::SeqCst),
+        "pending reader future is dropped"
+    );
+    assert_eq!(budget.exhaustion_reason(), Some("total_run_deadline"));
+    Ok(())
 }
 
 fn epoch_millis() -> u128 {
@@ -1836,6 +2120,23 @@ where
     })
 }
 
+fn parse_bounded_positive(
+    name: &str,
+    raw: Option<&str>,
+    default: u64,
+    maximum: u64,
+) -> anyhow::Result<u64> {
+    let Some(raw) = raw else {
+        return Ok(default);
+    };
+    let value = raw
+        .parse::<u64>()
+        .map_err(|error| anyhow::anyhow!("invalid {name}: {error}"))?;
+    anyhow::ensure!(value > 0, "{name} must be greater than zero");
+    anyhow::ensure!(value <= maximum, "{name} must be at most {maximum}");
+    Ok(value)
+}
+
 #[tokio::test]
 async fn discovers_unknown_size_with_a_bounded_single_donor_sample() -> anyhow::Result<()> {
     let server = MockServer::start();
@@ -1855,21 +2156,7 @@ async fn discovers_unknown_size_with_a_bounded_single_donor_sample() -> anyhow::
             .header("Content-Length", "65535")
             .body(vec![b'x'; 65_535]);
     });
-    let stream: MediaStream = serde_json::from_value(serde_json::json!({
-        "id": 80,
-        "base_url": server.url("/media?fixture=1"),
-        "backup_urls": [],
-        "language": null,
-        "language_doc": null,
-        "codecs": "avc1.640028",
-        "codec_family": "h264",
-        "bandwidth": 1_000_000,
-        "width": 1920,
-        "height": 1080,
-        "frame_rate": "30",
-        "mime_type": "video/mp4",
-        "size": null
-    }))?;
+    let stream = unknown_size_stream(&server)?;
 
     let budget = RunBudget::for_test(std::time::Duration::from_secs(10), u64::MAX, u64::MAX);
     let discovered =
@@ -1884,5 +2171,206 @@ async fn discovers_unknown_size_with_a_bounded_single_donor_sample() -> anyhow::
     );
     assert_eq!(discovery.calls(), 1);
     assert_eq!(sample.calls(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn stops_unknown_size_probe_when_body_or_request_budget_is_exhausted() -> anyhow::Result<()> {
+    for (body_limit, request_limit, expected_reason) in [
+        (1, u64::MAX, "cumulative_body_bytes"),
+        (u64::MAX, 1, "observed_request_threshold"),
+    ] {
+        let server = MockServer::start();
+        let discovery = server.mock(|when, then| {
+            when.method(GET).path("/media").header("range", "bytes=0-0");
+            then.status(206)
+                .header("Content-Range", "bytes 0-0/100000")
+                .header("Content-Length", "1")
+                .body("x");
+        });
+        let sample = server.mock(|when, then| {
+            when.method(GET)
+                .path("/media")
+                .header("range", "bytes=1-65535");
+            then.status(206)
+                .header("Content-Range", "bytes 1-65535/100000")
+                .header("Content-Length", "65535")
+                .body(vec![b'x'; 65_535]);
+        });
+        let stream = unknown_size_stream(&server)?;
+        let budget = RunBudget::for_test(
+            std::time::Duration::from_secs(10),
+            body_limit,
+            request_limit,
+        );
+
+        let Err(error) =
+            discover_selected_size(&BiliClient::new(ClientConfig::default()), &stream, &budget)
+                .await
+        else {
+            anyhow::bail!("budget exhaustion must stop donor size discovery");
+        };
+        let snapshot = budget.snapshot();
+
+        assert!(error.to_string().contains("benchmark budget is exhausted"));
+        assert_eq!(snapshot.exhausted_reason, Some(expected_reason));
+        assert_eq!(discovery.calls(), 1);
+        assert_eq!(sample.calls(), 1);
+        assert_eq!(snapshot.observed_request_count, 2);
+        if expected_reason == "cumulative_body_bytes" {
+            assert!(snapshot.consumed_body_bytes > body_limit);
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn bounded_size_probe_drops_cancelled_future_and_rejects_same_poll_success() {
+    struct DropObserver<'a>(&'a std::cell::Cell<bool>);
+    impl Drop for DropObserver<'_> {
+        fn drop(&mut self) {
+            self.0.set(true);
+        }
+    }
+
+    let budget = RunBudget::for_test(std::time::Duration::from_secs(10), u64::MAX, 1);
+    let cancellation = DownloadCancellationToken::new();
+    let dropped = std::cell::Cell::new(false);
+    let pending_probe = {
+        let cancellation = &cancellation;
+        let budget = &budget;
+        let dropped = &dropped;
+        async move {
+            let _drop_observer = DropObserver(dropped);
+            budget.observe_request_id();
+            budget.observe_request_id();
+            cancellation.cancel_with_reason(BUDGET_CANCEL_REASON);
+            std::future::pending::<()>().await;
+            Ok::<(), Error>(())
+        }
+    };
+    let result = run_bounded_size_probe(pending_probe, &cancellation, &budget).await;
+    assert!(result.is_err());
+    assert!(dropped.get(), "cancelled probe future should be dropped");
+
+    let ready_budget = RunBudget::for_test(std::time::Duration::from_secs(10), u64::MAX, 1);
+    let ready_cancellation = DownloadCancellationToken::new();
+    let ready_probe = {
+        let cancellation = &ready_cancellation;
+        let budget = &ready_budget;
+        async move {
+            budget.observe_request_id();
+            budget.observe_request_id();
+            cancellation.cancel_with_reason(BUDGET_CANCEL_REASON);
+            Ok::<(), Error>(())
+        }
+    };
+    let result = run_bounded_size_probe(ready_probe, &ready_cancellation, &ready_budget).await;
+    assert!(
+        result.is_err(),
+        "a probe that crosses a budget while returning Ready must not succeed"
+    );
+}
+
+fn unknown_size_stream(server: &MockServer) -> anyhow::Result<MediaStream> {
+    Ok(serde_json::from_value(serde_json::json!({
+        "id": 80,
+        "base_url": server.url("/media?fixture=1"),
+        "backup_urls": [],
+        "language": null,
+        "language_doc": null,
+        "codecs": "avc1.640028",
+        "codec_family": "h264",
+        "bandwidth": 1_000_000,
+        "width": 1920,
+        "height": 1080,
+        "frame_rate": "30",
+        "mime_type": "video/mp4",
+        "size": null
+    }))?)
+}
+
+#[test]
+fn benchmark_limits_default_to_existing_caps_and_accept_lower_values() -> anyhow::Result<()> {
+    assert_eq!(
+        BenchmarkLimits::parse(None, None, None, None)?,
+        BenchmarkLimits::default()
+    );
+    assert_eq!(
+        BenchmarkLimits::parse(
+            Some("536870912"),
+            Some("600"),
+            Some("2048"),
+            Some("134217728")
+        )?,
+        BenchmarkLimits {
+            body_budget_bytes: 512 * 1024 * 1024,
+            run_timeout_secs: 600,
+            request_budget: 2048,
+            max_media_bytes: 128 * 1024 * 1024,
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn benchmark_limits_reject_zero_invalid_and_over_cap_values() {
+    let invalid_values = ["0", "invalid"];
+    for value in invalid_values {
+        assert!(BenchmarkLimits::parse(Some(value), None, None, None).is_err());
+        assert!(BenchmarkLimits::parse(None, Some(value), None, None).is_err());
+        assert!(BenchmarkLimits::parse(None, None, Some(value), None).is_err());
+        assert!(BenchmarkLimits::parse(None, None, None, Some(value)).is_err());
+    }
+    assert!(BenchmarkLimits::parse(Some("3221225473"), None, None, None).is_err());
+    assert!(BenchmarkLimits::parse(None, Some("2701"), None, None).is_err());
+    assert!(BenchmarkLimits::parse(None, None, Some("16385"), None).is_err());
+    assert!(BenchmarkLimits::parse(None, None, None, Some("268435457")).is_err());
+}
+
+fn representation_fixture(id: u32, codecs: &str) -> anyhow::Result<MediaStream> {
+    Ok(serde_json::from_value(serde_json::json!({
+        "id": id,
+        "base_url": "https://cdn.example/media?token=fixture",
+        "backup_urls": [],
+        "language": null,
+        "language_doc": null,
+        "codecs": codecs,
+        "codec_family": "h264",
+        "bandwidth": 1_000_000,
+        "width": 1280,
+        "height": 720,
+        "frame_rate": "30",
+        "mime_type": "video/mp4",
+        "size": 1_000_000
+    }))?)
+}
+
+#[test]
+fn representation_selection_preserves_default_and_requires_one_exact_match() -> anyhow::Result<()> {
+    let avc = representation_fixture(80, "avc1.640028")?;
+    let hevc = representation_fixture(80, "hev1.1.6.L120.90")?;
+    let high_quality = representation_fixture(64, "avc1.640028")?;
+    let videos = vec![avc.clone(), hevc.clone(), high_quality.clone()];
+
+    assert_eq!(
+        select_representation(&videos, None, None)?.codecs,
+        avc.codecs
+    );
+    assert_eq!(
+        select_representation(&videos, Some(64), None)?.codecs,
+        high_quality.codecs
+    );
+    assert_eq!(
+        select_representation(&videos, None, Some("hev1.1.6.L120.90"))?.codecs,
+        hevc.codecs
+    );
+    assert_eq!(
+        select_representation(&videos, Some(80), Some("hev1.1.6.L120.90"))?.codecs,
+        hevc.codecs
+    );
+    assert!(select_representation(&videos, Some(80), None).is_err());
+    assert!(select_representation(&videos, Some(99), None).is_err());
+    assert!(select_representation(&videos, Some(80), Some("avc1.640028 ")).is_err());
     Ok(())
 }

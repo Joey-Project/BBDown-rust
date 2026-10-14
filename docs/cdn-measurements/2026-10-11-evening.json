@@ -1,0 +1,4341 @@
+{
+  "metadata": {
+    "schema_version": 1,
+    "source_base_sha": "e971ee5f15826ce455fd4642e1b886060876af49",
+    "harness_commit_sha": "ad386e1ad7fb4ed99b1bfb189a5e778543e6823f",
+    "measurement_date": "2026-10-11",
+    "window": "evening",
+    "environment": {
+      "operating_system": "macOS 26.3",
+      "architecture": "Darwin arm64",
+      "rustc": "1.95.0",
+      "cargo": "1.95.0",
+      "authentication": "anonymous; no credentials",
+      "proxy_environment": "HTTP(S)/ALL proxy variables cleared",
+      "egress_region": "unverified",
+      "task_timezone": "Europe/London",
+      "process_wall_secs": {
+        "playlist": 33.062,
+        "multipage": 5.499
+      }
+    },
+    "fixtures": [
+      {
+        "sample": "expanded-public-playlist",
+        "bvid": "BV1QtjA6BEB8",
+        "source": "public Bilibili video fixture"
+      },
+      {
+        "sample": "expanded-public-multipage",
+        "bvid": "BV1uW4y1s7zN",
+        "source": "public Bilibili video fixture"
+      }
+    ],
+    "limits": {
+      "body_budget_bytes_per_run": 536870912,
+      "run_timeout_secs": 600,
+      "request_id_limit": 2048,
+      "max_media_bytes": 134217728,
+      "request_timeout_secs": 300,
+      "body_budget_note": "Application-consumed decoded media response-body bytes are observed after body chunks are read. A crossing chunk and in-flight chunks may overshoot; this is not a wire-byte cap."
+    },
+    "preflight_note": "Standalone Python metadata preflight received HTTP 412 for both fixtures. That result did not predict the library harness path; these measurements are from the successful project harness runs.",
+    "record_sanitization": {
+      "url_query_credential_material_redacted": true,
+      "sensitive_matches_seen_before_redaction": 0,
+      "sensitive_matches_remaining": 0
+    },
+    "inputs": [
+      {
+        "fixture": "expanded-public-playlist",
+        "source_log": "live-playlist.log",
+        "record_count": 3
+      },
+      {
+        "fixture": "expanded-public-multipage",
+        "source_log": "live-multipage.log",
+        "record_count": 3
+      }
+    ]
+  },
+  "records": [
+    {
+      "sample": "expanded-public-playlist",
+      "entry_index": 1,
+      "repetition": 1,
+      "order": 1,
+      "order_offset": 0,
+      "started_at_epoch_ms": 1791749474496,
+      "group": "fixed_host_baseline",
+      "fixed_host": "upos-sz-mirroraliov.bilivideo.com:443",
+      "candidate_hosts": [
+        "upos-sz-mirroraliov.bilivideo.com:443",
+        "upos-hz-mirrorakam.akamaized.net:443",
+        "upos-sz-mirror08h.bilivideo.com:443"
+      ],
+      "request_timeout_secs": 300,
+      "quality": 80,
+      "codecs": "avc1.640033",
+      "declared_size": 106436100,
+      "max_media_bytes_limit": 134217728,
+      "size_source": "probe",
+      "size_probe_phase": "standalone_probe",
+      "size_probe_sample_bytes": 65536,
+      "size_probe_elapsed_ms": 999,
+      "size_probe_observation_scope": "one shared case setup; repeated metadata only; excluded from each group transfer total",
+      "size_probe_transfer_bytes_by_host_phase": [
+        {
+          "host": "upos-sz-mirrorcosov.bilivideo.com",
+          "phase": "standalone_probe",
+          "bytes": 65536
+        }
+      ],
+      "size_probe_transfer_activity_by_host_phase": [
+        {
+          "host": "upos-sz-mirrorcosov.bilivideo.com",
+          "phase": "standalone_probe",
+          "first_event_elapsed_ms": 789,
+          "last_event_elapsed_ms": 999,
+          "observed_activity_elapsed_ms": 210
+        }
+      ],
+      "size_probe_transfer_consumed_body_bytes": 65536,
+      "size_probe_observed_request_ids": [
+        1,
+        2
+      ],
+      "size_probe_observed_request_count_lower_bound": 2,
+      "size_probe_request_outcomes": {
+        "completed": 2,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "size_probe_transfer_diagnostics": [
+        {
+          "request_id": 1,
+          "phase": "standalone_probe",
+          "host": "upos-sz-mirrorcosov.bilivideo.com",
+          "observed_at_elapsed_ms": 789,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1
+          }
+        },
+        {
+          "request_id": 2,
+          "phase": "standalone_probe",
+          "host": "upos-sz-mirrorcosov.bilivideo.com",
+          "observed_at_elapsed_ms": 999,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 65535
+          }
+        }
+      ],
+      "size_probe_included_in_group_totals": false,
+      "configured_cdn_parallelism": 1,
+      "success": true,
+      "elapsed_ms": 2702,
+      "benchmark_elapsed_ms": 32977,
+      "size": 106436100,
+      "sha256": "a5e36c30dac68f70bdcb0c6a63040e11d7e49410f269ab464def09c19d6df404",
+      "shard_bytes_by_host": {},
+      "whole_file_fallback": false,
+      "transfer_bytes_by_host_phase": [
+        {
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "phase": "whole_file",
+          "bytes": 106436100
+        }
+      ],
+      "transfer_activity_by_host_phase": [
+        {
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "phase": "whole_file",
+          "first_event_elapsed_ms": 300,
+          "last_event_elapsed_ms": 2702,
+          "observed_activity_elapsed_ms": 2402
+        }
+      ],
+      "observed_request_ids": [
+        1
+      ],
+      "observed_request_count_lower_bound": 1,
+      "request_outcomes": {
+        "completed": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "transfer_diagnostics": [
+        {
+          "request_id": 1,
+          "phase": "whole_file",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2702,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 106436100
+          }
+        }
+      ],
+      "transfer_total_consumed_body_bytes": 106436100,
+      "preflight_consumed_body_bytes": 0,
+      "media_body_consumed_bytes": 106436100,
+      "budget_exhausted": null,
+      "budget_body_bytes_limit": 536870912,
+      "budget_observed_body_bytes": 319554060,
+      "budget_body_overshoot_bytes": 0,
+      "budget_observed_request_limit": 2048,
+      "budget_observed_request_count_lower_bound": 215,
+      "cleanup_timed_out": false,
+      "total_run_timeout_secs": 600,
+      "cleanup_grace_secs": 5,
+      "request_id_scope": "IDs are local to each progress-reporter call; shared standalone_probe IDs are recorded separately and are not globally unique",
+      "request_count_semantics": "unique media-transfer request IDs seen in body or terminal/retry diagnostics; lower bound because no request-start event is emitted; API/auth requests are excluded",
+      "transfer_activity_semantics": "first/last times are relative to the group or standalone probe collector; includes body or phase-tagged diagnostic events only, omits connection and response-header wait, and is neither full request latency nor additive concurrency time",
+      "body_bytes_scope": "decoded media response bodies only",
+      "body_measurement": "response body chunks after transparent gzip decoding; excludes API/auth responses; not wire bytes",
+      "body_budget_semantics": "cancel after the first observed crossing chunk/request; the crossing chunk and in-flight decoded chunks may overshoot; not a wire cap",
+      "api_response_body_bytes_observed": false,
+      "wire_bytes_observed": false,
+      "wire_completeness_observed": false,
+      "valid_three_way_sample": true,
+      "validity_reasons": [],
+      "error_class": null
+    },
+    {
+      "sample": "expanded-public-playlist",
+      "entry_index": 1,
+      "repetition": 1,
+      "order": 2,
+      "order_offset": 0,
+      "started_at_epoch_ms": 1791749482680,
+      "group": "fixed_host_range4",
+      "fixed_host": "upos-sz-mirroraliov.bilivideo.com:443",
+      "candidate_hosts": [
+        "upos-sz-mirroraliov.bilivideo.com:443",
+        "upos-hz-mirrorakam.akamaized.net:443",
+        "upos-sz-mirror08h.bilivideo.com:443"
+      ],
+      "request_timeout_secs": 300,
+      "quality": 80,
+      "codecs": "avc1.640033",
+      "declared_size": 106436100,
+      "max_media_bytes_limit": 134217728,
+      "size_source": "probe",
+      "size_probe_phase": "standalone_probe",
+      "size_probe_sample_bytes": 65536,
+      "size_probe_elapsed_ms": 999,
+      "size_probe_observation_scope": "one shared case setup; repeated metadata only; excluded from each group transfer total",
+      "size_probe_transfer_bytes_by_host_phase": [
+        {
+          "host": "upos-sz-mirrorcosov.bilivideo.com",
+          "phase": "standalone_probe",
+          "bytes": 65536
+        }
+      ],
+      "size_probe_transfer_activity_by_host_phase": [
+        {
+          "host": "upos-sz-mirrorcosov.bilivideo.com",
+          "phase": "standalone_probe",
+          "first_event_elapsed_ms": 789,
+          "last_event_elapsed_ms": 999,
+          "observed_activity_elapsed_ms": 210
+        }
+      ],
+      "size_probe_transfer_consumed_body_bytes": 65536,
+      "size_probe_observed_request_ids": [
+        1,
+        2
+      ],
+      "size_probe_observed_request_count_lower_bound": 2,
+      "size_probe_request_outcomes": {
+        "completed": 2,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "size_probe_transfer_diagnostics": [
+        {
+          "request_id": 1,
+          "phase": "standalone_probe",
+          "host": "upos-sz-mirrorcosov.bilivideo.com",
+          "observed_at_elapsed_ms": 789,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1
+          }
+        },
+        {
+          "request_id": 2,
+          "phase": "standalone_probe",
+          "host": "upos-sz-mirrorcosov.bilivideo.com",
+          "observed_at_elapsed_ms": 999,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 65535
+          }
+        }
+      ],
+      "size_probe_included_in_group_totals": false,
+      "configured_cdn_parallelism": 4,
+      "success": true,
+      "elapsed_ms": 3672,
+      "benchmark_elapsed_ms": 32977,
+      "size": 106436100,
+      "sha256": "a5e36c30dac68f70bdcb0c6a63040e11d7e49410f269ab464def09c19d6df404",
+      "shard_bytes_by_host": {
+        "upos-sz-mirroraliov.bilivideo.com": 106436100
+      },
+      "whole_file_fallback": false,
+      "transfer_bytes_by_host_phase": [
+        {
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "phase": "automatic_probe",
+          "bytes": 65536
+        },
+        {
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "phase": "range_chunk",
+          "bytes": 106436100
+        },
+        {
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "phase": "shard_probe",
+          "bytes": 16384
+        }
+      ],
+      "transfer_activity_by_host_phase": [
+        {
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "phase": "automatic_probe",
+          "first_event_elapsed_ms": 14,
+          "last_event_elapsed_ms": 14,
+          "observed_activity_elapsed_ms": 0
+        },
+        {
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "phase": "range_chunk",
+          "first_event_elapsed_ms": 45,
+          "last_event_elapsed_ms": 3642,
+          "observed_activity_elapsed_ms": 3597
+        },
+        {
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "phase": "shard_probe",
+          "first_event_elapsed_ms": 27,
+          "last_event_elapsed_ms": 27,
+          "observed_activity_elapsed_ms": 0
+        }
+      ],
+      "observed_request_ids": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        79,
+        80,
+        81,
+        82,
+        83,
+        84,
+        85,
+        86,
+        87,
+        88,
+        89,
+        90,
+        91,
+        92,
+        93,
+        94,
+        95,
+        96,
+        97,
+        98,
+        99,
+        100,
+        101,
+        102,
+        103,
+        104
+      ],
+      "observed_request_count_lower_bound": 104,
+      "request_outcomes": {
+        "completed": 104,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "transfer_diagnostics": [
+        {
+          "request_id": 1,
+          "phase": "automatic_probe",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 14,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 65536
+          }
+        },
+        {
+          "request_id": 2,
+          "phase": "shard_probe",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 27,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 16384
+          }
+        },
+        {
+          "request_id": null,
+          "phase": "shard_probe",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 27,
+          "diagnostic": {
+            "event": "candidate_selected"
+          }
+        },
+        {
+          "request_id": 3,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 62,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 4,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 107,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 6,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 130,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 7,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 144,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 5,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 146,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 8,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 174,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 9,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 199,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 11,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 219,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 10,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 226,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 12,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 255,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 13,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 283,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 14,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 303,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 15,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 303,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 16,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 336,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 17,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 348,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 18,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 374,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 20,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 489,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 21,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 505,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 22,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 522,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 23,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 582,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 24,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 592,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 25,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 600,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 26,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 661,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 27,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 671,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 28,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 680,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 29,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 732,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 30,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 743,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 31,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 754,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 32,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 808,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 33,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 820,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 34,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 829,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 35,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 876,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 37,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 899,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 36,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 909,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 38,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1032,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 39,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1048,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 40,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1063,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 41,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1082,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 44,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1118,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 42,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1134,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 43,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1143,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 45,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1184,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 46,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1198,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 47,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1215,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 48,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1251,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 49,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1262,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 50,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1286,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 51,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1390,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 52,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1395,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 53,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1423,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 56,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1547,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 55,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1585,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 54,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1586,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 57,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1604,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 58,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1621,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 59,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1654,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 61,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1692,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 60,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1692,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 62,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1722,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 63,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1755,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 64,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1766,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 65,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1801,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 66,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1940,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 67,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1944,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 68,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1967,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 69,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2089,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 70,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2104,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 71,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2118,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 72,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2137,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 74,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2169,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 73,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2182,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 75,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2206,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 76,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2239,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 77,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2251,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 78,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2272,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 79,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2317,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 80,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2327,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 81,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2347,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 82,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2392,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 83,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2402,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 84,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2422,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 86,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2479,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 85,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2491,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 87,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2594,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 88,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2614,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 89,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2651,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 90,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2656,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 91,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2674,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 92,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2716,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 93,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2725,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 94,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2747,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 95,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2780,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 96,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2811,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 97,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2818,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 98,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2845,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 99,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2889,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 100,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2897,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 102,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2963,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 103,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2984,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 101,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2985,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 104,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3108,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 529924
+          }
+        },
+        {
+          "request_id": 19,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3642,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        }
+      ],
+      "transfer_total_consumed_body_bytes": 106518020,
+      "preflight_consumed_body_bytes": 81920,
+      "media_body_consumed_bytes": 106436100,
+      "budget_exhausted": null,
+      "budget_body_bytes_limit": 536870912,
+      "budget_observed_body_bytes": 319554060,
+      "budget_body_overshoot_bytes": 0,
+      "budget_observed_request_limit": 2048,
+      "budget_observed_request_count_lower_bound": 215,
+      "cleanup_timed_out": false,
+      "total_run_timeout_secs": 600,
+      "cleanup_grace_secs": 5,
+      "request_id_scope": "IDs are local to each progress-reporter call; shared standalone_probe IDs are recorded separately and are not globally unique",
+      "request_count_semantics": "unique media-transfer request IDs seen in body or terminal/retry diagnostics; lower bound because no request-start event is emitted; API/auth requests are excluded",
+      "transfer_activity_semantics": "first/last times are relative to the group or standalone probe collector; includes body or phase-tagged diagnostic events only, omits connection and response-header wait, and is neither full request latency nor additive concurrency time",
+      "body_bytes_scope": "decoded media response bodies only",
+      "body_measurement": "response body chunks after transparent gzip decoding; excludes API/auth responses; not wire bytes",
+      "body_budget_semantics": "cancel after the first observed crossing chunk/request; the crossing chunk and in-flight decoded chunks may overshoot; not a wire cap",
+      "api_response_body_bytes_observed": false,
+      "wire_bytes_observed": false,
+      "wire_completeness_observed": false,
+      "valid_three_way_sample": true,
+      "validity_reasons": [],
+      "error_class": null
+    },
+    {
+      "sample": "expanded-public-playlist",
+      "entry_index": 1,
+      "repetition": 1,
+      "order": 3,
+      "order_offset": 0,
+      "started_at_epoch_ms": 1791749493058,
+      "group": "multi_host_range4",
+      "fixed_host": "upos-sz-mirroraliov.bilivideo.com:443",
+      "candidate_hosts": [
+        "upos-sz-mirroraliov.bilivideo.com:443",
+        "upos-hz-mirrorakam.akamaized.net:443",
+        "upos-sz-mirror08h.bilivideo.com:443"
+      ],
+      "request_timeout_secs": 300,
+      "quality": 80,
+      "codecs": "avc1.640033",
+      "declared_size": 106436100,
+      "max_media_bytes_limit": 134217728,
+      "size_source": "probe",
+      "size_probe_phase": "standalone_probe",
+      "size_probe_sample_bytes": 65536,
+      "size_probe_elapsed_ms": 999,
+      "size_probe_observation_scope": "one shared case setup; repeated metadata only; excluded from each group transfer total",
+      "size_probe_transfer_bytes_by_host_phase": [
+        {
+          "host": "upos-sz-mirrorcosov.bilivideo.com",
+          "phase": "standalone_probe",
+          "bytes": 65536
+        }
+      ],
+      "size_probe_transfer_activity_by_host_phase": [
+        {
+          "host": "upos-sz-mirrorcosov.bilivideo.com",
+          "phase": "standalone_probe",
+          "first_event_elapsed_ms": 789,
+          "last_event_elapsed_ms": 999,
+          "observed_activity_elapsed_ms": 210
+        }
+      ],
+      "size_probe_transfer_consumed_body_bytes": 65536,
+      "size_probe_observed_request_ids": [
+        1,
+        2
+      ],
+      "size_probe_observed_request_count_lower_bound": 2,
+      "size_probe_request_outcomes": {
+        "completed": 2,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "size_probe_transfer_diagnostics": [
+        {
+          "request_id": 1,
+          "phase": "standalone_probe",
+          "host": "upos-sz-mirrorcosov.bilivideo.com",
+          "observed_at_elapsed_ms": 789,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1
+          }
+        },
+        {
+          "request_id": 2,
+          "phase": "standalone_probe",
+          "host": "upos-sz-mirrorcosov.bilivideo.com",
+          "observed_at_elapsed_ms": 999,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 65535
+          }
+        }
+      ],
+      "size_probe_included_in_group_totals": false,
+      "configured_cdn_parallelism": 4,
+      "success": true,
+      "elapsed_ms": 5867,
+      "benchmark_elapsed_ms": 32977,
+      "size": 106436100,
+      "sha256": "a5e36c30dac68f70bdcb0c6a63040e11d7e49410f269ab464def09c19d6df404",
+      "shard_bytes_by_host": {
+        "upos-sz-mirror08h.bilivideo.com": 8388608,
+        "upos-sz-mirroraliov.bilivideo.com": 98047492
+      },
+      "whole_file_fallback": false,
+      "transfer_bytes_by_host_phase": [
+        {
+          "host": "upos-sz-mirror08h.bilivideo.com",
+          "phase": "range_chunk",
+          "bytes": 8388608
+        },
+        {
+          "host": "upos-sz-mirror08h.bilivideo.com",
+          "phase": "shard_probe",
+          "bytes": 16384
+        },
+        {
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "phase": "automatic_probe",
+          "bytes": 65536
+        },
+        {
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "phase": "range_chunk",
+          "bytes": 98047492
+        },
+        {
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "phase": "shard_probe",
+          "bytes": 16384
+        }
+      ],
+      "transfer_activity_by_host_phase": [
+        {
+          "host": "upos-hz-mirrorakam.akamaized.net",
+          "phase": "automatic_probe",
+          "first_event_elapsed_ms": 164,
+          "last_event_elapsed_ms": 164,
+          "observed_activity_elapsed_ms": 0
+        },
+        {
+          "host": "upos-hz-mirrorakam.akamaized.net",
+          "phase": "shard_probe",
+          "first_event_elapsed_ms": 2020,
+          "last_event_elapsed_ms": 2506,
+          "observed_activity_elapsed_ms": 486
+        },
+        {
+          "host": "upos-sz-mirror08h.bilivideo.com",
+          "phase": "automatic_probe",
+          "first_event_elapsed_ms": 2004,
+          "last_event_elapsed_ms": 2004,
+          "observed_activity_elapsed_ms": 0
+        },
+        {
+          "host": "upos-sz-mirror08h.bilivideo.com",
+          "phase": "range_chunk",
+          "first_event_elapsed_ms": 2814,
+          "last_event_elapsed_ms": 5839,
+          "observed_activity_elapsed_ms": 3025
+        },
+        {
+          "host": "upos-sz-mirror08h.bilivideo.com",
+          "phase": "shard_probe",
+          "first_event_elapsed_ms": 2506,
+          "last_event_elapsed_ms": 2506,
+          "observed_activity_elapsed_ms": 0
+        },
+        {
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "phase": "automatic_probe",
+          "first_event_elapsed_ms": 80,
+          "last_event_elapsed_ms": 83,
+          "observed_activity_elapsed_ms": 3
+        },
+        {
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "phase": "range_chunk",
+          "first_event_elapsed_ms": 2525,
+          "last_event_elapsed_ms": 5419,
+          "observed_activity_elapsed_ms": 2894
+        },
+        {
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "phase": "shard_probe",
+          "first_event_elapsed_ms": 2026,
+          "last_event_elapsed_ms": 2506,
+          "observed_activity_elapsed_ms": 480
+        }
+      ],
+      "observed_request_ids": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        79,
+        80,
+        81,
+        82,
+        83,
+        84,
+        85,
+        86,
+        87,
+        88,
+        89,
+        90,
+        91,
+        92,
+        93,
+        94,
+        95,
+        96,
+        97,
+        98,
+        99,
+        100,
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        107,
+        108
+      ],
+      "observed_request_count_lower_bound": 108,
+      "request_outcomes": {
+        "completed": 105,
+        "failed": 3,
+        "cancelled": 0
+      },
+      "transfer_diagnostics": [
+        {
+          "request_id": 1,
+          "phase": "automatic_probe",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 83,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 65536
+          }
+        },
+        {
+          "request_id": 2,
+          "phase": "automatic_probe",
+          "host": "upos-hz-mirrorakam.akamaized.net",
+          "observed_at_elapsed_ms": 164,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "failed",
+              "reason": "invalid_response"
+            },
+            "bytes_received": 0
+          }
+        },
+        {
+          "request_id": 3,
+          "phase": "automatic_probe",
+          "host": "upos-sz-mirror08h.bilivideo.com",
+          "observed_at_elapsed_ms": 2004,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "failed",
+              "reason": "timed_out"
+            },
+            "bytes_received": 0
+          }
+        },
+        {
+          "request_id": 5,
+          "phase": "shard_probe",
+          "host": "upos-hz-mirrorakam.akamaized.net",
+          "observed_at_elapsed_ms": 2020,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "failed",
+              "reason": "invalid_response"
+            },
+            "bytes_received": 0
+          }
+        },
+        {
+          "request_id": 4,
+          "phase": "shard_probe",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2026,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 16384
+          }
+        },
+        {
+          "request_id": 6,
+          "phase": "shard_probe",
+          "host": "upos-sz-mirror08h.bilivideo.com",
+          "observed_at_elapsed_ms": 2506,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 16384
+          }
+        },
+        {
+          "request_id": null,
+          "phase": "shard_probe",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2506,
+          "diagnostic": {
+            "event": "candidate_selected"
+          }
+        },
+        {
+          "request_id": null,
+          "phase": "shard_probe",
+          "host": "upos-hz-mirrorakam.akamaized.net",
+          "observed_at_elapsed_ms": 2506,
+          "diagnostic": {
+            "event": "candidate_excluded",
+            "reason": "probe_failed"
+          }
+        },
+        {
+          "request_id": null,
+          "phase": "shard_probe",
+          "host": "upos-sz-mirror08h.bilivideo.com",
+          "observed_at_elapsed_ms": 2506,
+          "diagnostic": {
+            "event": "candidate_selected"
+          }
+        },
+        {
+          "request_id": 7,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2551,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 9,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2594,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 11,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2707,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 12,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2762,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 13,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2764,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 14,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2805,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 15,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2840,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 16,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2847,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 18,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2880,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 17,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2898,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 19,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2937,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 20,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2960,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 21,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 2980,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 22,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3001,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 23,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3021,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 24,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3039,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 25,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3072,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 26,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3094,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 27,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3115,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 28,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3221,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 29,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3242,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 30,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3261,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 31,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3285,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 32,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3307,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 33,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3327,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 34,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3345,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 35,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3366,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 36,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3387,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 37,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3405,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 38,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3427,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 39,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3448,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 40,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3474,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 41,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3495,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 42,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3520,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 43,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3536,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 44,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3557,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 46,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3593,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 45,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3619,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 47,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3639,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 49,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3762,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 48,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3781,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 50,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3814,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 51,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3844,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 52,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3862,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 53,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3889,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 54,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3909,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 55,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3929,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 56,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3953,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 58,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 3995,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 57,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 4007,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 59,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 4031,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 60,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 4083,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 61,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 4097,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 8,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirror08h.bilivideo.com",
+          "observed_at_elapsed_ms": 4104,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 63,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 4130,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 62,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 4152,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 65,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 4171,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 10,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirror08h.bilivideo.com",
+          "observed_at_elapsed_ms": 4282,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 66,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 4285,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 67,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 4307,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 69,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 4325,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 70,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 4353,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 71,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 4370,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 73,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 4414,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 72,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 4432,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 74,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 4455,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 76,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 4491,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 77,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 4530,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 75,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 4539,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 79,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 4574,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 64,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirror08h.bilivideo.com",
+          "observed_at_elapsed_ms": 4585,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 80,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 4615,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 78,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 4635,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 82,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 4657,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 83,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 4683,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 84,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 4794,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 68,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirror08h.bilivideo.com",
+          "observed_at_elapsed_ms": 4805,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 85,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 4819,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 86,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 4838,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 88,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 4858,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 89,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 4879,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 90,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 4909,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 91,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 4932,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 81,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirror08h.bilivideo.com",
+          "observed_at_elapsed_ms": 4954,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 92,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 4968,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 95,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 5004,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 93,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 5038,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 96,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 5080,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 97,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 5085,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 98,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 5114,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 99,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 5137,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 100,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 5158,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 101,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 5180,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 102,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 5199,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 103,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 5222,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 87,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirror08h.bilivideo.com",
+          "observed_at_elapsed_ms": 5336,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 104,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 5341,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 105,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 5388,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 94,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirror08h.bilivideo.com",
+          "observed_at_elapsed_ms": 5389,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 107,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 5397,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 108,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 5419,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 529924
+          }
+        },
+        {
+          "request_id": 106,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirror08h.bilivideo.com",
+          "observed_at_elapsed_ms": 5839,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        }
+      ],
+      "transfer_total_consumed_body_bytes": 106534404,
+      "preflight_consumed_body_bytes": 98304,
+      "media_body_consumed_bytes": 106436100,
+      "budget_exhausted": null,
+      "budget_body_bytes_limit": 536870912,
+      "budget_observed_body_bytes": 319554060,
+      "budget_body_overshoot_bytes": 0,
+      "budget_observed_request_limit": 2048,
+      "budget_observed_request_count_lower_bound": 215,
+      "cleanup_timed_out": false,
+      "total_run_timeout_secs": 600,
+      "cleanup_grace_secs": 5,
+      "request_id_scope": "IDs are local to each progress-reporter call; shared standalone_probe IDs are recorded separately and are not globally unique",
+      "request_count_semantics": "unique media-transfer request IDs seen in body or terminal/retry diagnostics; lower bound because no request-start event is emitted; API/auth requests are excluded",
+      "transfer_activity_semantics": "first/last times are relative to the group or standalone probe collector; includes body or phase-tagged diagnostic events only, omits connection and response-header wait, and is neither full request latency nor additive concurrency time",
+      "body_bytes_scope": "decoded media response bodies only",
+      "body_measurement": "response body chunks after transparent gzip decoding; excludes API/auth responses; not wire bytes",
+      "body_budget_semantics": "cancel after the first observed crossing chunk/request; the crossing chunk and in-flight decoded chunks may overshoot; not a wire cap",
+      "api_response_body_bytes_observed": false,
+      "wire_bytes_observed": false,
+      "wire_completeness_observed": false,
+      "valid_three_way_sample": true,
+      "validity_reasons": [],
+      "error_class": null
+    },
+    {
+      "sample": "expanded-public-multipage",
+      "entry_index": 1,
+      "repetition": 1,
+      "order": 1,
+      "order_offset": 1,
+      "started_at_epoch_ms": 1791749580890,
+      "group": "fixed_host_range4",
+      "fixed_host": "upos-sz-mirroraliov.bilivideo.com:443",
+      "candidate_hosts": [
+        "upos-sz-mirroraliov.bilivideo.com:443",
+        "upos-hz-mirrorakam.akamaized.net:443",
+        "upos-sz-mirror08h.bilivideo.com:443"
+      ],
+      "request_timeout_secs": 300,
+      "quality": 80,
+      "codecs": "avc1.640032",
+      "declared_size": 1644777,
+      "max_media_bytes_limit": 134217728,
+      "size_source": "probe",
+      "size_probe_phase": "standalone_probe",
+      "size_probe_sample_bytes": 65536,
+      "size_probe_elapsed_ms": 950,
+      "size_probe_observation_scope": "one shared case setup; repeated metadata only; excluded from each group transfer total",
+      "size_probe_transfer_bytes_by_host_phase": [
+        {
+          "host": "upos-sz-mirrorcosov.bilivideo.com",
+          "phase": "standalone_probe",
+          "bytes": 65536
+        }
+      ],
+      "size_probe_transfer_activity_by_host_phase": [
+        {
+          "host": "upos-sz-mirrorcosov.bilivideo.com",
+          "phase": "standalone_probe",
+          "first_event_elapsed_ms": 758,
+          "last_event_elapsed_ms": 950,
+          "observed_activity_elapsed_ms": 192
+        }
+      ],
+      "size_probe_transfer_consumed_body_bytes": 65536,
+      "size_probe_observed_request_ids": [
+        1,
+        2
+      ],
+      "size_probe_observed_request_count_lower_bound": 2,
+      "size_probe_request_outcomes": {
+        "completed": 2,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "size_probe_transfer_diagnostics": [
+        {
+          "request_id": 1,
+          "phase": "standalone_probe",
+          "host": "upos-sz-mirrorcosov.bilivideo.com",
+          "observed_at_elapsed_ms": 758,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1
+          }
+        },
+        {
+          "request_id": 2,
+          "phase": "standalone_probe",
+          "host": "upos-sz-mirrorcosov.bilivideo.com",
+          "observed_at_elapsed_ms": 950,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 65535
+          }
+        }
+      ],
+      "size_probe_included_in_group_totals": false,
+      "configured_cdn_parallelism": 4,
+      "success": true,
+      "elapsed_ms": 204,
+      "benchmark_elapsed_ms": 5464,
+      "size": 1644777,
+      "sha256": "7864dbf341d59958ed70d96cebe2ab19338d9e444e18857ed146e3974de45011",
+      "shard_bytes_by_host": {
+        "upos-sz-mirroraliov.bilivideo.com": 1644777
+      },
+      "whole_file_fallback": false,
+      "transfer_bytes_by_host_phase": [
+        {
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "phase": "automatic_probe",
+          "bytes": 65536
+        },
+        {
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "phase": "range_chunk",
+          "bytes": 1644777
+        },
+        {
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "phase": "shard_probe",
+          "bytes": 16384
+        }
+      ],
+      "transfer_activity_by_host_phase": [
+        {
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "phase": "automatic_probe",
+          "first_event_elapsed_ms": 113,
+          "last_event_elapsed_ms": 114,
+          "observed_activity_elapsed_ms": 1
+        },
+        {
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "phase": "range_chunk",
+          "first_event_elapsed_ms": 149,
+          "last_event_elapsed_ms": 202,
+          "observed_activity_elapsed_ms": 53
+        },
+        {
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "phase": "shard_probe",
+          "first_event_elapsed_ms": 130,
+          "last_event_elapsed_ms": 130,
+          "observed_activity_elapsed_ms": 0
+        }
+      ],
+      "observed_request_ids": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "observed_request_count_lower_bound": 4,
+      "request_outcomes": {
+        "completed": 4,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "transfer_diagnostics": [
+        {
+          "request_id": 1,
+          "phase": "automatic_probe",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 114,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 65536
+          }
+        },
+        {
+          "request_id": 2,
+          "phase": "shard_probe",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 130,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 16384
+          }
+        },
+        {
+          "request_id": null,
+          "phase": "shard_probe",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 130,
+          "diagnostic": {
+            "event": "candidate_selected"
+          }
+        },
+        {
+          "request_id": 3,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 188,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 4,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 202,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 596201
+          }
+        }
+      ],
+      "transfer_total_consumed_body_bytes": 1726697,
+      "preflight_consumed_body_bytes": 81920,
+      "media_body_consumed_bytes": 1644777,
+      "budget_exhausted": null,
+      "budget_body_bytes_limit": 536870912,
+      "budget_observed_body_bytes": 5245627,
+      "budget_body_overshoot_bytes": 0,
+      "budget_observed_request_limit": 2048,
+      "budget_observed_request_count_lower_bound": 15,
+      "cleanup_timed_out": false,
+      "total_run_timeout_secs": 600,
+      "cleanup_grace_secs": 5,
+      "request_id_scope": "IDs are local to each progress-reporter call; shared standalone_probe IDs are recorded separately and are not globally unique",
+      "request_count_semantics": "unique media-transfer request IDs seen in body or terminal/retry diagnostics; lower bound because no request-start event is emitted; API/auth requests are excluded",
+      "transfer_activity_semantics": "first/last times are relative to the group or standalone probe collector; includes body or phase-tagged diagnostic events only, omits connection and response-header wait, and is neither full request latency nor additive concurrency time",
+      "body_bytes_scope": "decoded media response bodies only",
+      "body_measurement": "response body chunks after transparent gzip decoding; excludes API/auth responses; not wire bytes",
+      "body_budget_semantics": "cancel after the first observed crossing chunk/request; the crossing chunk and in-flight decoded chunks may overshoot; not a wire cap",
+      "api_response_body_bytes_observed": false,
+      "wire_bytes_observed": false,
+      "wire_completeness_observed": false,
+      "valid_three_way_sample": true,
+      "validity_reasons": [],
+      "error_class": null
+    },
+    {
+      "sample": "expanded-public-multipage",
+      "entry_index": 1,
+      "repetition": 1,
+      "order": 2,
+      "order_offset": 1,
+      "started_at_epoch_ms": 1791749581198,
+      "group": "multi_host_range4",
+      "fixed_host": "upos-sz-mirroraliov.bilivideo.com:443",
+      "candidate_hosts": [
+        "upos-sz-mirroraliov.bilivideo.com:443",
+        "upos-hz-mirrorakam.akamaized.net:443",
+        "upos-sz-mirror08h.bilivideo.com:443"
+      ],
+      "request_timeout_secs": 300,
+      "quality": 80,
+      "codecs": "avc1.640032",
+      "declared_size": 1644777,
+      "max_media_bytes_limit": 134217728,
+      "size_source": "probe",
+      "size_probe_phase": "standalone_probe",
+      "size_probe_sample_bytes": 65536,
+      "size_probe_elapsed_ms": 950,
+      "size_probe_observation_scope": "one shared case setup; repeated metadata only; excluded from each group transfer total",
+      "size_probe_transfer_bytes_by_host_phase": [
+        {
+          "host": "upos-sz-mirrorcosov.bilivideo.com",
+          "phase": "standalone_probe",
+          "bytes": 65536
+        }
+      ],
+      "size_probe_transfer_activity_by_host_phase": [
+        {
+          "host": "upos-sz-mirrorcosov.bilivideo.com",
+          "phase": "standalone_probe",
+          "first_event_elapsed_ms": 758,
+          "last_event_elapsed_ms": 950,
+          "observed_activity_elapsed_ms": 192
+        }
+      ],
+      "size_probe_transfer_consumed_body_bytes": 65536,
+      "size_probe_observed_request_ids": [
+        1,
+        2
+      ],
+      "size_probe_observed_request_count_lower_bound": 2,
+      "size_probe_request_outcomes": {
+        "completed": 2,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "size_probe_transfer_diagnostics": [
+        {
+          "request_id": 1,
+          "phase": "standalone_probe",
+          "host": "upos-sz-mirrorcosov.bilivideo.com",
+          "observed_at_elapsed_ms": 758,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1
+          }
+        },
+        {
+          "request_id": 2,
+          "phase": "standalone_probe",
+          "host": "upos-sz-mirrorcosov.bilivideo.com",
+          "observed_at_elapsed_ms": 950,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 65535
+          }
+        }
+      ],
+      "size_probe_included_in_group_totals": false,
+      "configured_cdn_parallelism": 4,
+      "success": true,
+      "elapsed_ms": 2862,
+      "benchmark_elapsed_ms": 5464,
+      "size": 1644777,
+      "sha256": "7864dbf341d59958ed70d96cebe2ab19338d9e444e18857ed146e3974de45011",
+      "shard_bytes_by_host": {
+        "upos-sz-mirror08h.bilivideo.com": 596201,
+        "upos-sz-mirroraliov.bilivideo.com": 1048576
+      },
+      "whole_file_fallback": false,
+      "transfer_bytes_by_host_phase": [
+        {
+          "host": "upos-sz-mirror08h.bilivideo.com",
+          "phase": "automatic_probe",
+          "bytes": 65536
+        },
+        {
+          "host": "upos-sz-mirror08h.bilivideo.com",
+          "phase": "range_chunk",
+          "bytes": 596201
+        },
+        {
+          "host": "upos-sz-mirror08h.bilivideo.com",
+          "phase": "shard_probe",
+          "bytes": 16384
+        },
+        {
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "phase": "automatic_probe",
+          "bytes": 65536
+        },
+        {
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "phase": "range_chunk",
+          "bytes": 1048576
+        },
+        {
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "phase": "shard_probe",
+          "bytes": 16384
+        }
+      ],
+      "transfer_activity_by_host_phase": [
+        {
+          "host": "upos-hz-mirrorakam.akamaized.net",
+          "phase": "automatic_probe",
+          "first_event_elapsed_ms": 113,
+          "last_event_elapsed_ms": 113,
+          "observed_activity_elapsed_ms": 0
+        },
+        {
+          "host": "upos-hz-mirrorakam.akamaized.net",
+          "phase": "shard_probe",
+          "first_event_elapsed_ms": 1600,
+          "last_event_elapsed_ms": 1819,
+          "observed_activity_elapsed_ms": 219
+        },
+        {
+          "host": "upos-sz-mirror08h.bilivideo.com",
+          "phase": "automatic_probe",
+          "first_event_elapsed_ms": 1348,
+          "last_event_elapsed_ms": 1585,
+          "observed_activity_elapsed_ms": 237
+        },
+        {
+          "host": "upos-sz-mirror08h.bilivideo.com",
+          "phase": "range_chunk",
+          "first_event_elapsed_ms": 2158,
+          "last_event_elapsed_ms": 2858,
+          "observed_activity_elapsed_ms": 700
+        },
+        {
+          "host": "upos-sz-mirror08h.bilivideo.com",
+          "phase": "shard_probe",
+          "first_event_elapsed_ms": 1818,
+          "last_event_elapsed_ms": 1819,
+          "observed_activity_elapsed_ms": 1
+        },
+        {
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "phase": "automatic_probe",
+          "first_event_elapsed_ms": 19,
+          "last_event_elapsed_ms": 19,
+          "observed_activity_elapsed_ms": 0
+        },
+        {
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "phase": "range_chunk",
+          "first_event_elapsed_ms": 1837,
+          "last_event_elapsed_ms": 1856,
+          "observed_activity_elapsed_ms": 19
+        },
+        {
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "phase": "shard_probe",
+          "first_event_elapsed_ms": 1682,
+          "last_event_elapsed_ms": 1819,
+          "observed_activity_elapsed_ms": 137
+        }
+      ],
+      "observed_request_ids": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "observed_request_count_lower_bound": 8,
+      "request_outcomes": {
+        "completed": 6,
+        "failed": 2,
+        "cancelled": 0
+      },
+      "transfer_diagnostics": [
+        {
+          "request_id": 1,
+          "phase": "automatic_probe",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 19,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 65536
+          }
+        },
+        {
+          "request_id": 2,
+          "phase": "automatic_probe",
+          "host": "upos-hz-mirrorakam.akamaized.net",
+          "observed_at_elapsed_ms": 113,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "failed",
+              "reason": "invalid_response"
+            },
+            "bytes_received": 0
+          }
+        },
+        {
+          "request_id": 3,
+          "phase": "automatic_probe",
+          "host": "upos-sz-mirror08h.bilivideo.com",
+          "observed_at_elapsed_ms": 1585,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 65536
+          }
+        },
+        {
+          "request_id": 6,
+          "phase": "shard_probe",
+          "host": "upos-hz-mirrorakam.akamaized.net",
+          "observed_at_elapsed_ms": 1600,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "failed",
+              "reason": "invalid_response"
+            },
+            "bytes_received": 0
+          }
+        },
+        {
+          "request_id": 4,
+          "phase": "shard_probe",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1682,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 16384
+          }
+        },
+        {
+          "request_id": 5,
+          "phase": "shard_probe",
+          "host": "upos-sz-mirror08h.bilivideo.com",
+          "observed_at_elapsed_ms": 1818,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 16384
+          }
+        },
+        {
+          "request_id": null,
+          "phase": "shard_probe",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1819,
+          "diagnostic": {
+            "event": "candidate_selected"
+          }
+        },
+        {
+          "request_id": null,
+          "phase": "shard_probe",
+          "host": "upos-sz-mirror08h.bilivideo.com",
+          "observed_at_elapsed_ms": 1819,
+          "diagnostic": {
+            "event": "candidate_selected"
+          }
+        },
+        {
+          "request_id": null,
+          "phase": "shard_probe",
+          "host": "upos-hz-mirrorakam.akamaized.net",
+          "observed_at_elapsed_ms": 1819,
+          "diagnostic": {
+            "event": "candidate_excluded",
+            "reason": "probe_failed"
+          }
+        },
+        {
+          "request_id": 7,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 1856,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1048576
+          }
+        },
+        {
+          "request_id": 8,
+          "phase": "range_chunk",
+          "host": "upos-sz-mirror08h.bilivideo.com",
+          "observed_at_elapsed_ms": 2858,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 596201
+          }
+        }
+      ],
+      "transfer_total_consumed_body_bytes": 1808617,
+      "preflight_consumed_body_bytes": 163840,
+      "media_body_consumed_bytes": 1644777,
+      "budget_exhausted": null,
+      "budget_body_bytes_limit": 536870912,
+      "budget_observed_body_bytes": 5245627,
+      "budget_body_overshoot_bytes": 0,
+      "budget_observed_request_limit": 2048,
+      "budget_observed_request_count_lower_bound": 15,
+      "cleanup_timed_out": false,
+      "total_run_timeout_secs": 600,
+      "cleanup_grace_secs": 5,
+      "request_id_scope": "IDs are local to each progress-reporter call; shared standalone_probe IDs are recorded separately and are not globally unique",
+      "request_count_semantics": "unique media-transfer request IDs seen in body or terminal/retry diagnostics; lower bound because no request-start event is emitted; API/auth requests are excluded",
+      "transfer_activity_semantics": "first/last times are relative to the group or standalone probe collector; includes body or phase-tagged diagnostic events only, omits connection and response-header wait, and is neither full request latency nor additive concurrency time",
+      "body_bytes_scope": "decoded media response bodies only",
+      "body_measurement": "response body chunks after transparent gzip decoding; excludes API/auth responses; not wire bytes",
+      "body_budget_semantics": "cancel after the first observed crossing chunk/request; the crossing chunk and in-flight decoded chunks may overshoot; not a wire cap",
+      "api_response_body_bytes_observed": false,
+      "wire_bytes_observed": false,
+      "wire_completeness_observed": false,
+      "valid_three_way_sample": true,
+      "validity_reasons": [],
+      "error_class": null
+    },
+    {
+      "sample": "expanded-public-multipage",
+      "entry_index": 1,
+      "repetition": 1,
+      "order": 3,
+      "order_offset": 1,
+      "started_at_epoch_ms": 1791749584142,
+      "group": "fixed_host_baseline",
+      "fixed_host": "upos-sz-mirroraliov.bilivideo.com:443",
+      "candidate_hosts": [
+        "upos-sz-mirroraliov.bilivideo.com:443",
+        "upos-hz-mirrorakam.akamaized.net:443",
+        "upos-sz-mirror08h.bilivideo.com:443"
+      ],
+      "request_timeout_secs": 300,
+      "quality": 80,
+      "codecs": "avc1.640032",
+      "declared_size": 1644777,
+      "max_media_bytes_limit": 134217728,
+      "size_source": "probe",
+      "size_probe_phase": "standalone_probe",
+      "size_probe_sample_bytes": 65536,
+      "size_probe_elapsed_ms": 950,
+      "size_probe_observation_scope": "one shared case setup; repeated metadata only; excluded from each group transfer total",
+      "size_probe_transfer_bytes_by_host_phase": [
+        {
+          "host": "upos-sz-mirrorcosov.bilivideo.com",
+          "phase": "standalone_probe",
+          "bytes": 65536
+        }
+      ],
+      "size_probe_transfer_activity_by_host_phase": [
+        {
+          "host": "upos-sz-mirrorcosov.bilivideo.com",
+          "phase": "standalone_probe",
+          "first_event_elapsed_ms": 758,
+          "last_event_elapsed_ms": 950,
+          "observed_activity_elapsed_ms": 192
+        }
+      ],
+      "size_probe_transfer_consumed_body_bytes": 65536,
+      "size_probe_observed_request_ids": [
+        1,
+        2
+      ],
+      "size_probe_observed_request_count_lower_bound": 2,
+      "size_probe_request_outcomes": {
+        "completed": 2,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "size_probe_transfer_diagnostics": [
+        {
+          "request_id": 1,
+          "phase": "standalone_probe",
+          "host": "upos-sz-mirrorcosov.bilivideo.com",
+          "observed_at_elapsed_ms": 758,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1
+          }
+        },
+        {
+          "request_id": 2,
+          "phase": "standalone_probe",
+          "host": "upos-sz-mirrorcosov.bilivideo.com",
+          "observed_at_elapsed_ms": 950,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 65535
+          }
+        }
+      ],
+      "size_probe_included_in_group_totals": false,
+      "configured_cdn_parallelism": 1,
+      "success": true,
+      "elapsed_ms": 44,
+      "benchmark_elapsed_ms": 5464,
+      "size": 1644777,
+      "sha256": "7864dbf341d59958ed70d96cebe2ab19338d9e444e18857ed146e3974de45011",
+      "shard_bytes_by_host": {},
+      "whole_file_fallback": false,
+      "transfer_bytes_by_host_phase": [
+        {
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "phase": "whole_file",
+          "bytes": 1644777
+        }
+      ],
+      "transfer_activity_by_host_phase": [
+        {
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "phase": "whole_file",
+          "first_event_elapsed_ms": 15,
+          "last_event_elapsed_ms": 44,
+          "observed_activity_elapsed_ms": 29
+        }
+      ],
+      "observed_request_ids": [
+        1
+      ],
+      "observed_request_count_lower_bound": 1,
+      "request_outcomes": {
+        "completed": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "transfer_diagnostics": [
+        {
+          "request_id": 1,
+          "phase": "whole_file",
+          "host": "upos-sz-mirroraliov.bilivideo.com",
+          "observed_at_elapsed_ms": 44,
+          "diagnostic": {
+            "event": "request_finished",
+            "outcome": {
+              "status": "succeeded"
+            },
+            "bytes_received": 1644777
+          }
+        }
+      ],
+      "transfer_total_consumed_body_bytes": 1644777,
+      "preflight_consumed_body_bytes": 0,
+      "media_body_consumed_bytes": 1644777,
+      "budget_exhausted": null,
+      "budget_body_bytes_limit": 536870912,
+      "budget_observed_body_bytes": 5245627,
+      "budget_body_overshoot_bytes": 0,
+      "budget_observed_request_limit": 2048,
+      "budget_observed_request_count_lower_bound": 15,
+      "cleanup_timed_out": false,
+      "total_run_timeout_secs": 600,
+      "cleanup_grace_secs": 5,
+      "request_id_scope": "IDs are local to each progress-reporter call; shared standalone_probe IDs are recorded separately and are not globally unique",
+      "request_count_semantics": "unique media-transfer request IDs seen in body or terminal/retry diagnostics; lower bound because no request-start event is emitted; API/auth requests are excluded",
+      "transfer_activity_semantics": "first/last times are relative to the group or standalone probe collector; includes body or phase-tagged diagnostic events only, omits connection and response-header wait, and is neither full request latency nor additive concurrency time",
+      "body_bytes_scope": "decoded media response bodies only",
+      "body_measurement": "response body chunks after transparent gzip decoding; excludes API/auth responses; not wire bytes",
+      "body_budget_semantics": "cancel after the first observed crossing chunk/request; the crossing chunk and in-flight decoded chunks may overshoot; not a wire cap",
+      "api_response_body_bytes_observed": false,
+      "wire_bytes_observed": false,
+      "wire_completeness_observed": false,
+      "valid_three_way_sample": true,
+      "validity_reasons": [],
+      "error_class": null
+    }
+  ]
+}

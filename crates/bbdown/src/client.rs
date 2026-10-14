@@ -22,9 +22,18 @@ use http_body_util::BodyExt as _;
 use md5::{Digest, Md5};
 use reqwest::header::{COOKIE, HeaderMap, HeaderValue, REFERER, USER_AGENT};
 use serde::Deserialize;
+use sha2::Sha256;
 use std::fmt;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::sync::Mutex;
 use url::Url;
+
+mod metadata_page;
+pub use metadata_page::{
+    MetadataCollectionInfo, MetadataConsistency, MetadataCursor, MetadataPage, MetadataPageOptions,
+    MetadataStopReason,
+};
 
 pub(crate) const TV_PLAYURL_APPKEY: &str = "4409e2ce8ffd12b8";
 pub(crate) const TV_PLAYURL_APP_SECRET: &str = "59b43e04ad6965f34319062b478f83dd";
@@ -35,6 +44,7 @@ pub(crate) const BILIBILI_ANDROID_APP_SECRET: &str = "2653583c8873dea268ab938691
 pub(crate) const BILIBILI_ANDROID_B_APPKEY: &str = "1d8b6e7d45233436";
 pub(crate) const BILIBILI_ANDROID_B_APP_SECRET: &str = "560c52ccd288fed045859ed18bffd973";
 const DYNAMIC_FEED_FEATURES: &str = "itemOpusStyle,listOnlyfans,opusBigCover,onlyfansVote,forwardListHidden,decorationCard,commentsNewVersion,onlyfansAssetsV2,ugcDelete,onlyfansQaCard";
+const DYNAMIC_SPI_RESPONSE_MAX_BYTES: usize = 1024 * 1024;
 const RECOMMENDATION_MIN_PAGE_SIZE: u32 = 20;
 const RECOMMENDATION_MAX_PAGE_SIZE: u32 = 30;
 const RECOMMENDATION_MAX_REFRESH_PAGES: u32 = 10;
@@ -438,6 +448,31 @@ impl RestrictedAreaProxy {
 pub struct BiliClient {
     pub(crate) http: reqwest::Client,
     pub(crate) config: ClientConfig,
+    json_body_limit: Option<usize>,
+    dynamic_device_cookie_cache: Arc<Mutex<Option<CachedDynamicDeviceCookies>>>,
+}
+
+#[derive(Clone)]
+struct CachedDynamicDeviceCookies {
+    context_binding: [u8; 32],
+    values: DynamicDeviceCookieValues,
+}
+
+impl fmt::Debug for CachedDynamicDeviceCookies {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("CachedDynamicDeviceCookies([REDACTED])")
+    }
+}
+
+#[derive(Clone)]
+struct DynamicDeviceCookieValues {
+    buvid3: String,
+    buvid4: String,
+}
+
+pub(crate) enum DynamicDeviceCookiePreparation {
+    Ready(Option<String>),
+    RequestLimit,
 }
 
 impl BiliClient {
@@ -446,7 +481,21 @@ impl BiliClient {
         Self {
             http: reqwest::Client::new(),
             config,
+            json_body_limit: None,
+            dynamic_device_cookie_cache: Arc::default(),
         }
+    }
+
+    /// Resolves one bounded page from a supported dynamic collection input.
+    ///
+    /// The supported inputs are following and per-space dynamic feeds. This metadata
+    /// operation does not invoke playurl, media, subtitle, or tag endpoints.
+    pub async fn resolve_metadata_page(
+        &self,
+        input: Input,
+        options: MetadataPageOptions,
+    ) -> Result<MetadataPage> {
+        metadata_page::resolve_metadata_page(self, input, options).await
     }
 
     pub async fn check_credential_health(&self) -> CredentialHealthReport {
@@ -2553,6 +2602,18 @@ impl BiliClient {
         kind: DynamicFeedKind,
         fetch_mode: FeedListFetchMode,
     ) -> Result<VideoCollectionMetadata> {
+        let cookie_override = if matches!(kind, DynamicFeedKind::Space { .. }) {
+            match self.prepare_space_dynamic_cookie(|| true).await? {
+                DynamicDeviceCookiePreparation::Ready(cookie) => cookie,
+                DynamicDeviceCookiePreparation::RequestLimit => {
+                    return Err(Error::InvalidInput(
+                        "unbudgeted dynamic device cookie initialization was limited".to_owned(),
+                    ));
+                }
+            }
+        } else {
+            None
+        };
         let mixin_key = match kind {
             DynamicFeedKind::Following => None,
             DynamicFeedKind::Space { .. } => Some(self.fetch_wbi_mixin_key().await?),
@@ -2561,7 +2622,12 @@ impl BiliClient {
         let mut items = Vec::new();
         loop {
             let page = self
-                .fetch_dynamic_feed_page(kind, offset.as_deref(), mixin_key.as_deref())
+                .fetch_dynamic_feed_page(
+                    kind,
+                    offset.as_deref(),
+                    mixin_key.as_deref(),
+                    cookie_override.as_deref(),
+                )
                 .await?;
             if page.items.is_empty() {
                 break;
@@ -2615,6 +2681,7 @@ impl BiliClient {
         kind: DynamicFeedKind,
         offset: Option<&str>,
         mixin_key: Option<&str>,
+        cookie_override: Option<&str>,
     ) -> Result<DynamicFeedData> {
         let mut url = Self::endpoint_url(&self.config.endpoints.api_base, kind.endpoint_path())?;
         match kind {
@@ -2646,8 +2713,93 @@ impl BiliClient {
                 url.set_query(Some(&wbi_signed_query(params, mixin_key)));
             }
         }
-        let response: ApiData<DynamicFeedData> = self.get_json(url).await?;
+        let response: ApiData<DynamicFeedData> = if let Some(cookie) = cookie_override {
+            self.get_json_with_cookie_override(url, false, Some(cookie))
+                .await?
+        } else {
+            self.get_json(url).await?
+        };
         response.into_data()
+    }
+
+    pub(crate) async fn prepare_space_dynamic_cookie(
+        &self,
+        reserve_spi_request: impl FnOnce() -> bool,
+    ) -> Result<DynamicDeviceCookiePreparation> {
+        let Some(cookie) = request_credential_value(self.config.credentials.cookie.as_deref())
+        else {
+            return Ok(DynamicDeviceCookiePreparation::Ready(None));
+        };
+        HeaderValue::from_str(cookie)
+            .map_err(|_| Error::InvalidInput("invalid dynamic cookie header".to_owned()))?;
+        let mut prepared_cookie = remove_empty_device_cookie_pairs(cookie);
+        let has_buvid3 = cookie_has_nonempty_value(&prepared_cookie, "buvid3");
+        let has_buvid4 = cookie_has_nonempty_value(&prepared_cookie, "buvid4");
+        if has_buvid3 && has_buvid4 {
+            return Ok(DynamicDeviceCookiePreparation::Ready(
+                (prepared_cookie != cookie).then_some(prepared_cookie),
+            ));
+        }
+
+        let context_binding = dynamic_device_cookie_context_binding(
+            cookie,
+            &self.config.endpoints.api_base,
+            &self.config.user_agent,
+        )?;
+        let mut cache = self.dynamic_device_cookie_cache.lock().await;
+        let values = if let Some(entry) = cache
+            .as_ref()
+            .filter(|entry| entry.context_binding == context_binding)
+        {
+            entry.values.clone()
+        } else {
+            if !reserve_spi_request() {
+                return Ok(DynamicDeviceCookiePreparation::RequestLimit);
+            }
+            let values = self.fetch_server_dynamic_device_cookies().await?;
+            *cache = Some(CachedDynamicDeviceCookies {
+                context_binding,
+                values: values.clone(),
+            });
+            values
+        };
+
+        if !has_buvid3 {
+            append_cookie_pair(&mut prepared_cookie, "buvid3", &values.buvid3);
+        }
+        if !has_buvid4 {
+            append_cookie_pair(&mut prepared_cookie, "buvid4", &values.buvid4);
+        }
+        HeaderValue::from_str(&prepared_cookie)
+            .map_err(|_| Error::InvalidInput("invalid dynamic cookie header".to_owned()))?;
+        Ok(DynamicDeviceCookiePreparation::Ready(Some(prepared_cookie)))
+    }
+
+    async fn fetch_server_dynamic_device_cookies(&self) -> Result<DynamicDeviceCookieValues> {
+        let url = Self::endpoint_url(&self.config.endpoints.api_base, "/x/frontend/finger/spi")?;
+        // Keep legacy redirect behavior unchanged while limiting this bounded
+        // initialization request to one HTTP request and a capped JSON body.
+        let isolated_client = if self.json_body_limit.is_some() {
+            None
+        } else {
+            Some(Self {
+                http: reqwest::Client::builder()
+                    .redirect(reqwest::redirect::Policy::none())
+                    .build()
+                    .map_err(Self::http_error_without_url)?,
+                config: self.config.clone(),
+                json_body_limit: Some(DYNAMIC_SPI_RESPONSE_MAX_BYTES),
+                dynamic_device_cookie_cache: self.dynamic_device_cookie_cache.clone(),
+            })
+        };
+        let request_client = isolated_client.as_ref().unwrap_or(self);
+        let response: ApiData<DynamicDeviceCookieData> =
+            request_client.get_json_without_cookie(url).await?;
+        let data = response.into_data()?;
+        Ok(DynamicDeviceCookieValues {
+            buvid3: validate_server_cookie_value(data.b_3, "data.b_3")?,
+            buvid4: validate_server_cookie_value(data.b_4, "data.b_4")?,
+        })
     }
 
     async fn push_dynamic_feed_item(
@@ -3484,18 +3636,62 @@ impl BiliClient {
     where
         T: for<'de> Deserialize<'de>,
     {
+        self.get_json_with_cookie_override(url, include_cookie, None)
+            .await
+    }
+
+    async fn get_json_with_cookie_override<T>(
+        &self,
+        url: Url,
+        include_cookie: bool,
+        cookie_override: Option<&str>,
+    ) -> Result<T>
+    where
+        T: for<'de> Deserialize<'de>,
+    {
         let preserve_status_url = preserves_json_status_url_for_path(url.path());
+        let mut headers = self.headers(include_cookie)?;
+        if let Some(cookie) = cookie_override {
+            let mut header_value = HeaderValue::from_str(cookie)
+                .map_err(|_| Error::InvalidInput("invalid cookie header".to_owned()))?;
+            header_value.set_sensitive(true);
+            headers.insert(COOKIE, header_value);
+        }
         let response = self
             .http
             .get(url)
-            .headers(self.headers(include_cookie)?)
+            .headers(headers)
             .timeout(self.config.request_timeout)
             .send()
             .await
             .map_err(Self::http_error_without_url)?;
-        let response = response
+        let mut response = response
             .error_for_status()
             .map_err(|error| Self::http_json_status_error(error, preserve_status_url))?;
+        if let Some(limit) = self.json_body_limit {
+            if response
+                .content_length()
+                .is_some_and(|content_length| content_length > limit as u64)
+            {
+                return Err(Error::InvalidInput(format!(
+                    "bounded metadata API response exceeded the {limit}-byte limit"
+                )));
+            }
+            let mut body = Vec::new();
+            while let Some(chunk) = response
+                .chunk()
+                .await
+                .map_err(Self::http_error_without_url)?
+            {
+                if body.len().saturating_add(chunk.len()) > limit {
+                    return Err(Error::InvalidInput(format!(
+                        "bounded metadata API response exceeded the {limit}-byte limit"
+                    )));
+                }
+                body.extend_from_slice(&chunk);
+            }
+            return serde_json::from_slice(&body).map_err(Error::from);
+        }
         response
             .json::<T>()
             .await
@@ -3758,6 +3954,93 @@ struct ApiData<T> {
     #[serde(default)]
     message: String,
     data: Option<T>,
+}
+
+#[derive(Deserialize)]
+struct DynamicDeviceCookieData {
+    b_3: Option<String>,
+    b_4: Option<String>,
+}
+
+fn validate_server_cookie_value(value: Option<String>, field: &'static str) -> Result<String> {
+    let value = value.ok_or(Error::MissingField(field))?;
+    if value.is_empty() || value.len() > 256 || !value.bytes().all(is_rfc6265_cookie_octet) {
+        return Err(Error::InvalidInput(format!(
+            "{field} is not a valid server-issued cookie value"
+        )));
+    }
+    Ok(value)
+}
+
+fn is_rfc6265_cookie_octet(byte: u8) -> bool {
+    byte == 0x21
+        || (0x23..=0x2b).contains(&byte)
+        || (0x2d..=0x3a).contains(&byte)
+        || (0x3c..=0x5b).contains(&byte)
+        || (0x5d..=0x7e).contains(&byte)
+}
+
+fn cookie_has_nonempty_value(cookie: &str, expected_name: &str) -> bool {
+    cookie.split(';').any(|pair| {
+        pair.split_once('=')
+            .is_some_and(|(name, value)| name.trim() == expected_name && !value.trim().is_empty())
+    })
+}
+
+fn remove_empty_device_cookie_pairs(cookie: &str) -> String {
+    let retained = cookie
+        .split(';')
+        .enumerate()
+        .filter(|(_, pair)| {
+            !pair.split_once('=').is_some_and(|(name, value)| {
+                matches!(name.trim(), "buvid3" | "buvid4") && value.trim().is_empty()
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut cleaned = String::with_capacity(cookie.len());
+    for (retained_index, (original_index, pair)) in retained.into_iter().enumerate() {
+        if retained_index > 0 {
+            cleaned.push(';');
+        }
+        if retained_index == 0 && original_index > 0 {
+            cleaned.push_str(pair.trim_start_matches([' ', '\t']));
+        } else {
+            cleaned.push_str(pair);
+        }
+    }
+    cleaned
+}
+
+fn append_cookie_pair(cookie: &mut String, name: &str, value: &str) {
+    if !cookie.is_empty() && !cookie.trim_end().ends_with(';') {
+        cookie.push_str("; ");
+    } else if cookie.ends_with(';') {
+        cookie.push(' ');
+    }
+    cookie.push_str(name);
+    cookie.push('=');
+    cookie.push_str(value);
+}
+
+fn dynamic_device_cookie_context_binding(
+    cookie: &str,
+    api_base: &str,
+    user_agent: &str,
+) -> Result<[u8; 32]> {
+    let mut normalized_api_base = Url::parse(api_base)?;
+    normalized_api_base.set_query(None);
+    normalized_api_base.set_fragment(None);
+    let mut digest = Sha256::new();
+    digest.update(b"bbdown-space-dynamic-device-cookie-v1");
+    for part in [
+        cookie.as_bytes(),
+        normalized_api_base.as_str().as_bytes(),
+        user_agent.as_bytes(),
+    ] {
+        digest.update((part.len() as u64).to_be_bytes());
+        digest.update(part);
+    }
+    Ok(digest.finalize().into())
 }
 
 impl<T> ApiData<T> {
@@ -4417,7 +4700,7 @@ impl FlexibleU64 {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct DynamicArchiveSeed {
     aid: u64,
     bvid: Option<String>,

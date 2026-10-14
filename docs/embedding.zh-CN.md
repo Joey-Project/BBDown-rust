@@ -132,6 +132,125 @@ API。不带 selector 时，集合类输入会选择全部解析条目；传入 
 `Selection::Latest` 可选择上游列表顺序中的第一个解析条目。空集合会表示为空 item 列表，
 而不是 missing-field 错误。
 
+### 有界动态元数据分页
+
+通过 `BiliClient::resolve_metadata_page(input, options)`，可从 `Input::FollowingFeed` 或
+`Input::SpaceDynamic(mid)` 获取显式受限的候选窗口。其它输入类型会在发送请求前被拒绝。
+现有 `resolve` / `resolve_input` 和 CLI 信息查询保留全量集合语义；`Selection::Page(n)`
+仍表示选择结果中的第 n 个条目。
+
+`MetadataPageOptions` 提供三个独立、非零的单次调用预算：
+
+| 选项 | 默认值 | 最大值 | 消耗预算的操作 |
+| --- | ---: | ---: | --- |
+| `max_items` | 100 | 4096 | 返回有效且按 `(aid, cid)` 去重的视频分 P |
+| `max_source_items` | 100 | 4096 | 检查动态记录，包括无效、非视频和重复记录 |
+| `max_requests` | 10 | 512 | 尝试设备 Cookie 初始化、nav、动态页和视频详情 API 请求，包括失败的尝试 |
+
+请求预算耗尽后，操作会在发起下一次请求前停止。只有配置了非空 Web cookie 时才会使用此
+初始化流程。匿名 Space feed 会跳过 SPI；本次调用中的第一个新 feed 仍需要 nav 和 feed。
+如果非空配置 Cookie 的 `buvid3` 或 `buvid4` 值缺少、为空或仅含空白字符，且即将请求新的
+`SpaceDynamic` feed、客户端内存中又没有匹配的初始化缓存，客户端才会向配置的 API base 的
+`/x/frontend/finger/spi` 发起匿名请求。
+它会验证服务器返回的 `data.b_3` 和 `data.b_4`。Space feed 使用临时 Cookie header：移除空值
+或仅含空白字符的设备 Cookie pair，并为没有非空配置值的名称追加服务器返回值。已有的非空
+值会保留。如果两个名称都已有非空值，即使存在空值重复项，也只从临时 header 移除空 pair，
+无需 SPI。此过程不会修改原始配置 Cookie 或 `Credentials`。验证通过的服务器值缓存在客户端
+内存中供克隆客户端共享；缓存键是原始 Cookie、API base 和 user agent 的私有摘要。不会本地
+生成这些值，也不会写入 credential store。
+`FollowingFeed` 和其它输入不使用该初始化流程。初始化失败会返回错误，不会继续请求动态
+feed。相同的缺失 Cookie 初始化也适用于现有完整 SpaceDynamic resolver，并发生在 WBI nav
+请求之前；Following 和无关路径保持现有行为。
+
+初始化请求同样消耗 `max_requests`，nav、动态页和视频详情请求也计入预算。每次
+`resolve_metadata_page` 调用最多获取一次 WBI key，并供本次调用后续 Space feed 复用。
+游标不保存该 key，因此每次调用中第一个新的 Space feed 都需要一个 nav 和一个 feed 请求。
+如果非空配置 Cookie 的设备值缺少、为空或仅含空白字符，且初始化缓存未命中，第一个新 feed 还需要
+一个 SPI 请求，共需三个额度。冷初始化时额度少于三个，会以 `RequestLimit` 停止，不会联系
+SPI、nav 或动态 feed。如果初始化已缓存（或两个设备名称都已有非空配置值），该调用的第一个新
+feed 需要两个额度用于 nav 和 feed。同一次调用中的后续 feed 每个只需一个额度，因为 nav key
+和成功初始化已可复用。消费缓冲条目和待用的视频详情请求时，在需要新 Space feed 之前
+无需初始化、nav 或 feed。关注动态不需要 WBI 查询。视频详情查询提供 cid，并展开多 P 视频。
+如果本次调用没有覆盖所需请求组的额度，会在发出该组请求前以 `RequestLimit` 停止。
+此操作只获取元数据，禁止自动重定向，不请求 tags、playurl 或媒体。请求计数统计 API 调用
+尝试，不统计传输握手或协议重传。每份 JSON 响应有 1 MiB 字节上限，并在读取响应体时
+执行限制。相同的缺失 Cookie 初始化也适用于现有完整 SpaceDynamic resolver，并发生在
+WBI nav 请求之前；Following 和无关路径保持现有行为。
+
+`MetadataPage` 返回不含全量 `items` 字段的集合摘要、有界的 `items`、`requests_used`、
+`source_items_examined`、`stop_reason` 和 `next_cursor`。`MetadataStopReason` 区分
+`ItemLimit`、`SourceItemLimit`、`RequestLimit` 和 `End`。空页仍可能携带续页游标，表示
+预算触发了停止，不代表源列表已耗尽。
+
+```rust,no_run
+use std::num::NonZeroUsize;
+use bbdown_core::{BiliClient, ClientConfig, Input, MetadataPageOptions};
+
+#[tokio::main]
+async fn main() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let input = Input::SpaceDynamic(441_167_301);
+    let first = client.resolve_metadata_page(input.clone(), MetadataPageOptions {
+        max_items: NonZeroUsize::MIN,
+        ..Default::default()
+    }).await?;
+    println!("{} items, {} requests", first.items.len(), first.requests_used);
+
+    if let Some(cursor) = first.next_cursor {
+        let next = client.resolve_metadata_page(input, MetadataPageOptions {
+            max_items: NonZeroUsize::MIN,
+            cursor: Some(cursor),
+            ..Default::default()
+        }).await?;
+        println!("{} next items", next.items.len());
+    }
+    Ok(())
+}
+```
+
+`MetadataCursor` 是可克隆、内部字段不公开的内存续页游标。它保存尚未消费的记录和视频
+分 P，静态测试数据续页时不会丢掉批次或视频的剩余部分，也无需重复请求已经缓冲的分 P。
+游标绑定输入、规范化 API 端点，以及私有的 cookie 上下文摘要；更换来源或认证上下文
+会在网络请求前被拒绝。它不保存原始凭据、WBI key 或签名 URL，调试输出会隐藏内部状态，
+也不提供序列化持久化格式。每次续页调用会重新获得预算；调用方还应限制整个候选窗口
+使用的调用次数。没有新的 Space feed 请求时，缓冲记录和待用视频详情不会触发设备 Cookie
+初始化、nav 或 feed。若某次续页需要新的 Space feed，该次调用必须重新获取 nav，因为游标
+不保留 WBI key；该调用后续的 feed 可复用本地 key。该次调用的首个新 feed 需要 nav 和
+feed；如果设备初始化仍是冷缓存，还需要 SPI。使用热初始化缓存（或 Cookie 中两个设备名称都
+有非空值）的客户端需要两个额度；冷初始化需要三个额度，并会在请求 SPI、nav 或 feed 前检查
+完整预算。同一次调用后续的 feed 各需一个额度。由缓冲游标状态恢复的视频详情请求只需
+自身预算，不会重复请求 nav 或 feed。
+
+上游动态接口没有稳定的快照 token，因此明确返回 `MetadataConsistency::BestEffort`：
+源列表变化时可能遗漏或重排结果。重复、循环或缺失的续页 offset 会明确报错，不会无界
+重试。响应和游标状态也有固定上限，超限会报错，不会静默丢弃记录：最多缓冲 4096 条
+源记录、4096 个展开后的视频分 P、4096 个已见条目身份，以及 128 个上游 offset。
+展开的分 P 会从一份缓冲的视频详情按需生成。返回条目的 UTF-8 字符串载荷总计不得超过
+4 MiB，超限会报错，不会截断。
+
+```mermaid
+flowchart TD
+    A[验证输入和游标] --> B[消费已缓冲记录与视频分P]
+    B --> C{需要上游元数据？}
+    C -->|需要| D{下一次源请求是否为 Space feed？}
+    D -->|否| E{能否预留所需 Following feed 或 view 请求？}
+    E -->|能| F[请求 Following feed 或视频详情]
+    E -->|否| J[返回 RequestLimit，停止下一次请求]
+    D -->|是| G{能否预留所需 SPI、本次调用未获取的 nav 和 feed？}
+    G -->|能| H[必要时请求 SPI；必要时请求 nav；然后请求 feed]
+    G -->|否| J
+    F --> I[读取有界 JSON 并筛选记录]
+    H --> I
+    I --> B
+    C -->|额度耗尽或源结束| K[返回条目、用量、停止原因和游标]
+```
+
+此 API 需要当前源码检出，尚未包含在已发布的 `0.9.0` 中。认证 actual-core 端到端检查使用
+原始已存 Cookie，由库自动初始化。首次调用用 3 个请求额度，在视频详情前停止；续页用
+2 个请求返回 2 条视频元数据，合计 5 个请求、检查 3 条源记录。这验证了元数据初始化、
+请求计数和续页。续页消费了缓冲的源记录并请求其视频详情，没有请求新的动态 feed，因此
+无需重复 nav；完整 V2 consumer 规划与播放仍需独立验收。
+
 推荐输入使用 WEB 首页推荐端点。它支持 `recommendations`、`recommendation`、`recommend`
 shorthand 和 B 站首页 URL。当前实现会输出普通视频 `av` 卡片；非视频推荐卡片会被跳过，
 显式 index selection 需要时会在安全上限内继续请求后续 `fresh_idx` 刷新批次来覆盖过滤后
