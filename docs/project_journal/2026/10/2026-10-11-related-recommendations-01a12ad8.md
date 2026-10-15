@@ -3,7 +3,7 @@ id: 20261011-related-recommendations-01a12ad8
 title: Related Video Recommendations
 status: completed
 created: 2026-10-11
-updated: 2026-10-11
+updated: 2026-10-14
 branch: wip/per-video-related-recommendations
 pr: https://github.com/Joey-Project/BBDown-rust/pull/96
 supersedes: []
@@ -46,4 +46,8 @@ superseded_by:
 
 ## Future Scope
 
-- Additional page families remain separate future work. This workstream adds only single-video related recommendations and retains homepage recommendation behavior.
+- Additional page families remain separate future work. This workstream adds only single-video
+  related recommendations and retains homepage recommendation behavior. See the
+  [page-family roadmap](2026-10-11-page-family-roadmap.md) for the ordered follow-up scope: preserve
+  PGC season grouping first, then ordinary video search, the anime timetable and film/TV category
+  listings, popular/ranking feeds, category/channel lists, and topic pages.

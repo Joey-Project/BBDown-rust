@@ -20,12 +20,19 @@ snapshot CDN/public-resolver catalogs with runtime probe commands, and independe
 Web playurl routes; it does not introduce automatic CDN routing. It also supports an
 explicit download archive for duplicate preflight, CLI replace / keep-both / cancel decisions, and
 append-only danmaku sidecar updates for already-downloaded archive entries.
-The current published release is `0.9.0`. The published `0.8.0` release's preserving update
-policy deduplicates XML comments by positive IDs (falling back to complete `p` values and decoded
-text for invalid IDs), retains XML history, and regenerates selected ASS output from the merged XML
-before publishing staged sidecars with the archive. The `0.9.0` release adds structured CDN
+Version `0.8.0` introduced preserving danmaku updates: it deduplicates XML comments by positive IDs
+(falling back to complete `p` values and decoded text for invalid IDs), retains XML history, and
+regenerates selected ASS output from the merged XML before publishing staged sidecars with the
+archive. Version `0.9.0` added structured CDN
 transfer diagnostics to progress callbacks and CLI `--progress-json`, and signs personal-space
 dynamic feed requests with WBI, including continuation pages.
+Version `0.10.0` introduces per-video related recommendations, a bounded metadata-page
+API for following and space-dynamic feeds, and authenticated SpaceDynamic initialization for missing
+device-cookie values. It also records a reproducible CDN performance baseline; in both added sample
+invocations, sequential download was faster than either Range control for that fixture. The
+`0.10.0` line does not implement automatic CDN routing or adaptive policy. Use `bbdown-core = "0.10"`
+for the new library APIs; a `0.9` dependency does not include them. If the `0.10.0` package is not
+available in your registry, use the matching source checkout or a local path dependency.
 Input parsing covers normal videos, PGC and intl episodes, PUGV/cheese courses, B23 short links,
 favorite lists, space videos, collections, series, homepage recommendations, per-video related
 recommendations, watch history, watch-later lists, following video feeds, and space dynamic video
@@ -210,8 +217,10 @@ with an `av`/`BV` id, numeric aid, or official desktop/mobile Bilibili video URL
 batch for that source video; they do not paginate or recursively fetch recommendations. Results
 exclude the source, invalid entries, and OGV entries, preserve upstream order, and deduplicate by
 aid. `--select` indexes this result list; homepage aliases and homepage URL continue to request the
-homepage recommendation feed. This feature requires the current source checkout and is not included
-in the published `0.9.0` release; it will ship in a future release. History input uses `history` or
+homepage recommendation feed. This feature was introduced in `0.10.0`; a `0.9` release does not
+include it. Use the matching `bbdown-core` dependency line, or a matching source checkout if the
+registry package is not available. History
+input uses `history` or
 `https://www.bilibili.com/account/history`, requires an authenticated web cookie, and currently
 includes normal-video `archive` history records. Watch-later input uses `watchlater`,
 `watch-later`, `watch_later`, `later`, `toview`, `https://www.bilibili.com/watchlater`, or
@@ -411,7 +420,10 @@ running, so sample behavior is driven by the manifest rather than shell state.
 - Crate API note: the publishable package is `bbdown-core`, imported as `bbdown_core`. The `0.7.0`
   release added the networking/downloader features described here, including opt-in CDN host
   selection, probing and parallel transfer, bundled network catalogs, and an independent PGC Web
-  playurl route API. The current published crate is `0.9.0`. The download APIs from `0.5.0` still include
+  playurl route API. Per-video related-recommendation and bounded metadata-page APIs were introduced
+  in `0.10.0`; a `0.9` crate does not include them. Use `bbdown-core = "0.10"`, or a matching source
+  checkout if the registry package is not available. The download APIs
+  from `0.5.0` still include
   `DownloadProgressEvent` callbacks,
   `DownloadCancellationToken`-based graceful cancellation, and ffmpeg chapter metadata muxing when
   plan entries expose chapters.

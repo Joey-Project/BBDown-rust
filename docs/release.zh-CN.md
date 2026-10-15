@@ -34,20 +34,24 @@ rulesets 应只允许这个 App 作为非人工 actor 写 tag。
 
 推荐 rulesets：
 
-- Repository default branch，目前是 `master`：要求 pull request，要求 `Rust` 和（受控 v2
-  切换后）`codex/github-review-gate` status checks，要求 Code Owner review。只有普通 PR 不需要
+- Repository default branch，目前是 `master`：要求 pull request，要求 `Rust` 和
+  `codex/github-review-gate` status checks，要求 Code Owner review。只有普通 PR 不需要
   人工审批时才把通用 required approval count 保持为 `0`。保留其他所有非 status 保护，包括
   conversation resolution 和禁止删除/非快进更新。
 
-目前配置的 legacy status 是 `codex/review-gate`，v2 consumer 不会发布它。合并 consumer 安装
-PR 后会进入明确的 fail-closed 维护窗口：暂停其他 PR 的合并；用另一个尚未合并的 canary PR
-证明 native v2 check 成功；由 coordinator 激活 `codex/github-review-gate` 并回读确认精确
-ruleset；然后才退役 legacy v1 要求。不得绕过缺失的 legacy check，也不得在回读前宣称生产
-ruleset 已迁移。
+生产 `master` 的规则现在要求 `codex/github-review-gate`，不再要求 legacy
+`codex/review-gate` status。以后切换 consumer 或 ruleset 时，仍须保留明确的 fail-closed
+维护窗口：暂停其他 PR 的合并；用另一个尚未合并的 canary PR 证明新的 native check 成功；
+由 coordinator 激活它并回读确认精确 ruleset；然后才退役旧要求。不得绕过缺失的 required
+check，也不得在回读前宣称 ruleset 已迁移。
 
-已安装的 v2 consumer 支持同仓库、目标为 default branch 的普通 PR。Fork-head PR 和目标为
-`release/*` 的 PR 不在支持范围内；除非另有独立审查的能力实现，不要在这些分支要求 v2
-context。
+已安装的 v2 consumer 支持同仓库、目标为 default branch 的普通 PR。Required checks 按目标分支
+生效，因此 fork-head PR 以 `master` 为目标时无法满足当前必需的 v2 gate。接收 fork 贡献时，
+maintainer 先审查拟接收的修改，将已审查的修改复制到同仓库分支，再开启以 `master` 为目标的
+同仓库 PR。新 PR 保留原 fork PR 链接及贡献归属，并在保留 `master` 保护规则的情况下完成正常
+CI、Codex、Code Owner 和 conversation gates。这是独立审查通过 fork-head 支持前的贡献交接路径。
+本项目不开以 `release/*` 为目标的 PR，这些分支不要求 v2。
+
 - RC tags：target `v*-rc.*`；限制创建、更新和删除；只允许 release GitHub App 创建。
 - 正式 release tags：target `v*`，如果 UI 支持 exclude，则排除 `v*-rc.*`；否则使用不会匹配
   RC tag 的单独正式 tag pattern。限制创建、更新和删除；只允许 release GitHub App 创建。

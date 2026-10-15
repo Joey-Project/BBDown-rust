@@ -9,12 +9,16 @@ projects that need typed Bilibili metadata, download plans, media downloads, sub
 danmaku sidecars, QR login state, batch collection parsing, and restricted-area proxy diagnostics
 without shelling out to the CLI.
 
-The current published `0.9.0` release includes CDN transfer diagnostics and WBI-signed personal-space
+Version `0.9.0` includes CDN transfer diagnostics and WBI-signed personal-space
 dynamic feed requests, including continuation pages. The published `0.8.0` release includes staged
 preserving danmaku refresh and explicit credential-account identity checks. The earlier `0.7.0`
 release added explicit CDN host pools, probing, and parallel transfer options plus an independent
 PGC Web playurl route selector. These network actions remain caller-selected; the crate does not
 automatically route requests from the bundled CLI catalogs.
+Per-video related-recommendation and bounded metadata-page APIs were introduced in `bbdown-core`
+`0.10.0`. Use the `0.10` dependency line for these APIs; version `0.9.0` does not include them. If
+the `0.10.0` registry package is not available, use the matching source checkout or a local path
+dependency.
 Prefer constructors and builder-style APIs for configuration, and treat metadata and plan
 structs as read-only output surfaces. This keeps embedding code resilient when new fields are added
 while the crate matures.
@@ -266,7 +270,8 @@ flowchart TD
     C -->|Limit or source end| K[Return items, usage, stop reason, and cursor]
 ```
 
-This API requires the current source checkout and is not included in the published `0.9.0`.
+This API was introduced in `bbdown-core` `0.10.0`; version `0.9.0` does not include it. Use the
+`0.10` dependency line, or the matching source checkout while the registry package is unavailable.
 An authenticated actual-core end-to-end check used the original stored cookie and automatic
 initialization. Its initial three-request call stopped before video details; a two-request
 continuation returned two video metadata items, with five requests and three examined source
@@ -294,8 +299,8 @@ empty default/all result is a valid empty collection. `Current` and `Episode` se
 before the endpoint request. The call uses the ordinary web API client configuration and may send its
 configured cookie; anonymous requests may be restricted by the upstream service. API errors are
 returned through the normal `Result` error path. No additional client configuration is required.
-This feature requires the current source checkout and is not included in the published `0.9.0`
-release; it will ship in a future release.
+This feature was introduced in `bbdown-core` `0.10.0`; version `0.9.0` does not include it. Use the
+`0.10` dependency line, or the matching source checkout while the registry package is unavailable.
 
 ```rust,no_run
 use bbdown_core::{BiliClient, ClientConfig, Input, ResolvedContent, Selection};

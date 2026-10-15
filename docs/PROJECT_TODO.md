@@ -125,8 +125,17 @@
 - [completed] Sign personal-space dynamic feed pages with the existing WBI key lookup and signer,
   including continuation offsets, while preserving following-feed behavior. See
   `docs/project_journal/2026/10/2026-10-10-space-dynamic-wbi-signing.md`.
-- [pending] Plan per-video related recommendations and additional Bilibili page-family parsing for
-  a later feed/page release; keep this feed/page backlog deferred from `v0.7.0`.
+- [completed] Add single-video related recommendations as one finite batch, with CLI, Rust API,
+  and selection support. See
+  `docs/project_journal/2026/10/2026-10-11-related-recommendations-01a12ad8.md`.
+- [pending] Preserve PGC season section titles and grouping before adding ordinary video search.
+  See `docs/project_journal/2026/10/2026-10-11-page-family-roadmap.md`.
+- [pending] Add ordinary video search, then the new-season anime timetable and film/TV category
+  listings. Support explicitly configured reverse API resolvers for metadata, listing, and playurl
+  endpoints only where each endpoint's capabilities permit it. See
+  `docs/project_journal/2026/10/2026-10-11-page-family-roadmap.md`.
+- [pending] Add popular/ranking feeds, then category/channel lists, then topic pages at lower
+  priority. See `docs/project_journal/2026/10/2026-10-11-page-family-roadmap.md`.
 - [completed] Add the `0.8.0` preserving danmaku refresh API and CLI: deduplicate XML comments by
   positive IDs (falling back to complete `p` values and decoded text for invalid IDs), retain XML
   history, regenerate selected ASS from merged XML, and publish staged sidecars with the archive as
@@ -138,6 +147,27 @@
 - [completed] Publish `v0.9.0` as a GitHub Release and crates.io `bbdown-core` package through the
   protected release-candidate and promotion workflows. See
   `docs/project_journal/2026/10/2026-10-10-v0-9-release-prep.md`.
-- [pending] Continue the remaining BBDown parity backlog after the published `0.4.0` credential and
-  danmaku sequence unless reprioritized:
-  aria2 or multi-thread download integration, MP4Box muxing, and subtitle-to-SRT conversion.
+- [completed] Record the opt-in CDN three-way comparison and deterministic local transfer baseline
+  for the `0.10.0` source line, without adding a global automatic route. See
+  `docs/project_journal/2026/10/2026-10-11-cdn-performance-baseline-53887b35.md`.
+- [completed] Extend the opt-in live CDN sample with six valid downloads across two invocations;
+  sequential was faster than either Range control in both observations. This is a small sample, not
+  an automatic or adaptive routing implementation. See
+  `docs/project_journal/2026/10/2026-10-11-cdn-expanded-live-measurement-01a12c87.md`.
+- [pending] Consider automatic CDN routing only after broader measurements; persistent host-health
+  state and adaptive chunk/concurrency settings also remain future work. See
+  `docs/project_journal/2026/10/2026-10-11-cdn-performance-baseline-53887b35.md`.
+- [completed] Add the explicit bounded metadata-only API for `FollowingFeed` and `SpaceDynamic`,
+  preserving full `resolve`/`info` defaults and accounting for metadata requests. This does not
+  validate V2 playback-candidate planning or playback. See
+  `docs/project_journal/2026/10/2026-10-11-dynamic-request-and-bounded-metadata.md`.
+- [completed] Initialize missing or empty device-cookie values for authenticated SpaceDynamic
+  feed requests using server-issued values, a temporary request header, and clone-shared in-memory
+  cache; preserve configured credentials and keep Following behavior unchanged. See
+  `docs/project_journal/2026/10/2026-10-11-dynamic-request-and-bounded-metadata.md`.
+- [pending] Diagnose the consumer-reported initial Space dynamic HTTP 412 and complete bounded real
+  Rust playback-candidate/V2 smoke validation. The consumer's V2 resolution failed before producing
+  a candidate; the focused smoke has not passed. See
+  `docs/project_journal/2026/10/2026-10-11-space-dynamic-request-and-bounded-metadata-followup.md`.
+- [pending] Add aria2 backend integration, MP4Box muxing, and subtitle-to-SRT conversion. BBDown
+  Rust's custom concurrent HTTP Range downloader is already implemented.

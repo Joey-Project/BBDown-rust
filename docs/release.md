@@ -35,21 +35,27 @@ App should be the only non-human actor allowed by the release tag rulesets.
 Recommended rulesets:
 
 - Repository default branch, currently `master`: require pull requests, require status checks `Rust`
-  and (after the controlled v2 cutover) `codex/github-review-gate`, require Code Owner review, and
+  and `codex/github-review-gate`, require Code Owner review, and
   keep the general required approval count at `0` only if ordinary PRs should not need human
   approval. Preserve all other non-status protections, including conversation resolution and
   deletion/non-fast-forward restrictions.
 
-The currently configured legacy status is `codex/review-gate`. The v2 consumer does not publish
-that status. Merging the consumer installation therefore opens an explicit fail-closed maintenance
-window: pause merges of other PRs, use a separate unmerged canary PR to prove the native v2 check
-passes, have the coordinator activate `codex/github-review-gate` and read back the exact ruleset,
-then retire the legacy v1 requirement. Do not bypass the missing legacy check or describe the
-production ruleset as migrated before that readback.
+The production `master` rules now require `codex/github-review-gate`; the legacy
+`codex/review-gate` status is no longer required. For a future consumer/ruleset cutover, keep an
+explicit fail-closed maintenance window: pause merges of other PRs, use a separate unmerged canary
+PR to prove the new native check passes, have the coordinator activate it and read back the exact
+ruleset, then retire the old requirement. Do not bypass a missing required check or describe a
+ruleset as migrated before that readback.
 
 The installed v2 consumer supports same-repository ordinary PRs targeting the default branch.
-Fork-head PRs and PRs targeting `release/*` are outside its supported boundary; do not require the v2
-context on those branches until a separately reviewed capability exists.
+Required checks apply to the target branch, so fork-head PRs targeting `master` cannot satisfy the
+current required v2 gate. For fork contributions, a maintainer first reviews the intended changes,
+copies the reviewed changes to a same-repository branch, and opens a same-repository PR targeting
+`master`. Retain the original fork PR link and contribution attribution, and run the normal CI,
+Codex, Code Owner, and conversation gates on that integration PR with `master` protections intact.
+This is the supported contribution handoff until separately reviewed fork-head support exists.
+The project does not open PRs targeting `release/*`; those branches have no v2 requirement.
+
 - RC tags: target `v*-rc.*`; restrict creation, updates, and deletion; allow creation only through
   the release GitHub App.
 - Final release tags: target `v*` and exclude `v*-rc.*` when the UI supports excludes; otherwise use

@@ -11,18 +11,22 @@ replacement or BBDown-like PCDN avoidance through `MediaHostOptions`, and the
 `*_with_progress` / `*_with_cancellation` download methods emit typed progress callbacks and accept
 explicit cancellation tokens for embedding UIs. Raw input parsing covers
 normal videos, PGC and intl episodes, PUGV/cheese courses, B23 short links, favorite lists, space
-videos, collections, series, homepage recommendations, watch history, watch-later lists, following
-video feeds, and space dynamic video feeds.
+videos, collections, series, homepage recommendations, per-video related recommendations, watch
+history, watch-later lists, following video feeds, and space dynamic video feeds.
 
-Install with `cargo add bbdown-core`, then import with `bbdown_core`.
+Install the crate from crates.io with `cargo add bbdown-core`, then import it as `bbdown_core`.
+Version `0.8.0` added preserving danmaku refresh and credential-account identity APIs. Version
+`0.9.0` added typed CDN transfer-byte and diagnostic progress events, including the
+`probe_media_cdns_with_progress` API, and WBI-signed personal-space dynamic feed requests with
+continuation offsets. Transfer-byte events count response-body bytes consumed by the application;
+they are distinct from bytes written or published and do not represent total wire traffic.
 
-The current published crate version and source line are `0.9.0`, following the published `0.8.0`
-release. This release adds typed
-CDN transfer-byte and diagnostic progress events, including the
-`probe_media_cdns_with_progress` API, and signs personal-space dynamic feed requests with WBI,
-including continuation offsets. Transfer-byte events count response-body bytes consumed by the
-application; they are distinct from bytes written or published and do not represent total wire
-traffic.
+Per-video related-recommendation APIs and the bounded metadata-page API for `FollowingFeed` and
+`SpaceDynamic` were introduced in `bbdown-core` `0.10.0`. Authenticated SpaceDynamic feed
+resolution in this version can initialize missing device-cookie values from the server for its
+temporary request header. Metadata paging leaves full `resolve`/`info` behavior unchanged. These
+APIs require the `0.10` dependency line; a `0.9` dependency does not include them. If the `0.10.0`
+registry package is not available, use the matching source checkout or a local path dependency.
 
 The crate provides staged XML-history-preserving danmaku refresh, deduplicates comments by positive
 IDs with a complete-parameter-and-decoded-text fallback, and regenerates ASS from merged XML. It
@@ -88,8 +92,8 @@ including `https://m.bilibili.com/video/...`. They resolve one finite batch, pre
 order, filter the source, invalid, and OGV items, and deduplicate by aid. Selection indexes this
 result list; it is not paginated or recursive. The endpoint uses the normal web API client and may
 send its configured cookie, while anonymous requests may be restricted upstream.
-This feature requires the current source checkout and is not included in the published `0.9.0`
-release; it will ship in a future release.
+Per-video related recommendations were introduced in `bbdown-core` `0.10.0`; use the `0.10`
+dependency line for this API. Version `0.9.0` does not include it.
 Recommendation input fetches homepage recommendation batches and currently emits normal-video `av`
 cards, walking additional `fresh_idx` refresh batches within a safety cap when needed to cover
 explicit index selection. History, watch-later, and dynamic feed inputs require a cookie in client

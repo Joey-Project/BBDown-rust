@@ -8,8 +8,15 @@ embedding-facing shape of each source line and shipped release.
 
 ## Versions
 
-- [v0.9.0 (published)](v0.9.0.md): structured CDN transfer diagnostics for progress callbacks and
-  CLI JSON, plus WBI signing for personal-space dynamic feed requests and continuation pages.
+- [v0.10.0 source preparation (unpublished as of 2026-10-14)](v0.10.0.md): related
+  recommendations, bounded metadata pages and SpaceDynamic cookie initialization, plus expanded
+  opt-in CDN measurements.
+- [v0.9.0 (published as of 2026-10-14)](v0.9.0.md): structured CDN transfer diagnostics for
+  progress callbacks and CLI JSON, plus WBI signing for personal-space dynamic feed requests and
+  continuation pages.
+
+For current publication status, see
+[official GitHub Releases](https://github.com/Joey-Project/BBDown-rust/releases).
 
 - [v0.8.0 (published)](v0.8.0.md): opt-in danmaku refresh that preserves XML history, rebuilds
   selected ASS outputs from merged XML, and stages generated sidecars with the updated archive for

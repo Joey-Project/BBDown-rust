@@ -18,7 +18,7 @@ host 控制，以及 builder 风格的 crate 集成 API。它还支持显式下�
 文件更新。已发布的 `0.7.0` 版本增加显式 CDN host pool、限额 Range 探测、可选并行
 Range 下载、
 内置 CDN/公共 resolver 目录，以及独立的 PGC Web playurl 路由 API；这些功能不会自动选择
-路由。当前已发布版本为 `0.9.0`。已发布的 `0.8.0` 版本的 Preserve 更新策略会按正 `p[7]`
+路由。`0.8.0` 版本的 Preserve 更新策略会按正 `p[7]`
 ID 去重弹幕；ID 缺失、为零或无效时，会回退到完整 `p` 属性和解码后的文本进行匹配。它保留 XML 历史，从合并后的
 XML 重新生成所选 ASS 输出，再将暂存后的旁路文件与归档一起发布。`0.9.0` 为
 progress callback 和 CLI `--progress-json` 增加结构化 CDN 传输诊断，并通过 WBI 签名空间动态
@@ -31,6 +31,12 @@ path-based medialist 收藏夹 URL，以及带 uploader mid 的空间合集 / �
 `m.bilibili.com/video/...`），以及需要登录态的
 `bilibili.com/account/history` 观看历史页面，以及 `bilibili.com/watchlater` 和
 `bilibili.com/list/watchlater` 稍后再看页面。
+
+`0.10.0` 引入单视频相关推荐、适用于关注与空间动态 feed 的有界元数据分页 API，以及认证
+SpaceDynamic 请求缺少设备 Cookie 值时的初始化逻辑。它还记录了可复现的 CDN 性能 baseline；两次新增样本中，
+各自的顺序下载都快于对应的 Range 对照组。`0.10.0` 未实现自动 CDN 路由或自适应策略。使用新的库 API 需要
+`bbdown-core = "0.10"`；`0.9` 依赖不包含这些 API。如果 registry 中尚无 `0.10.0` package，请使用对应的源码检出
+或本地 path dependency。
 
 ## 当前 CLI
 
@@ -195,7 +201,8 @@ bbdown info ss26801 --select page:1
 `https://m.bilibili.com/video/...`）。它只读取该源视频的一批有限相关推荐，不会
 翻页或递归抓取相关推荐；结果按上游顺序排列，排除源视频、无效条目和 OGV 条目，并按 aid
 去重。`--select` 按这份结果列表的序号选择；homepage aliases 和首页 URL 仍表示首页推荐。
-此功能需要当前源码检出，尚未包含在已发布的 `0.9.0` 中，将随后续版本发布。
+此功能于 `0.10.0` 引入；`0.9` 版本不包含此功能。使用对应的 `bbdown-core` 依赖版本线；若 registry package 尚不可用，
+可使用匹配的源码检出。
 观看历史输入可使用 `history` 或 `https://www.bilibili.com/account/history`，需要已认证的
 WEB cookie，目前只包含普通视频 `archive` 历史记录。稍后再看输入可使用 `watchlater`、
 `watch-later`、`watch_later`、`later`、`toview` 或
@@ -378,7 +385,8 @@ just ci
 
 - Crate API 说明：可发布 package 是 `bbdown-core`，导入时使用 `bbdown_core`。`0.7.0` 发布版
   增加了可选 CDN host 选择、探测和并行传输、内置网络目录，以及独立的 PGC Web playurl 路由
-  API；目录不会触发自动 CDN 路由。当前已发布 crate 版本为 `0.9.0`。
+  API；目录不会触发自动 CDN 路由。单视频相关推荐和有界元数据分页 API 于 `0.10.0` 引入；`0.9` crate 不包含这些 API。
+  使用 `bbdown-core = "0.10"`，或在 registry package 尚不可用时使用匹配的源码检出。
   `0.5.0` 的 download API 仍包含
   `DownloadProgressEvent` callback、基于 `DownloadCancellationToken` 的 graceful
   cancellation，以及当 plan 条目暴露章节时的 ffmpeg 章节 metadata mux；嵌入项目应优先使用

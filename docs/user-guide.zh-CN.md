@@ -7,8 +7,8 @@
 BBDown Rust 当前提供可复用的 `bbdown-core` package / `bbdown_core` crate 和一个 CLI，用
 于确定性的元数据解析、下载计划解析、媒体下载执行、旁路文件下载、append-only 弹幕旁路文
 件更新，以及可选 `ffmpeg` 封装。支持的输入家族包括普通视频、PGC 和 intl 分集、PUGV/cheese
-课程、B23 短链接、收藏夹、空间投稿、合集、系列、首页推荐、观看历史、稍后再看列表、关
-注 feed 和空间动态 feed。
+课程、B23 短链接、收藏夹、空间投稿、合集、系列、首页推荐、单视频相关推荐、观看历史、
+稍后再看列表、关注 feed 和空间动态 feed。
 
 ## 发布归档
 
@@ -24,8 +24,12 @@ crates.io 发布目标是可复用的 `bbdown-core` library package。使用 `ju
 可以在本地执行锁定版本的 dry run，并允许工作树存在未提交修改；使用
 `just publish-dry-run-strict` 或 `cargo publish --dry-run -p bbdown-core --locked` 可以复现
 干净 CI 门禁。`bbdown-cli` 包标记为 `publish = false`；CLI 应通过 GitHub release 归档安
-装或分发。当前已发布版本是 `0.9.0`，新增类型化 CDN 传输诊断，以及通过 WBI 签名的个人空间
-动态 feed 请求（包括分页请求）。`0.8.0` 增加了保留历史的弹幕刷新和账号身份 API，并延续
+装或分发。`0.9.0` 增加类型化 CDN 传输诊断，以及通过 WBI 签名的个人空间动态 feed 请求（包括分页请求）。
+`0.10.0` 引入单视频相关推荐、适用于关注与空间动态 feed 的有界元数据分页 API，以及设备 Cookie 缺少值时的认证
+SpaceDynamic 初始化。它还记录可复现的 CDN 性能 baseline；两次新增样本中，各自的顺序下载都快于对应的 Range
+对照组。`0.10.0` 未实现自动 CDN 路由或自适应策略。相关推荐 CLI 输入需要 `0.10.0` CLI，新的库 API 需要
+`bbdown-core = "0.10"`；`0.9.0` 不包含这些功能。如果 `0.10.0` 二进制或 crate package 尚不可用，请使用对应的源码检出
+或本地 path dependency。`0.8.0` 增加了保留历史的弹幕刷新和账号身份 API，并延续
 `0.7.0` 的网络与下载器功能。已发布的网络功能包括可选 CDN 选择、探测和并行传输、内置网络目录，以及独立的 PGC Web playurl 路由。
 这些控制都需要显式选择；目录是快照，
 只有用户运行探测或选定路由时才会检查列出的端点。嵌入调用方仍应优先使用
@@ -103,7 +107,7 @@ OGV 条目，并按 aid 去重。`--select` 按结果列表序号选择；不带
 `--select all` 时，`info` 返回整批结果，`plan`/`download` 处理所有选中条目。`latest` 表示
 上游返回的第一条相关推荐。首页 aliases 和首页 URL 仍然表示首页推荐 feed。该端点沿用普通
 WEB API 请求路径，也可能接受已配置的 cookie；上游可能限制匿名请求。
-此功能需要当前源码检出，尚未包含在已发布的 `0.9.0` 中，将随后续版本发布。
+单视频相关推荐于 `0.10.0` 引入；`0.9.0` 不包含此输入。使用 `0.10.0` CLI；若对应 release 归档尚不可用，可使用匹配的源码检出。
 观看历史输入支持 `history` 和 `https://www.bilibili.com/account/history`。它需要已认证的
 WEB cookie，目前只输出普通视频 `archive` 记录；PGC、直播或专栏等其它历史记录 business
 类型会被跳过，直到这些条目形态有专门的 collection planning 支持。
@@ -115,6 +119,9 @@ WEB cookie，目前只输出普通视频 `archive` 记录；PGC、直播或专�
 注 feed 中的普通视频 archive 卡片。空间动态 feed 输入支持
 `https://space.bilibili.com/<mid>/dynamic`，可以匿名访问，目前输出公开普通视频 archive 卡
 片；非视频动态卡片会被跳过。请求（包括分页续页）使用 WBI 签名。
+从 `0.10.0` 起，认证 SpaceDynamic 请求若要获取新 feed、且配置 Cookie 对 `buvid3` 或
+`buvid4` 没有非空值，会获取服务器签发的设备 Cookie 值。值只用于临时请求 header，并缓存在克隆共享的客户端内存中；
+不会修改已配置凭据。Following feed 不使用此初始化流程。
 
 ## 下载计划
 
@@ -413,9 +420,9 @@ flowchart TD
     E --> F{启用 --cdn-probe 或 --cdn-parallel 大于 1?}
     F -->|是| G[探测最多 8 个候选：每个最多采样 64 KiB]
     F -->|否| H[保留已配置的候选顺序]
-    G --> I{已启用并行、媒体符合条件且至少有 2 个兼容 CDN?}
+    G --> I{已启用并行、媒体符合条件且至少有 1 个兼容 CDN host?}
     H --> J[常规下载或续传]
-    I -->|是| K[先采样 16 KiB 检查兼容性，再用 2–8 路下载 1 MiB 分片]
+    I -->|是| K[先采样 16 KiB 检查兼容性，再用 2–8 路下载 1 MiB 分片；多个 host 符合条件时才跨 CDN]
     I -->|否| J
     K -->|可恢复的失败| J
     K -->|已取消或目标错误不可恢复| X[报错停止]
