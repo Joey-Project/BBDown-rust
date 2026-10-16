@@ -10,7 +10,7 @@ use crate::{
         TransferRequestReporter,
     },
 };
-use flate2::read::GzDecoder;
+use flate2::read::MultiGzDecoder;
 use flate2::{Decompress, FlushDecompress, Status};
 use futures_util::StreamExt;
 use md5::{Digest, Md5};
@@ -1618,7 +1618,7 @@ impl BiliClient {
             .with_resume(false)
             .with_download_idle_timeout(options.download_idle_timeout);
         let cancellation = DownloadCancellationToken::new();
-        let fetched_xml = self
+        let fetched_source = self
             .download_danmaku_source(
                 plan_entry,
                 &source_path,
@@ -1629,7 +1629,7 @@ impl BiliClient {
             )
             .await?;
         let existing_xml = read_optional_text_file(&xml_path).await?;
-        let merged = danmaku::merge_xml_append_only(&existing_xml, &fetched_xml);
+        let merged = danmaku::merge_xml_append_only(&existing_xml, &fetched_source.xml);
         let mut files = Vec::new();
         let xml_file =
             write_generated_text_file(&xml_path, &merged.xml, DownloadFileKind::Danmaku).await?;
@@ -1968,7 +1968,7 @@ impl BiliClient {
         let writes_xml = options.danmaku_formats.contains(DanmakuFormat::Xml);
         let writes_ass = options.danmaku_formats.contains(DanmakuFormat::Ass);
         let source_path = temporary_path_with_suffix(&xml_path, ".bbdown-source");
-        let xml = if writes_xml {
+        let downloaded_source = if writes_xml {
             self.download_danmaku_source(
                 entry,
                 &source_path,
@@ -1989,9 +1989,9 @@ impl BiliClient {
             )
             .await?
         };
+        let DownloadedDanmakuSource { xml, attempt } = downloaded_source;
         let xml_request =
             DownloadFileRequest::new(entry, &xml_path, DownloadFileKind::Danmaku, None);
-        let finalization_attempt = DownloadAttempt { current: 1, max: 1 };
         let ass_result = (|| {
             if !writes_ass {
                 return Ok(None);
@@ -2012,7 +2012,7 @@ impl BiliClient {
             Err(error) => {
                 let error = cancellation.check().err().unwrap_or(error);
                 if writes_xml {
-                    emit_file_failed(progress, &xml_request, finalization_attempt, &error);
+                    emit_file_failed(progress, &xml_request, attempt, &error);
                 }
                 return Err(error);
             }
@@ -2024,7 +2024,7 @@ impl BiliClient {
                     &xml,
                     DownloadFileKind::Danmaku,
                     entry,
-                    &DanmakuFinalizationProgress(progress),
+                    &DanmakuFinalizationProgress::new(progress, attempt),
                     cancellation,
                 )
                 .await?,
@@ -2055,7 +2055,7 @@ impl BiliClient {
         options: &DownloadOptions,
         progress: &P,
         cancellation: &DownloadCancellationToken,
-    ) -> Result<String>
+    ) -> Result<DownloadedDanmakuSource>
     where
         P: DownloadProgressSink + ?Sized,
     {
@@ -2137,7 +2137,9 @@ impl BiliClient {
                         emit_file_failed(progress, &logical_request, attempt, &error);
                         return Err(error);
                     }
-                    return Ok(xml);
+                    let size = u64::try_from(xml.len()).unwrap_or(u64::MAX);
+                    emit_file_progress(progress, &logical_request, 0, 0, 0, Some(size));
+                    return Ok(DownloadedDanmakuSource { xml, attempt });
                 }
                 Err(error) => {
                     if error.is_cancelled() {
@@ -3567,6 +3569,11 @@ struct DownloadAttempt {
     max: u32,
 }
 
+struct DownloadedDanmakuSource {
+    xml: String,
+    attempt: DownloadAttempt,
+}
+
 struct DanmakuSourceProgress<'a, P: ?Sized> {
     progress: &'a P,
     logical_path: &'a Path,
@@ -3595,18 +3602,20 @@ impl<P: DownloadProgressSink + ?Sized> DownloadProgressSink for DanmakuSourcePro
         match &mut event {
             DownloadProgressEvent::FileStarted {
                 path,
+                resumed_from,
+                expected_size,
                 attempt,
                 max_attempts,
                 ..
             } => {
                 *path = self.logical_path.to_path_buf();
+                *resumed_from = 0;
+                *expected_size = None;
                 *attempt = self.attempt.load(Ordering::Acquire);
                 *max_attempts = self.max_attempts;
             }
-            DownloadProgressEvent::FileProgress { path, .. } => {
-                *path = self.logical_path.to_path_buf();
-            }
-            DownloadProgressEvent::FileCompleted { .. }
+            DownloadProgressEvent::FileProgress { .. }
+            | DownloadProgressEvent::FileCompleted { .. }
             | DownloadProgressEvent::FileFailed { .. } => {
                 return;
             }
@@ -3620,21 +3629,59 @@ impl<P: DownloadProgressSink + ?Sized> DownloadProgressSink for DanmakuSourcePro
     }
 }
 
-pub(crate) struct DanmakuFinalizationProgress<'a, P: ?Sized>(pub(crate) &'a P);
+struct DanmakuFinalizationProgress<'a, P: ?Sized> {
+    progress: &'a P,
+    attempt: DownloadAttempt,
+}
+
+impl<'a, P: ?Sized> DanmakuFinalizationProgress<'a, P> {
+    fn new(progress: &'a P, attempt: DownloadAttempt) -> Self {
+        Self { progress, attempt }
+    }
+}
 
 impl<P: DownloadProgressSink + ?Sized> DownloadProgressSink for DanmakuFinalizationProgress<'_, P> {
     fn on_download_progress(&self, event: &DownloadProgressEvent) {
-        if matches!(
-            event,
+        match event {
             DownloadProgressEvent::FileCompleted {
+                entry_index,
+                entry_title,
                 kind: DownloadFileKind::Danmaku,
-                ..
-            } | DownloadProgressEvent::FileFailed {
-                kind: DownloadFileKind::Danmaku,
-                ..
+                path,
+                bytes_written,
+                resumed_from,
+                total_bytes,
+            } => {
+                self.progress
+                    .on_download_progress(&DownloadProgressEvent::FileProgress {
+                        entry_index: *entry_index,
+                        entry_title: entry_title.clone(),
+                        kind: DownloadFileKind::Danmaku,
+                        path: path.clone(),
+                        bytes_delta: *bytes_written,
+                        bytes_written: *bytes_written,
+                        resumed_from: *resumed_from,
+                        expected_size: Some(*total_bytes),
+                    });
+                self.progress.on_download_progress(event);
             }
-        ) {
-            self.0.on_download_progress(event);
+            DownloadProgressEvent::FileFailed {
+                kind: DownloadFileKind::Danmaku,
+                ..
+            } => {
+                let mut event = event.clone();
+                if let DownloadProgressEvent::FileFailed {
+                    attempt,
+                    max_attempts,
+                    ..
+                } = &mut event
+                {
+                    *attempt = self.attempt.current;
+                    *max_attempts = self.attempt.max;
+                }
+                self.progress.on_download_progress(&event);
+            }
+            _ => {}
         }
     }
 
@@ -3941,7 +3988,7 @@ fn decode_and_validate_danmaku_xml(bytes: &[u8]) -> Result<String> {
         None
     };
 
-    let decoded = decode_bounded_stream(GzDecoder::new(bytes))
+    let decoded = decode_bounded_stream(MultiGzDecoder::new(bytes))
         .or_else(|_| decode_deflate_bounded(bytes, true))
         .or_else(|_| decode_deflate_bounded(bytes, false));
     let Ok(decoded) = decoded else {
@@ -10240,6 +10287,7 @@ mod tests {
     async fn danmaku_source_progress_completes_only_after_logical_xml_is_written()
     -> anyhow::Result<()> {
         const XML: &str = r#"<i><d p="1,1,25,16777215,1,0,0,0">hello</d></i>"#;
+        let xml_size = u64::try_from(XML.len())?;
 
         let server = MockServer::start();
         server.mock(|when, then| {
@@ -10275,7 +10323,7 @@ mod tests {
             push_progress_event(&progress_events, event.clone());
         };
 
-        let xml = client
+        let downloaded_source = client
             .download_danmaku_source(
                 entry,
                 &source_path,
@@ -10286,26 +10334,57 @@ mod tests {
             )
             .await?;
 
-        assert_eq!(xml, XML);
+        assert_eq!(downloaded_source.xml, XML);
         assert!(!logical_xml_path.exists());
         assert!(!source_path.exists());
-        assert!(
-            !progress_events_snapshot(&events)
+        let source_events = progress_events_snapshot(&events);
+        assert_eq!(
+            source_events
                 .iter()
-                .any(|event| matches!(
+                .filter(|event| matches!(
                     event,
-                    DownloadProgressEvent::FileCompleted {
+                    DownloadProgressEvent::FileStarted {
                         kind: DownloadFileKind::Danmaku,
+                        path,
+                        resumed_from: 0,
+                        expected_size: None,
                         ..
-                    }
+                    } if path == &logical_xml_path
                 ))
+                .count(),
+            1
         );
+        assert_eq!(
+            source_events
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    DownloadProgressEvent::FileProgress {
+                        kind: DownloadFileKind::Danmaku,
+                        path,
+                        bytes_delta: 0,
+                        bytes_written: 0,
+                        resumed_from: 0,
+                        expected_size: Some(size),
+                        ..
+                    } if path == &logical_xml_path && *size == xml_size
+                ))
+                .count(),
+            1
+        );
+        assert!(!source_events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::FileCompleted {
+                kind: DownloadFileKind::Danmaku,
+                ..
+            }
+        )));
         super::write_generated_text_file_with_progress(
             &logical_xml_path,
-            &xml,
+            &downloaded_source.xml,
             DownloadFileKind::Danmaku,
             entry,
-            &super::DanmakuFinalizationProgress(&progress),
+            &super::DanmakuFinalizationProgress::new(&progress, downloaded_source.attempt),
             &cancellation,
         )
         .await?;
@@ -10329,9 +10408,31 @@ mod tests {
             DownloadProgressEvent::FileProgress {
                 kind: DownloadFileKind::Danmaku,
                 path,
+                bytes_delta,
+                bytes_written,
+                resumed_from: 0,
+                expected_size: Some(expected_size),
                 ..
-            } if path == &logical_xml_path
+            } if path == &logical_xml_path && *bytes_delta == xml_size
+                && *bytes_written == xml_size && *expected_size == xml_size
         )));
+        let xml_progress = events
+            .iter()
+            .filter_map(|event| match event {
+                DownloadProgressEvent::FileProgress {
+                    kind: DownloadFileKind::Danmaku,
+                    bytes_delta,
+                    bytes_written,
+                    expected_size,
+                    ..
+                } => Some((*bytes_delta, *bytes_written, *expected_size)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            xml_progress,
+            vec![(0, 0, Some(xml_size)), (xml_size, xml_size, Some(xml_size))]
+        );
         assert_eq!(
             events
                 .iter()
@@ -10340,8 +10441,11 @@ mod tests {
                     DownloadProgressEvent::FileCompleted {
                         kind: DownloadFileKind::Danmaku,
                         path,
+                        bytes_written,
+                        total_bytes,
                         ..
-                    } if path == &logical_xml_path
+                    } if path == &logical_xml_path && *bytes_written == xml_size
+                        && *total_bytes == xml_size
                 ))
                 .count(),
             1
@@ -10747,6 +10851,119 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn compressed_danmaku_progress_reports_normalized_xml_bytes() -> anyhow::Result<()> {
+        let expected_xml = format!(
+            r#"<i><d p="0,5,25,255,0,0,0,0">{}</d></i>"#,
+            "decoded".repeat(10_000)
+        );
+        let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(expected_xml.as_bytes())?;
+        let compressed = encoder.finish()?;
+        let xml_size = u64::try_from(expected_xml.len())?;
+        let compressed_size = u64::try_from(compressed.len())?;
+        assert_ne!(compressed_size, xml_size);
+
+        let server = MockServer::start();
+        server.mock(move |when, then| {
+            when.method(GET).path("/danmaku.xml");
+            then.status(200)
+                .header("Content-Encoding", "deflate")
+                .body(compressed);
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let mut plan = test_plan(&server);
+        plan.entries[0].streams.videos.clear();
+        plan.entries[0].streams.audios.clear();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress_events = Arc::clone(&events);
+        let progress = move |event: &DownloadProgressEvent| {
+            push_progress_event(&progress_events, event.clone());
+        };
+
+        let report = client
+            .download_plan_with_progress(
+                &plan,
+                DownloadOptions::new(temp.path())
+                    .with_retry_policy(RetryPolicy::single_attempt())
+                    .with_download_mode(DownloadMode::DanmakuOnly)
+                    .with_danmaku_formats([DanmakuFormat::Xml]),
+                &progress,
+            )
+            .await?;
+        let xml_file = report.entries[0]
+            .files
+            .iter()
+            .find(|file| file.kind == DownloadFileKind::Danmaku)
+            .ok_or_else(|| anyhow::anyhow!("download did not publish danmaku XML"))?;
+        assert_eq!(
+            tokio::fs::read_to_string(&xml_file.path).await?,
+            expected_xml
+        );
+
+        let events = progress_events_snapshot(&events);
+        let logical_starts = events
+            .iter()
+            .filter_map(|event| match event {
+                DownloadProgressEvent::FileStarted {
+                    kind: DownloadFileKind::Danmaku,
+                    path,
+                    resumed_from,
+                    expected_size,
+                    ..
+                } => Some((path, *resumed_from, *expected_size)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(logical_starts, vec![(&xml_file.path, 0, None)]);
+
+        let logical_progress = events
+            .iter()
+            .filter_map(|event| match event {
+                DownloadProgressEvent::FileProgress {
+                    kind: DownloadFileKind::Danmaku,
+                    path,
+                    bytes_delta,
+                    bytes_written,
+                    resumed_from,
+                    expected_size,
+                    ..
+                } => Some((
+                    path,
+                    *bytes_delta,
+                    *bytes_written,
+                    *resumed_from,
+                    *expected_size,
+                )),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            logical_progress,
+            vec![
+                (&xml_file.path, 0, 0, 0, Some(xml_size)),
+                (&xml_file.path, xml_size, xml_size, 0, Some(xml_size)),
+            ]
+        );
+        let completed = events
+            .iter()
+            .filter_map(|event| match event {
+                DownloadProgressEvent::FileCompleted {
+                    kind: DownloadFileKind::Danmaku,
+                    path,
+                    bytes_written,
+                    total_bytes,
+                    ..
+                } => Some((path, *bytes_written, *total_bytes)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(completed, vec![(&xml_file.path, xml_size, xml_size)]);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn xml_only_download_does_not_render_or_limit_unused_ass() -> anyhow::Result<()> {
         let xml = format!(
             "<i>{}</i>",
@@ -10836,6 +11053,177 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn danmaku_ass_failure_after_successful_retry_reports_attempt() -> anyhow::Result<()> {
+        let xml = format!(
+            "<i>{}</i>",
+            r#"<d p="0,1,25,16777215">x</d>"#.repeat(240_000)
+        );
+        assert!(u64::try_from(xml.len())? < super::DANMAKU_MAX_BODY_BYTES);
+        let server = Arc::new(MockServer::start());
+        let _invalid_response = server.mock(|when, then| {
+            when.method(GET).path("/danmaku.xml");
+            then.status(200).body("<html>not danmaku</html>");
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let mut plan = test_plan(&server);
+        plan.entries[0].streams.videos.clear();
+        plan.entries[0].streams.audios.clear();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress = retry_response_after_first_danmaku_failure(
+            Arc::clone(&server),
+            xml.clone(),
+            Arc::clone(&events),
+        );
+
+        let error = client
+            .download_plan_with_progress(
+                &plan,
+                DownloadOptions::new(temp.path())
+                    .with_retry_policy(RetryPolicy::new(2, Duration::ZERO))
+                    .with_download_mode(DownloadMode::DanmakuOnly)
+                    .with_danmaku_formats([DanmakuFormat::Xml, DanmakuFormat::Ass]),
+                &progress,
+            )
+            .await
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("oversized ASS was accepted after retry"))?;
+        assert!(error.to_string().contains("ASS exceeds"), "{error}");
+
+        let entry_dir = test_entry_dir(temp.path(), &plan)?;
+        let xml_path = entry_dir.join("danmaku.xml");
+        let ass_path = entry_dir.join("danmaku.ass");
+        assert!(!xml_path.exists());
+        assert!(!ass_path.exists());
+        let events = progress_events_snapshot(&events);
+        let starts = events
+            .iter()
+            .filter_map(|event| match event {
+                DownloadProgressEvent::FileStarted {
+                    kind: DownloadFileKind::Danmaku,
+                    attempt,
+                    max_attempts,
+                    ..
+                } => Some((*attempt, *max_attempts)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(starts, vec![(1, 2), (2, 2)]);
+        let failures = events
+            .iter()
+            .filter_map(|event| match event {
+                DownloadProgressEvent::FileFailed {
+                    kind: DownloadFileKind::Danmaku,
+                    path,
+                    attempt,
+                    max_attempts,
+                    ..
+                } => Some((path, *attempt, *max_attempts)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(failures, vec![(&xml_path, 1, 2), (&xml_path, 2, 2)]);
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::FileProgress {
+                kind: DownloadFileKind::Danmaku,
+                bytes_written,
+                ..
+            } if *bytes_written > 0
+        )));
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::FileCompleted {
+                kind: DownloadFileKind::Danmaku,
+                ..
+            }
+        )));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn danmaku_final_write_failure_after_successful_retry_reports_attempt()
+    -> anyhow::Result<()> {
+        let xml = r#"<i><d p="1,1,25,16777215,1,0,0,0">hello</d></i>"#.to_owned();
+        let server = Arc::new(MockServer::start());
+        let _invalid_response = server.mock(|when, then| {
+            when.method(GET).path("/danmaku.xml");
+            then.status(200).body("<html>not danmaku</html>");
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let mut plan = test_plan(&server);
+        plan.entries[0].streams.videos.clear();
+        plan.entries[0].streams.audios.clear();
+        let entry_dir = test_entry_dir(temp.path(), &plan)?;
+        let xml_path = entry_dir.join("danmaku.xml");
+        tokio::fs::create_dir_all(temporary_generated_path(&xml_path)).await?;
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress = retry_response_after_first_danmaku_failure(
+            Arc::clone(&server),
+            xml,
+            Arc::clone(&events),
+        );
+
+        let error = client
+            .download_plan_with_progress(
+                &plan,
+                DownloadOptions::new(temp.path())
+                    .with_retry_policy(RetryPolicy::new(2, Duration::ZERO))
+                    .with_download_mode(DownloadMode::DanmakuOnly)
+                    .with_danmaku_formats([DanmakuFormat::Xml]),
+                &progress,
+            )
+            .await
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("blocked final XML write succeeded"))?;
+        assert!(matches!(&error, crate::Error::Io(_)), "{error}");
+
+        let events = progress_events_snapshot(&events);
+        let failures = events
+            .iter()
+            .filter_map(|event| match event {
+                DownloadProgressEvent::FileFailed {
+                    kind: DownloadFileKind::Danmaku,
+                    path,
+                    attempt,
+                    max_attempts,
+                    ..
+                } => Some((path, *attempt, *max_attempts)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(failures, vec![(&xml_path, 1, 2), (&xml_path, 2, 2)]);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::FileProgress {
+                kind: DownloadFileKind::Danmaku,
+                bytes_delta: 0,
+                bytes_written: 0,
+                expected_size: Some(_),
+                ..
+            }
+        )));
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::FileProgress {
+                kind: DownloadFileKind::Danmaku,
+                bytes_written,
+                ..
+            } if *bytes_written > 0
+        )));
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::FileCompleted {
+                kind: DownloadFileKind::Danmaku,
+                ..
+            }
+        )));
+        Ok(())
+    }
+
     #[test]
     fn danmaku_decoder_enforces_encoded_and_decoded_limits() -> anyhow::Result<()> {
         let oversized = vec![b'x'; usize::try_from(super::DANMAKU_MAX_BODY_BYTES)? + 1];
@@ -10857,10 +11245,57 @@ mod tests {
         let mut gzip = GzEncoder::new(Vec::new(), Compression::fast());
         gzip.write_all(&oversized)?;
         let gzip = gzip.finish()?;
-        let error = super::decode_bounded_stream(flate2::read::GzDecoder::new(gzip.as_slice()))
-            .err()
-            .ok_or_else(|| anyhow::anyhow!("oversized gzip output was accepted"))?;
+        let error =
+            super::decode_bounded_stream(flate2::read::MultiGzDecoder::new(gzip.as_slice()))
+                .err()
+                .ok_or_else(|| anyhow::anyhow!("oversized gzip output was accepted"))?;
         assert!(error.to_string().contains("exceeds"));
+
+        let (first, second) = oversized.split_at(oversized.len() / 2);
+        let mut gzip = GzEncoder::new(Vec::new(), Compression::fast());
+        gzip.write_all(first)?;
+        let mut members = gzip.finish()?;
+        let mut gzip = GzEncoder::new(Vec::new(), Compression::fast());
+        gzip.write_all(second)?;
+        members.extend(gzip.finish()?);
+        let error =
+            super::decode_bounded_stream(flate2::read::MultiGzDecoder::new(members.as_slice()))
+                .err()
+                .ok_or_else(|| anyhow::anyhow!("oversized multi-member gzip was accepted"))?;
+        assert!(error.to_string().contains("exceeds"));
+        Ok(())
+    }
+
+    #[test]
+    fn danmaku_decoder_consumes_all_gzip_members_and_rejects_invalid_tails() -> anyhow::Result<()> {
+        let encode = |bytes: &[u8]| -> anyhow::Result<Vec<u8>> {
+            let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+            encoder.write_all(bytes)?;
+            Ok(encoder.finish()?)
+        };
+        let first = b"<i>";
+        let second = br#"<d p="1,1,25,255">hello</d></i>"#;
+        let mut members = encode(first)?;
+        members.extend(encode(second)?);
+        let expected = String::from_utf8([first.as_slice(), second.as_slice()].concat())?;
+        assert_eq!(super::decode_and_validate_danmaku_xml(&members)?, expected);
+
+        let complete = encode(expected.as_bytes())?;
+        let mut trailing_junk = complete.clone();
+        trailing_junk.extend(b"not a gzip member");
+        assert!(super::decode_and_validate_danmaku_xml(&trailing_junk).is_err());
+
+        let empty_member = encode(b"")?;
+        let mut truncated = complete.clone();
+        truncated.extend(&empty_member[..empty_member.len() - 1]);
+        assert!(super::decode_and_validate_danmaku_xml(&truncated).is_err());
+
+        let mut corrupt_member = empty_member;
+        let checksum_offset = corrupt_member.len() - 8;
+        corrupt_member[checksum_offset] ^= 1;
+        let mut corrupt = complete;
+        corrupt.extend(corrupt_member);
+        assert!(super::decode_and_validate_danmaku_xml(&corrupt).is_err());
         Ok(())
     }
 
@@ -15882,6 +16317,37 @@ mod tests {
         match events.lock() {
             Ok(events) => events.clone(),
             Err(poisoned) => poisoned.into_inner().clone(),
+        }
+    }
+
+    fn retry_response_after_first_danmaku_failure(
+        server: Arc<MockServer>,
+        retry_xml: String,
+        events: Arc<Mutex<Vec<DownloadProgressEvent>>>,
+    ) -> impl Fn(&DownloadProgressEvent) + Send + Sync {
+        let installed = Arc::new(AtomicBool::new(false));
+        move |event| {
+            push_progress_event(&events, event.clone());
+            let first_attempt_failed = matches!(
+                event,
+                DownloadProgressEvent::FileFailed {
+                    kind: DownloadFileKind::Danmaku,
+                    attempt: 1,
+                    ..
+                }
+            );
+            if first_attempt_failed
+                && installed
+                    .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+            {
+                server.reset();
+                let body = retry_xml.clone();
+                server.mock(move |when, then| {
+                    when.method(GET).path("/danmaku.xml");
+                    then.status(200).body(body.clone());
+                });
+            }
         }
     }
 

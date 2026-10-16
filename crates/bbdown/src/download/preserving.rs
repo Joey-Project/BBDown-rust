@@ -205,12 +205,12 @@ async fn stage_entry(
     archive_entry: &DownloadArchiveEntryRecord,
     options: &DanmakuUpdateOptions,
 ) -> Result<StagedEntry> {
-    let fetched_xml =
+    let fetched_source =
         download_danmaku_source(client, plan_entry, &archive_entry.directory, options).await?;
     let xml_logical_path = archive_entry.directory.join("danmaku.xml");
     let (xml_path, original_xml_bytes) = read_destination(&xml_logical_path)?;
     let existing_xml = bytes_to_text(original_xml_bytes.as_deref(), "existing danmaku XML")?;
-    let merged = danmaku::merge_xml_preserving(existing_xml, &fetched_xml)?;
+    let merged = danmaku::merge_xml_preserving(existing_xml, &fetched_source)?;
     let mut files = vec![StagedDanmakuFile {
         logical_path: xml_logical_path,
         path: xml_path,
@@ -299,7 +299,7 @@ async fn download_danmaku_source(
     {
         return Err(Error::Io(error));
     }
-    result
+    result.map(|downloaded_source| downloaded_source.xml)
 }
 
 fn read_destination(logical_path: &Path) -> Result<(PathBuf, Option<Vec<u8>>)> {
