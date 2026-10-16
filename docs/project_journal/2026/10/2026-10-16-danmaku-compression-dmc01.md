@@ -1,0 +1,50 @@
+---
+id: 20261016-dmc01
+title: Danmaku Transport Compression
+status: completed
+created: 2026-10-16
+updated: 2026-10-16
+branch: wip/danmaku-raw-deflate
+pr: 102
+supersedes: []
+superseded_by:
+---
+
+# Danmaku Transport Compression
+
+## Evidence
+
+- A downstream bot stored raw DEFLATE bytes as XML and emitted a header-only
+  ASS despite an XML pool containing 3,600 recoverable comments.
+- Reqwest's optional deflate feature uses zlib framing and rejects raw
+  DEFLATE, so enabling it alone is insufficient for the observed response.
+
+## Changes
+
+- Normalize bounded danmaku payloads before XML parsing and ASS generation,
+  accepting plain UTF-8 XML, raw DEFLATE, zlib, and gzip.
+- Reject malformed or oversized payloads rather than silently publishing an
+  empty ASS generated from invalid XML. Leave media streaming unchanged.
+- Validate XML independently and render ASS only when requested. XML-only
+  downloads are unaffected by the size or cost of unused ASS output.
+- Apply one configured retry budget to transport and decoding together.
+  Preserve logical-file byte, failure, and retry telemetry while keeping the
+  private transport filename out of progress; publish completion only after
+  the final XML exists.
+- Close started XML progress on ASS generation failure, cancellation, and
+  transport cleanup errors. Reuse one lazily initialized, compression-disabled
+  HTTP connection pool across danmaku files and client clones.
+- Keep normalized XML write counters separate from compressed transport bytes
+  and retain the successful retry number through publication failures.
+- Consume every gzip member and validate its trailer; reject corrupt or
+  truncated trailing members instead of accepting a valid prefix.
+
+## Validation
+
+- Offline regression tests exercise compressed HTTP fixtures and malformed,
+  truncated, and oversized payloads without production credentials or media.
+- Rust 1.95.0 workspace tests passed: 871 passed, zero failed, and three
+  existing opt-in tests ignored, including all 159 CLI end-to-end tests.
+  HTTP compression fixtures exceed the decoder's per-chunk buffer.
+- Formatting, workspace all-target Clippy with warnings denied, declared-MSRV
+  check, and project journal validation passed.

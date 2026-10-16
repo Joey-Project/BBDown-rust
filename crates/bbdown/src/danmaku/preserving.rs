@@ -445,6 +445,12 @@ fn splice_comments_preserving_source_namespace(
     Ok(insertion)
 }
 
+pub(crate) fn validate_fetched_xml(xml: &str) -> crate::Result<()> {
+    let document = parse_xml(xml, "fetched")?;
+    root_element(&document, "fetched")?;
+    Ok(())
+}
+
 pub(crate) fn xml_to_ass_validated(xml: &str) -> crate::Result<String> {
     let document = parse_xml(xml, "fetched")?;
     root_element(&document, "fetched")?;
