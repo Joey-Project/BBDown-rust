@@ -7,7 +7,7 @@ use super::{
 };
 use crate::{
     BiliClient, DanmakuFormat, DanmakuUpdateReport, DownloadEntry, DownloadPlan, Error, Result,
-    danmaku, progress::NoopDownloadProgress,
+    danmaku,
 };
 use std::collections::HashSet;
 use std::fs::{self as std_fs, OpenOptions};
@@ -15,7 +15,6 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::fs as async_fs;
 
 static UNIQUE_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -278,36 +277,22 @@ async fn download_danmaku_source(
 ) -> Result<String> {
     let temp_dir = create_unique_directory(directory)?;
     let source_path = temp_dir.path().join("source.xml");
-    let request =
-        super::DownloadFileRequest::new(plan_entry, &source_path, DownloadFileKind::Danmaku, None);
     let download_options = super::DownloadOptions::default()
         .with_retry_policy(options.retry)
         .with_resume(false)
         .with_download_idle_timeout(options.download_idle_timeout);
     let cancellation = crate::DownloadCancellationToken::new();
     let result = client
-        .download_url_to_file(
-            &plan_entry.danmaku.xml_url,
-            &request,
-            &download_options,
-            &NoopDownloadProgress,
-            &cancellation,
-        )
+        .download_danmaku_source(plan_entry, &source_path, &download_options, &cancellation)
         .await;
-    let bytes = match result {
-        Ok(_) => async_fs::read(&source_path).await.map_err(Error::Io),
-        Err(error) => Err(error),
-    };
     let cleanup = temp_dir.close();
     if let Err(error) = cleanup
         && error.kind() != std::io::ErrorKind::NotFound
-        && bytes.is_ok()
+        && result.is_ok()
     {
         return Err(Error::Io(error));
     }
-    let bytes = bytes?;
-    String::from_utf8(bytes)
-        .map_err(|_| Error::InvalidInput("downloaded danmaku XML is not UTF-8".to_owned()))
+    result.map(|(xml, _)| xml)
 }
 
 fn read_destination(logical_path: &Path) -> Result<(PathBuf, Option<Vec<u8>>)> {

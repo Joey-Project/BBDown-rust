@@ -10,6 +10,8 @@ use crate::{
         TransferRequestReporter,
     },
 };
+use flate2::read::GzDecoder;
+use flate2::{Decompress, FlushDecompress, Status};
 use futures_util::StreamExt;
 use md5::{Digest, Md5};
 use reqwest::StatusCode;
@@ -19,13 +21,14 @@ use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::future::Future;
+use std::io::{ErrorKind, Read};
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::fs::{self, OpenOptions};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 
 mod preserving;
@@ -41,6 +44,7 @@ const CDN_PROBE_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 const CDN_PROBE_IDLE_TIMEOUT: Duration = Duration::from_secs(1);
 const CDN_SHARD_CHUNK_SIZE: u64 = 1024 * 1024;
 const CDN_PUBLIC_PROBE_MAX_BYTES: u64 = 64 * 1024;
+const DANMAKU_MAX_BODY_BYTES: u64 = 16 * 1024 * 1024;
 #[cfg(any(unix, windows))]
 const MUX_SIGNAL_CANCELLATION_GRACE: Duration = Duration::from_millis(100);
 const DEFAULT_UPOS_REPLACEMENT_HOST: &str = "upos-sz-mirrorcoso1.bilivideo.com";
@@ -1608,26 +1612,14 @@ impl BiliClient {
         ensure_directory_exists(&archive_entry.directory).await?;
         let xml_path = archive_entry.directory.join("danmaku.xml");
         let source_path = temporary_path_with_suffix(&xml_path, ".bbdown-source");
-        remove_file_if_exists(&source_path).await?;
         let download_options = DownloadOptions::default()
             .with_retry_policy(options.retry)
             .with_resume(false)
             .with_download_idle_timeout(options.download_idle_timeout);
-        let source_request =
-            DownloadFileRequest::new(plan_entry, &source_path, DownloadFileKind::Danmaku, None);
         let cancellation = DownloadCancellationToken::new();
-        let source_file = self
-            .download_url_to_file(
-                &plan_entry.danmaku.xml_url,
-                &source_request,
-                &download_options,
-                &NoopDownloadProgress,
-                &cancellation,
-            )
+        let (fetched_xml, _) = self
+            .download_danmaku_source(plan_entry, &source_path, &download_options, &cancellation)
             .await?;
-        let fetched_xml = fs::read_to_string(&source_file.path).await;
-        let _ = remove_file_if_exists(&source_file.path).await;
-        let fetched_xml = fetched_xml?;
         let existing_xml = read_optional_text_file(&xml_path).await?;
         let merged = danmaku::merge_xml_append_only(&existing_xml, &fetched_xml);
         let mut files = Vec::new();
@@ -1967,40 +1959,25 @@ impl BiliClient {
         let xml_path = entry_dir.join("danmaku.xml");
         let writes_xml = options.danmaku_formats.contains(DanmakuFormat::Xml);
         let writes_ass = options.danmaku_formats.contains(DanmakuFormat::Ass);
-        let source_file = if writes_xml {
-            let request =
-                DownloadFileRequest::new(entry, &xml_path, DownloadFileKind::Danmaku, None);
-            let file = self
-                .download_url_to_file(
-                    &entry.danmaku.xml_url,
-                    &request,
-                    options,
+        let source_path = temporary_path_with_suffix(&xml_path, ".bbdown-source");
+        let (xml, ass) = self
+            .download_danmaku_source(entry, &source_path, options, cancellation)
+            .await?;
+        if writes_xml {
+            files.push(
+                write_generated_text_file_with_progress(
+                    &xml_path,
+                    &xml,
+                    DownloadFileKind::Danmaku,
+                    entry,
                     progress,
                     cancellation,
                 )
-                .await?;
-            files.push(file.clone());
-            file
-        } else {
-            let source_path = temporary_path_with_suffix(&xml_path, ".bbdown-source");
-            remove_file_if_exists(&source_path).await?;
-            let request =
-                DownloadFileRequest::new(entry, &source_path, DownloadFileKind::Danmaku, None);
-            self.download_url_to_file(
-                &entry.danmaku.xml_url,
-                &request,
-                options,
-                &NoopDownloadProgress,
-                cancellation,
-            )
-            .await?
-        };
+                .await?,
+            );
+        }
         if writes_ass {
-            let ass_file = match async {
-                cancellation.check()?;
-                let xml = fs::read(&source_file.path).await?;
-                let xml = String::from_utf8_lossy(&xml);
-                let ass = danmaku::xml_to_ass(&xml);
+            files.push(
                 write_generated_text_file_with_progress(
                     &entry_dir.join("danmaku.ass"),
                     &ass,
@@ -2009,24 +1986,49 @@ impl BiliClient {
                     progress,
                     cancellation,
                 )
-                .await
-            }
-            .await
-            {
-                Ok(ass_file) => ass_file,
-                Err(error) => {
-                    if !writes_xml {
-                        let _ = remove_file_if_exists(&source_file.path).await;
-                    }
-                    return Err(error);
-                }
-            };
-            files.push(ass_file);
-        }
-        if !writes_xml {
-            let _ = remove_file_if_exists(&source_file.path).await;
+                .await?,
+            );
         }
         Ok(())
+    }
+
+    async fn download_danmaku_source(
+        &self,
+        entry: &DownloadEntry,
+        source_path: &Path,
+        options: &DownloadOptions,
+        cancellation: &DownloadCancellationToken,
+    ) -> Result<(String, String)> {
+        remove_file_if_exists(source_path).await?;
+        let request = DownloadFileRequest::new(entry, source_path, DownloadFileKind::Danmaku, None);
+        // Reqwest's automatic deflate decoder assumes the zlib wrapper. Bilibili
+        // also serves raw DEFLATE, so retain the response bytes for our bounded
+        // format-detecting decoder while leaving media clients unchanged.
+        let danmaku_http = reqwest::Client::builder()
+            .no_deflate()
+            .no_gzip()
+            .build()
+            .map_err(BiliClient::http_error_without_url)?;
+        let result = async {
+            self.download_url_to_file_with_client(
+                &danmaku_http,
+                &entry.danmaku.xml_url,
+                &request,
+                options,
+                &NoopDownloadProgress,
+                cancellation,
+            )
+            .await?;
+            cancellation.check()?;
+            let source_bytes = read_danmaku_source_bounded(source_path).await?;
+            decode_and_validate_danmaku_xml(&source_bytes)
+        }
+        .await;
+        let cleanup_result = remove_file_if_exists(source_path).await;
+        match (result, cleanup_result) {
+            (Err(error), _) | (Ok(_), Err(error)) => Err(error),
+            (Ok(xml_and_ass), Ok(())) => Ok(xml_and_ass),
+        }
     }
 
     async fn download_media_stream<P>(
@@ -2607,6 +2609,29 @@ impl BiliClient {
     where
         P: DownloadProgressSink + ?Sized,
     {
+        self.download_url_to_file_with_client(
+            &self.http,
+            url,
+            request,
+            options,
+            progress,
+            cancellation,
+        )
+        .await
+    }
+
+    async fn download_url_to_file_with_client<P>(
+        &self,
+        http: &reqwest::Client,
+        url: &str,
+        request: &DownloadFileRequest<'_>,
+        options: &DownloadOptions,
+        progress: &P,
+        cancellation: &DownloadCancellationToken,
+    ) -> Result<DownloadedFile>
+    where
+        P: DownloadProgressSink + ?Sized,
+    {
         let transfer_reporter = TransferReporter::new(
             progress,
             Some(request.entry.index),
@@ -2616,6 +2641,7 @@ impl BiliClient {
         );
         let result = self
             .download_url_to_file_without_terminal(
+                http,
                 url,
                 request,
                 options,
@@ -2639,6 +2665,7 @@ impl BiliClient {
     #[allow(clippy::too_many_arguments)] // Each retry dependency stays explicit at the call site.
     async fn download_url_to_file_without_terminal<P>(
         &self,
+        http: &reqwest::Client,
         url: &str,
         request: &DownloadFileRequest<'_>,
         options: &DownloadOptions,
@@ -2670,6 +2697,7 @@ impl BiliClient {
             };
             let result = self
                 .try_download_url_to_file(
+                    http,
                     url,
                     request,
                     options,
@@ -2740,6 +2768,7 @@ impl BiliClient {
             cancellation.check()?;
             match self
                 .download_url_to_file_without_terminal(
+                    &self.http,
                     url,
                     request,
                     options,
@@ -2785,6 +2814,7 @@ impl BiliClient {
     // Request streaming, cancellation, and retry diagnostics share one response lifecycle.
     async fn try_download_url_to_file<P>(
         &self,
+        http: &reqwest::Client,
         url: &str,
         request: &DownloadFileRequest<'_>,
         options: &DownloadOptions,
@@ -2815,7 +2845,11 @@ impl BiliClient {
         let mut expected_response_body_size = request.expected_size;
         let mut result = async {
             let response = map_attempt_error(
-                await_or_cancel(self.send_download_request(url, resume_from), cancellation).await,
+                await_or_cancel(
+                    self.send_download_request(http, url, resume_from),
+                    cancellation,
+                )
+                .await,
                 attempt,
                 started,
             )?;
@@ -3007,10 +3041,11 @@ impl BiliClient {
 
     async fn send_download_request(
         &self,
+        http: &reqwest::Client,
         url: &str,
         resume_from: u64,
     ) -> Result<reqwest::Response> {
-        let mut request = self.http.get(url).headers(self.media_headers()?);
+        let mut request = http.get(url).headers(self.media_headers()?);
         if resume_from > 0 {
             request = request.header(RANGE, format!("bytes={resume_from}-"));
         }
@@ -3620,11 +3655,20 @@ where
             rollback_download_file(file, write_request.start_offset).await?;
             return Err(error);
         }
+        let bytes_delta = u64::try_from(chunk.len()).unwrap_or(u64::MAX);
+        if matches!(&file_request.kind, DownloadFileKind::Danmaku)
+            && bytes_written.saturating_add(bytes_delta) > DANMAKU_MAX_BODY_BYTES
+        {
+            rollback_download_file(file, write_request.start_offset).await?;
+            return Err(Error::InvalidInput(format!(
+                "downloaded danmaku response exceeds the {} MiB limit",
+                DANMAKU_MAX_BODY_BYTES / (1024 * 1024)
+            )));
+        }
         if let Err(error) = file.write_all(&chunk).await {
             rollback_download_file(file, write_request.start_offset).await?;
             return Err(Error::Io(error));
         }
-        let bytes_delta = u64::try_from(chunk.len()).unwrap_or(u64::MAX);
         bytes_written = bytes_written.saturating_add(bytes_delta);
         emit_file_progress(
             progress,
@@ -3653,6 +3697,138 @@ where
         return Err(error);
     }
     Ok(bytes_written)
+}
+
+async fn read_danmaku_source_bounded(path: &Path) -> Result<Vec<u8>> {
+    let file = fs::File::open(path).await?;
+    let mut bounded = file.take(DANMAKU_MAX_BODY_BYTES.saturating_add(1));
+    let mut bytes = Vec::new();
+    bounded.read_to_end(&mut bytes).await?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > DANMAKU_MAX_BODY_BYTES {
+        return Err(Error::InvalidInput(format!(
+            "downloaded danmaku response exceeds the {} MiB limit",
+            DANMAKU_MAX_BODY_BYTES / (1024 * 1024)
+        )));
+    }
+    Ok(bytes)
+}
+
+fn decode_and_validate_danmaku_xml(bytes: &[u8]) -> Result<(String, String)> {
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > DANMAKU_MAX_BODY_BYTES {
+        return Err(Error::InvalidInput(format!(
+            "downloaded danmaku response exceeds the {} MiB limit",
+            DANMAKU_MAX_BODY_BYTES / (1024 * 1024)
+        )));
+    }
+    let plain_error = if let Ok(xml) = std::str::from_utf8(bytes) {
+        match danmaku::xml_to_ass_validated(xml) {
+            Ok(ass) => {
+                if u64::try_from(ass.len()).unwrap_or(u64::MAX) > DANMAKU_MAX_BODY_BYTES {
+                    return Err(invalid_danmaku_payload_error());
+                }
+                return Ok((xml.to_owned(), ass));
+            }
+            Err(error) => Some(error),
+        }
+    } else {
+        None
+    };
+
+    let decoded = decode_bounded_stream(GzDecoder::new(bytes))
+        .or_else(|_| decode_deflate_bounded(bytes, true))
+        .or_else(|_| decode_deflate_bounded(bytes, false));
+    let Ok(decoded) = decoded else {
+        return Err(plain_error.unwrap_or_else(invalid_danmaku_payload_error));
+    };
+    let Ok(xml) = String::from_utf8(decoded) else {
+        return Err(invalid_danmaku_payload_error());
+    };
+    let ass = danmaku::xml_to_ass_validated(&xml).map_err(|_| invalid_danmaku_payload_error())?;
+    if u64::try_from(ass.len()).unwrap_or(u64::MAX) > DANMAKU_MAX_BODY_BYTES {
+        return Err(invalid_danmaku_payload_error());
+    }
+    Ok((xml, ass))
+}
+
+fn decode_bounded_stream<R: Read>(reader: R) -> std::io::Result<Vec<u8>> {
+    let mut bounded = reader.take(DANMAKU_MAX_BODY_BYTES.saturating_add(1));
+    let mut decoded = Vec::new();
+    bounded.read_to_end(&mut decoded)?;
+    if u64::try_from(decoded.len()).unwrap_or(u64::MAX) > DANMAKU_MAX_BODY_BYTES {
+        return Err(std::io::Error::new(
+            ErrorKind::InvalidData,
+            "decompressed danmaku XML exceeds the configured size limit",
+        ));
+    }
+    Ok(decoded)
+}
+
+fn decode_deflate_bounded(bytes: &[u8], zlib_wrapper: bool) -> std::io::Result<Vec<u8>> {
+    let mut decoder = Decompress::new(zlib_wrapper);
+    let mut output = Vec::new();
+    let mut buffer = [0_u8; 16 * 1024];
+    let output_limit = DANMAKU_MAX_BODY_BYTES.saturating_add(1);
+    loop {
+        let input_offset = usize::try_from(decoder.total_in())
+            .map_err(|error| std::io::Error::new(ErrorKind::InvalidData, error))?;
+        if input_offset > bytes.len() {
+            return Err(std::io::Error::new(
+                ErrorKind::InvalidData,
+                "DEFLATE decoder consumed beyond the input body",
+            ));
+        }
+        let output_remaining = usize::try_from(
+            output_limit.saturating_sub(u64::try_from(output.len()).unwrap_or(u64::MAX)),
+        )
+        .unwrap_or(0);
+        if output_remaining == 0 {
+            return Err(std::io::Error::new(
+                ErrorKind::InvalidData,
+                "decompressed danmaku XML exceeds the configured size limit",
+            ));
+        }
+        let before_in = decoder.total_in();
+        let before_out = decoder.total_out();
+        let output_capacity = buffer.len().min(output_remaining);
+        let status = decoder
+            .decompress(
+                &bytes[input_offset..],
+                &mut buffer[..output_capacity],
+                FlushDecompress::None,
+            )
+            .map_err(|error| std::io::Error::new(ErrorKind::InvalidData, error))?;
+        let produced =
+            usize::try_from(decoder.total_out().saturating_sub(before_out)).unwrap_or(usize::MAX);
+        output.extend_from_slice(&buffer[..produced]);
+        if u64::try_from(output.len()).unwrap_or(u64::MAX) > DANMAKU_MAX_BODY_BYTES {
+            return Err(std::io::Error::new(
+                ErrorKind::InvalidData,
+                "decompressed danmaku XML exceeds the configured size limit",
+            ));
+        }
+        if status == Status::StreamEnd {
+            if decoder.total_in() != u64::try_from(bytes.len()).unwrap_or(u64::MAX) {
+                return Err(std::io::Error::new(
+                    ErrorKind::InvalidData,
+                    "DEFLATE body contains trailing bytes",
+                ));
+            }
+            return Ok(output);
+        }
+        if decoder.total_in() == before_in && decoder.total_out() == before_out {
+            return Err(std::io::Error::new(
+                ErrorKind::UnexpectedEof,
+                "DEFLATE stream ended before its end marker",
+            ));
+        }
+    }
+}
+
+fn invalid_danmaku_payload_error() -> Error {
+    Error::InvalidInput(format!(
+        "downloaded danmaku is not valid UTF-8 <i> XML or a supported gzip, zlib, or raw DEFLATE stream ({} MiB limit)",
+        DANMAKU_MAX_BODY_BYTES / (1024 * 1024)
+    ))
 }
 
 async fn await_or_cancel<T, F>(future: F, cancellation: &DownloadCancellationToken) -> Result<T>
@@ -6189,6 +6365,10 @@ mod tests {
         DownloadCancellationToken, DownloadFileKind, DownloadProgressEvent,
         DownloadTransferDiagnostic, DownloadTransferFailureReason, DownloadTransferPhase,
         DownloadTransferRequestOutcome, NoopDownloadProgress,
+    };
+    use flate2::{
+        Compression,
+        write::{DeflateEncoder, GzEncoder, ZlibEncoder},
     };
     use httpmock::MockServer;
     use httpmock::prelude::*;
@@ -10007,6 +10187,157 @@ mod tests {
                 .await?
                 .contains("\\an8")
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn download_danmaku_decodes_raw_zlib_and_gzip_before_writing_sidecars()
+    -> anyhow::Result<()> {
+        let expected_xml = format!(
+            r#"<i><d p="0,5,25,255,0,0,0,0">{}</d></i>"#,
+            "decoded".repeat(10_000)
+        );
+
+        let mut raw_encoder = DeflateEncoder::new(Vec::new(), Compression::default());
+        raw_encoder.write_all(expected_xml.as_bytes())?;
+        let raw = raw_encoder.finish()?;
+
+        let mut zlib_encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        zlib_encoder.write_all(expected_xml.as_bytes())?;
+        let zlib = zlib_encoder.finish()?;
+
+        let mut gzip_encoder = GzEncoder::new(Vec::new(), Compression::default());
+        gzip_encoder.write_all(expected_xml.as_bytes())?;
+        let gzip = gzip_encoder.finish()?;
+
+        for (name, content_encoding, body) in [
+            ("raw", "deflate", raw),
+            ("zlib", "deflate", zlib),
+            ("gzip", "gzip", gzip),
+        ] {
+            let server = MockServer::start();
+            server.mock(move |when, then| {
+                when.method(GET).path("/danmaku.xml");
+                then.status(200)
+                    .header("Content-Encoding", content_encoding)
+                    .body(body);
+            });
+            let temp = tempfile::tempdir()?;
+            let client = BiliClient::new(ClientConfig::default());
+            let mut plan = test_plan(&server);
+            plan.entries[0].streams.videos.clear();
+            plan.entries[0].streams.audios.clear();
+
+            let report = client
+                .download_plan(
+                    &plan,
+                    DownloadOptions::new(temp.path())
+                        .with_retry_policy(RetryPolicy::single_attempt())
+                        .with_download_mode(DownloadMode::DanmakuOnly)
+                        .with_danmaku_formats([DanmakuFormat::Xml, DanmakuFormat::Ass]),
+                )
+                .await?;
+
+            let entry = &report.entries[0];
+            let xml = entry
+                .files
+                .iter()
+                .find(|file| file.kind == DownloadFileKind::Danmaku)
+                .ok_or_else(|| anyhow::anyhow!("{name} response did not produce XML"))?;
+            let ass = entry
+                .files
+                .iter()
+                .find(|file| file.kind == DownloadFileKind::DanmakuAss)
+                .ok_or_else(|| anyhow::anyhow!("{name} response did not produce ASS"))?;
+            assert_eq!(
+                tokio::fs::read_to_string(&xml.path).await?,
+                expected_xml,
+                "{name}"
+            );
+            assert!(
+                tokio::fs::read_to_string(&ass.path)
+                    .await?
+                    .contains("Dialogue:"),
+                "{name} response should produce ASS dialogue"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn danmaku_decoder_enforces_encoded_and_decoded_limits() -> anyhow::Result<()> {
+        let oversized = vec![b'x'; usize::try_from(super::DANMAKU_MAX_BODY_BYTES)? + 1];
+        assert!(super::decode_and_validate_danmaku_xml(&oversized).is_err());
+
+        let mut raw = DeflateEncoder::new(Vec::new(), Compression::fast());
+        raw.write_all(&oversized)?;
+        let raw = raw.finish()?;
+        let mut zlib = ZlibEncoder::new(Vec::new(), Compression::fast());
+        zlib.write_all(&oversized)?;
+        let zlib = zlib.finish()?;
+        for (encoded, wrapped) in [(raw, false), (zlib, true)] {
+            let error = super::decode_deflate_bounded(&encoded, wrapped)
+                .err()
+                .ok_or_else(|| anyhow::anyhow!("oversized DEFLATE output was accepted"))?;
+            assert!(error.to_string().contains("exceeds"), "{error}");
+        }
+
+        let mut gzip = GzEncoder::new(Vec::new(), Compression::fast());
+        gzip.write_all(&oversized)?;
+        let gzip = gzip.finish()?;
+        let error = super::decode_bounded_stream(flate2::read::GzDecoder::new(gzip.as_slice()))
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("oversized gzip output was accepted"))?;
+        assert!(error.to_string().contains("exceeds"));
+        Ok(())
+    }
+
+    #[test]
+    fn danmaku_decoder_rejects_truncated_raw_deflate() -> anyhow::Result<()> {
+        const XML: &str = r#"<i><d p="0,5,25,255,0,0,0,0">truncated</d></i>"#;
+        let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(XML.as_bytes())?;
+        let mut compressed = encoder.finish()?;
+        if compressed.pop().is_none() {
+            return Err(anyhow::anyhow!("raw DEFLATE fixture unexpectedly empty"));
+        }
+        assert!(super::decode_and_validate_danmaku_xml(&compressed).is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn download_danmaku_rejects_invalid_xml_without_replacing_sidecars() -> anyhow::Result<()>
+    {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/danmaku.xml");
+            then.status(200).body("<html>not danmaku</html>");
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let mut plan = test_plan(&server);
+        plan.entries[0].streams.videos.clear();
+        plan.entries[0].streams.audios.clear();
+        let entry_dir = test_entry_dir(temp.path(), &plan)?;
+        std::fs::create_dir_all(&entry_dir)?;
+        let xml_path = entry_dir.join("danmaku.xml");
+        let ass_path = entry_dir.join("danmaku.ass");
+        std::fs::write(&xml_path, "existing XML")?;
+        std::fs::write(&ass_path, "existing ASS")?;
+
+        let result = client
+            .download_plan(
+                &plan,
+                DownloadOptions::new(temp.path())
+                    .with_retry_policy(RetryPolicy::single_attempt())
+                    .with_download_mode(DownloadMode::DanmakuOnly)
+                    .with_danmaku_formats([DanmakuFormat::Xml, DanmakuFormat::Ass]),
+            )
+            .await;
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read_to_string(xml_path)?, "existing XML");
+        assert_eq!(std::fs::read_to_string(ass_path)?, "existing ASS");
         Ok(())
     }
 
