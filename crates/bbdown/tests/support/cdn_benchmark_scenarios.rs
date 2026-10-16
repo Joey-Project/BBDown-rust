@@ -6,7 +6,7 @@ use std::{
     net::{Shutdown, SocketAddr, TcpListener, TcpStream},
     path::Path,
     sync::{
-        Arc, Condvar, Mutex,
+        Arc, Condvar, Mutex, MutexGuard,
         atomic::{AtomicBool, Ordering},
     },
     thread::{self, JoinHandle},
@@ -30,6 +30,7 @@ const SHARD_PROBE_BYTES: usize = 16 * 1024;
 const RANGE_CHUNK_BYTES: u64 = 1024 * 1024;
 const SERVER_READ_TIMEOUT: Duration = Duration::from_secs(3);
 const SERVER_WRITE_TIMEOUT: Duration = Duration::from_secs(3);
+const SERVER_QUIESCENCE_TIMEOUT: Duration = Duration::from_secs(8);
 const OVERLAP_GATE_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[tokio::test]
@@ -554,6 +555,53 @@ async fn cumulative_budget_counts_restarted_request_ids_across_groups() -> anyho
     Ok(())
 }
 
+#[tokio::test]
+async fn server_snapshot_waits_for_post_write_byte_accounting() -> anyhow::Result<()> {
+    let body = fixture_body(SMALL_MEDIA_BYTES);
+    let cluster = FixtureCluster::start(1, &body, Behavior::Success, false)?;
+    let case = benchmark_case(&cluster, &body)?;
+    let settings = BenchmarkSettings::for_test();
+    let root = tempfile::tempdir()?;
+    let gate = Arc::new(AccountingGate::default());
+    let _release_gate = ReleaseAccountingGateOnDrop(Arc::clone(&gate));
+    cluster.servers[0].arm_accounting_gate(Arc::clone(&gate));
+
+    let record = run_fixture_group(
+        &case,
+        &settings,
+        root.path(),
+        0,
+        Group::FixedHostRange4,
+        &test_budget(Duration::from_secs(10), 1, u64::MAX),
+    )
+    .await?;
+    assert!(!record.success);
+    assert_eq!(record.budget_exhausted, Some("cumulative_body_bytes"));
+    assert_eq!(
+        bytes_for(
+            &record,
+            Some(&cluster.servers[0].host_label()),
+            DownloadTransferPhase::AutomaticProbe
+        ),
+        body.len() as u64,
+        "the client must finish receiving the chunk before the server is released to account it"
+    );
+    gate.wait_until_paused(SERVER_QUIESCENCE_TIMEOUT)?;
+
+    let server = Arc::clone(&cluster.servers[0].state);
+    let changed = Arc::clone(&cluster.servers[0].changed);
+    let snapshot = tokio::task::spawn_blocking(move || snapshot_when_quiescent(&server, &changed));
+    cluster.servers[0].wait_for_quiescence_waiter()?;
+    gate.release();
+    let snapshot = snapshot.await??;
+    assert_eq!(
+        snapshot.bytes_for(DownloadTransferPhase::AutomaticProbe),
+        body.len() as u64
+    );
+    assert_server_bytes_match_record(&record, &cluster);
+    Ok(())
+}
+
 fn test_budget(deadline: Duration, max_body_bytes: u64, max_requests: u64) -> RunBudget {
     RunBudget::for_test(deadline, max_body_bytes, max_requests)
 }
@@ -818,6 +866,9 @@ struct ServerSpec {
 struct ServerSnapshot {
     request_count: u64,
     automatic_probe_seen: bool,
+    active_handlers: usize,
+    quiescence_waiters: usize,
+    accounting_gate: Option<Arc<AccountingGate>>,
     bytes_by_phase: Vec<(DownloadTransferPhase, u64)>,
     requests: Vec<ServedRequestObservation>,
     write_errors: Vec<ServerWriteError>,
@@ -862,6 +913,7 @@ impl ServerSnapshot {
 struct LocalServer {
     address: SocketAddr,
     state: Arc<Mutex<ServerSnapshot>>,
+    changed: Arc<Condvar>,
     stop: Arc<AtomicBool>,
     listener_thread: Option<JoinHandle<()>>,
 }
@@ -872,8 +924,10 @@ impl LocalServer {
         listener.set_nonblocking(true)?;
         let address = listener.local_addr()?;
         let state = Arc::new(Mutex::new(ServerSnapshot::default()));
+        let changed = Arc::new(Condvar::new());
         let stop = Arc::new(AtomicBool::new(false));
         let thread_state = Arc::clone(&state);
+        let thread_changed = Arc::clone(&changed);
         let thread_stop = Arc::clone(&stop);
         let listener_thread = thread::spawn(move || {
             let mut handlers = Vec::new();
@@ -882,8 +936,14 @@ impl LocalServer {
                     Ok((stream, _)) => {
                         let spec = spec.clone();
                         let state = Arc::clone(&thread_state);
+                        let changed = Arc::clone(&thread_changed);
                         let overlap = Arc::clone(&overlap);
+                        state
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .active_handlers += 1;
                         handlers.push(thread::spawn(move || {
+                            let _active = ActiveHandlerGuard::new(state.clone(), changed.clone());
                             let _ = handle_request(stream, &spec, &state, &overlap);
                         }));
                         join_finished_handlers(&mut handlers);
@@ -901,6 +961,7 @@ impl LocalServer {
         Ok(Self {
             address,
             state,
+            changed,
             stop,
             listener_thread: Some(listener_thread),
         })
@@ -915,18 +976,236 @@ impl LocalServer {
     }
 
     fn snapshot(&self) -> ServerSnapshot {
-        self.state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
+        let snapshot = snapshot_when_quiescent(&self.state, &self.changed);
+        let error = snapshot.as_ref().err().map_or_else(
+            || "unknown synchronization error".to_owned(),
+            ToString::to_string,
+        );
+        assert!(
+            snapshot.is_ok(),
+            "local fixture server did not quiesce: {error}"
+        );
+        snapshot.unwrap_or_default()
     }
 
     fn reset_observations(&self) {
-        *self
+        let state = wait_for_quiescence(&self.state, &self.changed);
+        let error = state.as_ref().err().map_or_else(
+            || "unknown synchronization error".to_owned(),
+            ToString::to_string,
+        );
+        assert!(
+            state.is_ok(),
+            "local fixture server did not quiesce before reset: {error}"
+        );
+        if let Ok(mut state) = state {
+            *state = ServerSnapshot::default();
+        }
+    }
+
+    fn arm_accounting_gate(&self, gate: Arc<AccountingGate>) {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .accounting_gate = Some(gate);
+    }
+
+    fn wait_for_quiescence_waiter(&self) -> std::io::Result<()> {
+        let deadline = Instant::now() + SERVER_QUIESCENCE_TIMEOUT;
+        let mut state = self
             .state
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = ServerSnapshot::default();
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        while state.quiescence_waiters == 0 {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "snapshot did not wait for the active fixture handler",
+                ));
+            }
+            let (next, timeout) = self
+                .changed
+                .wait_timeout(state, remaining)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state = next;
+            if timeout.timed_out() && state.quiescence_waiters == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "snapshot did not wait for the active fixture handler",
+                ));
+            }
+        }
+        Ok(())
     }
+}
+
+struct ActiveHandlerGuard {
+    state: Arc<Mutex<ServerSnapshot>>,
+    changed: Arc<Condvar>,
+}
+
+impl ActiveHandlerGuard {
+    fn new(state: Arc<Mutex<ServerSnapshot>>, changed: Arc<Condvar>) -> Self {
+        Self { state, changed }
+    }
+}
+
+impl Drop for ActiveHandlerGuard {
+    fn drop(&mut self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.active_handlers = state.active_handlers.saturating_sub(1);
+        self.changed.notify_all();
+    }
+}
+
+#[derive(Default)]
+struct AccountingGate {
+    claimed: AtomicBool,
+    state: Mutex<AccountingGateState>,
+    changed: Condvar,
+}
+
+#[derive(Default)]
+struct AccountingGateState {
+    paused: bool,
+    released: bool,
+}
+
+impl AccountingGate {
+    fn pause_before_accounting(&self) -> std::io::Result<()> {
+        if self.claimed.swap(true, Ordering::AcqRel) {
+            return Ok(());
+        }
+        let deadline = Instant::now() + SERVER_QUIESCENCE_TIMEOUT;
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.paused = true;
+        self.changed.notify_all();
+        while !state.released {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "test accounting gate was not released before its deadline",
+                ));
+            }
+            let (next, timeout) = self
+                .changed
+                .wait_timeout(state, remaining)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state = next;
+            if timeout.timed_out() && !state.released {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "test accounting gate was not released before its deadline",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn wait_until_paused(&self, timeout: Duration) -> std::io::Result<()> {
+        let deadline = Instant::now() + timeout;
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        while !state.paused {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "fixture server did not reach the post-write accounting gate",
+                ));
+            }
+            let (next, timeout) = self
+                .changed
+                .wait_timeout(state, remaining)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state = next;
+            if timeout.timed_out() && !state.paused {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "fixture server did not reach the post-write accounting gate",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn release(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.released = true;
+        self.changed.notify_all();
+    }
+}
+
+struct ReleaseAccountingGateOnDrop(Arc<AccountingGate>);
+
+impl Drop for ReleaseAccountingGateOnDrop {
+    fn drop(&mut self) {
+        self.0.release();
+    }
+}
+
+fn snapshot_when_quiescent(
+    state: &Mutex<ServerSnapshot>,
+    changed: &Condvar,
+) -> std::io::Result<ServerSnapshot> {
+    Ok(wait_for_quiescence(state, changed)?.clone())
+}
+
+fn wait_for_quiescence<'a>(
+    state: &'a Mutex<ServerSnapshot>,
+    changed: &Condvar,
+) -> std::io::Result<MutexGuard<'a, ServerSnapshot>> {
+    let deadline = Instant::now() + SERVER_QUIESCENCE_TIMEOUT;
+    let mut state = state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    state.quiescence_waiters += 1;
+    changed.notify_all();
+    while state.active_handlers != 0 {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            state.quiescence_waiters = state.quiescence_waiters.saturating_sub(1);
+            changed.notify_all();
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!(
+                    "{} fixture request handler(s) remain active",
+                    state.active_handlers
+                ),
+            ));
+        }
+        let (next, timeout) = changed
+            .wait_timeout(state, remaining)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state = next;
+        if timeout.timed_out() && state.active_handlers != 0 {
+            state.quiescence_waiters = state.quiescence_waiters.saturating_sub(1);
+            changed.notify_all();
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!(
+                    "{} fixture request handler(s) remain active",
+                    state.active_handlers
+                ),
+            ));
+        }
+    }
+    state.quiescence_waiters = state.quiescence_waiters.saturating_sub(1);
+    changed.notify_all();
+    Ok(state)
 }
 
 impl Drop for LocalServer {
@@ -1406,6 +1685,19 @@ fn write_body_counted(
             }
             Ok(written) => {
                 bytes_written = bytes_written.saturating_add(written);
+                if bytes_written == body.len() {
+                    let gate = state
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .accounting_gate
+                        .clone();
+                    if let Some(gate) = gate
+                        && let Err(error) = gate.pause_before_accounting()
+                    {
+                        record_write_error(state, phase, bytes_written, error.kind());
+                        return Err(error);
+                    }
+                }
                 state
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
