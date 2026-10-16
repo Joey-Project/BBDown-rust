@@ -8147,7 +8147,8 @@ fn danmaku_update_preserve_failure_keeps_original_sidecars_and_archive_bytes() -
             .assert()
             .failure();
 
-        if fetched_result == "malformed-old" || fetched_result == "malformed-xml" {
+        // Only fetched payload errors retry; an invalid local baseline does not refetch.
+        if fetched_result == "malformed-old" {
             danmaku_mock.assert_calls(1);
         } else {
             danmaku_mock.assert_calls(3);

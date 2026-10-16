@@ -5,7 +5,7 @@ status: completed
 created: 2026-10-16
 updated: 2026-10-16
 branch: wip/danmaku-raw-deflate
-pr:
+pr: 102
 supersedes: []
 superseded_by:
 ---
@@ -25,12 +25,18 @@ superseded_by:
   accepting plain UTF-8 XML, raw DEFLATE, zlib, and gzip.
 - Reject malformed or oversized payloads rather than silently publishing an
   empty ASS generated from invalid XML. Leave media streaming unchanged.
+- Validate XML independently and render ASS only when requested. XML-only
+  downloads are unaffected by the size or cost of unused ASS output.
+- Apply one configured retry budget to transport and decoding together.
+  Preserve logical-file byte, failure, and retry telemetry while keeping the
+  private transport filename out of progress; publish completion only after
+  the final XML exists.
 
 ## Validation
 
 - Offline regression tests exercise compressed HTTP fixtures and malformed,
   truncated, and oversized payloads without production credentials or media.
-- Rust 1.95.0 workspace tests passed: 862 passed, zero failed, and three
+- Rust 1.95.0 workspace tests passed: 865 passed, zero failed, and three
   existing opt-in tests ignored. The separate CLI e2e repeat passed all 159
   tests. HTTP compression fixtures exceed the decoder's per-chunk buffer.
 - Formatting, workspace all-target Clippy with warnings denied, declared-MSRV

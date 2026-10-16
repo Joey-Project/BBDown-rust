@@ -5,7 +5,7 @@ use std::time::Duration;
 mod preserving;
 
 pub use preserving::merge_xml_preserving;
-pub(crate) use preserving::xml_to_ass_validated;
+pub(crate) use preserving::{validate_fetched_xml, xml_to_ass_validated};
 
 const DANMAKU_FORMAT_ORDER: [DanmakuFormat; 2] = [DanmakuFormat::Xml, DanmakuFormat::Ass];
 const PLAY_RES_X: u32 = 1920;

@@ -283,7 +283,14 @@ async fn download_danmaku_source(
         .with_download_idle_timeout(options.download_idle_timeout);
     let cancellation = crate::DownloadCancellationToken::new();
     let result = client
-        .download_danmaku_source(plan_entry, &source_path, &download_options, &cancellation)
+        .download_danmaku_source(
+            plan_entry,
+            &source_path,
+            &directory.join("danmaku.xml"),
+            &download_options,
+            &crate::progress::NoopDownloadProgress,
+            &cancellation,
+        )
         .await;
     let cleanup = temp_dir.close();
     if let Err(error) = cleanup
@@ -292,7 +299,7 @@ async fn download_danmaku_source(
     {
         return Err(Error::Io(error));
     }
-    result.map(|(xml, _)| xml)
+    result
 }
 
 fn read_destination(logical_path: &Path) -> Result<(PathBuf, Option<Vec<u8>>)> {
