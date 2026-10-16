@@ -24,7 +24,7 @@ use reqwest::header::{COOKIE, HeaderMap, HeaderValue, REFERER, USER_AGENT};
 use serde::Deserialize;
 use sha2::Sha256;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 use url::Url;
@@ -447,6 +447,7 @@ impl RestrictedAreaProxy {
 #[derive(Clone, Debug)]
 pub struct BiliClient {
     pub(crate) http: reqwest::Client,
+    danmaku_http: Arc<OnceLock<reqwest::Client>>,
     pub(crate) config: ClientConfig,
     json_body_limit: Option<usize>,
     dynamic_device_cookie_cache: Arc<Mutex<Option<CachedDynamicDeviceCookies>>>,
@@ -480,10 +481,25 @@ impl BiliClient {
     pub fn new(config: ClientConfig) -> Self {
         Self {
             http: reqwest::Client::new(),
+            danmaku_http: Arc::default(),
             config,
             json_body_limit: None,
             dynamic_device_cookie_cache: Arc::default(),
         }
+    }
+
+    pub(crate) fn danmaku_http_client(&self) -> Result<&reqwest::Client> {
+        if let Some(client) = self.danmaku_http.get() {
+            return Ok(client);
+        }
+        // Preserve raw transport bytes without changing the media/API client.
+        // The shared lazy cell keeps one connection pool across downloads and clones.
+        let client = reqwest::Client::builder()
+            .no_deflate()
+            .no_gzip()
+            .build()
+            .map_err(Self::http_error_without_url)?;
+        Ok(self.danmaku_http.get_or_init(|| client))
     }
 
     /// Resolves one bounded page from a supported dynamic collection input.
@@ -2788,6 +2804,7 @@ impl BiliClient {
                     .build()
                     .map_err(Self::http_error_without_url)?,
                 config: self.config.clone(),
+                danmaku_http: self.danmaku_http.clone(),
                 json_body_limit: Some(DYNAMIC_SPI_RESPONSE_MAX_BYTES),
                 dynamic_device_cookie_cache: self.dynamic_device_cookie_cache.clone(),
             })
@@ -6863,6 +6880,18 @@ mod tests {
     const IDENTITY_COOKIE_FIXTURE: &str = "codex_synth_v1_bearer_a";
     const IDENTITY_ACCESS_KEY_FIXTURE: &str = "codex_synth_v1_access_a";
     const IDENTITY_TV_ACCESS_KEY_FIXTURE: &str = "codex_synth_v1_access_b";
+
+    #[test]
+    fn danmaku_http_client_is_lazy_and_reused_across_clones() -> anyhow::Result<()> {
+        let client = BiliClient::new(ClientConfig::default());
+        let cloned = client.clone();
+        assert!(client.danmaku_http.get().is_none());
+        let first = client.danmaku_http_client()?;
+        assert!(std::ptr::eq(first, client.danmaku_http_client()?));
+        assert!(std::ptr::eq(first, cloned.danmaku_http_client()?));
+        assert!(!std::ptr::eq(first, &raw const client.http));
+        Ok(())
+    }
 
     fn identity_keypair_appkey(keypair: AccessKeyIdentityKeypair) -> &'static str {
         match keypair {

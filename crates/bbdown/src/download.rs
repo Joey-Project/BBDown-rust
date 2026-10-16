@@ -1989,17 +1989,33 @@ impl BiliClient {
             )
             .await?
         };
-        let ass = if writes_ass {
+        let xml_request =
+            DownloadFileRequest::new(entry, &xml_path, DownloadFileKind::Danmaku, None);
+        let finalization_attempt = DownloadAttempt { current: 1, max: 1 };
+        let ass_result = (|| {
+            if !writes_ass {
+                return Ok(None);
+            }
+            cancellation.check()?;
             let ass = danmaku::xml_to_ass_validated(&xml)?;
+            cancellation.check()?;
             if u64::try_from(ass.len()).unwrap_or(u64::MAX) > DANMAKU_MAX_BODY_BYTES {
                 return Err(Error::InvalidInput(format!(
                     "generated danmaku ASS exceeds the {} MiB limit",
                     DANMAKU_MAX_BODY_BYTES / (1024 * 1024)
                 )));
             }
-            Some(ass)
-        } else {
-            None
+            Ok(Some(ass))
+        })();
+        let ass = match ass_result {
+            Ok(ass) => ass,
+            Err(error) => {
+                let error = cancellation.check().err().unwrap_or(error);
+                if writes_xml {
+                    emit_file_failed(progress, &xml_request, finalization_attempt, &error);
+                }
+                return Err(error);
+            }
         };
         if writes_xml {
             files.push(
@@ -2030,6 +2046,7 @@ impl BiliClient {
         Ok(())
     }
 
+    #[allow(clippy::too_many_lines)] // Keep transfer, decoding, cleanup, and terminal events in one retry lifecycle.
     async fn download_danmaku_source<P>(
         &self,
         entry: &DownloadEntry,
@@ -2049,11 +2066,7 @@ impl BiliClient {
         // Reqwest's automatic deflate decoder assumes the zlib wrapper. Bilibili
         // also serves raw DEFLATE, so retain the response bytes for our bounded
         // format-detecting decoder while leaving media clients unchanged.
-        let danmaku_http = reqwest::Client::builder()
-            .no_deflate()
-            .no_gzip()
-            .build()
-            .map_err(BiliClient::http_error_without_url)?;
+        let danmaku_http = self.danmaku_http_client()?;
         let attempt_options = options
             .clone()
             .with_retry_policy(RetryPolicy::single_attempt())
@@ -2079,7 +2092,7 @@ impl BiliClient {
             source_progress.set_attempt(current_attempt);
             let downloaded = self
                 .download_url_to_file_without_terminal(
-                    &danmaku_http,
+                    danmaku_http,
                     &entry.danmaku.xml_url,
                     &request,
                     &attempt_options,
@@ -2090,7 +2103,7 @@ impl BiliClient {
                 )
                 .await;
 
-            let (decoded, failure_reason) = match downloaded {
+            let (decoded, failure_reason, started) = match downloaded {
                 Ok(downloaded_file) => {
                     let decoded = async {
                         cancellation.check()?;
@@ -2108,23 +2121,29 @@ impl BiliClient {
                             )
                         },
                     );
-                    (decoded, reason)
+                    (decoded, reason, true)
                 }
                 Err(error) => {
                     let reason = error.transfer_failure_reason.unwrap_or_else(|| {
                         download_transfer_failure_reason(&error.error, 0, request.expected_size)
                     });
-                    (Err(error.error), reason)
+                    (Err(error.error), reason, error.started)
                 }
             };
             let cleanup_result = remove_file_if_exists(source_path).await;
             match decoded {
                 Ok(xml) => {
-                    cleanup_result?;
+                    if let Err(error) = cleanup_result {
+                        emit_file_failed(progress, &logical_request, attempt, &error);
+                        return Err(error);
+                    }
                     return Ok(xml);
                 }
                 Err(error) => {
                     if error.is_cancelled() {
+                        if started {
+                            emit_file_failed(progress, &logical_request, attempt, &error);
+                        }
                         return Err(error);
                     }
                     let error = match cleanup_result {
@@ -10151,6 +10170,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cancelled_danmaku_source_terminates_started_file_once() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/danmaku.xml");
+            then.status(200).body("<i></i>");
+        });
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = test_plan(&server);
+        let source_path = temp.path().join("danmaku.xml.bbdown-source");
+        let logical_path = temp.path().join("danmaku.xml");
+        let options =
+            DownloadOptions::new(temp.path()).with_retry_policy(RetryPolicy::single_attempt());
+        let cancellation = DownloadCancellationToken::new();
+        let cancel_on_start = cancellation.clone();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&events);
+        let progress = move |event: &DownloadProgressEvent| {
+            push_progress_event(&recorded, event.clone());
+            if matches!(event, DownloadProgressEvent::FileStarted { .. }) {
+                cancel_on_start.cancel();
+            }
+        };
+        let result = client
+            .download_danmaku_source(
+                &plan.entries[0],
+                &source_path,
+                &logical_path,
+                &options,
+                &progress,
+                &cancellation,
+            )
+            .await;
+        let error = result
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("cancel was ignored"))?;
+        assert!(error.is_cancelled());
+        let events = progress_events_snapshot(&events);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, DownloadProgressEvent::FileStarted { .. }))
+                .count(),
+            1
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event, DownloadProgressEvent::FileFailed {
+                        kind: DownloadFileKind::Danmaku, path, ..
+                    } if path == &logical_path
+                ))
+                .count(),
+            1
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, DownloadProgressEvent::FileCompleted { .. }))
+        );
+        assert!(!logical_path.exists());
+        Ok(())
+    }
+
+    #[tokio::test]
     #[allow(clippy::too_many_lines)] // Verify one complete transfer and publication lifecycle.
     async fn danmaku_source_progress_completes_only_after_logical_xml_is_written()
     -> anyhow::Result<()> {
@@ -10699,6 +10784,55 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("oversized ASS was accepted"))?;
         assert!(error.to_string().contains("ASS exceeds"), "{error}");
         assert!(!file.path.with_extension("ass").exists());
+
+        let xml_ass_temp = tempfile::tempdir()?;
+        let xml_ass_options = DownloadOptions::new(xml_ass_temp.path())
+            .with_retry_policy(RetryPolicy::single_attempt())
+            .with_download_mode(DownloadMode::DanmakuOnly)
+            .with_danmaku_formats([DanmakuFormat::Xml, DanmakuFormat::Ass]);
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let progress_events = Arc::clone(&events);
+        let progress = move |event: &DownloadProgressEvent| {
+            push_progress_event(&progress_events, event.clone());
+        };
+        let error = client
+            .download_plan_with_progress(&plan, xml_ass_options, &progress)
+            .await
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("oversized XML+ASS output was accepted"))?;
+        assert!(error.to_string().contains("ASS exceeds"), "{error}");
+
+        let xml_ass_entry_dir = test_entry_dir(xml_ass_temp.path(), &plan)?;
+        let xml_ass_xml_path = xml_ass_entry_dir.join("danmaku.xml");
+        let xml_ass_ass_path = xml_ass_entry_dir.join("danmaku.ass");
+        assert!(!xml_ass_xml_path.exists());
+        assert!(!xml_ass_ass_path.exists());
+        let events = progress_events_snapshot(&events);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    DownloadProgressEvent::FileFailed {
+                        kind: DownloadFileKind::Danmaku,
+                        path,
+                        attempt: 1,
+                        max_attempts: 1,
+                        error: event_error,
+                        ..
+                    } if path == &xml_ass_xml_path && event_error == &error.to_string()
+                ))
+                .count(),
+            1
+        );
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            DownloadProgressEvent::FileCompleted {
+                kind: DownloadFileKind::Danmaku,
+                path,
+                ..
+            } if path == &xml_ass_xml_path
+        )));
         Ok(())
     }
 

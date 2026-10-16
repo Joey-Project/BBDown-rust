@@ -31,13 +31,16 @@ superseded_by:
   Preserve logical-file byte, failure, and retry telemetry while keeping the
   private transport filename out of progress; publish completion only after
   the final XML exists.
+- Close started XML progress on ASS generation failure, cancellation, and
+  transport cleanup errors. Reuse one lazily initialized, compression-disabled
+  HTTP connection pool across danmaku files and client clones.
 
 ## Validation
 
 - Offline regression tests exercise compressed HTTP fixtures and malformed,
   truncated, and oversized payloads without production credentials or media.
-- Rust 1.95.0 workspace tests passed: 865 passed, zero failed, and three
-  existing opt-in tests ignored. The separate CLI e2e repeat passed all 159
-  tests. HTTP compression fixtures exceed the decoder's per-chunk buffer.
+- Rust 1.95.0 workspace tests passed: 867 passed, zero failed, and three
+  existing opt-in tests ignored, including all 159 CLI end-to-end tests.
+  HTTP compression fixtures exceed the decoder's per-chunk buffer.
 - Formatting, workspace all-target Clippy with warnings denied, declared-MSRV
   check, and project journal validation passed.

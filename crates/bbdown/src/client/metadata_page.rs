@@ -386,6 +386,7 @@ fn prepare_metadata_page(
             .redirect(reqwest::redirect::Policy::none())
             .build()?,
         config: client.config.clone(),
+        danmaku_http: client.danmaku_http.clone(),
         json_body_limit: Some(MAX_RESPONSE_BYTES),
         dynamic_device_cookie_cache: client.dynamic_device_cookie_cache.clone(),
     };
