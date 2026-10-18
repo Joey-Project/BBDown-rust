@@ -14573,9 +14573,9 @@ mod tests {
             Some("specials")
         );
         assert_eq!(season.episode_groups[2].title.as_deref(), Some("Extras"));
-        assert!(season.episode_groups[2].episode_positions.is_empty());
+        assert_eq!(season.episode_groups[2].episode_positions, [] as [usize; 0]);
         assert_eq!(season.episode_groups[3].title.as_deref(), Some(""));
-        assert!(season.episode_groups[3].episode_positions.is_empty());
+        assert_eq!(season.episode_groups[3].episode_positions, [] as [usize; 0]);
         assert_eq!(season.episode_groups[4].title, None);
         assert_eq!(season.episode_groups[5].source_id, None);
         assert_eq!(season.episode_groups[5].title, None);
@@ -14589,7 +14589,10 @@ mod tests {
             empty_main.episode_groups[0].kind,
             SeasonEpisodeGroupKind::Main
         );
-        assert!(empty_main.episode_groups[0].episode_positions.is_empty());
+        assert_eq!(
+            empty_main.episode_groups[0].episode_positions,
+            [] as [usize; 0]
+        );
         Ok(())
     }
 

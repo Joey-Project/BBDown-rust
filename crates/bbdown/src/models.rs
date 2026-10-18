@@ -382,7 +382,7 @@ mod tests {
             "tags": [],
             "episodes": []
         }))?;
-        assert!(season.episode_groups.is_empty());
+        assert_eq!(season.episode_groups, [] as [SeasonEpisodeGroup; 0]);
         let serialized = serde_json::to_value(&season)?;
         assert!(serialized.get("episode_groups").is_none());
 

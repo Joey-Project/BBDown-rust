@@ -45,10 +45,12 @@ superseded_by:
 
 ## Validation
 
-- `just ci` passed with Cargo/rustc 1.95.0: formatting, strict workspace Clippy, Rust 1.95.0
+- `just ci` passed with stable Cargo/rustc 1.99.1: formatting, strict workspace Clippy, Rust 1.95.0
   MSRV check, workspace tests (877 passed, 3 ignored), the separate CLI e2e command (160 passed),
   and crate publication dry run. No crate was uploaded. The existing published `0.10.0` version
   and locked yanked `spin 0.9.8` produced warnings, not gate failures.
+- Current stable's `assert_is_empty` lint is satisfied with typed empty-collection equality
+  assertions. Validation covers both stable 1.99.1 and the separate 1.95.0 MSRV gate.
 - Mock coverage checks filtering before member-position assignment, repeated episode IDs,
   optional numeric/string source IDs, empty or repeated titles and groups, old JSON defaults,
   public reexports, configured metadata endpoints, full CLI JSON metadata, human-readable
