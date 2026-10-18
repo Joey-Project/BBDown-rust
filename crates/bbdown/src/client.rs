@@ -3819,6 +3819,7 @@ fn season_from_pgc(result: PgcSeasonResult) -> SeasonMetadata {
         season_title,
         evaluate,
         cover,
+        positive,
         episodes,
         section,
         areas,
@@ -3826,10 +3827,11 @@ fn season_from_pgc(result: PgcSeasonResult) -> SeasonMetadata {
     } = result;
     let mut episodes = episodes_to_metadata(episodes, 0);
     let main_episode_count = episodes.len();
+    let positive = positive.unwrap_or_default();
     let mut episode_groups = vec![SeasonEpisodeGroup {
         kind: SeasonEpisodeGroupKind::Main,
-        source_id: None,
-        title: None,
+        source_id: positive.id.and_then(pgc_group_source_id),
+        title: positive.title,
         episode_positions: (0..main_episode_count).collect(),
     }];
     for section in section {
@@ -4215,6 +4217,8 @@ struct PgcSeasonResult {
     evaluate: Option<String>,
     cover: Option<String>,
     #[serde(default)]
+    positive: Option<PgcGroupMetadata>,
+    #[serde(default)]
     episodes: Vec<PgcEpisode>,
     #[serde(default)]
     section: Vec<PgcSection>,
@@ -4222,6 +4226,14 @@ struct PgcSeasonResult {
     areas: Vec<PgcName>,
     #[serde(default)]
     styles: Vec<PgcName>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct PgcGroupMetadata {
+    #[serde(default)]
+    id: Option<serde_json::Value>,
+    #[serde(default)]
+    title: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -14525,6 +14537,7 @@ mod tests {
         let result = serde_json::from_value(serde_json::json!({
             "season_id": 123,
             "title": "A Season",
+            "positive": {"id": 42, "title": "Main group"},
             "episodes": [
                 {"aid": 10, "cid": 100, "id": 7, "title": "Main"},
                 {"bvid": "BVbad", "cid": 101, "id": 8, "title": "Filtered"},
@@ -14563,7 +14576,11 @@ mod tests {
         );
         assert_eq!(season.episode_groups.len(), 6);
         assert_eq!(season.episode_groups[0].kind, SeasonEpisodeGroupKind::Main);
-        assert_eq!(season.episode_groups[0].title, None);
+        assert_eq!(season.episode_groups[0].source_id.as_deref(), Some("42"));
+        assert_eq!(
+            season.episode_groups[0].title.as_deref(),
+            Some("Main group")
+        );
         assert_eq!(season.episode_groups[0].episode_positions, vec![0, 1]);
         assert_eq!(season.episode_groups[1].source_id.as_deref(), Some("42"));
         assert_eq!(season.episode_groups[1].title.as_deref(), Some("Extras"));
@@ -14589,10 +14606,32 @@ mod tests {
             empty_main.episode_groups[0].kind,
             SeasonEpisodeGroupKind::Main
         );
+        assert_eq!(empty_main.episode_groups[0].source_id, None);
+        assert_eq!(empty_main.episode_groups[0].title, None);
         assert_eq!(
             empty_main.episode_groups[0].episode_positions,
             [] as [usize; 0]
         );
+
+        let empty_title_main = season_from_pgc(serde_json::from_value(serde_json::json!({
+            "positive": {"id": "root-group", "title": ""},
+            "episodes": []
+        }))?);
+        assert_eq!(
+            empty_title_main.episode_groups[0].source_id.as_deref(),
+            Some("root-group")
+        );
+        assert_eq!(
+            empty_title_main.episode_groups[0].title.as_deref(),
+            Some("")
+        );
+
+        let unsupported_id_main = season_from_pgc(serde_json::from_value(serde_json::json!({
+            "positive": {"id": {"unsupported": true}},
+            "episodes": []
+        }))?);
+        assert_eq!(unsupported_id_main.episode_groups[0].source_id, None);
+        assert_eq!(unsupported_id_main.episode_groups[0].title, None);
         Ok(())
     }
 
@@ -14608,6 +14647,7 @@ mod tests {
                 "result": {
                     "season_id": 123,
                     "title": "A Season",
+                    "positive": {"id": 5, "title": "Main group"},
                     "episodes": [
                         {"aid": 10, "cid": 100, "id": 1000, "title": "Main"}
                     ],
@@ -14635,6 +14675,14 @@ mod tests {
         match resolved {
             ResolvedContent::Season(season) => {
                 assert_eq!(season.season.episode_groups.len(), 2);
+                assert_eq!(
+                    season.season.episode_groups[0].source_id.as_deref(),
+                    Some("5")
+                );
+                assert_eq!(
+                    season.season.episode_groups[0].title.as_deref(),
+                    Some("Main group")
+                );
                 assert_eq!(
                     season.season.episode_groups[1].source_id.as_deref(),
                     Some("9")

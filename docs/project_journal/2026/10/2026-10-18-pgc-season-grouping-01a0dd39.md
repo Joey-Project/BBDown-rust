@@ -25,12 +25,14 @@ superseded_by:
   exposes `kind`, optional upstream `source_id` and `title`, and `episode_positions`.
 - Positions are zero-based offsets into `SeasonMetadata.episodes`, calculated after invalid
   upstream episodes are filtered. They are neither EP IDs nor the one-based display indexes.
-- The root episode list forms the main group. Every supplementary section retains its own
+- The root episode list forms the main group; its available upstream ID and title come from
+  `positive`. Every supplementary section retains its own
   position and membership, including empty groups, repeated titles, missing or empty titles,
   and repeated episode IDs. Upstream numeric or string group IDs are represented as strings;
   absent or unsupported IDs are not synthesized.
 - JSON preserves raw group metadata for the full season even when selection returns a subset.
-  Human-readable `info` displays group headings and the existing global episode indexes.
+  Human-readable `info` displays group headings and the existing global episode indexes;
+  supplementary section labels count only sections, not the main group.
 - Older JSON without `episode_groups` deserializes to an empty list. Rust callers constructing
   `SeasonMetadata` literals must supply the added field. Intl modules and PUGV courses retain
   their existing flat behavior and do not acquire inferred groups in this slice.
@@ -51,7 +53,7 @@ superseded_by:
   and locked yanked `spin 0.9.8` produced warnings, not gate failures.
 - Current stable's `assert_is_empty` lint is satisfied with typed empty-collection equality
   assertions. Validation covers both stable 1.99.1 and the separate 1.95.0 MSRV gate.
-- Mock coverage checks filtering before member-position assignment, repeated episode IDs,
+- Mock coverage checks main-group `positive` metadata, filtering before member-position assignment, repeated episode IDs,
   optional numeric/string source IDs, empty or repeated titles and groups, old JSON defaults,
   public reexports, configured metadata endpoints, full CLI JSON metadata, human-readable
   output, numeric and exact-EP selection, and main-only `Latest` behavior.
@@ -66,6 +68,7 @@ superseded_by:
 
 ## Evidence
 
+- PR: `https://github.com/Joey-Project/BBDown-rust/pull/105`.
 - Priority and shared resolver requirements: `2026-10-11-page-family-roadmap.md`.
 - Implementation: `crates/bbdown/src/models.rs`, `client.rs`, and `lib.rs`.
 - CLI and public-surface coverage: `crates/bbdown-cli/tests/cli_e2e.rs` and

@@ -7155,21 +7155,21 @@ fn print_human_summary(resolved: &ResolvedContent) {
             println!("title: {}", season.season.title);
             println!("episodes: {}", season.season.episodes.len());
             println!("selected: {}", season.selected_episodes.len());
-            for (group_index, group) in season.season.episode_groups.iter().enumerate() {
+            let mut section_number = 0;
+            for group in &season.season.episode_groups {
+                let fallback_label = match &group.kind {
+                    bbdown_core::SeasonEpisodeGroupKind::Main => "Main episodes".to_owned(),
+                    bbdown_core::SeasonEpisodeGroupKind::Section => {
+                        section_number += 1;
+                        format!("Section {section_number}")
+                    }
+                };
                 let label = group
                     .title
                     .as_deref()
                     .map(str::trim)
                     .filter(|title| !title.is_empty())
-                    .map_or_else(
-                        || match &group.kind {
-                            bbdown_core::SeasonEpisodeGroupKind::Main => "Main episodes".to_owned(),
-                            bbdown_core::SeasonEpisodeGroupKind::Section => {
-                                format!("Section {}", group_index + 1)
-                            }
-                        },
-                        str::to_owned,
-                    );
+                    .map_or_else(|| fallback_label, str::to_owned);
                 println!("group: {label}");
                 if group.episode_positions.is_empty() {
                     println!("  (no episodes)");

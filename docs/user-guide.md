@@ -101,8 +101,9 @@ Domestic PGC season metadata also reports `episode_groups` in `info` output. Eac
 `kind` (`main` or `section`), optional upstream `source_id` and `title`, and
 `episode_positions`. Positions are zero-based indexes into the complete `SeasonMetadata.episodes`
 list; they are not episode IDs or the one-based indexes shown to users. Group order, section titles,
-empty sections, and duplicate titles follow the upstream season response. A missing main-group title
-or ID stays `null`. `info --json` includes the full groups even when `--select` chooses only some
+empty sections, and duplicate titles follow the upstream season response. The main group's title
+and ID come from the upstream `positive` object when provided; missing values stay `null`.
+`info --json` includes the full groups even when `--select` chooses only some
 episodes; human-readable `info` shows group headings and each member's global episode index and
 title. `latest` continues to select the last main episode; download planning uses the selected
 episodes, including supplementary episodes when requested. All existing flat selectors retain

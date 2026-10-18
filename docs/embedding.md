@@ -384,7 +384,9 @@ parser accepts equivalent strings such as `1`, `page:1`, `1,3-5`, and `page:2-4,
 
 Domestic PGC `SeasonMetadata` exposes ordered `episode_groups`. `kind` is `Main` or `Section`;
 `source_id` is an optional upstream ID normalized to a string, and `title` is an optional upstream
-title. `episode_positions` contains zero-based indexes into `SeasonMetadata.episodes`; positions
+title. Main-group ID and title come from the upstream `positive` object when provided; section
+metadata comes from its corresponding `section` entry. `episode_positions` contains zero-based
+indexes into `SeasonMetadata.episodes`; positions
 are not episode IDs or display indexes. Preserve group order, including empty sections and duplicate
 titles, and use `.get(position)` so sparse or future metadata cannot panic. Groups remain available
 on the full metadata result even when a selection resolves only some episodes. Intl and PUGV seasons

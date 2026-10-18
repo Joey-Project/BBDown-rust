@@ -349,6 +349,7 @@ async fn main() -> bbdown_core::Result<()> {
 
 国内 PGC 的 `SeasonMetadata` 会公开按顺序排列的 `episode_groups`。`kind` 为 `Main` 或
 `Section`；`source_id` 是规范化为字符串的可选上游 id，`title` 是可选的上游标题。
+main 组的 id 和标题取自上游提供的 `positive` 对象，各 section 的元数据则取自对应的 `section` 条目。
 `episode_positions` 是 `SeasonMetadata.episodes` 中的零基位置，不是 episode id 或面向用户的分集序号。
 请保留分组顺序，包括空 section 和重复标题，并通过 `.get(position)` 读取，避免元数据稀疏或未来变化时
 发生 panic。即使 selection 只解析部分分集，完整 metadata 结果仍会保留全部分组。本次 intl 和 PUGV

@@ -89,8 +89,9 @@ Season、media 和 `cheese/ss...` 输入在非交互模式下需要 `--select`�
 国内 PGC season metadata 还会在 `info` 输出中提供 `episode_groups`。每组包含 `kind`（`main` 或
 `section`）、可选的上游 `source_id` 和 `title`，以及 `episode_positions`。这些位置是完整
 `SeasonMetadata.episodes` 列表中的零基位置；它们既不是 episode id，也不是面向用户的一基分集序号。
-分组顺序、section 标题、空 section 和重复标题都会保留上游 season 响应中的形式。上游缺少 main
-组标题或 id 时，对应值保持 `null`。即使 `--select` 只选择部分分集，`info --json` 仍包含完整分组；
+分组顺序、section 标题、空 section 和重复标题都会保留上游 season 响应中的形式。main 组的标题和 id
+取自上游提供的 `positive` 对象，缺少的值保持 `null`。即使 `--select` 只选择部分分集，
+`info --json` 仍包含完整分组；
 人类可读的 `info` 会显示组标题以及每个成员的全局分集序号和标题。`latest` 仍选择最后一集正片；
 下载规划使用所选分集，也包含明确选中的补充内容。现有平铺选择器的含义不变，Intl 和 PUGV season
 仍保持平铺行为。

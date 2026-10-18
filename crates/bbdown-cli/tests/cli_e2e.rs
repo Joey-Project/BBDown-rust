@@ -214,10 +214,7 @@ fn info_preserves_pgc_season_groups_across_selection_modes() -> anyhow::Result<(
         all["season"]["season"]["episode_groups"][1]["source_id"],
         "8"
     );
-    assert_eq!(
-        all["season"]["season"]["episode_groups"][1]["title"],
-        "Extras"
-    );
+    assert_eq!(all["season"]["season"]["episode_groups"][1]["title"], "");
     assert_eq!(
         all["season"]["season"]["episode_groups"][1]["episode_positions"],
         serde_json::json!([2])
@@ -226,7 +223,10 @@ fn info_preserves_pgc_season_groups_across_selection_modes() -> anyhow::Result<(
         all["season"]["season"]["episode_groups"][2]["title"],
         "Extras"
     );
-    assert_eq!(all["season"]["season"]["episode_groups"][3]["title"], "");
+    assert_eq!(
+        all["season"]["season"]["episode_groups"][3]["title"],
+        "Extras"
+    );
     assert_eq!(
         all["season"]["season"]["episode_groups"][4]["title"],
         Value::Null
@@ -266,8 +266,9 @@ fn info_preserves_pgc_season_groups_across_selection_modes() -> anyhow::Result<(
     let text = run_pgc_info_text(&server, &credential_file)?;
     assert!(text.contains("group: Main episodes"));
     assert!(text.contains("group: Extras"));
+    assert!(text.contains("group: Section 1"));
     assert!(text.contains("episode 4: 4 (Commentary)"));
-    assert!(text.contains("group: Section 5\n  (no episodes)"));
+    assert!(text.contains("group: Section 4\n  (no episodes)"));
     Ok(())
 }
 
@@ -286,13 +287,13 @@ fn mock_grouped_pgc_season(server: &MockServer) {
                     {"aid": 11, "bvid": "BV1ab", "cid": 101, "id": 1001, "ep_id": 1001, "title": "2", "long_title": "Finale"}
                 ],
                 "section": [
-                    {"id": 8, "title": "Extras", "episodes": [
+                    {"id": 8, "title": "", "episodes": [
                         {"aid": 12, "bvid": "BV1ac", "cid": 102, "id": 1002, "ep_id": 1002, "title": "3", "long_title": "Interview"}
                     ]},
                     {"id": 9, "title": "Extras", "episodes": [
                         {"aid": 13, "bvid": "BV1ad", "cid": 103, "id": 1003, "ep_id": 1003, "title": "4", "long_title": "Commentary"}
                     ]},
-                    {"id": 10, "title": "", "episodes": [
+                    {"id": 10, "title": "Extras", "episodes": [
                         {"aid": 14, "bvid": "BV1ae", "cid": 104, "id": 1004, "ep_id": 1004, "title": "5", "long_title": "Interview 2"}
                     ]},
                     {"id": 11, "episodes": []}
