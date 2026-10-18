@@ -1,5 +1,5 @@
 use crate::bv;
-use crate::client::VideoSearchOrder;
+use crate::client::{VideoSearchOrder, VideoSearchQuery};
 use crate::models::{UgcCollectionKind, UgcCollectionReference};
 use crate::{Error, Result};
 use url::Url;
@@ -61,17 +61,7 @@ impl Input {
         if let Some(keyword) = trimmed.get("search:".len()..)
             && lower.starts_with("search:")
         {
-            let keyword = keyword.trim();
-            if keyword.is_empty() {
-                return Err(Error::InvalidInput(
-                    "video search keyword is empty".to_owned(),
-                ));
-            }
-            return Ok(Self::VideoSearch {
-                keyword: keyword.to_owned(),
-                page: 1,
-                order: VideoSearchOrder::TotalRank,
-            });
+            return video_search_input(VideoSearchQuery::new(keyword.trim()));
         }
         if lower.starts_with("bv") {
             return parse_bvid(trimmed);
@@ -324,14 +314,19 @@ fn parse_video_search_url(url: &Url) -> Result<Input> {
         .map(|(_, value)| VideoSearchOrder::parse_api_value(&value))
         .transpose()?
         .unwrap_or_default();
-    crate::client::VideoSearchQuery::new(keyword.clone())
-        .with_page(page)
-        .with_order(order)
-        .validate()?;
+    video_search_input(
+        VideoSearchQuery::new(keyword)
+            .with_page(page)
+            .with_order(order),
+    )
+}
+
+fn video_search_input(query: VideoSearchQuery) -> Result<Input> {
+    query.validate()?;
     Ok(Input::VideoSearch {
-        keyword,
-        page,
-        order,
+        keyword: query.keyword,
+        page: query.page,
+        order: query.order,
     })
 }
 
@@ -581,6 +576,15 @@ mod tests {
             "https://search.bilibili.com/video?keyword=x&order=unknown",
         ] {
             assert!(Input::parse(raw).is_err(), "expected {raw:?} to fail");
+        }
+
+        let too_long = "界".repeat(67);
+        for keyword in ["!'()*", "bad\nquery", too_long.as_str()] {
+            assert!(Input::parse(&format!("search:{keyword}")).is_err());
+            let encoded =
+                url::form_urlencoded::byte_serialize(keyword.as_bytes()).collect::<String>();
+            let url = format!("https://search.bilibili.com/video?keyword={encoded}");
+            assert!(Input::parse(&url).is_err(), "expected {url:?} to fail");
         }
     }
 

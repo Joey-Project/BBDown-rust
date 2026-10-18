@@ -1240,15 +1240,7 @@ async fn run() -> anyhow::Result<()> {
             order,
             json,
         } => {
-            handle_video_search(
-                &credential_runtime,
-                &client_runtime,
-                keyword,
-                page,
-                order,
-                json,
-            )
-            .await?;
+            handle_video_search(&client_runtime, keyword, page, order, json).await?;
         }
         Command::Plan { url, select, json } => {
             handle_plan(
@@ -1900,7 +1892,6 @@ async fn handle_info(
 }
 
 async fn handle_video_search(
-    credentials: &CredentialRuntime,
     client_runtime: &ClientRuntimeConfig,
     keyword: String,
     page: u32,
@@ -1908,7 +1899,7 @@ async fn handle_video_search(
     json: bool,
 ) -> anyhow::Result<()> {
     ensure!(page > 0, "--page must be greater than 0");
-    let client = BiliClient::new(client_runtime.client_config(credentials.load()?));
+    let client = BiliClient::new(client_runtime.client_config(Credentials::default()));
     let result = client
         .search_videos(
             VideoSearchQuery::new(keyword.clone())

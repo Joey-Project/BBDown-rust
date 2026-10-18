@@ -176,7 +176,8 @@ bbdown download 'search:Rust async' --select 2 --output-dir downloads
 有界页面中的全部结果。每次使用 `search:<keyword>` 或搜索 URL 都会重新查询，上游顺序可能变化，
 因此 `--select N` 不会锁定之前展示页面里的条目。要精确处理刚展示的搜索结果，请将页面条目的 BVID 或 aid
 作为普通视频输入。只有选中的条目会交给普通视频解析器补充 metadata、规划、播放或下载。独立的
-`search` 命令不会补充视频详情、解析流或下载媒体。选中的搜索结果按集合条目行为只使用第一个视频分 P（P1）。
+`search` 命令不会补充视频详情、解析流或下载媒体，也不会加载凭据文件或要求指定的 credential profile 存在。
+选中的搜索结果按集合条目行为只使用第一个视频分 P（P1）。
 如需选择其他分 P，可取出已选结果的 BVID 或 aid，再将其作为普通视频输入并使用原有的 `--select` 页码。
 
 搜索使用 `--api-base` / `BBDOWN_API_BASE` 请求 `/x/web-interface/nav` 和

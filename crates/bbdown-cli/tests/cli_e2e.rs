@@ -146,6 +146,129 @@ fn search_json_uses_configured_api_base_and_only_requests_metadata() -> anyhow::
 }
 
 #[test]
+fn search_ignores_invalid_credential_store_and_selected_profile() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let sentinel = b"malformed credential data that must remain untouched";
+    fs::write(&credential_file, sentinel)?;
+
+    let nav = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/nav")
+            .header_missing("cookie")
+            .query_param_missing("access_key");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "wbi_img": {
+                    "img_url": "https://i0.hdslb.com/bfs/wbi/0123456789abcdef0123456789abcdef.png",
+                    "sub_url": "https://i0.hdslb.com/bfs/wbi/fedcba9876543210fedcba9876543210.png"
+                }
+            }
+        }));
+    });
+    let search = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/wbi/search/type")
+            .query_param("keyword", "Rust")
+            .query_param("page", "1")
+            .query_param("order", "totalrank")
+            .query_param_exists("w_rid")
+            .query_param_missing("access_key")
+            .header_missing("cookie");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "page": 1,
+                "numResults": 1,
+                "numPages": 1,
+                "pagesize": 1,
+                "result": [{
+                    "type": "video",
+                    "aid": 170_001,
+                    "title": "Rust metadata result",
+                    "author": "Creator"
+                }]
+            }
+        }));
+    });
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("missing-profile")
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("search")
+        .arg("Rust")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    assert_eq!(json["items"][0]["title"], "Rust metadata result");
+    assert_eq!(fs::read(&credential_file)?, sentinel);
+    nav.assert();
+    search.assert();
+    Ok(())
+}
+
+#[test]
+fn invalid_search_shorthand_fails_before_credential_preflight() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let sentinel = b"malformed credential data that must remain untouched";
+    fs::write(&credential_file, sentinel)?;
+    let nav = mock_search_nav(&server);
+    let invalid_inputs = [
+        "search:!'()*".to_owned(),
+        format!("search:{}", "x".repeat(201)),
+        "search:Rust\nterm".to_owned(),
+    ];
+
+    for preflight in ["fail", "renew"] {
+        for subcommand in ["plan", "playback", "download"] {
+            for input in &invalid_inputs {
+                let mut command = bbdown_command()?;
+                command
+                    .arg("--credential-file")
+                    .arg(&credential_file)
+                    .arg("--api-base")
+                    .arg(server.base_url())
+                    .arg("--playurl-mode")
+                    .arg("app")
+                    .arg("--credential-preflight")
+                    .arg(preflight)
+                    .arg(subcommand)
+                    .arg(input)
+                    .arg("--select")
+                    .arg("1");
+                if subcommand == "download" {
+                    command
+                        .arg("--output-dir")
+                        .arg(temp.path().join("downloads"));
+                }
+                let output = command.assert().failure().get_output().clone();
+                let stderr = String::from_utf8(output.stderr)?;
+                assert!(
+                    stderr.contains("video search keyword"),
+                    "expected search keyword validation for {input:?}, got: {stderr}"
+                );
+                assert!(
+                    !stderr.contains("credential"),
+                    "unexpected credential error: {stderr}"
+                );
+                assert_eq!(fs::read(&credential_file)?, sentinel);
+            }
+        }
+    }
+    nav.assert_calls(0);
+    Ok(())
+}
+
+#[test]
 fn search_human_output_shows_result_indexes_and_continuation() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;

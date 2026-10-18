@@ -62,11 +62,11 @@ superseded_by:
 
 ## Validation
 
-- `cargo test -p bbdown-core search --locked` passed after the PR #106 fixes: 18 tests. Focused CLI
-  search tests passed: 10 tests.
-- After the final selector validation fix, `just ci` completed with exit 0 using rustc 1.99.1 and
-  the Rust 1.95.0 MSRV check. Workspace test targets reported 905 passed and 3 ignored across counts of 67, 170, 9
-  (2 ignored), 635, 21 (1 ignored), 1, and 2. A separate CLI e2e run passed 170 tests; this is an
+- `cargo test -p bbdown-core parses_keyword_video_search_inputs --locked` passed: 1 test covering
+  both input forms and keyword boundaries. Focused CLI search tests passed: 12 tests.
+- After the final input and credential fixes, `just ci` completed with exit 0 using rustc 1.99.1
+  and the Rust 1.95.0 MSRV check. Workspace test targets reported 907 passed and 3 ignored across counts of 67, 172, 9
+  (2 ignored), 635, 21 (1 ignored), 1, and 2. A separate CLI e2e run passed 172 tests; this is an
   additional run, not part of the workspace total. The `bbdown-core` publish dry run packaged and
   verified the crate, then aborted upload as expected for dry-run mode; no upload was made.
 - After the WBI and response-page fixes, an anonymous official Rust CLI metadata smoke for
@@ -74,8 +74,8 @@ superseded_by:
   It returned `page_size=20`, `total=1000`, `total_pages=50`, `next_page=2`, and 18 items; the JSON
   output was 11,507 bytes and stderr was empty. The anonymous credentials file did not exist. The
   request made no media request, so this confirms live metadata search only, not playback access,
-  planning, or download e2e. This probe preceded the final CLI selector validation change; the
-  search request implementation did not change afterward.
+  planning, or download e2e. Later fixes changed input validation and CLI credential handling;
+  this is metadata-only evidence from before those changes.
 - The earlier initial-head `Rust 教程` metadata smoke returned 17 valid items. It is a separate
   observation and is not a validation result for the PR #106 fixes.
 - Documentation validation: `project_journal.py validate` and `git diff --check` passed.
@@ -91,6 +91,10 @@ superseded_by:
   spans `plan`, `playback`, and `download` with absent, `latest`, `current`, and `episode:1`
   selections, unchanged credential-file bytes, and zero API requests. Numeric, range, and `all`
   selections retain successful planning paths.
+- Validate shorthand and URL keywords through the same query validator before credential
+  preflight, including control characters, the UTF-8 byte limit, and empty normalized keywords.
+- Build the anonymous CLI search client without loading credential stores or selecting credential
+  profiles. Malformed stores and absent named profiles do not block metadata-only searches.
 - PR: [#106](https://github.com/Joey-Project/BBDown-rust/pull/106). Validation of these fixes is
   recorded above.
 

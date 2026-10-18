@@ -205,6 +205,7 @@ change and `--select N` does not pin an item from a page shown earlier. Use the 
 BVID or aid as an ordinary video input to target that exact result. Only selected
 rows are hydrated through the ordinary video resolver for metadata, planning, playback, or download. The
 standalone `search` command does not hydrate video details, resolve streams, or download media. A
+credential store or named credential profile is not required or loaded by this anonymous command. A
 selected search result uses the first video part (P1), following collection-item planning behavior.
 To choose another part, take the selected result's BVID or aid and pass it to the ordinary video
 input with its usual `--select` page index.
