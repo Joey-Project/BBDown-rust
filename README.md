@@ -65,6 +65,11 @@ bbdown info https://space.bilibili.com/123/dynamic --select latest --json
 bbdown info 'https://space.bilibili.com/123/lists/456?type=series' --json
 ```
 
+Domestic PGC season metadata includes ordered `main` and `section` groups in the `episode_groups`
+field of `info --json` output. Membership uses zero-based positions into the full season episode list, so
+it remains useful when `--select` returns only a subset. Intl and PUGV season output keeps its flat
+shape.
+
 Build a download plan as JSON:
 
 ```bash

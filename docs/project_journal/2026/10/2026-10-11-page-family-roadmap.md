@@ -3,7 +3,7 @@ id: 20261011-page-family-roadmap
 title: Page Family and Season Grouping Roadmap
 status: active
 created: 2026-10-11
-updated: 2026-10-11
+updated: 2026-10-18
 branch:
 pr:
 supersedes: []
@@ -19,14 +19,15 @@ superseded_by:
 
 ## Current State
 
-- Domestic PGC season resolution combines the main episode list and every returned section's episodes into one flat list. It retains the main episode count but discards section titles and grouping.
+- Domestic PGC season resolution preserves main and supplementary groups in `SeasonMetadata.episode_groups`, including section titles, available upstream IDs, empty groups, duplicate titles, and membership positions in the unchanged flat episode list. See `2026-10-18-pgc-season-grouping-01a0dd39.md`.
+- Intl modules and PUGV courses retain their existing flat metadata behavior; this domestic PGC section slice does not infer groups for those sources.
 - Standard UGC collections, series, favorites, and medialist inputs already have collection resolution and planning paths. Ordinary BV input keeps its single-video behavior; membership expansion is explicit.
 - Existing `PgcWebPlayurlRoute` controls PGC Web playurl requests only. It does not route season metadata or page listings through the restricted-area resolver chain.
 - PGC metadata requests use the configurable `EndpointConfig.pgc_base`; changing an endpoint base alone does not establish that a resolver supports its metadata endpoints, response shape, or regional access.
 
 ## Ordered Backlog
 
-1. **Preserve PGC season grouping.** Retain main episodes and supplementary sections with their titles, upstream order, episode membership, and available stable identifiers. Expose the structure through the public API and CLI metadata output. Preserve existing flat episode order, index selection, exact episode selection, and the main-episode-only `Latest` behavior for compatibility.
+1. **Completed: preserve domestic PGC season grouping.** Main episodes and supplementary sections retain their titles, upstream order, episode membership, and available stable identifiers through the public API and CLI metadata output. Existing flat episode order, index selection, exact episode selection, and the main-episode-only `Latest` behavior remain compatible.
 2. **Add ordinary video search results.** Define explicit input, pagination, ordering, selection, and bounded metadata behavior on top of the shared feed/list layer.
 3. **Add the new-season anime timetable and film/TV category listings.** Treat these as listing inputs distinct from a single `ss`/`md` season page. Define their upstream listing scope and continuation behavior before implementation.
 4. **Popular and ranking feeds.** These are not urgent.
@@ -54,4 +55,4 @@ superseded_by:
 
 - Joey's 2026-10-11 instruction places season grouping before search, the anime timetable and film/TV category listings after search, and topic pages after category/channel lists.
 - Current implementation references: `crates/bbdown/src/client.rs` (`PgcWebPlayurlRoute`, `fetch_season_by_ep`, `fetch_season_by_season_id`, `fetch_season_by_media_id`, and `season_from_pgc`) and `crates/bbdown/src/models.rs` (`SeasonMetadata`).
-- This update records requirements and priority only; it does not claim new implementation or test execution.
+- The domestic PGC grouping implementation and its validation are recorded in `2026-10-18-pgc-season-grouping-01a0dd39.md`. Remaining listing items and reverse-resolver expansion are requirements, not completed implementations.

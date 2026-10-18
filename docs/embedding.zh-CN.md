@@ -347,6 +347,37 @@ async fn main() -> bbdown_core::Result<()> {
 字符串，例如 `1`、`page:1`、`1,3-5` 和 `page:2-4,7`。`Selection::Episode(epid)` 仍表示
 精确 PGC episode id。
 
+国内 PGC 的 `SeasonMetadata` 会公开按顺序排列的 `episode_groups`。`kind` 为 `Main` 或
+`Section`；`source_id` 是规范化为字符串的可选上游 id，`title` 是可选的上游标题。
+`episode_positions` 是 `SeasonMetadata.episodes` 中的零基位置，不是 episode id 或面向用户的分集序号。
+请保留分组顺序，包括空 section 和重复标题，并通过 `.get(position)` 读取，避免元数据稀疏或未来变化时
+发生 panic。即使 selection 只解析部分分集，完整 metadata 结果仍会保留全部分组。本次 intl 和 PUGV
+season 仍保持平铺行为。
+
+```rust
+use bbdown_core::SeasonMetadata;
+
+fn print_episode_groups(season: &SeasonMetadata) {
+    for group in &season.episode_groups {
+        let name = group.title.as_deref().unwrap_or("(untitled)");
+        println!("{:?}: {name}", group.kind);
+        for &position in &group.episode_positions {
+            if let Some(episode) = season.episodes.get(position) {
+                println!("  position {position} (episode {}): {}", episode.index, episode.title);
+            }
+        }
+    }
+}
+```
+
+缺少 `episode_groups` 字段的旧版 JSON 会反序列化为空列表。使用 struct literal 构造
+`SeasonMetadata` 的 Rust 调用方需要提供新字段；建议消费 API 返回的 metadata，而不是自行构造输出模型。
+
+PGC season 和 review metadata 会使用配置的 PGC base 访问 `/pgc/view/web/season` 和
+`/pgc/review/user`。CLI 可通过 `--pgc-base` 或 `BBDOWN_PGC_BASE` 选择可信的本地或私有 gateway。
+兼容服务必须实现这些精确路由及响应 payload。`PgcWebPlayurlRoute` 只适用于 Web playurl 请求，
+不会路由 metadata。crate 不提供公共 gateway 或 metadata 自动回退。
+
 下载规划会把选中的集合条目映射回普通视频条目，因此下游下载执行、归档重复检查、stream
 selection、封面、字幕和弹幕旁路文件仍使用与普通视频下载相同的 API。因为 `DownloadPlan`
 不暴露 collection metadata，规划阶段可以只抓取选中的批量条目集合。PUGV/cheese 分集输入

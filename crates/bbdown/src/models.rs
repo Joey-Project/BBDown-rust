@@ -125,6 +125,28 @@ pub struct SeasonMetadata {
     pub areas: Vec<String>,
     pub tags: Vec<String>,
     pub episodes: Vec<EpisodeMetadata>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub episode_groups: Vec<SeasonEpisodeGroup>,
+}
+
+/// Describes one upstream episode group within a season.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SeasonEpisodeGroup {
+    pub kind: SeasonEpisodeGroupKind,
+    /// The upstream group identifier, when it is present and supported.
+    pub source_id: Option<String>,
+    /// The upstream title, preserving missing titles separately from empty titles.
+    pub title: Option<String>,
+    /// Zero-based offsets into [`SeasonMetadata::episodes`], not EP IDs or display indexes.
+    pub episode_positions: Vec<usize>,
+}
+
+/// Identifies the source role of a season episode group.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SeasonEpisodeGroupKind {
+    Main,
+    Section,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -313,7 +335,9 @@ pub struct DanmakuTrack {
 
 #[cfg(test)]
 mod tests {
-    use super::{DownloadEntry, StreamSource};
+    use super::{
+        DownloadEntry, SeasonEpisodeGroup, SeasonEpisodeGroupKind, SeasonMetadata, StreamSource,
+    };
 
     #[test]
     fn download_entry_defaults_missing_cover_url() -> anyhow::Result<()> {
@@ -342,6 +366,38 @@ mod tests {
         assert_eq!(entry.cover_url, None);
         assert_eq!(entry.chapters.len(), 0);
         assert_eq!(entry.source, StreamSource::NormalWeb);
+        Ok(())
+    }
+
+    #[test]
+    fn season_episode_groups_default_and_use_snake_case() -> anyhow::Result<()> {
+        let season: SeasonMetadata = serde_json::from_value(serde_json::json!({
+            "season_id": null,
+            "media_id": null,
+            "title": "Season",
+            "description": "",
+            "cover_url": null,
+            "main_episode_count": 0,
+            "areas": [],
+            "tags": [],
+            "episodes": []
+        }))?;
+        assert!(season.episode_groups.is_empty());
+        let serialized = serde_json::to_value(&season)?;
+        assert!(serialized.get("episode_groups").is_none());
+
+        let group = SeasonEpisodeGroup {
+            kind: SeasonEpisodeGroupKind::Section,
+            source_id: Some("42".to_owned()),
+            title: Some(String::new()),
+            episode_positions: vec![0, 2],
+        };
+        let value = serde_json::to_value(&group)?;
+        assert_eq!(value["kind"], "section");
+        assert_eq!(value["source_id"], "42");
+        assert_eq!(value["title"], "");
+        assert_eq!(value["episode_positions"], serde_json::json!([0, 2]));
+        assert_eq!(serde_json::from_value::<SeasonEpisodeGroup>(value)?, group);
         Ok(())
     }
 }

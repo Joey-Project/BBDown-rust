@@ -128,8 +128,9 @@
 - [completed] Add single-video related recommendations as one finite batch, with CLI, Rust API,
   and selection support. See
   `docs/project_journal/2026/10/2026-10-11-related-recommendations-01a12ad8.md`.
-- [pending] Preserve PGC season section titles and grouping before adding ordinary video search.
-  See `docs/project_journal/2026/10/2026-10-11-page-family-roadmap.md`.
+- [completed] Preserve domestic PGC season section titles and grouping while retaining flat
+  episode selection and main-episode-only `Latest` behavior. See
+  `docs/project_journal/2026/10/2026-10-18-pgc-season-grouping-01a0dd39.md`.
 - [pending] Add ordinary video search, then the new-season anime timetable and film/TV category
   listings. Support explicitly configured reverse API resolvers for metadata, listing, and playurl
   endpoints only where each endpoint's capabilities permit it. See

@@ -382,6 +382,40 @@ The same index selection type applies to normal video pages and season episode i
 parser accepts equivalent strings such as `1`, `page:1`, `1,3-5`, and `page:2-4,7`.
 `Selection::Episode(epid)` remains an exact PGC episode-id selector.
 
+Domestic PGC `SeasonMetadata` exposes ordered `episode_groups`. `kind` is `Main` or `Section`;
+`source_id` is an optional upstream ID normalized to a string, and `title` is an optional upstream
+title. `episode_positions` contains zero-based indexes into `SeasonMetadata.episodes`; positions
+are not episode IDs or display indexes. Preserve group order, including empty sections and duplicate
+titles, and use `.get(position)` so sparse or future metadata cannot panic. Groups remain available
+on the full metadata result even when a selection resolves only some episodes. Intl and PUGV seasons
+retain their flat behavior.
+
+```rust
+use bbdown_core::SeasonMetadata;
+
+fn print_episode_groups(season: &SeasonMetadata) {
+    for group in &season.episode_groups {
+        let name = group.title.as_deref().unwrap_or("(untitled)");
+        println!("{:?}: {name}", group.kind);
+        for &position in &group.episode_positions {
+            if let Some(episode) = season.episodes.get(position) {
+                println!("  position {position} (episode {}): {}", episode.index, episode.title);
+            }
+        }
+    }
+}
+```
+
+Legacy serialized JSON without `episode_groups` deserializes to an empty list. Rust callers that
+construct `SeasonMetadata` with a struct literal must provide the new field; prefer consuming the
+metadata returned by the API over constructing output models.
+
+PGC season and review metadata use the configured PGC base for `/pgc/view/web/season` and
+`/pgc/review/user`. The CLI can select a trusted local or private gateway with `--pgc-base` or
+`BBDOWN_PGC_BASE`. A compatible service must implement those exact routes and response payloads.
+`PgcWebPlayurlRoute` applies only to Web playurl requests and does not route metadata. The crate
+provides no public gateway or automatic metadata fallback.
+
 Download planning maps selected collection items back to normal video entries, so downstream
 download execution, archive duplicate checks, stream selection, cover, subtitles, and danmaku
 sidecars use the same APIs as normal video downloads. Planning may fetch only the selected batch item

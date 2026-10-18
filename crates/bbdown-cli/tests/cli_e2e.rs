@@ -169,6 +169,177 @@ fn info_json_applies_video_index_range_selection() -> anyhow::Result<()> {
 }
 
 #[test]
+fn info_preserves_pgc_season_groups_across_selection_modes() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    mock_grouped_pgc_season(&server);
+
+    let all = run_pgc_info(&server, &credential_file, Some("all"), true)?;
+    assert_eq!(
+        all["season"]["season"]["episodes"].as_array().map(Vec::len),
+        Some(5)
+    );
+    assert_eq!(
+        all["season"]["season"]["episode_groups"]
+            .as_array()
+            .map(Vec::len),
+        Some(5)
+    );
+    let episode_indices = all["season"]["season"]["episodes"]
+        .as_array()
+        .context("season episodes should be an array")?
+        .iter()
+        .map(|episode| {
+            episode["index"]
+                .as_u64()
+                .context("episode index should be an integer")
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    assert_eq!(episode_indices, vec![1, 2, 3, 4, 5]);
+    assert_eq!(all["season"]["season"]["episode_groups"][0]["kind"], "main");
+    assert_eq!(
+        all["season"]["season"]["episode_groups"][0]["source_id"],
+        Value::Null
+    );
+    assert_eq!(
+        all["season"]["season"]["episode_groups"][0]["title"],
+        Value::Null
+    );
+    assert_eq!(
+        all["season"]["season"]["episode_groups"][0]["episode_positions"],
+        serde_json::json!([0, 1])
+    );
+    assert_eq!(
+        all["season"]["season"]["episode_groups"][1]["source_id"],
+        "8"
+    );
+    assert_eq!(
+        all["season"]["season"]["episode_groups"][1]["title"],
+        "Extras"
+    );
+    assert_eq!(
+        all["season"]["season"]["episode_groups"][1]["episode_positions"],
+        serde_json::json!([2])
+    );
+    assert_eq!(
+        all["season"]["season"]["episode_groups"][2]["title"],
+        "Extras"
+    );
+    assert_eq!(all["season"]["season"]["episode_groups"][3]["title"], "");
+    assert_eq!(
+        all["season"]["season"]["episode_groups"][4]["title"],
+        Value::Null
+    );
+    assert_eq!(
+        all["season"]["season"]["episode_groups"][4]["episode_positions"],
+        serde_json::json!([])
+    );
+
+    let latest = run_pgc_info(&server, &credential_file, Some("latest"), true)?;
+    assert_eq!(
+        latest["season"]["selected_episodes"]
+            .as_array()
+            .map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(latest["season"]["selected_episodes"][0]["index"], 2);
+
+    let exact_extra = run_pgc_info(&server, &credential_file, Some("episode:1003"), true)?;
+    assert_eq!(
+        exact_extra["season"]["selected_episodes"]
+            .as_array()
+            .map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(exact_extra["season"]["selected_episodes"][0]["index"], 4);
+
+    let numeric_extra = run_pgc_info(&server, &credential_file, Some("4"), true)?;
+    assert_eq!(
+        numeric_extra["season"]["selected_episodes"]
+            .as_array()
+            .map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(numeric_extra["season"]["selected_episodes"][0]["index"], 4);
+
+    let text = run_pgc_info_text(&server, &credential_file)?;
+    assert!(text.contains("group: Main episodes"));
+    assert!(text.contains("group: Extras"));
+    assert!(text.contains("episode 4: 4 (Commentary)"));
+    assert!(text.contains("group: Section 5\n  (no episodes)"));
+    Ok(())
+}
+
+fn mock_grouped_pgc_season(server: &MockServer) {
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/view/web/season")
+            .query_param("ep_id", "1000");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "result": {
+                "season_id": 123,
+                "title": "Grouped season",
+                "episodes": [
+                    {"aid": 10, "bvid": "BV1aa", "cid": 100, "id": 1000, "ep_id": 1000, "title": "1", "long_title": "Opening"},
+                    {"aid": 11, "bvid": "BV1ab", "cid": 101, "id": 1001, "ep_id": 1001, "title": "2", "long_title": "Finale"}
+                ],
+                "section": [
+                    {"id": 8, "title": "Extras", "episodes": [
+                        {"aid": 12, "bvid": "BV1ac", "cid": 102, "id": 1002, "ep_id": 1002, "title": "3", "long_title": "Interview"}
+                    ]},
+                    {"id": 9, "title": "Extras", "episodes": [
+                        {"aid": 13, "bvid": "BV1ad", "cid": 103, "id": 1003, "ep_id": 1003, "title": "4", "long_title": "Commentary"}
+                    ]},
+                    {"id": 10, "title": "", "episodes": [
+                        {"aid": 14, "bvid": "BV1ae", "cid": 104, "id": 1004, "ep_id": 1004, "title": "5", "long_title": "Interview 2"}
+                    ]},
+                    {"id": 11, "episodes": []}
+                ]
+            }
+        }));
+    });
+}
+
+fn run_pgc_info(
+    server: &MockServer,
+    credential_file: &Path,
+    selection: Option<&str>,
+    json: bool,
+) -> anyhow::Result<Value> {
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(credential_file)
+        .arg("--pgc-base")
+        .arg(server.base_url())
+        .arg("info")
+        .arg("ep1000");
+    if let Some(selection) = selection {
+        command.arg("--select").arg(selection);
+    }
+    if json {
+        command.arg("--json");
+    }
+    let output = command.assert().success().get_output().stdout.clone();
+    Ok(serde_json::from_slice(&output)?)
+}
+
+fn run_pgc_info_text(server: &MockServer, credential_file: &Path) -> anyhow::Result<String> {
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(credential_file)
+        .arg("--pgc-base")
+        .arg(server.base_url())
+        .arg("info")
+        .arg("ep1000");
+    let output = command.assert().success().get_output().stdout.clone();
+    Ok(String::from_utf8(output)?)
+}
+
+#[test]
 fn info_json_resolves_mock_favorite_collection() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;
