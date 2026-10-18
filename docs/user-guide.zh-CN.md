@@ -86,6 +86,24 @@ Season、media 和 `cheese/ss...` 输入在非交互模式下需要 `--select`�
 `--select page:2-4,7`。列表和范围会保留请求顺序，并对重复 index 去重。
 `episode:<epid>` 仍然表示精确 PGC episode id，而不是分集序号。
 
+国内 PGC season metadata 还会在 `info` 输出中提供 `episode_groups`。每组包含 `kind`（`main` 或
+`section`）、可选的上游 `source_id` 和 `title`，以及 `episode_positions`。这些位置是完整
+`SeasonMetadata.episodes` 列表中的零基位置；它们既不是 episode id，也不是面向用户的一基分集序号。
+分组顺序、section 标题、空 section 和重复标题都会保留上游 season 响应中的形式。main 组的标题和 id
+取自上游提供的 `positive` 对象，缺少的值保持 `null`。即使 `--select` 只选择部分分集，
+`info --json` 仍包含完整分组；
+人类可读的 `info` 会显示组标题以及每个成员的全局分集序号和标题。`latest` 仍选择最后一集正片；
+下载规划使用所选分集，也包含明确选中的补充内容。现有平铺选择器的含义不变，Intl 和 PUGV season
+仍保持平铺行为。
+在完整的解析 JSON 中，分组位于 `season.season.episode_groups`，所选分集位于
+`season.selected_episodes`。
+
+PGC season 和 review metadata 请求会使用配置的 PGC base，并访问 `/pgc/view/web/season` 和
+`/pgc/review/user`。CLI 可通过 `--pgc-base http://127.0.0.1:8080`（或 `BBDOWN_PGC_BASE`）选择
+可信的本地或私有 metadata gateway。服务必须实现这些精确路由及请求所需的兼容响应 payload。
+现有 `PgcWebPlayurlRoute` 只控制 Web playurl 请求，不会路由 metadata。本功能不提供公共 gateway
+或 metadata 自动回退。
+
 收藏夹、空间投稿、合集、系列、首页推荐、观看历史、稍后再看列表、关注 feed 和空间动态 feed 都是批量输
 入。使用 `--select latest` 可选择上游列表顺序中的第一个解析条目。JSON metadata 会在
 `collection.collection.items` 保留完整解析到的集合条目列表，并在 `collection.selected_items`

@@ -97,6 +97,27 @@ indexes. Use `--select 2`, `--select page:2`, `--select 1,3-5`, or `--select pag
 ranges preserve the requested order and deduplicate repeated indexes. `episode:<epid>` still selects
 an exact PGC episode id rather than an episode index.
 
+Domestic PGC season metadata also reports `episode_groups` in `info` output. Each group has a
+`kind` (`main` or `section`), optional upstream `source_id` and `title`, and
+`episode_positions`. Positions are zero-based indexes into the complete `SeasonMetadata.episodes`
+list; they are not episode IDs or the one-based indexes shown to users. Group order, section titles,
+empty sections, and duplicate titles follow the upstream season response. The main group's title
+and ID come from the upstream `positive` object when provided; missing values stay `null`.
+`info --json` includes the full groups even when `--select` chooses only some
+episodes; human-readable `info` shows group headings and each member's global episode index and
+title. `latest` continues to select the last main episode; download planning uses the selected
+episodes, including supplementary episodes when requested. All existing flat selectors retain
+their meaning. Intl and PUGV seasons keep their flat behavior.
+In the resolved JSON envelope, groups are at `season.season.episode_groups`, while selected
+episodes are at `season.selected_episodes`.
+
+PGC season and review metadata requests use the configured PGC base at `/pgc/view/web/season` and
+`/pgc/review/user`. To select a trusted local or private metadata gateway in the CLI, set
+`--pgc-base http://127.0.0.1:8080` (or `BBDOWN_PGC_BASE`). The service must implement the exact
+routes and compatible response payloads used by the requests. The existing `PgcWebPlayurlRoute`
+controls only Web playurl requests; it does not route metadata. No public gateway or automatic
+metadata fallback is provided.
+
 Favorite lists, space videos, collections, series, homepage recommendations, watch history,
 watch-later lists, following feeds, and space dynamic feeds are batch inputs. Use `--select latest` for the first
 parsed item in the upstream list order. JSON metadata keeps the full parsed collection item list

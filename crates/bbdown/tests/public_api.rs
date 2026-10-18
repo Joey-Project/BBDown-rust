@@ -5,8 +5,8 @@ use bbdown_core::{
     CredentialProfileMetadata, CredentialProfiles, DanmakuUpdateOptions, DanmakuUpdatePolicy,
     DownloadCancellationToken, DownloadOptions, DownloadProgressEvent, DownloadProgressSink,
     DownloadReportSummary, Input, MetadataPageOptions, NoopDownloadProgress, PlayurlMode,
-    RestrictedAreaConfig, StreamSelection, SubtitleAiPolicy, UgcCollectionKind,
-    UgcCollectionReference, VideoCollectionKind,
+    RestrictedAreaConfig, SeasonEpisodeGroup, SeasonEpisodeGroupKind, StreamSelection,
+    SubtitleAiPolicy, UgcCollectionKind, UgcCollectionReference, VideoCollectionKind,
 };
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
@@ -98,4 +98,15 @@ fn embedding_surface_is_reexported() -> anyhow::Result<()> {
     let health_status = CredentialHealthSummaryStatus::Unknown;
     assert_eq!(format!("{health_status:?}"), "Unknown");
     Ok(())
+}
+
+#[test]
+fn season_episode_group_types_are_reexported() {
+    let group = SeasonEpisodeGroup {
+        kind: SeasonEpisodeGroupKind::Main,
+        source_id: None,
+        title: None,
+        episode_positions: vec![0, 1],
+    };
+    assert_eq!(group.episode_positions, vec![0, 1]);
 }

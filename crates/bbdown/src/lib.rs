@@ -69,11 +69,11 @@ pub use login::{
 };
 pub use models::{
     ChapterTrack, CodecFamily, DanmakuTrack, DownloadEntry, DownloadPlan, EpisodeMetadata,
-    FlvSegment, MediaStream, Owner, PageMetadata, ResolvedContent, SeasonMetadata,
-    SeasonResolution, StreamDiagnostics, StreamQuality, StreamResolverAttempt,
-    StreamResolverOutcome, StreamSet, StreamSource, SubtitleFormat, SubtitleTrack, Tag,
-    UgcCollectionKind, UgcCollectionReference, VideoCollectionItem, VideoCollectionKind,
-    VideoCollectionMetadata, VideoCollectionResolution, VideoMetadata,
+    FlvSegment, MediaStream, Owner, PageMetadata, ResolvedContent, SeasonEpisodeGroup,
+    SeasonEpisodeGroupKind, SeasonMetadata, SeasonResolution, StreamDiagnostics, StreamQuality,
+    StreamResolverAttempt, StreamResolverOutcome, StreamSet, StreamSource, SubtitleFormat,
+    SubtitleTrack, Tag, UgcCollectionKind, UgcCollectionReference, VideoCollectionItem,
+    VideoCollectionKind, VideoCollectionMetadata, VideoCollectionResolution, VideoMetadata,
 };
 pub use playback::{
     HttpHeaderSpec, MediaCacheKey, MediaRequestKind, MediaRequestSpec, PlaybackAbrGroup,

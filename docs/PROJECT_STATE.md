@@ -86,12 +86,14 @@
   Automatic routing, persistent route health, and adaptive tuning remain deferred from that release.
   Per-video related recommendations are complete on the current source line; additional feed/page
   families remain deferred.
-- The unreleased `0.10.0` source line includes per-video related recommendations, a bounded
+- `v0.10.0` is published as a GitHub Release and crates.io `bbdown-core` package. It includes
+  per-video related recommendations, a bounded
   metadata-page API for Following and SpaceDynamic, authenticated SpaceDynamic device-cookie
   initialization, and reproducible CDN baseline work. In the two added live sample invocations,
   sequential was faster than either Range control for each fixture; this short sample is not a
   general performance claim. Automatic CDN routing, persistent host-health state, and adaptive
-  tuning are not implemented. The latest published release and crate remain `0.9.0`. See
+  tuning are not implemented. The published tag targets `03baba367d846379f5fd4bddabc4784d1b0de8e7`;
+  publication succeeded through promotion run `38977080381` on 2026-10-18. See
   `docs/project_journal/2026/10/2026-10-11-related-recommendations-01a12ad8.md`,
   `docs/project_journal/2026/10/2026-10-11-page-family-roadmap.md`,
   `docs/project_journal/2026/10/2026-10-11-cdn-performance-baseline-53887b35.md`,

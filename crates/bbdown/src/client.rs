@@ -7,11 +7,11 @@ use crate::feed_list::{
 };
 use crate::models::{
     ChapterTrack, DanmakuTrack, DownloadEntry, DownloadPlan, EpisodeMetadata, FlvSegment,
-    MediaStream, Owner, PageMetadata, ResolvedContent, SeasonMetadata, SeasonResolution,
-    StreamDiagnostics, StreamQuality, StreamResolverAttempt, StreamResolverOutcome, StreamSet,
-    StreamSource, SubtitleFormat, SubtitleTrack, Tag, UgcCollectionKind, UgcCollectionReference,
-    VideoCollectionItem, VideoCollectionKind, VideoCollectionMetadata, VideoCollectionResolution,
-    VideoMetadata,
+    MediaStream, Owner, PageMetadata, ResolvedContent, SeasonEpisodeGroup, SeasonEpisodeGroupKind,
+    SeasonMetadata, SeasonResolution, StreamDiagnostics, StreamQuality, StreamResolverAttempt,
+    StreamResolverOutcome, StreamSet, StreamSource, SubtitleFormat, SubtitleTrack, Tag,
+    UgcCollectionKind, UgcCollectionReference, VideoCollectionItem, VideoCollectionKind,
+    VideoCollectionMetadata, VideoCollectionResolution, VideoMetadata,
 };
 use crate::playback::{PlaybackPlan, header_specs_from_map};
 use crate::{
@@ -3819,6 +3819,7 @@ fn season_from_pgc(result: PgcSeasonResult) -> SeasonMetadata {
         season_title,
         evaluate,
         cover,
+        positive,
         episodes,
         section,
         areas,
@@ -3826,11 +3827,25 @@ fn season_from_pgc(result: PgcSeasonResult) -> SeasonMetadata {
     } = result;
     let mut episodes = episodes_to_metadata(episodes, 0);
     let main_episode_count = episodes.len();
-    let section_episodes = section
-        .into_iter()
-        .flat_map(|section| section.episodes.into_iter())
-        .collect();
-    episodes.extend(episodes_to_metadata(section_episodes, main_episode_count));
+    let positive = positive.unwrap_or_default();
+    let mut episode_groups = vec![SeasonEpisodeGroup {
+        kind: SeasonEpisodeGroupKind::Main,
+        source_id: positive.id.and_then(pgc_group_source_id),
+        title: positive.title,
+        episode_positions: (0..main_episode_count).collect(),
+    }];
+    for section in section {
+        let start = episodes.len();
+        let section_episodes = episodes_to_metadata(section.episodes, start);
+        let episode_positions = (start..start + section_episodes.len()).collect();
+        episodes.extend(section_episodes);
+        episode_groups.push(SeasonEpisodeGroup {
+            kind: SeasonEpisodeGroupKind::Section,
+            source_id: section.id.and_then(pgc_group_source_id),
+            title: section.title,
+            episode_positions,
+        });
+    }
     SeasonMetadata {
         season_id,
         media_id,
@@ -3841,6 +3856,7 @@ fn season_from_pgc(result: PgcSeasonResult) -> SeasonMetadata {
         areas: areas.into_iter().filter_map(PgcName::into_name).collect(),
         tags: styles.into_iter().filter_map(PgcName::into_name).collect(),
         episodes,
+        episode_groups,
     }
 }
 
@@ -3889,6 +3905,7 @@ fn season_from_intl(result: IntlSeasonResult, current_epid: Option<u64>) -> Seas
         areas: areas.into_iter().filter_map(PgcName::into_name).collect(),
         tags: styles.into_iter().filter_map(PgcName::into_name).collect(),
         episodes,
+        episode_groups: Vec::new(),
     }
 }
 
@@ -3932,6 +3949,15 @@ fn season_from_pugv(data: PugvSeasonData) -> SeasonMetadata {
             .map(|owner| vec![format!("UP: {}", owner.name)])
             .unwrap_or_default(),
         episodes,
+        episode_groups: Vec::new(),
+    }
+}
+
+fn pgc_group_source_id(id: serde_json::Value) -> Option<String> {
+    match id {
+        serde_json::Value::String(id) => Some(id),
+        serde_json::Value::Number(id) => Some(id.to_string()),
+        _ => None,
     }
 }
 
@@ -4191,6 +4217,8 @@ struct PgcSeasonResult {
     evaluate: Option<String>,
     cover: Option<String>,
     #[serde(default)]
+    positive: Option<PgcGroupMetadata>,
+    #[serde(default)]
     episodes: Vec<PgcEpisode>,
     #[serde(default)]
     section: Vec<PgcSection>,
@@ -4198,6 +4226,14 @@ struct PgcSeasonResult {
     areas: Vec<PgcName>,
     #[serde(default)]
     styles: Vec<PgcName>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct PgcGroupMetadata {
+    #[serde(default)]
+    id: Option<serde_json::Value>,
+    #[serde(default)]
+    title: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -4311,6 +4347,10 @@ impl PgcEpisode {
 
 #[derive(Debug, Deserialize)]
 struct PgcSection {
+    #[serde(default)]
+    id: Option<serde_json::Value>,
+    #[serde(default)]
+    title: Option<String>,
     #[serde(default)]
     episodes: Vec<PgcEpisode>,
 }
@@ -6858,14 +6898,15 @@ mod tests {
         PlayurlMode, RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy,
         TV_PLAYURL_APP_SECRET, TV_PLAYURL_APPKEY, access_key_identity_params,
         append_pgc_playurl_params, append_tv_playurl_params, decode_app_grpc_stream_set,
-        intl_ogv_playurl_params, oauth2_info_params, sign_ordered_params,
+        intl_ogv_playurl_params, oauth2_info_params, season_from_pgc, sign_ordered_params,
     };
     use crate::{
         AccessKeyIdentityKeypair, AccessKeyProvider, CodecFamily, CredentialHealthScope,
         CredentialHealthStatus, CredentialKind, Credentials, EpisodeMetadata, Error,
-        IndexSelection, IndexSelector, Input, PageMetadata, ResolvedContent, SeasonMetadata,
-        Selection, StreamSource, SubtitleFormat, UgcCollectionKind, VideoCollectionItem,
-        VideoCollectionKind, VideoCollectionMetadata, VideoMetadata, app_playurl,
+        IndexSelection, IndexSelector, Input, PageMetadata, ResolvedContent,
+        SeasonEpisodeGroupKind, SeasonMetadata, Selection, StreamSource, SubtitleFormat,
+        UgcCollectionKind, VideoCollectionItem, VideoCollectionKind, VideoCollectionMetadata,
+        VideoMetadata, app_playurl,
     };
     use http_body_util::BodyExt as _;
     use httpmock::MockServer;
@@ -12331,6 +12372,7 @@ mod tests {
             areas: Vec::new(),
             tags: Vec::new(),
             episodes: (1..=4).map(episode_metadata).collect(),
+            episode_groups: Vec::new(),
         };
         let selection = IndexSelection::new([
             IndexSelector::index(2),
@@ -14482,6 +14524,171 @@ mod tests {
                 assert_eq!(season.season.episodes.len(), 3);
                 assert_eq!(season.season.main_episode_count, 2);
                 assert_eq!(season.selected_episodes[0].epid, 1001);
+            }
+            ResolvedContent::Video(_) | ResolvedContent::Collection(_) => {
+                return Err(anyhow::anyhow!("expected season"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn pgc_episode_groups_follow_filtered_flat_episode_positions() -> anyhow::Result<()> {
+        let result = serde_json::from_value(serde_json::json!({
+            "season_id": 123,
+            "title": "A Season",
+            "positive": {"id": 42, "title": "Main group"},
+            "episodes": [
+                {"aid": 10, "cid": 100, "id": 7, "title": "Main"},
+                {"bvid": "BVbad", "cid": 101, "id": 8, "title": "Filtered"},
+                {"aid": 12, "cid": 102, "id": 7, "title": "Duplicate EP ID"}
+            ],
+            "section": [
+                {"id": 42, "title": "Extras", "episodes": [
+                    {"aid": 13, "cid": 103, "id": 7, "title": "Same EP ID"}
+                ]},
+                {"id": "specials", "title": "Extras", "episodes": []},
+                {"title": "", "episodes": [
+                    {"aid": 14, "cid": 104, "title": "Filtered"}
+                ]},
+                {"episodes": []},
+                {"id": {}, "title": null, "episodes": []}
+            ]
+        }))?;
+
+        let season = season_from_pgc(result);
+        assert_eq!(season.main_episode_count, 2);
+        assert_eq!(
+            season
+                .episodes
+                .iter()
+                .map(|episode| episode.index)
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        assert_eq!(
+            season
+                .episodes
+                .iter()
+                .map(|episode| episode.epid)
+                .collect::<Vec<_>>(),
+            vec![7, 7, 7]
+        );
+        assert_eq!(season.episode_groups.len(), 6);
+        assert_eq!(season.episode_groups[0].kind, SeasonEpisodeGroupKind::Main);
+        assert_eq!(season.episode_groups[0].source_id.as_deref(), Some("42"));
+        assert_eq!(
+            season.episode_groups[0].title.as_deref(),
+            Some("Main group")
+        );
+        assert_eq!(season.episode_groups[0].episode_positions, vec![0, 1]);
+        assert_eq!(season.episode_groups[1].source_id.as_deref(), Some("42"));
+        assert_eq!(season.episode_groups[1].title.as_deref(), Some("Extras"));
+        assert_eq!(season.episode_groups[1].episode_positions, vec![2]);
+        assert_eq!(
+            season.episode_groups[2].source_id.as_deref(),
+            Some("specials")
+        );
+        assert_eq!(season.episode_groups[2].title.as_deref(), Some("Extras"));
+        assert_eq!(season.episode_groups[2].episode_positions, [] as [usize; 0]);
+        assert_eq!(season.episode_groups[3].title.as_deref(), Some(""));
+        assert_eq!(season.episode_groups[3].episode_positions, [] as [usize; 0]);
+        assert_eq!(season.episode_groups[4].title, None);
+        assert_eq!(season.episode_groups[5].source_id, None);
+        assert_eq!(season.episode_groups[5].title, None);
+
+        let empty_main = season_from_pgc(serde_json::from_value(serde_json::json!({
+            "episodes": [],
+            "section": []
+        }))?);
+        assert_eq!(empty_main.episode_groups.len(), 1);
+        assert_eq!(
+            empty_main.episode_groups[0].kind,
+            SeasonEpisodeGroupKind::Main
+        );
+        assert_eq!(empty_main.episode_groups[0].source_id, None);
+        assert_eq!(empty_main.episode_groups[0].title, None);
+        assert_eq!(
+            empty_main.episode_groups[0].episode_positions,
+            [] as [usize; 0]
+        );
+
+        let empty_title_main = season_from_pgc(serde_json::from_value(serde_json::json!({
+            "positive": {"id": "root-group", "title": ""},
+            "episodes": []
+        }))?);
+        assert_eq!(
+            empty_title_main.episode_groups[0].source_id.as_deref(),
+            Some("root-group")
+        );
+        assert_eq!(
+            empty_title_main.episode_groups[0].title.as_deref(),
+            Some("")
+        );
+
+        let unsupported_id_main = season_from_pgc(serde_json::from_value(serde_json::json!({
+            "positive": {"id": {"unsupported": true}},
+            "episodes": []
+        }))?);
+        assert_eq!(unsupported_id_main.episode_groups[0].source_id, None);
+        assert_eq!(unsupported_id_main.episode_groups[0].title, None);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pgc_groups_are_returned_from_the_configured_pgc_base() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/pgc/view/web/season")
+                .query_param("season_id", "123");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "result": {
+                    "season_id": 123,
+                    "title": "A Season",
+                    "positive": {"id": 5, "title": "Main group"},
+                    "episodes": [
+                        {"aid": 10, "cid": 100, "id": 1000, "title": "Main"}
+                    ],
+                    "section": [{
+                        "id": 9,
+                        "title": "Extras",
+                        "episodes": [
+                            {"aid": 11, "cid": 101, "id": 2000, "title": "PV"}
+                        ]
+                    }]
+                }
+            }));
+        });
+
+        let config = ClientConfig {
+            endpoints: EndpointConfig::default()
+                .with_api_base("http://127.0.0.1:1")
+                .with_pgc_base(server.base_url()),
+            ..ClientConfig::default()
+        };
+        let client = BiliClient::new(config);
+        let resolved = client
+            .resolve_input("ss123", Some(Selection::Latest))
+            .await?;
+        match resolved {
+            ResolvedContent::Season(season) => {
+                assert_eq!(season.season.episode_groups.len(), 2);
+                assert_eq!(
+                    season.season.episode_groups[0].source_id.as_deref(),
+                    Some("5")
+                );
+                assert_eq!(
+                    season.season.episode_groups[0].title.as_deref(),
+                    Some("Main group")
+                );
+                assert_eq!(
+                    season.season.episode_groups[1].source_id.as_deref(),
+                    Some("9")
+                );
+                assert_eq!(season.season.episode_groups[1].episode_positions, vec![1]);
+                assert_eq!(season.selected_episodes[0].epid, 1000);
             }
             ResolvedContent::Video(_) | ResolvedContent::Collection(_) => {
                 return Err(anyhow::anyhow!("expected season"));

@@ -61,6 +61,10 @@ bbdown info https://space.bilibili.com/123/dynamic --select latest --json
 bbdown info 'https://space.bilibili.com/123/lists/456?type=series' --json
 ```
 
+国内 PGC season metadata 会在 `info --json` 输出的 `episode_groups` 字段中包含按上游顺序排列的
+`main` 和 `section` 分集组。组成员使用完整 season 分集列表中的零基位置，因此即使 `--select` 只
+返回一个子集，分组仍可正确对应。Intl 和 PUGV season 输出仍保持平铺结构。
+
 生成下载计划并输出 JSON：
 
 ```bash
