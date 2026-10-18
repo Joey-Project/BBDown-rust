@@ -161,7 +161,8 @@ rules.
 
 The trimmed keyword must contain 1 to 200 UTF-8 bytes and must not contain control characters;
 invalid values are rejected rather than truncated. Before WBI signing and sending, the search
-normalization removes ASCII `!`, `'`, `(`, `)`, and `*`. If normalization leaves an empty keyword,
+normalization removes ASCII `!`, `'`, `(`, `)`, and `*`, then trims surrounding whitespace again.
+If normalization leaves an empty keyword,
 the request is rejected.
 
 ```rust,no_run

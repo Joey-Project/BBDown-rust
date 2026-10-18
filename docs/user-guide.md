@@ -177,7 +177,8 @@ bbdown search "Rust async" --page 2 --order pubdate --json
 
 The keyword must be 1 to 200 UTF-8 bytes after trimming and must not contain control characters;
 invalid keywords are rejected, not silently shortened. Before WBI signing and sending, search
-normalization removes ASCII `!`, `'`, `(`, `)`, and `*`; a keyword that becomes empty is rejected.
+normalization removes ASCII `!`, `'`, `(`, `)`, and `*`, then trims surrounding whitespace again;
+a keyword that becomes empty is rejected.
 
 `--page` defaults to `1` and accepts any positive page number. `--order` defaults to `totalrank`; supported
 values are `totalrank`, `click` (play count), `pubdate`, `dm` (danmaku count), `stow` (favorites), and

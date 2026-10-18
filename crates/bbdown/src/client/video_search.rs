@@ -45,7 +45,7 @@ impl VideoSearchQuery {
                 "video search keyword must contain 1 to 200 non-control bytes".to_owned(),
             ));
         }
-        if filter_wbi_keyword(keyword).is_empty() {
+        if normalize_keyword(keyword).is_empty() {
             return Err(Error::InvalidInput(
                 "video search keyword is empty after WBI normalization".to_owned(),
             ));
@@ -315,6 +315,10 @@ fn filter_wbi_keyword(keyword: &str) -> String {
         .collect()
 }
 
+fn normalize_keyword(keyword: &str) -> String {
+    filter_wbi_keyword(keyword).trim().to_owned()
+}
+
 fn signed_video_search_query(
     keyword: &str,
     page: u32,
@@ -322,7 +326,7 @@ fn signed_video_search_query(
     mixin_key: &str,
     wts: &str,
 ) -> Result<String> {
-    let keyword = filter_wbi_keyword(keyword.trim());
+    let keyword = normalize_keyword(keyword.trim());
     if keyword.is_empty() {
         return Err(Error::InvalidInput(
             "video search keyword is empty after WBI normalization".to_owned(),
@@ -467,6 +471,8 @@ mod tests {
         for query in [
             VideoSearchQuery::new(" "),
             VideoSearchQuery::new("!'()*"),
+            VideoSearchQuery::new("! *"),
+            VideoSearchQuery::new("!\u{3000}*"),
             VideoSearchQuery::new("bad\nquery"),
             VideoSearchQuery::new("rust").with_page(0),
         ] {
@@ -493,7 +499,7 @@ mod tests {
     #[test]
     fn forbidden_wbi_keyword_characters_are_filtered_before_signing() -> anyhow::Result<()> {
         let signed = signed_video_search_query(
-            "Rust's async C++ (tutorial)!*",
+            " ! Rust's async C++ (tutorial) * ",
             2,
             VideoSearchOrder::TotalRank,
             "0123456789abcdef",
@@ -580,7 +586,7 @@ mod tests {
         let client = test_client(&server, true);
         let page = search_videos(
             &client,
-            VideoSearchQuery::new("Rust 搜索!'()*")
+            VideoSearchQuery::new(" ! Rust 搜索 * ")
                 .with_page(2)
                 .with_order(VideoSearchOrder::Favorites),
         )

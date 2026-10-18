@@ -21,9 +21,10 @@ use bbdown_core::{
     QrLoginCredentialsState, QrLoginKind, QrLoginTicket, QrLoginTicketOutput, ResolvedContent,
     RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind,
     RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet, StreamSource,
-    SubtitleAiPolicy, TvAccessKeyLoginCredentials, TvAccessKeyRefreshRequest, VideoSearchOrder,
-    VideoSearchQuery, WebCookieRefreshCredentials, WebCookieRefreshRequest,
-    archive_entry_allows_danmaku_update, credential_preflight_requirements_for_media_paths,
+    SubtitleAiPolicy, TvAccessKeyLoginCredentials, TvAccessKeyRefreshRequest,
+    VIDEO_SEARCH_MAX_ITEMS, VideoSearchOrder, VideoSearchQuery, WebCookieRefreshCredentials,
+    WebCookieRefreshRequest, archive_entry_allows_danmaku_update,
+    credential_preflight_requirements_for_media_paths,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Deserialize;
@@ -2807,11 +2808,17 @@ fn ensure_input_selection_for_media_preflight(
         let selection = selection.ok_or(bbdown_core::Error::SelectionRequired {
             input_kind: "video search",
         })?;
+        let max_index = u32::try_from(VIDEO_SEARCH_MAX_ITEMS).unwrap_or(u32::MAX);
         return match selection {
-            Selection::All | Selection::Indices(_) => Ok(()),
-            Selection::Page(page) if *page > 0 => Ok(()),
-            Selection::Page(_) => Err(bbdown_core::Error::InvalidInput(
+            Selection::All => Ok(()),
+            Selection::Page(0) => Err(bbdown_core::Error::InvalidInput(
                 "video search result indices are 1-based".to_owned(),
+            )
+            .into()),
+            Selection::Page(page) if *page <= max_index => Ok(()),
+            Selection::Indices(indices) if indices.max_index() <= max_index => Ok(()),
+            Selection::Page(_) | Selection::Indices(_) => Err(bbdown_core::Error::InvalidInput(
+                format!("video search result indices must be between 1 and {max_index}"),
             )
             .into()),
             Selection::Current | Selection::Latest | Selection::Episode(_) => {

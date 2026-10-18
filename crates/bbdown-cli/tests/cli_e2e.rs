@@ -4,7 +4,7 @@ use bbdown_core::{
     AccessKeyProvider, AccessKeyProviderSecret, AccessKeyRefreshKeypair, AccessKeyRefreshProvider,
     CredentialKind, CredentialLifecycleMetadata, CredentialLifecycleSource,
     CredentialProfileMetadata, CredentialProfileSecrets, CredentialProfiles,
-    CredentialRefreshSecret, CredentialStore, Credentials,
+    CredentialRefreshSecret, CredentialStore, Credentials, VIDEO_SEARCH_MAX_ITEMS,
 };
 use httpmock::MockServer;
 use httpmock::prelude::*;
@@ -262,6 +262,111 @@ fn invalid_search_shorthand_fails_before_credential_preflight() -> anyhow::Resul
                 );
                 assert_eq!(fs::read(&credential_file)?, sentinel);
             }
+        }
+    }
+    nav.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+fn oversized_search_selection_fails_before_credential_preflight() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let sentinel = b"malformed credential data that must remain untouched";
+    fs::write(&credential_file, sentinel)?;
+    let nav = mock_search_nav(&server);
+    let out_of_bounds =
+        format!("video search result indices must be between 1 and {VIDEO_SEARCH_MAX_ITEMS}");
+    let invalid_selectors = [
+        ("21", out_of_bounds.as_str()),
+        ("1,21", out_of_bounds.as_str()),
+        ("19-21", out_of_bounds.as_str()),
+        ("0", "index selections are 1-based"),
+        ("1,,2", "invalid index selection"),
+    ];
+
+    for preflight in ["fail", "renew"] {
+        for subcommand in ["plan", "playback", "download"] {
+            for (selector, expected_error) in invalid_selectors {
+                let mut command = bbdown_command()?;
+                command
+                    .arg("--credential-file")
+                    .arg(&credential_file)
+                    .arg("--api-base")
+                    .arg(server.base_url())
+                    .arg("--playurl-mode")
+                    .arg("app")
+                    .arg("--credential-preflight")
+                    .arg(preflight)
+                    .arg(subcommand)
+                    .arg("search:Rust")
+                    .arg("--select")
+                    .arg(selector);
+                if subcommand == "download" {
+                    command
+                        .arg("--output-dir")
+                        .arg(temp.path().join("downloads"));
+                }
+                let output = command.assert().failure().get_output().clone();
+                let stderr = String::from_utf8(output.stderr)?;
+                assert!(
+                    stderr.contains(expected_error),
+                    "expected selector validation for {selector:?}, got: {stderr}"
+                );
+                assert!(
+                    !stderr.contains("credential"),
+                    "unexpected credential error: {stderr}"
+                );
+                assert_eq!(fs::read(&credential_file)?, sentinel);
+            }
+        }
+    }
+    nav.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+fn search_index_twenty_reaches_preflight_as_a_valid_boundary() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let sentinel = b"malformed credential data that must remain untouched";
+    fs::write(&credential_file, sentinel)?;
+    let nav = mock_search_nav(&server);
+
+    for preflight in ["fail", "renew"] {
+        for subcommand in ["plan", "playback", "download"] {
+            let mut command = bbdown_command()?;
+            command
+                .arg("--credential-file")
+                .arg(&credential_file)
+                .arg("--api-base")
+                .arg(server.base_url())
+                .arg("--playurl-mode")
+                .arg("app")
+                .arg("--credential-preflight")
+                .arg(preflight)
+                .arg(subcommand)
+                .arg("search:Rust")
+                .arg("--select")
+                .arg(VIDEO_SEARCH_MAX_ITEMS.to_string());
+            if subcommand == "download" {
+                command
+                    .arg("--output-dir")
+                    .arg(temp.path().join("downloads"));
+            }
+            let output = command.assert().failure().get_output().clone();
+            let stderr = String::from_utf8(output.stderr)?;
+            assert!(
+                stderr.contains("failed to load credential profiles"),
+                "expected malformed store to fail after valid boundary selection, got: {stderr}"
+            );
+            assert!(
+                !stderr.contains("video search result indices must be between 1 and"),
+                "boundary index was rejected: {stderr}"
+            );
+            assert_eq!(fs::read(&credential_file)?, sentinel);
         }
     }
     nav.assert_calls(0);

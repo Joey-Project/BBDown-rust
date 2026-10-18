@@ -579,7 +579,13 @@ mod tests {
         }
 
         let too_long = "界".repeat(67);
-        for keyword in ["!'()*", "bad\nquery", too_long.as_str()] {
+        for keyword in [
+            "!'()*",
+            "! *",
+            "!\u{3000}*",
+            "bad\nquery",
+            too_long.as_str(),
+        ] {
             assert!(Input::parse(&format!("search:{keyword}")).is_err());
             let encoded =
                 url::form_urlencoded::byte_serialize(keyword.as_bytes()).collect::<String>();

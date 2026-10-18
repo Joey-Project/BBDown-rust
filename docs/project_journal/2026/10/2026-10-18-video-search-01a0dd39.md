@@ -27,7 +27,8 @@ superseded_by:
   `next_page`, and valid deduplicated `VideoSearchItem` rows.
 - Keywords are trimmed, must contain 1–200 UTF-8 bytes, and cannot contain control characters;
   invalid input is rejected rather than truncated. Before WBI signing and sending, normalization
-  removes ASCII `!`, `'`, `(`, `)`, and `*`; a keyword that normalizes to empty is rejected.
+  removes ASCII `!`, `'`, `(`, `)`, and `*` and trims surrounding whitespace again; a keyword
+  that normalizes to empty is rejected.
 - `VideoSearchPage.page` uses the positive page returned by the service, or the requested page if
   the response omits that field. `next_page` is derived from this actual page.
 - Search uses at most two API requests per call (WBI navigation and search), accepts at most 20 raw
@@ -63,10 +64,12 @@ superseded_by:
 ## Validation
 
 - `cargo test -p bbdown-core parses_keyword_video_search_inputs --locked` passed: 1 test covering
-  both input forms and keyword boundaries. Focused CLI search tests passed: 12 tests.
-- After the final input and credential fixes, `just ci` completed with exit 0 using rustc 1.99.1
-  and the Rust 1.95.0 MSRV check. Workspace test targets reported 907 passed and 3 ignored across counts of 67, 172, 9
-  (2 ignored), 635, 21 (1 ignored), 1, and 2. A separate CLI e2e run passed 172 tests; this is an
+  both input forms and keyword boundaries. The focused core search module passed 16 tests;
+  focused CLI search tests passed 14 tests.
+- After the final input, credential, and selector-bound fixes, `just ci` completed with exit 0
+  using rustc 1.99.1 and the Rust 1.95.0 MSRV check. Workspace test targets reported 909 passed
+  and 3 ignored across counts of 67, 174, 9 (2 ignored), 635, 21 (1 ignored), 1, and 2.
+  A separate CLI e2e run passed 174 tests; this is an
   additional run, not part of the workspace total. The `bbdown-core` publish dry run packaged and
   verified the crate, then aborted upload as expected for dry-run mode; no upload was made.
 - After the WBI and response-page fixes, an anonymous official Rust CLI metadata smoke for
@@ -82,8 +85,8 @@ superseded_by:
 
 ## PR #106 Review Fixes
 
-- Normalize WBI search keywords by removing ASCII `!`, `'`, `(`, `)`, and `*` before signing and
-  sending, and reject a keyword that becomes empty.
+- Normalize WBI search keywords by removing ASCII `!`, `'`, `(`, `)`, and `*`, then trimming
+  whitespace before validation, signing, and sending. Reject empty and whitespace-only keywords.
 - Report the positive page returned by the service, falling back to the requested page when the
   response omits it; calculate `next_page` from the actual page.
 - Reject missing and unsupported search selections before CLI credential strict/renew preflight
@@ -91,6 +94,8 @@ superseded_by:
   spans `plan`, `playback`, and `download` with absent, `latest`, `current`, and `episode:1`
   selections, unchanged credential-file bytes, and zero API requests. Numeric, range, and `all`
   selections retain successful planning paths.
+- Reject numeric selections and range endpoints above `VIDEO_SEARCH_MAX_ITEMS` before credential
+  preflight; search result indices must be within the fixed 1–20 page bound.
 - Validate shorthand and URL keywords through the same query validator before credential
   preflight, including control characters, the UTF-8 byte limit, and empty normalized keywords.
 - Build the anonymous CLI search client without loading credential stores or selecting credential
