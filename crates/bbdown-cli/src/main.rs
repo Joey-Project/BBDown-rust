@@ -2812,6 +2812,25 @@ fn ensure_input_selection_for_media_preflight(
     input: &Input,
     selection: Option<&Selection>,
 ) -> anyhow::Result<()> {
+    if matches!(input, Input::VideoSearch { .. }) {
+        let selection = selection.ok_or(bbdown_core::Error::SelectionRequired {
+            input_kind: "video search",
+        })?;
+        return match selection {
+            Selection::All | Selection::Indices(_) => Ok(()),
+            Selection::Page(page) if *page > 0 => Ok(()),
+            Selection::Page(_) => Err(bbdown_core::Error::InvalidInput(
+                "video search result indices are 1-based".to_owned(),
+            )
+            .into()),
+            Selection::Current | Selection::Latest | Selection::Episode(_) => {
+                Err(bbdown_core::Error::InvalidInput(
+                    "video search requires an explicit numeric, range, or all selection".to_owned(),
+                )
+                .into())
+            }
+        };
+    }
     if selection.is_none()
         && let Some(input_kind) = selection_required_input_kind(input)
     {

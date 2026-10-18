@@ -330,31 +330,43 @@ fn search_commands_require_selection_before_credential_preflight() -> anyhow::Re
     let nav = mock_search_nav(&server);
     for preflight in ["fail", "renew"] {
         for subcommand in ["plan", "playback", "download"] {
-            let mut command = bbdown_command()?;
-            command
-                .arg("--credential-file")
-                .arg(&credential_file)
-                .arg("--api-base")
-                .arg(server.base_url())
-                .arg("--playurl-mode")
-                .arg("app")
-                .arg("--credential-preflight")
-                .arg(preflight)
-                .arg(subcommand)
-                .arg("search:Rust");
-            if subcommand == "download" {
+            for selector in [None, Some("latest"), Some("current"), Some("episode:1")] {
+                let mut command = bbdown_command()?;
                 command
-                    .arg("--output-dir")
-                    .arg(temp.path().join("downloads"));
+                    .arg("--credential-file")
+                    .arg(&credential_file)
+                    .arg("--api-base")
+                    .arg(server.base_url())
+                    .arg("--playurl-mode")
+                    .arg("app")
+                    .arg("--credential-preflight")
+                    .arg(preflight)
+                    .arg(subcommand)
+                    .arg("search:Rust");
+                if let Some(selector) = selector {
+                    command.arg("--select").arg(selector);
+                }
+                if subcommand == "download" {
+                    command
+                        .arg("--output-dir")
+                        .arg(temp.path().join("downloads"));
+                }
+                let output = command.assert().failure().get_output().clone();
+                let stderr = String::from_utf8(output.stderr)?;
+                if selector.is_none() {
+                    assert!(stderr.contains(
+                        "video search links require an explicit selection in non-interactive mode"
+                    ));
+                } else {
+                    assert!(stderr.contains(
+                        "video search requires an explicit numeric, range, or all selection"
+                    ));
+                    assert!(!stderr.contains("video search links require an explicit selection"));
+                }
+                assert!(!stderr.contains("credential preflight failed"));
+                assert!(!stderr.contains("failed to load credential profiles"));
+                assert_eq!(fs::read(&credential_file)?, sentinel);
             }
-            let output = command.assert().failure().get_output().clone();
-            let stderr = String::from_utf8(output.stderr)?;
-            assert!(stderr.contains(
-                "video search links require an explicit selection in non-interactive mode"
-            ));
-            assert!(!stderr.contains("credential preflight failed"));
-            assert!(!stderr.contains("credential store"));
-            assert_eq!(fs::read(&credential_file)?, sentinel);
         }
     }
     nav.assert_calls(0);
@@ -367,7 +379,7 @@ fn plan_search_with_explicit_selection_keeps_normal_hydration() -> anyhow::Resul
     let temp = tempfile::tempdir()?;
     let credential_file = temp.path().join("credentials.json");
     mock_search_nav(&server);
-    server.mock(|when, then| {
+    let search = server.mock(|when, then| {
         when.method(GET)
             .path("/x/web-interface/wbi/search/type")
             .query_param("keyword", "Rust")
@@ -387,26 +399,31 @@ fn plan_search_with_explicit_selection_keeps_normal_hydration() -> anyhow::Resul
     });
     mock_video_stream_plan_endpoints(&server);
 
-    let output = bbdown_command()?
-        .arg("--credential-file")
-        .arg(credential_file)
-        .arg("--api-base")
-        .arg(server.base_url())
-        .arg("plan")
-        .arg("search:Rust")
-        .arg("--select")
-        .arg("1")
-        .arg("--json")
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
-    let plan: Value = serde_json::from_slice(&output)?;
-    assert_eq!(plan["title"], "Search: Rust");
-    assert_eq!(plan["entries"].as_array().map(Vec::len), Some(1));
-    assert_eq!(plan["entries"][0]["aid"], 170_001);
-    assert_eq!(plan["entries"][0]["title"], "Mock video");
+    for selector in ["1", "1-1", "all"] {
+        let output = bbdown_command()?
+            .arg("--credential-file")
+            .arg(&credential_file)
+            .arg("--api-base")
+            .arg(server.base_url())
+            .arg("--credential-preflight")
+            .arg("fail")
+            .arg("plan")
+            .arg("search:Rust")
+            .arg("--select")
+            .arg(selector)
+            .arg("--json")
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        let plan: Value = serde_json::from_slice(&output)?;
+        assert_eq!(plan["title"], "Search: Rust");
+        assert_eq!(plan["entries"].as_array().map(Vec::len), Some(1));
+        assert_eq!(plan["entries"][0]["aid"], 170_001);
+        assert_eq!(plan["entries"][0]["title"], "Mock video");
+    }
+    search.assert_calls(3);
     Ok(())
 }
 

@@ -64,16 +64,18 @@ superseded_by:
 
 - `cargo test -p bbdown-core search --locked` passed after the PR #106 fixes: 18 tests. Focused CLI
   search tests passed: 10 tests.
-- The CLI reported `just ci` completed with exit 0 using rustc 1.99.1 and the Rust 1.95.0 MSRV
-  check. Workspace test targets reported 905 passed and 3 ignored across counts of 67, 170, 9
+- After the final selector validation fix, `just ci` completed with exit 0 using rustc 1.99.1 and
+  the Rust 1.95.0 MSRV check. Workspace test targets reported 905 passed and 3 ignored across counts of 67, 170, 9
   (2 ignored), 635, 21 (1 ignored), 1, and 2. A separate CLI e2e run passed 170 tests; this is an
   additional run, not part of the workspace total. The `bbdown-core` publish dry run packaged and
   verified the crate, then aborted upload as expected for dry-run mode; no upload was made.
-- The final anonymous official Rust CLI metadata smoke for `Rust!`, page 1, `totalrank`, exited 0.
+- After the WBI and response-page fixes, an anonymous official Rust CLI metadata smoke for
+  `Rust!`, page 1, `totalrank`, exited 0.
   It returned `page_size=20`, `total=1000`, `total_pages=50`, `next_page=2`, and 18 items; the JSON
   output was 11,507 bytes and stderr was empty. The anonymous credentials file did not exist. The
   request made no media request, so this confirms live metadata search only, not playback access,
-  planning, or download e2e.
+  planning, or download e2e. This probe preceded the final CLI selector validation change; the
+  search request implementation did not change afterward.
 - The earlier initial-head `Rust 教程` metadata smoke returned 17 valid items. It is a separate
   observation and is not a validation result for the PR #106 fixes.
 - Documentation validation: `project_journal.py validate` and `git diff --check` passed.
@@ -84,10 +86,13 @@ superseded_by:
   sending, and reject a keyword that becomes empty.
 - Report the positive page returned by the service, falling back to the requested page when the
   response omits it; calculate `next_page` from the actual page.
-- Reject a missing search selection before CLI credential strict/renew preflight can run, avoiding
-  credential renewal side effects when no result was selected.
+- Reject missing and unsupported search selections before CLI credential strict/renew preflight
+  can run, avoiding credential renewal side effects for invalid commands. Regression coverage
+  spans `plan`, `playback`, and `download` with absent, `latest`, `current`, and `episode:1`
+  selections, unchanged credential-file bytes, and zero API requests. Numeric, range, and `all`
+  selections retain successful planning paths.
 - PR: [#106](https://github.com/Joey-Project/BBDown-rust/pull/106). Validation of these fixes is
-  recorded above. No fix commit SHA is recorded in this journal.
+  recorded above.
 
 ## Evidence
 
