@@ -51,6 +51,12 @@ const CLI_OVERRIDE_ENV_VARS: &[&str] = &[
     "BBDOWN_ACCESS_KEY",
 ];
 
+// Synthetic token fixture IDs from the reviewed catalog: access-expired, access-a, refresh-a, refresh-b.
+const SEARCH_PGC_EXPIRED_ACCESS_KEY: &str = "codex_synth_v1_access_expired";
+const SEARCH_PGC_RENEWED_ACCESS_KEY: &str = "codex_synth_v1_access_a";
+const SEARCH_PGC_OLD_REFRESH_TOKEN: &str = "codex_synth_v1_refresh_a";
+const SEARCH_PGC_NEW_REFRESH_TOKEN: &str = "codex_synth_v1_refresh_b";
+
 #[test]
 fn cli_version_reports_package_version() -> anyhow::Result<()> {
     let mut command = bbdown_command()?;
@@ -2531,6 +2537,245 @@ fn plan_credential_preflight_fail_allows_public_video_with_restricted_proxy_conf
 
     assert_eq!(stdout_json["title"], "Mock video");
     assert!(!stderr.contains("restricted-area proxy requires access_key"));
+    Ok(())
+}
+
+#[test]
+fn plan_search_with_proxy_fails_preflight_for_expired_generic_access_key() -> anyhow::Result<()> {
+    let api_server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    save_search_proxy_access_key_profile(
+        &credential_file,
+        SEARCH_PGC_EXPIRED_ACCESS_KEY,
+        SEARCH_PGC_OLD_REFRESH_TOKEN,
+    )?;
+    let nav = mock_search_nav(&api_server);
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--api-base")
+        .arg(api_server.base_url())
+        .arg("--pgc-base")
+        .arg(api_server.base_url())
+        .arg("--passport-base")
+        .arg(api_server.base_url())
+        .arg("--credential-preflight")
+        .arg("fail")
+        .arg("--restricted-area")
+        .arg("hk")
+        .arg("--restricted-area-proxy")
+        .arg(format!("hk={}/proxy-playurl", api_server.base_url()))
+        .arg("plan")
+        .arg("search:Rust")
+        .arg("--select")
+        .arg("1")
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert_eq!(output.stdout.len(), 0);
+    assert!(stderr.contains("credential preflight failed"));
+    assert!(stderr.contains("expired"));
+    nav.assert_calls(0);
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load_profile("intl")?
+            .access_key
+            .as_deref(),
+        Some(SEARCH_PGC_EXPIRED_ACCESS_KEY)
+    );
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn plan_search_with_proxy_renews_generic_access_key_before_pgc_fallback() -> anyhow::Result<()> {
+    let api_server = MockServer::start();
+    let pgc_server = MockServer::start();
+    let proxy_server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    save_search_proxy_access_key_profile(
+        &credential_file,
+        SEARCH_PGC_EXPIRED_ACCESS_KEY,
+        SEARCH_PGC_OLD_REFRESH_TOKEN,
+    )?;
+
+    let refresh = api_server.mock(|when, then| {
+        when.method(POST)
+            .path("/x/passport-tv-login/oauth2/refresh_token")
+            .form_urlencoded_tuple("access_key", SEARCH_PGC_EXPIRED_ACCESS_KEY)
+            .form_urlencoded_tuple("refresh_token", SEARCH_PGC_OLD_REFRESH_TOKEN)
+            .form_urlencoded_tuple("appkey", "4409e2ce8ffd12b8")
+            .form_urlencoded_tuple_exists("sign");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "token_info": {
+                    "access_token": SEARCH_PGC_RENEWED_ACCESS_KEY,
+                    "refresh_token": SEARCH_PGC_NEW_REFRESH_TOKEN,
+                    "expires_in": 60
+                }
+            }
+        }));
+    });
+    mock_search_nav(&api_server);
+    let search = api_server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/wbi/search/type")
+            .query_param("keyword", "Rust")
+            .query_param("page", "1")
+            .query_param("order", "totalrank")
+            .query_param_exists("w_rid");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "numResults": 1,
+                "numPages": 1,
+                "pagesize": 1,
+                "result": [{
+                    "type": "video",
+                    "aid": 455_017_605,
+                    "bvid": "BV1Q541167Qg",
+                    "title": "Selected PGC episode"
+                }]
+            }
+        }));
+    });
+    let selected_view = api_server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/view")
+            .query_param("bvid", "BV1Q541167Qg");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "aid": 455_017_605,
+                "bvid": "BV1Q541167Qg",
+                "title": "Selected PGC episode",
+                "redirect_url": "https://www.bilibili.com/bangumi/play/ep1000"
+            }
+        }));
+    });
+    let season = pgc_server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/view/web/season")
+            .query_param("ep_id", "1000");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "result": {
+                "season_id": 123,
+                "title": "Selected PGC season",
+                "episodes": [{
+                    "aid": 455_017_605,
+                    "bvid": "BV1Q541167Qg",
+                    "cid": 11,
+                    "id": 1000,
+                    "ep_id": 1000,
+                    "title": "1",
+                    "long_title": "Selected episode"
+                }]
+            }
+        }));
+    });
+    let official_pgc = pgc_server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/player/web/v2/playurl")
+            .query_param("ep_id", "1000")
+            .query_param("avid", "455017605")
+            .query_param("cid", "11")
+            .header_missing("cookie");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -40301,
+            "message": "area restricted"
+        }));
+    });
+    let proxy = proxy_server.mock(|when, then| {
+        when.method(GET)
+            .path("/proxy-playurl")
+            .query_param("ep_id", "1000")
+            .query_param("avid", "455017605")
+            .query_param("cid", "11")
+            .query_param("area", "hk")
+            .query_param("access_key", SEARCH_PGC_RENEWED_ACCESS_KEY)
+            .header_missing("cookie");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "timelength": 3000,
+            "accept_quality": [80],
+            "accept_description": ["1080P"],
+            "support_formats": [{"quality": 80, "new_description": "1080P"}],
+            "dash": {
+                "duration": 3,
+                "video": [{
+                    "id": 80,
+                    "baseUrl": "https://proxy.example/selected-video.m4s",
+                    "base_url": "https://proxy.example/selected-video.m4s"
+                }],
+                "audio": []
+            }
+        }));
+    });
+    mock_empty_player_v2(&api_server, "455017605", "11");
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("intl")
+        .arg("--api-base")
+        .arg(api_server.base_url())
+        .arg("--pgc-base")
+        .arg(pgc_server.base_url())
+        .arg("--passport-base")
+        .arg(api_server.base_url())
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("--restricted-area")
+        .arg("hk")
+        .arg("--restricted-area-proxy")
+        .arg(format!("hk={}/proxy-playurl", proxy_server.base_url()))
+        .arg("plan")
+        .arg("search:Rust")
+        .arg("--select")
+        .arg("1")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let plan: Value = serde_json::from_slice(&output.stdout)?;
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert_eq!(plan["entries"][0]["source"], "pgc_proxy");
+    assert!(stderr.contains("credential preflight: access_key refreshed"));
+    for secret in [
+        SEARCH_PGC_EXPIRED_ACCESS_KEY,
+        SEARCH_PGC_OLD_REFRESH_TOKEN,
+        SEARCH_PGC_RENEWED_ACCESS_KEY,
+        SEARCH_PGC_NEW_REFRESH_TOKEN,
+    ] {
+        assert!(!stderr.contains(secret));
+    }
+    assert_eq!(
+        CredentialStore::new(credential_file)
+            .load_profile("intl")?
+            .access_key
+            .as_deref(),
+        Some(SEARCH_PGC_RENEWED_ACCESS_KEY)
+    );
+    refresh.assert_calls(1);
+    search.assert_calls(1);
+    selected_view.assert_calls(1);
+    season.assert_calls(1);
+    official_pgc.assert_calls(1);
+    proxy.assert_calls(1);
     Ok(())
 }
 
@@ -11243,6 +11488,42 @@ fn save_lifecycle_cli_profiles_with_optional_access_key_secret(
         intl_secrets.set_access_key_provider(provider, secret);
         profiles.set_profile_secrets("intl", intl_secrets)?;
     }
+    store.save_profiles(&profiles)?;
+    Ok(())
+}
+
+fn save_search_proxy_access_key_profile(
+    credential_file: &Path,
+    access_key: &str,
+    refresh_token: &str,
+) -> anyhow::Result<()> {
+    let store = CredentialStore::new(credential_file.to_path_buf());
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_profile("default", Credentials::default())?;
+    profiles.set_profile(
+        "intl",
+        Credentials::default().with_access_key(access_key.to_owned()),
+    )?;
+    let mut metadata = CredentialProfileMetadata::default();
+    metadata.set_credential(
+        CredentialKind::AccessKey,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::AccessKeyLogin)
+            .with_access_key_provider(AccessKeyProvider::BalhBiliplus)
+            .with_acquired_at_unix_millis(1_000)
+            .with_expires_at_unix_millis(2_000)
+            .with_refresh_token_present(true),
+    );
+    profiles.set_profile_metadata("intl", metadata)?;
+    let mut secrets = CredentialProfileSecrets::default();
+    secrets.set_access_key_provider(
+        AccessKeyProvider::BalhBiliplus,
+        AccessKeyProviderSecret::default()
+            .with_refresh_token(refresh_token.to_owned())
+            .with_refresh_provider(AccessKeyRefreshProvider::BilibiliMainOauth2)
+            .with_refresh_keypair(AccessKeyRefreshKeypair::BiliTv),
+    );
+    profiles.set_profile_secrets("intl", secrets)?;
     store.save_profiles(&profiles)?;
     Ok(())
 }

@@ -698,6 +698,9 @@ authenticated WEB APIs before selecting media streams. Public space dynamic page
 anonymously and should not add that required-cookie preflight. Restricted-area proxy fallback
 treats the generic `access_key` as optional: present keys are checked and may be forwarded by the
 resolver, but missing keys do not block proxy URLs that authenticate themselves or allow anonymous fallback.
+An explicitly selected `Input::VideoSearch` may resolve to PGC; when restricted-area proxies are
+configured, embedders should apply the same proxy preflight if a generic key is present. A missing
+key remains optional. Reject invalid selections before running credential preflight.
 Intl/Bstar episode media and subtitle paths require the generic `access_key` used by official intl
 metadata, playurl, and subtitle requests. Cover-only and danmaku-only intl episode paths should skip
 that access-key requirement because they only need metadata and sidecar endpoints; metadata requests

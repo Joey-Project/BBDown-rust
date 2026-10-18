@@ -2861,7 +2861,11 @@ fn input_media_preflight_playurl_mode(
 fn input_may_use_restricted_area_proxy(input: &Input) -> bool {
     matches!(
         input,
-        Input::Episode(_) | Input::Season(_) | Input::Media(_) | Input::ShortLink(_)
+        Input::Episode(_)
+            | Input::Season(_)
+            | Input::Media(_)
+            | Input::ShortLink(_)
+            | Input::VideoSearch { .. }
     )
 }
 
@@ -7452,7 +7456,7 @@ mod tests {
         CredentialProfiles, CredentialRefreshSecret, CredentialStore, Credentials,
         DownloadCancellationToken, DownloadMode, DownloadOutputConflict, DownloadPreflight,
         DuplicateDecision, EndpointConfig, Input, PlayurlMode, QrLoginCredentials, QrLoginKind,
-        RestrictedAreaConfig, RestrictedAreaProxy,
+        RestrictedAreaConfig, RestrictedAreaProxy, VideoSearchOrder,
     };
     use clap::Parser as _;
     use std::fs;
@@ -7493,6 +7497,11 @@ mod tests {
         assert!(input_may_use_restricted_area_proxy(&Input::ShortLink(
             "https://b23.tv/example".to_owned()
         )));
+        assert!(input_may_use_restricted_area_proxy(&Input::VideoSearch {
+            keyword: "Rust".to_owned(),
+            page: 1,
+            order: VideoSearchOrder::TotalRank,
+        }));
         assert!(!input_may_use_restricted_area_proxy(&Input::Aid(170_001)));
         assert!(!input_may_use_restricted_area_proxy(&Input::Bvid(
             "BV1xx411c7mD".to_owned()

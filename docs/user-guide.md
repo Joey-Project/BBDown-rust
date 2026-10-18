@@ -797,7 +797,10 @@ playurl requires `tv_access_key`, APP playurl accepts either generic `access_key
 generic keys are checked before TV keys, while `bili_intl_oauth2` keys and legacy profiles with no
 provider metadata yield to TV keys. Restricted-area proxy fallback checks generic `access_key` only when that key is configured for
 an input where proxy fallback may run. Missing generic keys do not block restricted-area proxy URLs
-that authenticate themselves or allow anonymous fallback. Intl/Bstar episode media and subtitle
+that authenticate themselves or allow anonymous fallback. A valid explicit `search:<keyword>`
+selection may resolve to PGC, so it receives the same restricted-proxy preflight when proxies are
+configured and a generic key is present; a missing key remains optional, and invalid selections are
+rejected before credential preflight. Intl/Bstar episode media and subtitle
 paths require the generic `access_key` used by the official intl metadata, playurl, and subtitle
 requests. Cover-only and danmaku-only intl episode downloads skip this access-key preflight because
 they only need metadata and sidecar endpoints; if an access key is present, metadata requests still

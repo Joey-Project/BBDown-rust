@@ -79,29 +79,33 @@ superseded_by:
 
 ## Validation
 
-- Focused search tests passed: core 21/21 and CLI 15/15. The CLI set includes
-  `download_search_selected_pgc_uses_episode_and_restricted_area_proxy`.
-- The PGC mock e2e searches, selects a BVID whose official view redirects to `ep1000`, reads PGC
-  season metadata containing an unrelated `ep999`, handles an official Web playurl region error,
-  falls back to the restricted proxy, and verifies exact downloaded fixture bytes. It asserts that
-  the unselected UGC result does not trigger view, ordinary playurl, or media requests. This test is
-  mock-only; no real PGC/live request or credentials were used.
+- Focused restricted-proxy search coverage passed: one classifier unit test and two
+  `search_with_proxy` e2e tests. These include stale generic-key failure and renewal preflight.
+  The selected-PGC mock e2e searches and selects a BVID whose official view redirects to `ep1000`,
+  reads PGC season metadata containing an unrelated `ep999`, handles an official Web playurl region
+  error, falls back to the restricted proxy, and verifies exact downloaded fixture bytes. It asserts
+  that the unselected UGC result does not trigger view, ordinary playurl, or media requests. These
+  tests are mock-only; no live PGC request or credentials were used.
 - Final `just ci` completed with exit 0 using rustc 1.99.1 and the Rust 1.95.0 MSRV check. The gate
-  passed formatting, strict Clippy, MSRV check, workspace tests, CLI e2e, and publish dry run.
-  Log: `/private/tmp/bbdown-video-search.20261018-01a0dd39/pgc-search-just-ci-final.log` (92,422 bytes).
-  Workspace test targets reported 915 passed, 3 ignored, and 0 failed across counts of 67, 175,
-  9 (2 ignored), 640, 21 (1 ignored), 1, and 2. The CLI e2e target passed 175 tests, including the
-  PGC mock case. A separate CLI e2e rerun also passed 175 tests; this repeated run is not added to
-  the workspace total. The `bbdown-core` publish dry run packaged and verified the crate, then
-  aborted upload as expected; no upload was made.
+  passed formatting, strict Clippy, stable and MSRV checks, workspace tests, CLI e2e, and publish dry
+  run. Log: `/private/tmp/bbdown-video-search.20261018-01a0dd39/search-pgc-credential-just-ci.log`
+  (92,356 bytes). Workspace targets reported 917 passed, 3 ignored, and 0 failed across counts of
+  67, 177, 9 (2 ignored), 640, 21 (1 ignored), 1, and 2. The CLI e2e target passed 177 tests. A
+  separate CLI e2e rerun also passed 177 tests; this repeated run is not added to the workspace
+  total. The `bbdown-core` publish dry run completed without uploading.
 - The anonymous official Rust CLI metadata smokes for `Rust!` and `Rust 教程` are observations from
   earlier heads, before this selected-PGC extension. The `Rust!` smoke returned 18 items with empty
   stderr and no media request; the credentials file was absent. These observations confirm metadata
   search only and provide no live PGC, playback, or download evidence.
+- All authentication and PGC-path validation for this credential-preflight fix used mocks; no live
+  authentication, PGC, or media request was made.
 - Documentation validation: `project_journal.py validate` and `git diff --check` passed.
 
 ## PR #106 Review Fixes
 
+- Treat explicitly selected `Input::VideoSearch` as a possible PGC restricted-proxy input for
+  credential preflight. When restricted proxies are configured, check a present generic key under
+  the same policy; a missing key remains optional, and reject invalid selections before preflight.
 - Normalize WBI search keywords by removing ASCII `!`, `'`, `(`, `)`, and `*`, then trimming
   whitespace before validation, signing, and sending. Reject empty and whitespace-only keywords.
 - Report the positive page returned by the service, falling back to the requested page when the

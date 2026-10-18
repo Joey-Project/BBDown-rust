@@ -681,6 +681,8 @@ required-cookie preflight。TV playurl 要求 `tv_access_key`；APP playurl 接�
 provider metadata 的旧版 profile 会让位给 TV key。
 restricted-area proxy fallback 只会在当前输入可能触发 fallback 且已配置通用 `access_key` 时检查
 该 token；缺失通用 key 不会阻断自带认证或允许匿名 fallback 的 restricted-area proxy URL。
+有效且显式选择结果的 `search:<keyword>` 可能解析到 PGC，因此配置了代理且通用 key 存在时也会执行相同的
+restricted-proxy preflight；缺失 key 仍为 optional，无效选择会先被拒绝，不会进入 credential preflight。
 intl/Bstar episode 的 media 和 subtitle path 会要求官方 intl metadata、playurl 和 subtitle 请求实际使用的通用
 `access_key`。cover-only 和 danmaku-only 的 intl episode download 会跳过这个 access-key
 preflight，因为它们只需要 metadata 和 sidecar endpoint；如果 profile 里存在 access key，metadata
