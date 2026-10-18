@@ -59,6 +59,7 @@ pub enum VideoCollectionKind {
     Series,
     Recommendation,
     RelatedRecommendation,
+    Search,
     Following,
     SpaceDynamic,
     History,

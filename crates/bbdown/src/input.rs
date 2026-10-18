@@ -1,4 +1,5 @@
 use crate::bv;
+use crate::client::VideoSearchOrder;
 use crate::models::{UgcCollectionKind, UgcCollectionReference};
 use crate::{Error, Result};
 use url::Url;
@@ -33,6 +34,11 @@ pub enum Input {
     SpaceDynamic(u64),
     History,
     WatchLater,
+    VideoSearch {
+        keyword: String,
+        page: u32,
+        order: VideoSearchOrder,
+    },
     IntlEpisode(u64),
     ShortLink(String),
 }
@@ -51,6 +57,21 @@ impl Input {
         let lower = trimmed.to_ascii_lowercase();
         if lower.starts_with("related:") {
             return parse_related_recommendations_input(&trimmed["related:".len()..]);
+        }
+        if let Some(keyword) = trimmed.get("search:".len()..)
+            && lower.starts_with("search:")
+        {
+            let keyword = keyword.trim();
+            if keyword.is_empty() {
+                return Err(Error::InvalidInput(
+                    "video search keyword is empty".to_owned(),
+                ));
+            }
+            return Ok(Self::VideoSearch {
+                keyword: keyword.to_owned(),
+                page: 1,
+                order: VideoSearchOrder::TotalRank,
+            });
         }
         if lower.starts_with("bv") {
             return parse_bvid(trimmed);
@@ -133,6 +154,7 @@ impl Input {
             | Self::SpaceDynamic(_)
             | Self::History
             | Self::WatchLater
+            | Self::VideoSearch { .. }
             | Self::IntlEpisode(_)
             | Self::ShortLink(_) => Ok(None),
         }
@@ -202,6 +224,10 @@ fn parse_url(raw: &str) -> Result<Input> {
 
     if host == "b23.tv" {
         return Ok(Input::ShortLink(raw.to_owned()));
+    }
+
+    if host == "search.bilibili.com" && path == "/video" {
+        return parse_video_search_url(&url);
     }
 
     if host.ends_with("bilibili.tv") {
@@ -277,6 +303,36 @@ fn parse_url(raw: &str) -> Result<Input> {
     }
 
     Err(Error::InvalidInput(raw.to_owned()))
+}
+
+fn parse_video_search_url(url: &Url) -> Result<Input> {
+    let keyword = url
+        .query_pairs()
+        .find(|(name, _)| name == "keyword")
+        .map(|(_, value)| value.into_owned())
+        .ok_or_else(|| Error::InvalidInput("video search URL is missing keyword".to_owned()))?;
+    let page = url
+        .query_pairs()
+        .find(|(name, _)| name == "page")
+        .map(|(_, value)| value.parse::<u32>())
+        .transpose()
+        .map_err(|_| Error::InvalidInput("invalid video search page".to_owned()))?
+        .unwrap_or(1);
+    let order = url
+        .query_pairs()
+        .find(|(name, _)| name == "order")
+        .map(|(_, value)| VideoSearchOrder::parse_api_value(&value))
+        .transpose()?
+        .unwrap_or_default();
+    crate::client::VideoSearchQuery::new(keyword.clone())
+        .with_page(page)
+        .with_order(order)
+        .validate()?;
+    Ok(Input::VideoSearch {
+        keyword,
+        page,
+        order,
+    })
 }
 
 fn parse_history_url(url: &Url) -> bool {
@@ -491,7 +547,42 @@ fn parse_number(text: &str, label: &str) -> Result<u64> {
 
 #[cfg(test)]
 mod tests {
-    use crate::Input;
+    use crate::{Input, VideoSearchOrder};
+
+    #[test]
+    fn parses_keyword_video_search_inputs() -> anyhow::Result<()> {
+        assert_eq!(
+            Input::parse("search:  Rust 视频  ")?,
+            Input::VideoSearch {
+                keyword: "Rust 视频".to_owned(),
+                page: 1,
+                order: VideoSearchOrder::TotalRank,
+            }
+        );
+        assert_eq!(
+            Input::parse(
+                "https://search.bilibili.com/video?keyword=Rust%20%E8%A7%86%E9%A2%91&page=3&order=click"
+            )?,
+            Input::VideoSearch {
+                keyword: "Rust 视频".to_owned(),
+                page: 3,
+                order: VideoSearchOrder::Click,
+            }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_invalid_keyword_video_search_inputs() {
+        for raw in [
+            "search:",
+            "https://search.bilibili.com/video?page=2",
+            "https://search.bilibili.com/video?keyword=x&page=0",
+            "https://search.bilibili.com/video?keyword=x&order=unknown",
+        ] {
+            assert!(Input::parse(raw).is_err(), "expected {raw:?} to fail");
+        }
+    }
 
     #[test]
     fn parses_common_inputs() -> anyhow::Result<()> {

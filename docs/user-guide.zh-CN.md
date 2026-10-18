@@ -141,6 +141,50 @@ WEB cookie，目前只输出普通视频 `archive` 记录；PGC、直播或专�
 `buvid4` 没有非空值，会获取服务器签发的设备 Cookie 值。值只用于临时请求 header，并缓存在克隆共享的客户端内存中；
 不会修改已配置凭据。Following feed 不使用此初始化流程。
 
+## 普通视频搜索
+
+已发布的 `v0.10.0` CLI 不包含普通视频搜索。请使用包含此功能的源码检出，或后续实际包含它的版本。
+
+使用 `search` 获取一页有界的普通视频关键词搜索 metadata：
+
+```bash
+bbdown search "Rust async" --json
+bbdown search "Rust async" --page 2 --order pubdate --json
+```
+
+关键词去除首尾空白后须为 1 至 200 个 UTF-8 字节，且不能包含控制字符；不符合要求时会报错，不会静默截短。
+
+`--page` 默认为 `1`，可使用任意正整数页码。`--order` 默认为 `totalrank`，支持
+`totalrank`（综合排序）、`click`（播放量）、`pubdate`（发布时间）、`dm`（弹幕量）、`stow`（收藏量）和
+`scores`（评论量）。每次按上游完整页面读取，最多 20 条原始记录；
+没有会跳过上游结果的本地 page-size 参数。输出包括实际页码、页大小、上游报告的总条数和总页数；
+如果 API 提供续页，会包含 `next_page`。需要下一页时显式传入另一个 `--page`。
+
+如需通过现有普通视频路径解析搜索结果，可使用 `search:<keyword>` 或带有 `keyword`、`page` 和
+`order` 查询参数的 Bilibili 官方视频搜索 URL：
+
+```bash
+bbdown info 'search:Rust async' --select 1,3-4 --json
+bbdown plan 'search:Rust async' --select 2 --json
+bbdown playback 'search:Rust async' --select 2 --json
+bbdown download 'search:Rust async' --select 2 --output-dir downloads
+```
+
+这些通用命令必须显式传入数字选择、范围或 `all`。序号是该命令本次查询页面内的一基序号；`all` 表示该
+有界页面中的全部结果。每次使用 `search:<keyword>` 或搜索 URL 都会重新查询，上游顺序可能变化，
+因此 `--select N` 不会锁定之前展示页面里的条目。要精确处理刚展示的搜索结果，请将页面条目的 BVID 或 aid
+作为普通视频输入。只有选中的条目会交给普通视频解析器补充 metadata、规划、播放或下载。独立的
+`search` 命令不会补充视频详情、解析流或下载媒体。选中的搜索结果按集合条目行为只使用第一个视频分 P（P1）。
+如需选择其他分 P，可取出已选结果的 BVID 或 aid，再将其作为普通视频输入并使用原有的 `--select` 页码。
+
+搜索使用 `--api-base` / `BBDOWN_API_BASE` 请求 `/x/web-interface/nav` 和
+`/x/web-interface/wbi/search/type`。调用方可指定可信且兼容的服务，但该服务必须实现这两个端点及其响应格式；
+现有 PGC Web playurl 路由只处理 PGC Web playurl，不能提供搜索。这两个搜索请求以匿名方式发送，
+不会收到已配置的 credentials 或 Cookie。显式选择结果后，metadata hydration 会回到普通视频解析器，
+并遵循它现有的 credential profile 规则。搜索每页最多发起两次 API 请求，每个 JSON 响应上限为
+1 MiB，并使用已配置的请求超时。兼容服务或请求成功都不保证特定区域可用。
+本功能记录的匿名实时探测只确认搜索 metadata 可用；它不能证明实际 `view` 或 playurl 可访问，也不能证明播放规划或下载可用。
+
 ## 下载计划
 
 使用 `plan` 解析流、字幕和弹幕可用性：

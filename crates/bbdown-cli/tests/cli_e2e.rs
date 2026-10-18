@@ -69,6 +69,568 @@ fn cli_version_reports_package_version() -> anyhow::Result<()> {
 }
 
 #[test]
+fn search_json_uses_configured_api_base_and_only_requests_metadata() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    mock_search_nav(&server);
+    let search = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/wbi/search/type")
+            .query_param("keyword", "猫咪视频")
+            .query_param("page", "2")
+            .query_param("order", "click")
+            .query_param_exists("w_rid");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "page": 2,
+                "pages": 3,
+                "numResults": 41,
+                "numPages": 3,
+                "pagesize": 1,
+                "result": [{
+                    "type": "video",
+                    "id": 170_001,
+                    "aid": 455_017_605,
+                    "bvid": "BV1Q541167Qg",
+                    "title": "猫咪的日常",
+                    "author": "视频作者",
+                    "mid": 123,
+                    "duration": "01:02",
+                    "pubdate": 1_700_000_000,
+                    "play": 456,
+                    "review": 7,
+                    "video_review": 8,
+                    "favorites": 9
+                }]
+            }
+        }));
+    });
+    let view = server.mock(|when, then| {
+        when.method(GET).path("/x/web-interface/view");
+        then.status(500);
+    });
+    let playurl = server.mock(|when, then| {
+        when.method(GET).path("/x/player/playurl");
+        then.status(500);
+    });
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("search")
+        .arg("猫咪视频")
+        .arg("--page")
+        .arg("2")
+        .arg("--order")
+        .arg("click")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    assert_eq!(json["page"], 2);
+    assert_eq!(json["page_size"], 1);
+    assert_eq!(json["total"], 41);
+    assert_eq!(json["total_pages"], 3);
+    assert_eq!(json["next_page"], 3);
+    assert_eq!(json["items"][0]["bvid"], "BV1Q541167Qg");
+    assert_eq!(json["items"][0]["title"], "猫咪的日常");
+    assert_eq!(json["items"][0]["author"], "视频作者");
+    search.assert();
+    view.assert_calls(0);
+    playurl.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+fn search_human_output_shows_result_indexes_and_continuation() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    mock_search_nav(&server);
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/wbi/search/type")
+            .query_param("keyword", "猫's")
+            .query_param("page", "2")
+            .query_param("order", "click")
+            .query_param_exists("w_rid");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "page": 1,
+                "pages": 3,
+                "numResults": 21,
+                "numPages": 3,
+                "pagesize": 1,
+                "result": [{
+                    "type": "video",
+                    "aid": 455_017_605,
+                    "bvid": "BV1Q541167Qg",
+                    "title": "猫咪",
+                    "author": "Creator",
+                    "duration": "00:10"
+                }]
+            }
+        }));
+    });
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("search")
+        .arg("猫's")
+        .arg("--page")
+        .arg("2")
+        .arg("--order")
+        .arg("click");
+    let output = String::from_utf8(command.assert().success().get_output().stdout.clone())?;
+    assert!(output.contains("page: 2"));
+    assert!(output.contains("total: 21"));
+    assert!(output.contains("next page: 3"));
+    assert!(output.contains("1. bvid=BV1Q541167Qg"));
+    assert!(output.contains("creator=Creator"));
+    assert!(output.contains("title=猫咪"));
+    assert!(output.contains(
+        "bbdown plan 'https://search.bilibili.com/video?keyword=%E7%8C%AB%27s&page=2&order=click' --select INDEX"
+    ));
+    Ok(())
+}
+
+#[test]
+fn search_empty_results_and_invalid_page_are_bounded() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let nav = mock_search_nav(&server);
+    let search = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/wbi/search/type")
+            .query_param("keyword", "nothing")
+            .query_param("page", "1")
+            .query_param("order", "totalrank")
+            .query_param_exists("w_rid");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+                "data": {"page": 1, "pages": 0, "numResults": 0, "numPages": 0, "pagesize": 20, "result": []}
+        }));
+    });
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("search")
+        .arg("nothing")
+        .arg("--json");
+    let json: Value =
+        serde_json::from_slice(&command.assert().success().get_output().stdout.clone())?;
+    assert_eq!(json["items"], serde_json::json!([]));
+    assert_eq!(json["next_page"], Value::Null);
+    search.assert();
+
+    let mut invalid = bbdown_command()?;
+    invalid
+        .arg("--credential-file")
+        .arg(credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("search")
+        .arg("nothing")
+        .arg("--page")
+        .arg("0");
+    invalid
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("--page must be greater than 0"));
+    nav.assert_calls(1);
+    Ok(())
+}
+
+#[test]
+fn search_reports_unsupported_api_base_response() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let nav = server.mock(|when, then| {
+        when.method(GET).path("/x/web-interface/nav");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -1,
+            "message": "unsupported endpoint"
+        }));
+    });
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("search")
+        .arg("keyword");
+    command
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("unsupported endpoint"));
+    nav.assert();
+    Ok(())
+}
+
+#[test]
+fn search_rejects_oversized_upstream_page_size() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    mock_search_nav(&server);
+    let search = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/wbi/search/type")
+            .query_param("keyword", "Rust")
+            .query_param("page", "1")
+            .query_param("order", "totalrank")
+            .query_param_exists("w_rid");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "numResults": 21,
+                "numPages": 2,
+                "pagesize": 21,
+                "result": []
+            }
+        }));
+    });
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("search")
+        .arg("Rust");
+    command.assert().failure().stderr(predicates::str::contains(
+        "page size must be between 1 and 20",
+    ));
+    search.assert();
+    Ok(())
+}
+
+#[test]
+fn plan_and_download_search_inputs_require_selection_before_network() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let nav = mock_search_nav(&server);
+    for subcommand in ["plan", "download"] {
+        let mut command = bbdown_command()?;
+        command
+            .arg("--credential-file")
+            .arg(&credential_file)
+            .arg("--api-base")
+            .arg(server.base_url())
+            .arg(subcommand)
+            .arg("search:Rust");
+        command.assert().failure().stderr(predicates::str::contains(
+            "video search links require an explicit selection",
+        ));
+    }
+    nav.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+fn info_search_range_selection_hydrates_only_selected_results() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    mock_search_nav(&server);
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/wbi/search/type")
+            .query_param("keyword", "Rust")
+            .query_param("page", "1")
+            .query_param("order", "totalrank")
+            .query_param_exists("w_rid");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "numResults": 2,
+                "numPages": 1,
+                "pagesize": 2,
+                "result": [
+                    {"type": "video", "aid": 455_017_605, "bvid": "BV1Q541167Qg", "title": "First"},
+                    {"type": "video", "aid": 170_002, "title": "Second"}
+                ]
+            }
+        }));
+    });
+    let unselected = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/view")
+            .query_param("bvid", "BV1Q541167Qg");
+        then.status(500);
+    });
+    let selected = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/view")
+            .query_param("aid", "170002");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "aid": 170_002,
+                "title": "Hydrated second",
+                "desc": "description",
+                "owner": {"mid": 2, "name": "Selected creator"},
+                "pages": [{"page": 1, "cid": 22, "part": "Main", "duration": 42}]
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/tag/archive/tags")
+            .query_param("aid", "170002");
+        then.status(200)
+            .json_body_obj(&serde_json::json!({"code": 0, "data": []}));
+    });
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("info")
+        .arg("search:Rust")
+        .arg("--select")
+        .arg("2")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    assert!(serde_json::to_string(&json)?.contains("Hydrated second"));
+    selected.assert();
+    unselected.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+fn info_search_accepts_numeric_range_selection() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    mock_search_nav(&server);
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/wbi/search/type")
+            .query_param("keyword", "Rust")
+            .query_param("page", "1")
+            .query_param("order", "totalrank")
+            .query_param_exists("w_rid");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "numResults": 2,
+                "numPages": 1,
+                "pagesize": 2,
+                "result": [
+                    {"type": "video", "aid": 455_017_605, "bvid": "BV1Q541167Qg", "title": "First"},
+                    {"type": "video", "aid": 170_002, "title": "Second"}
+                ]
+            }
+        }));
+    });
+    let first = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/view")
+            .query_param("bvid", "BV1Q541167Qg");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "aid": 455_017_605,
+                "bvid": "BV1Q541167Qg",
+                "title": "First hydrated",
+                "owner": {"mid": 1, "name": "First creator"},
+                "pages": [{"page": 1, "cid": 11, "part": "Main", "duration": 10}]
+            }
+        }));
+    });
+    let second = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/view")
+            .query_param("aid", "170002");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "aid": 170_002,
+                "title": "Second hydrated",
+                "owner": {"mid": 2, "name": "Second creator"},
+                "pages": [{"page": 1, "cid": 22, "part": "Main", "duration": 20}]
+            }
+        }));
+    });
+    server.mock(|when, then| {
+        when.method(GET).path("/x/tag/archive/tags");
+        then.status(200)
+            .json_body_obj(&serde_json::json!({"code": 0, "data": []}));
+    });
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("info")
+        .arg("search:Rust")
+        .arg("--select")
+        .arg("1-2")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    assert!(String::from_utf8(output)?.contains("First hydrated"));
+    first.assert();
+    second.assert();
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn download_search_hydrates_and_downloads_only_explicitly_selected_video() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    mock_search_nav(&server);
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/wbi/search/type")
+            .query_param("keyword", "Rust")
+            .query_param("page", "1")
+            .query_param("order", "totalrank")
+            .query_param_exists("w_rid");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "numResults": 2,
+                "numPages": 1,
+                "pagesize": 2,
+                "result": [
+                    {"type": "video", "aid": 170_002, "title": "Unselected result"},
+                    {"type": "video", "aid": 170_001, "title": "Selected result"}
+                ]
+            }
+        }));
+    });
+    let selected_view = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/view")
+            .query_param("aid", "170001");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "aid": 170_001,
+                "bvid": "BV1xx411c7mD",
+                "title": "Selected video",
+                "owner": {"mid": 1, "name": "Selected creator"},
+                "pages": [{"page": 1, "cid": 11, "part": "Main", "duration": 3}]
+            }
+        }));
+    });
+    let unselected_view = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/view")
+            .query_param("aid", "170002");
+        then.status(500).body("unselected item must not hydrate");
+    });
+    let selected_playurl = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/playurl")
+            .query_param("avid", "170001")
+            .query_param("cid", "11")
+            .query_param("try_look", "1");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "dash": {
+                    "duration": 3,
+                    "video": [{
+                        "id": 80,
+                        "baseUrl": format!("{}/selected-video.m4s", server.base_url()),
+                        "base_url": format!("{}/selected-video.m4s", server.base_url())
+                    }],
+                    "audio": []
+                }
+            }
+        }));
+    });
+    let unselected_playurl = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/playurl")
+            .query_param("avid", "170002");
+        then.status(500)
+            .body("unselected item must not resolve playurl");
+    });
+    let selected_media = server.mock(|when, then| {
+        when.method(GET).path("/selected-video.m4s");
+        then.status(200).body("selected media bytes");
+    });
+    let unselected_media = server.mock(|when, then| {
+        when.method(GET).path("/unselected-video.m4s");
+        then.status(500)
+            .body("unselected item must not download media");
+    });
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("download")
+        .arg("search:Rust")
+        .arg("--select")
+        .arg("2")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--only")
+        .arg("video")
+        .arg("--no-cover")
+        .arg("--no-subtitles")
+        .arg("--no-danmaku")
+        .arg("--no-mux")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    let video_path = downloaded_file_path(&json, "video")?;
+    assert_eq!(fs::read(video_path)?, b"selected media bytes");
+    selected_view.assert();
+    unselected_view.assert_calls(0);
+    selected_playurl.assert();
+    unselected_playurl.assert_calls(0);
+    selected_media.assert();
+    unselected_media.assert_calls(0);
+    Ok(())
+}
+
+fn mock_search_nav(server: &MockServer) -> httpmock::Mock<'_> {
+    server.mock(|when, then| {
+        when.method(GET).path("/x/web-interface/nav");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "wbi_img": {
+                    "img_url": "https://i0.hdslb.com/bfs/wbi/0123456789abcdef0123456789abcdef.png",
+                    "sub_url": "https://i0.hdslb.com/bfs/wbi/fedcba9876543210fedcba9876543210.png"
+                }
+            }
+        }));
+    })
+}
+
+#[test]
 fn info_json_resolves_mock_video() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;

@@ -59,7 +59,15 @@ bbdown info following --select latest --json
 bbdown info https://www.bilibili.com/list/ml1103407912 --json
 bbdown info https://space.bilibili.com/123/dynamic --select latest --json
 bbdown info 'https://space.bilibili.com/123/lists/456?type=series' --json
+bbdown search "Rust async" --page 2 --order pubdate --json
 ```
+
+`search` 返回一页有界的普通视频关键词 metadata。若要解析、规划、播放或下载搜索结果，可将
+`search:<keyword>` 或官方搜索 URL 传给 `info`、`plan`、`playback` 或 `download`，并显式选择结果序号；只有
+被选中的结果会通过普通视频路径继续解析。页数限制和 Rust 示例见[用户指南](docs/user-guide.zh-CN.md)
+与[嵌入指南](docs/embedding.zh-CN.md)。
+已发布的 `v0.10.0` CLI 和 crate 不包含此功能；请使用包含该功能的源码检出，或后续实际包含它的版本。
+用搜索输入进行选择会重新查询；要精确指定刚展示的结果，请使用该条目的 BVID 或 aid。
 
 国内 PGC season metadata 会在 `info --json` 输出的 `episode_groups` 字段中包含按上游顺序排列的
 `main` 和 `section` 分集组。组成员使用完整 season 分集列表中的零基位置，因此即使 `--select` 只

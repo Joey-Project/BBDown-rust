@@ -163,6 +163,61 @@ device-cookie values when a new feed request needs `buvid3` or `buvid4` and the 
 no non-empty value for that name. It uses a temporary request header and a clone-shared in-memory
 cache; configured credentials are not changed. Following feeds do not use this initializer.
 
+## Ordinary Video Search
+
+Ordinary video search is not included in the published `v0.10.0` CLI. Use a source checkout that
+contains this feature, or a later release that includes it.
+
+Use `search` to fetch one bounded page of ordinary video keyword results as metadata:
+
+```bash
+bbdown search "Rust async" --json
+bbdown search "Rust async" --page 2 --order pubdate --json
+```
+
+The keyword must be 1 to 200 UTF-8 bytes after trimming and must not contain control characters;
+invalid keywords are rejected, not silently shortened.
+
+`--page` defaults to `1` and accepts any positive page number. `--order` defaults to `totalrank`; supported
+values are `totalrank`, `click` (play count), `pubdate`, `dm` (danmaku count), `stow` (favorites), and
+`scores` (comments). Each upstream page is fetched as a whole, with at most 20 raw rows; there is no
+local page-size option that could skip upstream rows.
+Output includes the actual page, page size, reported total and total page count, and `next_page` when
+the API reports a continuation. Pass another explicit `--page` to request another page.
+
+To resolve search results through the existing video path, use `search:<keyword>` or an official
+Bilibili video-search URL with its `keyword`, `page`, and `order` query parameters. For example:
+
+```bash
+bbdown info 'search:Rust async' --select 1,3-4 --json
+bbdown plan 'search:Rust async' --select 2 --json
+bbdown playback 'search:Rust async' --select 2 --json
+bbdown download 'search:Rust async' --select 2 --output-dir downloads
+```
+
+These generic commands require an explicit numeric selection, range, or `all`. Indexes are
+one-based within the page fetched by that command; `all` means all results from that one bounded
+page. Each use of `search:<keyword>` or a search URL runs a fresh query, so the upstream order may
+change and `--select N` does not pin an item from a page shown earlier. Use the displayed item's
+BVID or aid as an ordinary video input to target that exact result. Only selected
+rows are hydrated through the ordinary video resolver for metadata, planning, playback, or download. The
+standalone `search` command does not hydrate video details, resolve streams, or download media. A
+selected search result uses the first video part (P1), following collection-item planning behavior.
+To choose another part, take the selected result's BVID or aid and pass it to the ordinary video
+input with its usual `--select` page index.
+
+Search uses `--api-base` / `BBDOWN_API_BASE` for `/x/web-interface/nav` and
+`/x/web-interface/wbi/search/type`. A caller may point it at a trusted compatible service that
+implements both endpoints and their response shapes;
+the existing PGC Web playurl route only handles PGC Web playurl and does not provide search. Search
+requests are anonymous and never receive configured credentials or cookies. After explicit result
+selection, hydration returns to the ordinary video resolver and follows its existing credential
+profile rules. The search endpoint makes at most two API requests per page, caps each JSON response
+at 1 MiB, and uses the configured request timeout. A compatible endpoint or successful request
+does not guarantee regional availability.
+The anonymous live probe recorded for this feature confirms metadata search only; it does not
+establish real `view` or playurl access, playback planning, or download availability.
+
 ## Download Plans
 
 Use `plan` to resolve stream, subtitle, and danmaku availability:

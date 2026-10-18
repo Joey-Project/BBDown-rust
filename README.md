@@ -63,7 +63,19 @@ bbdown info following --select latest --json
 bbdown info https://www.bilibili.com/list/ml1103407912 --json
 bbdown info https://space.bilibili.com/123/dynamic --select latest --json
 bbdown info 'https://space.bilibili.com/123/lists/456?type=series' --json
+bbdown search "Rust async" --page 2 --order pubdate --json
 ```
+
+`search` returns one bounded page of ordinary video keyword metadata. To resolve, plan, play back, or
+download a search result, pass `search:<keyword>` or an official search URL to `info`, `plan`,
+`playback`, or `download` and explicitly select result indexes; only selected results are hydrated
+through the normal video path.
+This feature is not included in the published `v0.10.0` CLI or crate; use a source checkout that
+contains it, or a later release that includes it.
+Search-input selection runs a fresh query; use a displayed result's BVID or aid to target that exact
+video.
+See the [user guide](docs/user-guide.md) and [embedding guide](docs/embedding.md) for limits and
+Rust examples.
 
 Domestic PGC season metadata includes ordered `main` and `section` groups in the `episode_groups`
 field of `info --json` output. Membership uses zero-based positions into the full season episode list, so

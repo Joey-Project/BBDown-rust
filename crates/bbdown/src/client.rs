@@ -30,9 +30,13 @@ use tokio::sync::Mutex;
 use url::Url;
 
 mod metadata_page;
+mod video_search;
 pub use metadata_page::{
     MetadataCollectionInfo, MetadataConsistency, MetadataCursor, MetadataPage, MetadataPageOptions,
     MetadataStopReason,
+};
+pub use video_search::{
+    VIDEO_SEARCH_MAX_ITEMS, VideoSearchItem, VideoSearchOrder, VideoSearchPage, VideoSearchQuery,
 };
 
 pub(crate) const TV_PLAYURL_APPKEY: &str = "4409e2ce8ffd12b8";
@@ -514,6 +518,14 @@ impl BiliClient {
         metadata_page::resolve_metadata_page(self, input, options).await
     }
 
+    /// Searches one bounded page of ordinary videos without hydrating video details.
+    ///
+    /// The operation uses the configured API base, does not forward configured
+    /// credentials, and limits the navigation and search response bodies.
+    pub async fn search_videos(&self, query: VideoSearchQuery) -> Result<VideoSearchPage> {
+        video_search::search_videos(self, query).await
+    }
+
     pub async fn check_credential_health(&self) -> CredentialHealthReport {
         let credentials = self.config.credentials.redacted_summary();
         let probes = vec![
@@ -699,6 +711,20 @@ impl BiliClient {
             }
             Input::History => self.resolve_history(selection).await,
             Input::WatchLater => self.resolve_watch_later(selection).await,
+            Input::VideoSearch {
+                keyword,
+                page,
+                order,
+            } => self
+                .fetch_video_search_collection(
+                    VideoSearchQuery::new(keyword)
+                        .with_page(page)
+                        .with_order(order),
+                    selection,
+                    TagPolicy::Fetch,
+                )
+                .await
+                .map(ResolvedContent::Collection),
             Input::IntlEpisode(epid) => self
                 .fetch_intl_season_by_ep(epid, selection.or(Some(Selection::Current)))
                 .await
@@ -1157,6 +1183,22 @@ impl BiliClient {
                     .await?;
                 self.plan_season(season, StreamSource::PugvWeb, planning_mode)
                     .await
+            }
+            Input::VideoSearch {
+                keyword,
+                page,
+                order,
+            } => {
+                let collection = self
+                    .fetch_video_search_collection(
+                        VideoSearchQuery::new(keyword)
+                            .with_page(page)
+                            .with_order(order),
+                        selection,
+                        TagPolicy::Skip,
+                    )
+                    .await?;
+                self.plan_collection(collection, planning_mode).await
             }
             collection_input @ (Input::SpaceVideos(_)
             | Input::FavoriteList { .. }
@@ -3164,6 +3206,112 @@ impl BiliClient {
         Ok(VideoCollectionResolution {
             collection,
             selected_items,
+        })
+    }
+
+    fn select_video_search_items(
+        items: &[VideoSearchItem],
+        selection: &Selection,
+    ) -> Result<Vec<(u32, VideoSearchItem)>> {
+        let indexed = items
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(index, item)| {
+                u32::try_from(index + 1)
+                    .map(|index| (index, item))
+                    .map_err(|_| Error::InvalidInput("too many search results".to_owned()))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        match selection {
+            Selection::All => Ok(indexed),
+            Selection::Page(index) => {
+                let selected = indexed
+                    .into_iter()
+                    .filter(|(candidate, _)| candidate == index)
+                    .collect::<Vec<_>>();
+                if selected.is_empty() {
+                    Err(Error::MissingField("selected search result"))
+                } else {
+                    Ok(selected)
+                }
+            }
+            Selection::Indices(indices) => select_items_by_index(
+                &indexed,
+                indices,
+                |(index, _)| *index,
+                "selected search result",
+            ),
+            Selection::Current | Selection::Latest | Selection::Episode(_) => {
+                Err(Error::InvalidInput(
+                    "video search requires an explicit numeric, range, or all selection".to_owned(),
+                ))
+            }
+        }
+    }
+
+    async fn fetch_video_search_collection(
+        &self,
+        query: VideoSearchQuery,
+        selection: Option<Selection>,
+        tag_policy: TagPolicy,
+    ) -> Result<VideoCollectionResolution> {
+        let selection = selection.ok_or(Error::SelectionRequired {
+            input_kind: "video search",
+        })?;
+        if !matches!(
+            &selection,
+            Selection::All | Selection::Page(_) | Selection::Indices(_)
+        ) {
+            return Err(Error::InvalidInput(
+                "video search requires an explicit numeric, range, or all selection".to_owned(),
+            ));
+        }
+        if matches!(&selection, Selection::Page(0)) {
+            return Err(Error::InvalidInput(
+                "video search result indices are 1-based".to_owned(),
+            ));
+        }
+        let page = self.search_videos(query.clone()).await?;
+        let selected = Self::select_video_search_items(&page.items, &selection)?;
+        let mut items = Vec::with_capacity(selected.len());
+        for (search_index, item) in selected {
+            let video = if let Some(bvid) = item.bvid.as_deref() {
+                self.fetch_video_by_bvid(bvid, tag_policy).await?
+            } else if let Some(aid) = item.aid {
+                self.fetch_video_by_aid(aid, tag_policy).await?
+            } else {
+                return Err(Error::MissingField("search result aid or bvid"));
+            };
+            let first_page = video
+                .pages
+                .first()
+                .ok_or(Error::MissingField("selected search video first page"))?;
+            items.push(VideoCollectionItem {
+                index: search_index,
+                aid: video.aid,
+                bvid: video.bvid,
+                cid: first_page.cid,
+                title: video.title,
+                cover_url: video.cover_url,
+                description: video.description,
+                pub_time: video.pub_time,
+                owner: video.owner,
+                duration_seconds: first_page.duration_seconds,
+            });
+        }
+        Ok(VideoCollectionResolution {
+            collection: VideoCollectionMetadata {
+                id: None,
+                kind: VideoCollectionKind::Search,
+                title: format!("Search: {}", query.keyword.trim()),
+                description: format!("Video search results for {}", query.keyword.trim()),
+                cover_url: None,
+                pub_time: None,
+                owner: None,
+                items: items.clone(),
+            },
+            selected_items: items,
         })
     }
 

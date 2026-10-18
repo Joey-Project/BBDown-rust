@@ -21,9 +21,9 @@ use bbdown_core::{
     QrLoginCredentialsState, QrLoginKind, QrLoginTicket, QrLoginTicketOutput, ResolvedContent,
     RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind,
     RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet, StreamSource,
-    SubtitleAiPolicy, TvAccessKeyLoginCredentials, TvAccessKeyRefreshRequest,
-    WebCookieRefreshCredentials, WebCookieRefreshRequest, archive_entry_allows_danmaku_update,
-    credential_preflight_requirements_for_media_paths,
+    SubtitleAiPolicy, TvAccessKeyLoginCredentials, TvAccessKeyRefreshRequest, VideoSearchOrder,
+    VideoSearchQuery, WebCookieRefreshCredentials, WebCookieRefreshRequest,
+    archive_entry_allows_danmaku_update, credential_preflight_requirements_for_media_paths,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Deserialize;
@@ -178,6 +178,15 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    Search {
+        keyword: String,
+        #[arg(long, default_value_t = 1)]
+        page: u32,
+        #[arg(long, value_enum, default_value = "totalrank")]
+        order: SearchOrderArg,
+        #[arg(long)]
+        json: bool,
+    },
     Plan {
         url: String,
         #[arg(long)]
@@ -228,6 +237,48 @@ enum ResolverCatalogCommand {
         #[arg(long)]
         server: String,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum SearchOrderArg {
+    #[value(name = "totalrank")]
+    TotalRank,
+    #[value(name = "click")]
+    Click,
+    #[value(name = "pubdate")]
+    PubDate,
+    #[value(name = "dm")]
+    Danmaku,
+    #[value(name = "stow")]
+    Favorites,
+    #[value(name = "scores")]
+    Comments,
+}
+
+impl From<SearchOrderArg> for VideoSearchOrder {
+    fn from(order: SearchOrderArg) -> Self {
+        match order {
+            SearchOrderArg::TotalRank => Self::TotalRank,
+            SearchOrderArg::Click => Self::Click,
+            SearchOrderArg::PubDate => Self::PubDate,
+            SearchOrderArg::Danmaku => Self::Danmaku,
+            SearchOrderArg::Favorites => Self::Favorites,
+            SearchOrderArg::Comments => Self::Comments,
+        }
+    }
+}
+
+impl SearchOrderArg {
+    const fn api_value(self) -> &'static str {
+        match self {
+            Self::TotalRank => "totalrank",
+            Self::Click => "click",
+            Self::PubDate => "pubdate",
+            Self::Danmaku => "dm",
+            Self::Favorites => "stow",
+            Self::Comments => "scores",
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -1131,6 +1182,7 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 async fn run() -> anyhow::Result<()> {
     let raw_args = std::env::args_os().collect::<Vec<_>>();
     let cli = Cli::parse_from(raw_args.clone());
@@ -1181,6 +1233,22 @@ async fn run() -> anyhow::Result<()> {
         }
         Command::Info { url, select, json } => {
             handle_info(&credential_runtime, &client_runtime, url, select, json).await?;
+        }
+        Command::Search {
+            keyword,
+            page,
+            order,
+            json,
+        } => {
+            handle_video_search(
+                &credential_runtime,
+                &client_runtime,
+                keyword,
+                page,
+                order,
+                json,
+            )
+            .await?;
         }
         Command::Plan { url, select, json } => {
             handle_plan(
@@ -1829,6 +1897,82 @@ async fn handle_info(
         print_human_summary(&resolved);
     }
     Ok(())
+}
+
+async fn handle_video_search(
+    credentials: &CredentialRuntime,
+    client_runtime: &ClientRuntimeConfig,
+    keyword: String,
+    page: u32,
+    order: SearchOrderArg,
+    json: bool,
+) -> anyhow::Result<()> {
+    ensure!(page > 0, "--page must be greater than 0");
+    let client = BiliClient::new(client_runtime.client_config(credentials.load()?));
+    let result = client
+        .search_videos(
+            VideoSearchQuery::new(keyword.clone())
+                .with_page(page)
+                .with_order(order.into()),
+        )
+        .await?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    } else {
+        print_video_search_page(&result, &keyword, order)?;
+    }
+    Ok(())
+}
+
+fn print_video_search_page(
+    page: &bbdown_core::VideoSearchPage,
+    keyword: &str,
+    order: SearchOrderArg,
+) -> anyhow::Result<()> {
+    println!("page: {}", page.page);
+    println!("page size: {}", page.page_size);
+    println!("total: {}", page.total);
+    println!("total pages: {}", page.total_pages);
+    if let Some(next_page) = page.next_page {
+        println!("next page: {next_page}");
+    } else {
+        println!("next page: none");
+    }
+    for (index, item) in page.items.iter().enumerate() {
+        let bvid = item.bvid.as_deref().unwrap_or("unknown");
+        let aid = item
+            .aid
+            .map_or_else(|| "unknown".to_owned(), |aid| aid.to_string());
+        let creator = item.author.as_deref().unwrap_or("unknown");
+        println!(
+            "{}. bvid={} aid={} creator={} title={}",
+            index + 1,
+            bvid,
+            aid,
+            creator,
+            item.title
+        );
+    }
+    if !page.items.is_empty() {
+        let mut search_url = url::Url::parse("https://search.bilibili.com/video")?;
+        search_url
+            .query_pairs_mut()
+            .append_pair("keyword", keyword)
+            .append_pair("page", &page.page.to_string())
+            .append_pair("order", order.api_value());
+        let search_url = shell_quote_single(search_url.as_str());
+        println!(
+            "select results from this page with --select INDEX or INDEX-RANGE; use the same page and order with: bbdown plan {search_url} --select INDEX"
+        );
+        println!(
+            "for the exact item, plan by its BVID or aid; selecting the search URL runs a fresh search and ranking may change"
+        );
+    }
+    Ok(())
+}
+
+fn shell_quote_single(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 async fn prepare_credentials_for_media_request(
