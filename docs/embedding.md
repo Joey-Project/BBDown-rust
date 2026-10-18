@@ -160,7 +160,9 @@ explicit selection, normal video hydration follows the existing configured crede
 rules.
 
 The trimmed keyword must contain 1 to 200 UTF-8 bytes and must not contain control characters;
-invalid values are rejected rather than truncated.
+invalid values are rejected rather than truncated. Before WBI signing and sending, the search
+normalization removes ASCII `!`, `'`, `(`, `)`, and `*`. If normalization leaves an empty keyword,
+the request is rejected.
 
 ```rust,no_run
 use bbdown_core::{
@@ -217,8 +219,9 @@ the zero-based offset chosen from the supplied `items` slice or `None` when the 
 
 `VideoSearchOrder` supports total rank, clicks, publication time, danmaku, favorites, and comments;
 the wire values are `totalrank`, `click`, `pubdate`, `dm`, `stow`, and `scores`. `VideoSearchPage`
-reports `page`, `page_size`, `total`, `total_pages`, `next_page`, and `items`; serialized fields use
-snake_case. Search items expose
+reports `page`, `page_size`, `total`, `total_pages`, `next_page`, and `items`. `page` uses the
+positive page reported by the service, or the requested page when the response omits that field;
+`next_page` is derived from the actual `page`. Serialized fields use snake_case. Search items expose
 optional BVID, aid, and cid values along with title, author, duration, publication time, counts,
 cover URL, and description; absent upstream identifiers stay absent.
 

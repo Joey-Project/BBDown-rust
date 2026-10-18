@@ -144,6 +144,7 @@ API。不带 selector 时，集合类输入会选择全部解析条目；传入 
 credentials 或 Cookie。显式选择结果后，普通视频 hydration 会遵循现有 credential profile 规则。
 
 关键词去除首尾空白后须为 1 至 200 个 UTF-8 字节，且不能包含控制字符；不符合要求的值会被拒绝，不会截短。
+WBI 签名和发送请求前，搜索规范化会移除 ASCII `!`、`'`、`(`、`)` 和 `*`；规范化后若关键词为空，则会报错拒绝请求。
 
 ```rust,no_run
 use bbdown_core::{
@@ -200,9 +201,9 @@ async fn search_and_plan() -> bbdown_core::Result<()> {
 
 `VideoSearchOrder` 支持综合排序、播放量、发布时间、弹幕量、收藏量和评论量，对应上游值分别为
 `totalrank`、`click`、`pubdate`、`dm`、`stow` 和 `scores`。`VideoSearchPage` 提供 `page`、
-`page_size`、`total`、`total_pages`、`next_page` 和 `items`。搜索条目包含可选 BVID、aid、cid，
-以及标题、作者、时长、发布时间、各类计数、封面 URL 和描述；JSON 字段使用 snake_case，上游没有提供的
-标识会保持缺失。
+`page_size`、`total`、`total_pages`、`next_page` 和 `items`。`page` 使用服务端返回的正页码；响应缺少该字段时
+回退为请求页码。`next_page` 根据实际 `page` 计算。搜索条目包含可选 BVID、aid、cid，以及标题、作者、时长、
+发布时间、各类计数、封面 URL 和描述；JSON 字段使用 snake_case，上游没有提供的标识会保持缺失。
 
 对 `Input::VideoSearch`，`resolve_input`、`plan`、`plan_download` 和 `plan_playback` 必须显式传入 `Selection::Page`、
 `Selection::Indices` 或 `Selection::All`。序号从 1 开始，作用于本次重新查询后经筛选和去重的条目；

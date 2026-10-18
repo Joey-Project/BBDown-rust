@@ -45,6 +45,11 @@ impl VideoSearchQuery {
                 "video search keyword must contain 1 to 200 non-control bytes".to_owned(),
             ));
         }
+        if filter_wbi_keyword(keyword).is_empty() {
+            return Err(Error::InvalidInput(
+                "video search keyword is empty after WBI normalization".to_owned(),
+            ));
+        }
         if self.page == 0 {
             return Err(Error::InvalidInput(
                 "video search page must be greater than zero".to_owned(),
@@ -128,6 +133,7 @@ pub struct VideoSearchItem {
 
 #[derive(Debug, Deserialize)]
 struct SearchPageData {
+    page: Option<u32>,
     #[serde(rename = "numResults")]
     total: Option<u64>,
     #[serde(rename = "numPages")]
@@ -231,18 +237,18 @@ pub(super) async fn search_videos(
             .as_deref()
             .ok_or(Error::MissingField("data.wbi_img.sub_url"))?,
     )?;
-    let params = vec![
-        ("keyword", query.keyword.trim().to_owned()),
-        ("order", query.order.api_value().to_owned()),
-        ("page", query.page.to_string()),
-        ("search_type", "video".to_owned()),
-        ("wts", current_unix_timestamp().to_string()),
-    ];
+    let signed_query = signed_video_search_query(
+        &query.keyword,
+        query.page,
+        query.order,
+        &mixin_key,
+        &current_unix_timestamp().to_string(),
+    )?;
     let mut url = BiliClient::endpoint_url(
         &client.config.endpoints.api_base,
         "/x/web-interface/wbi/search/type",
     )?;
-    url.set_query(Some(&wbi_signed_query(params, &mixin_key)));
+    url.set_query(Some(&signed_query));
     let response: ApiData<SearchPageData> =
         get_bounded_json_without_cookie(&bounded_client, url).await?;
     let data = response.into_data()?;
@@ -251,6 +257,12 @@ pub(super) async fn search_videos(
         .total_pages
         .ok_or(Error::MissingField("data.numPages"))?;
     let page_size = data.pagesize.ok_or(Error::MissingField("data.pagesize"))?;
+    let actual_page = data.page.unwrap_or(query.page);
+    if actual_page == 0 {
+        return Err(Error::InvalidInput(
+            "video search returned an invalid page number".to_owned(),
+        ));
+    }
     if page_size == 0 || page_size as usize > VIDEO_SEARCH_MAX_ITEMS {
         return Err(Error::InvalidInput(format!(
             "video search page size must be between 1 and {VIDEO_SEARCH_MAX_ITEMS}"
@@ -281,19 +293,49 @@ pub(super) async fn search_videos(
             true
         })
         .collect();
-    let next_page = if query.page < total_pages {
-        query.page.checked_add(1)
+    let next_page = if actual_page < total_pages {
+        actual_page.checked_add(1)
     } else {
         None
     };
     Ok(VideoSearchPage {
-        page: query.page,
+        page: actual_page,
         page_size,
         total,
         total_pages,
         next_page,
         items,
     })
+}
+
+fn filter_wbi_keyword(keyword: &str) -> String {
+    keyword
+        .chars()
+        .filter(|character| !matches!(character, '!' | '\'' | '(' | ')' | '*'))
+        .collect()
+}
+
+fn signed_video_search_query(
+    keyword: &str,
+    page: u32,
+    order: VideoSearchOrder,
+    mixin_key: &str,
+    wts: &str,
+) -> Result<String> {
+    let keyword = filter_wbi_keyword(keyword.trim());
+    if keyword.is_empty() {
+        return Err(Error::InvalidInput(
+            "video search keyword is empty after WBI normalization".to_owned(),
+        ));
+    }
+    let params = vec![
+        ("keyword", keyword),
+        ("order", order.api_value().to_owned()),
+        ("page", page.to_string()),
+        ("search_type", "video".to_owned()),
+        ("wts", wts.to_owned()),
+    ];
+    Ok(wbi_signed_query(params, mixin_key))
 }
 
 async fn get_bounded_json_without_cookie<T>(client: &BiliClient, url: url::Url) -> Result<T>
@@ -403,7 +445,7 @@ fn decode_entity(entity: &str) -> Option<char> {
 mod tests {
     use super::{
         SearchVideoRow, VideoSearchItem, VideoSearchOrder, VideoSearchQuery,
-        clean_highlighted_text, decode_html_entities, search_videos,
+        clean_highlighted_text, decode_html_entities, search_videos, signed_video_search_query,
     };
     use crate::client::TagPolicy;
     use crate::{BiliClient, ClientConfig, Credentials, EndpointConfig, Error, Input, Selection};
@@ -424,6 +466,7 @@ mod tests {
     fn query_validation_rejects_empty_control_and_out_of_range_inputs() {
         for query in [
             VideoSearchQuery::new(" "),
+            VideoSearchQuery::new("!'()*"),
             VideoSearchQuery::new("bad\nquery"),
             VideoSearchQuery::new("rust").with_page(0),
         ] {
@@ -444,6 +487,32 @@ mod tests {
             "\"totalrank\""
         );
         assert_eq!(serde_json::to_string(&VideoSearchOrder::Danmaku)?, "\"dm\"");
+        Ok(())
+    }
+
+    #[test]
+    fn forbidden_wbi_keyword_characters_are_filtered_before_signing() -> anyhow::Result<()> {
+        let signed = signed_video_search_query(
+            "Rust's async C++ (tutorial)!*",
+            2,
+            VideoSearchOrder::TotalRank,
+            "0123456789abcdef",
+            "1700000000",
+        )?;
+        assert_eq!(
+            signed,
+            "keyword=Rusts+async+C%2B%2B+tutorial&order=totalrank&page=2&search_type=video&wts=1700000000&w_rid=b596c0401d43384988d6613b47b34dc8"
+        );
+        assert!(matches!(
+            signed_video_search_query(
+                "!'()*",
+                1,
+                VideoSearchOrder::TotalRank,
+                "0123456789abcdef",
+                "1700000000",
+            ),
+            Err(Error::InvalidInput(_))
+        ));
         Ok(())
     }
 
@@ -511,7 +580,7 @@ mod tests {
         let client = test_client(&server, true);
         let page = search_videos(
             &client,
-            VideoSearchQuery::new("Rust 搜索")
+            VideoSearchQuery::new("Rust 搜索!'()*")
                 .with_page(2)
                 .with_order(VideoSearchOrder::Favorites),
         )
@@ -540,6 +609,7 @@ mod tests {
         let client = test_client(&server, false);
         for query in [
             VideoSearchQuery::new(" "),
+            VideoSearchQuery::new("!'()*"),
             VideoSearchQuery::new("bad\u{0007}query"),
             VideoSearchQuery::new("valid").with_page(0),
         ] {
@@ -549,6 +619,41 @@ mod tests {
             ));
         }
         assert_eq!(nav.calls(), 0);
+    }
+
+    #[tokio::test]
+    async fn search_uses_the_page_returned_by_the_service_for_continuation() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let _nav = server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/nav");
+            then.status(200).json_body(nav_response(0));
+        });
+        let mut search = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/wbi/search/type")
+                .query_param("page", "999");
+            then.status(200)
+                .json_body(search_response_with_page(4, 5, 5, 20, &[]));
+        });
+        let client = test_client(&server, false);
+        let page = search_videos(&client, VideoSearchQuery::new("clamped").with_page(999)).await?;
+
+        assert_eq!(page.page, 4);
+        assert_eq!(page.next_page, Some(5));
+        assert_eq!(search.calls(), 1);
+        search.delete();
+
+        let zero_page = server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/wbi/search/type");
+            then.status(200)
+                .json_body(search_response_with_page(0, 5, 5, 20, &[]));
+        });
+        assert!(matches!(
+            search_videos(&client, VideoSearchQuery::new("invalid page")).await,
+            Err(Error::InvalidInput(message)) if message.contains("invalid page")
+        ));
+        assert_eq!(zero_page.calls(), 1);
+        Ok(())
     }
 
     #[tokio::test]
@@ -798,6 +903,18 @@ mod tests {
         json!({"code":0,"data":{
             "numResults":total,"numPages":total_pages,"pagesize":page_size,"result":rows
         }})
+    }
+
+    fn search_response_with_page(
+        page: u32,
+        total: u64,
+        total_pages: u32,
+        page_size: u32,
+        rows: &[Value],
+    ) -> Value {
+        let mut response = search_response(total, total_pages, page_size, rows);
+        response["data"]["page"] = json!(page);
+        response
     }
 
     fn test_client(server: &MockServer, prefix: bool) -> BiliClient {

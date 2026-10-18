@@ -154,14 +154,14 @@ fn search_human_output_shows_result_indexes_and_continuation() -> anyhow::Result
     server.mock(|when, then| {
         when.method(GET)
             .path("/x/web-interface/wbi/search/type")
-            .query_param("keyword", "猫's")
+            .query_param("keyword", "猫s")
             .query_param("page", "2")
             .query_param("order", "click")
             .query_param_exists("w_rid");
         then.status(200).json_body_obj(&serde_json::json!({
             "code": 0,
             "data": {
-                "page": 1,
+                "page": 2,
                 "pages": 3,
                 "numResults": 21,
                 "numPages": 3,
@@ -321,25 +321,92 @@ fn search_rejects_oversized_upstream_page_size() -> anyhow::Result<()> {
 }
 
 #[test]
-fn plan_and_download_search_inputs_require_selection_before_network() -> anyhow::Result<()> {
+fn search_commands_require_selection_before_credential_preflight() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;
     let credential_file = temp.path().join("credentials.json");
+    let sentinel = b"invalid credential store sentinel";
+    fs::write(&credential_file, sentinel)?;
     let nav = mock_search_nav(&server);
-    for subcommand in ["plan", "download"] {
-        let mut command = bbdown_command()?;
-        command
-            .arg("--credential-file")
-            .arg(&credential_file)
-            .arg("--api-base")
-            .arg(server.base_url())
-            .arg(subcommand)
-            .arg("search:Rust");
-        command.assert().failure().stderr(predicates::str::contains(
-            "video search links require an explicit selection",
-        ));
+    for preflight in ["fail", "renew"] {
+        for subcommand in ["plan", "playback", "download"] {
+            let mut command = bbdown_command()?;
+            command
+                .arg("--credential-file")
+                .arg(&credential_file)
+                .arg("--api-base")
+                .arg(server.base_url())
+                .arg("--playurl-mode")
+                .arg("app")
+                .arg("--credential-preflight")
+                .arg(preflight)
+                .arg(subcommand)
+                .arg("search:Rust");
+            if subcommand == "download" {
+                command
+                    .arg("--output-dir")
+                    .arg(temp.path().join("downloads"));
+            }
+            let output = command.assert().failure().get_output().clone();
+            let stderr = String::from_utf8(output.stderr)?;
+            assert!(stderr.contains(
+                "video search links require an explicit selection in non-interactive mode"
+            ));
+            assert!(!stderr.contains("credential preflight failed"));
+            assert!(!stderr.contains("credential store"));
+            assert_eq!(fs::read(&credential_file)?, sentinel);
+        }
     }
     nav.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+fn plan_search_with_explicit_selection_keeps_normal_hydration() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    mock_search_nav(&server);
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/wbi/search/type")
+            .query_param("keyword", "Rust")
+            .query_param("page", "1")
+            .query_param("order", "totalrank")
+            .query_param_exists("w_rid");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "page": 1,
+                "numResults": 1,
+                "numPages": 1,
+                "pagesize": 1,
+                "result": [{"type": "video", "aid": 170_001, "title": "Selected result"}]
+            }
+        }));
+    });
+    mock_video_stream_plan_endpoints(&server);
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("plan")
+        .arg("search:Rust")
+        .arg("--select")
+        .arg("1")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let plan: Value = serde_json::from_slice(&output)?;
+    assert_eq!(plan["title"], "Search: Rust");
+    assert_eq!(plan["entries"].as_array().map(Vec::len), Some(1));
+    assert_eq!(plan["entries"][0]["aid"], 170_001);
+    assert_eq!(plan["entries"][0]["title"], "Mock video");
     Ok(())
 }
 

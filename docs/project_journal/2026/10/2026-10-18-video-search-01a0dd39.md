@@ -5,7 +5,7 @@ status: completed
 created: 2026-10-18
 updated: 2026-10-18
 branch: wip/video-search
-pr:
+pr: https://github.com/Joey-Project/BBDown-rust/pull/106
 supersedes: []
 superseded_by:
 ---
@@ -26,7 +26,10 @@ superseded_by:
   the actual page, upstream page size, total result count, total page count, a checked optional
   `next_page`, and valid deduplicated `VideoSearchItem` rows.
 - Keywords are trimmed, must contain 1–200 UTF-8 bytes, and cannot contain control characters;
-  invalid input is rejected rather than truncated.
+  invalid input is rejected rather than truncated. Before WBI signing and sending, normalization
+  removes ASCII `!`, `'`, `(`, `)`, and `*`; a keyword that normalizes to empty is rejected.
+- `VideoSearchPage.page` uses the positive page returned by the service, or the requested page if
+  the response omits that field. `next_page` is derived from this actual page.
 - Search uses at most two API requests per call (WBI navigation and search), accepts at most 20 raw
   rows, caps each response at 1 MiB, and uses the configured request timeout. Both requests are
   anonymous and never receive configured credentials or cookies. After explicit selection, video
@@ -59,27 +62,32 @@ superseded_by:
 
 ## Validation
 
-- `cargo test -p bbdown-core search --locked` passed: 16 tests. Coverage includes anonymous
-  navigation/search requests, fixed API-base behavior, and rejecting 3xx responses without following
-  redirects.
-- Focused CLI search tests passed: 9 tests. The mock flow searches, explicitly selects result 2, and
-  downloads its media; only the selected item's view, playurl, and media endpoints are requested,
-  and the output bytes match the mock media.
-- An anonymous official Rust CLI search for `Rust 教程` at page 1 with `totalrank` exited 0. It
-  returned `page_size=20`, `total=1000`, `total_pages=50`, `next_page=2`, and 17 valid items, with
-  empty stderr. No local credential file or credential environment values were present. The probe
-  made no playurl or media request; it verifies live metadata search only, not real playback
-  planning or download e2e.
-- A second anonymous official Rust CLI search exited 0 for `Rust!`, page 1, `totalrank`. It returned
-  `page_size=20`, `total=1000`, `total_pages=50`, `next_page=2`, and 18 valid items; its JSON output
-  was 11,649 bytes and stderr was empty. The credential path remained absent. The request made no
-  `view`, playurl, or media request, so this confirms live metadata search only, not playback access,
-  planning, or download e2e. The earlier `Rust 教程` result remains the separate 17-item observation.
-- Final `just ci` passed using rustc 1.99.1 and the Rust 1.95.0 MSRV check. Workspace test targets
-  reported 902 passed and 3 ignored across counts of 67, 169, 9 (2 ignored), 633, 21 (1 ignored),
-  1, and 2. The additional CLI e2e run passed 169 tests. The `bbdown-core` publish dry run packaged
-  and verified the crate, then aborted upload as expected for dry-run mode; no upload was made.
+- `cargo test -p bbdown-core search --locked` passed after the PR #106 fixes: 18 tests. Focused CLI
+  search tests passed: 10 tests.
+- The CLI reported `just ci` completed with exit 0 using rustc 1.99.1 and the Rust 1.95.0 MSRV
+  check. Workspace test targets reported 905 passed and 3 ignored across counts of 67, 170, 9
+  (2 ignored), 635, 21 (1 ignored), 1, and 2. A separate CLI e2e run passed 170 tests; this is an
+  additional run, not part of the workspace total. The `bbdown-core` publish dry run packaged and
+  verified the crate, then aborted upload as expected for dry-run mode; no upload was made.
+- The final anonymous official Rust CLI metadata smoke for `Rust!`, page 1, `totalrank`, exited 0.
+  It returned `page_size=20`, `total=1000`, `total_pages=50`, `next_page=2`, and 18 items; the JSON
+  output was 11,507 bytes and stderr was empty. The anonymous credentials file did not exist. The
+  request made no media request, so this confirms live metadata search only, not playback access,
+  planning, or download e2e.
+- The earlier initial-head `Rust 教程` metadata smoke returned 17 valid items. It is a separate
+  observation and is not a validation result for the PR #106 fixes.
 - Documentation validation: `project_journal.py validate` and `git diff --check` passed.
+
+## PR #106 Review Fixes
+
+- Normalize WBI search keywords by removing ASCII `!`, `'`, `(`, `)`, and `*` before signing and
+  sending, and reject a keyword that becomes empty.
+- Report the positive page returned by the service, falling back to the requested page when the
+  response omits it; calculate `next_page` from the actual page.
+- Reject a missing search selection before CLI credential strict/renew preflight can run, avoiding
+  credential renewal side effects when no result was selected.
+- PR: [#106](https://github.com/Joey-Project/BBDown-rust/pull/106). Validation of these fixes is
+  recorded above. No fix commit SHA is recorded in this journal.
 
 ## Evidence
 

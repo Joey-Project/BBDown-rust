@@ -176,14 +176,17 @@ bbdown search "Rust async" --page 2 --order pubdate --json
 ```
 
 The keyword must be 1 to 200 UTF-8 bytes after trimming and must not contain control characters;
-invalid keywords are rejected, not silently shortened.
+invalid keywords are rejected, not silently shortened. Before WBI signing and sending, search
+normalization removes ASCII `!`, `'`, `(`, `)`, and `*`; a keyword that becomes empty is rejected.
 
 `--page` defaults to `1` and accepts any positive page number. `--order` defaults to `totalrank`; supported
 values are `totalrank`, `click` (play count), `pubdate`, `dm` (danmaku count), `stow` (favorites), and
 `scores` (comments). Each upstream page is fetched as a whole, with at most 20 raw rows; there is no
 local page-size option that could skip upstream rows.
-Output includes the actual page, page size, reported total and total page count, and `next_page` when
-the API reports a continuation. Pass another explicit `--page` to request another page.
+Output includes the service-reported positive page (or the requested page when the response omits
+that field), page size, reported total and total page count, and `next_page` when the API reports a
+continuation. `next_page` is derived from the actual page. Pass another explicit `--page` to request
+another page.
 
 To resolve search results through the existing video path, use `search:<keyword>` or an official
 Bilibili video-search URL with its `keyword`, `page`, and `order` query parameters. For example:

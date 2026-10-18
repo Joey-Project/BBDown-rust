@@ -2825,6 +2825,7 @@ fn selection_required_input_kind(input: &Input) -> Option<&'static str> {
         Input::Season(_) => Some("season"),
         Input::Media(_) => Some("media"),
         Input::CheeseSeason(_) => Some("cheese season"),
+        Input::VideoSearch { .. } => Some("video search"),
         _ => None,
     }
 }
