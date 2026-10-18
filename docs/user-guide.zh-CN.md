@@ -178,12 +178,24 @@ bbdown download 'search:Rust async' --select 2 --output-dir downloads
 因此 `--select N` 不会锁定之前展示页面里的条目。要精确处理刚展示的搜索结果，请将页面条目的 BVID 或 aid
 作为普通视频输入。只有选中的条目会交给普通视频解析器补充 metadata、规划、播放或下载。独立的
 `search` 命令不会补充视频详情、解析流或下载媒体，也不会加载凭据文件或要求指定的 credential profile 存在。
-选中的搜索结果按集合条目行为只使用第一个视频分 P（P1）。
+选中的普通 UGC 结果按集合条目行为只使用第一个视频分 P（P1）。
 如需选择其他分 P，可取出已选结果的 BVID 或 aid，再将其作为普通视频输入并使用原有的 `--select` 页码。
 
-搜索使用 `--api-base` / `BBDOWN_API_BASE` 请求 `/x/web-interface/nav` 和
+直接使用已展示条目的 BVID 或 aid 会保留现有直接视频行为。PGC 自动识别只在通过搜索输入选择条目时运行。
+此路径确认 PGC 分集后，如需后续命令固定到同一分集，请使用 plan 中返回的 `epid`，并传入 `ep<ID>`；
+直接 BV/aid 输入不会继承搜索选择中的 PGC 上下文。
+
+搜索列表仍是普通视频搜索，保留现有 collection JSON 形状；搜索条目本身不会新增 PGC 分集字段。若选中 BVID 或 aid
+的官方 `view` 响应在 `data.redirect_url` 中返回 `bilibili.com` 或 `www.bilibili.com` 下匹配
+`/bangumi/play/ep<ID>` 的分集链接，解析器会通过 `--pgc-base` / `BBDOWN_PGC_BASE` 请求
+`/pgc/view/web/season?ep_id=<ID>`。只有返回的 season 包含该分集且 aid 与选中视频一致时才接受识别。
+规划、播放和下载会保留已确认的 epid 和 cid。无法确认的分集重定向会明确报错，不猜测 PGC 身份，
+也不会把普通错误当作区域限制。PGC Web 使用配置的 Web playurl 路由；Web 和 APP 沿用现有受限区域代理回退。
+TV playurl 语义不变。
+
+搜索 metadata 使用 `--api-base` / `BBDOWN_API_BASE` 请求 `/x/web-interface/nav` 和
 `/x/web-interface/wbi/search/type`。调用方可指定可信且兼容的服务，但该服务必须实现这两个端点及其响应格式；
-现有 PGC Web playurl 路由只处理 PGC Web playurl，不能提供搜索。这两个搜索请求以匿名方式发送，
+`--pgc-base` 用于 PGC metadata，`PgcWebPlayurlRoute` 只控制 PGC Web playurl。这两个搜索请求以匿名方式发送，
 不会收到已配置的 credentials 或 Cookie。显式选择结果后，metadata hydration 会回到普通视频解析器，
 并遵循它现有的 credential profile 规则。搜索每页最多发起两次 API 请求，每个 JSON 响应上限为
 1 MiB，并使用已配置的请求超时。兼容服务或请求成功都不保证特定区域可用。

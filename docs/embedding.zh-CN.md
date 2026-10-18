@@ -199,6 +199,9 @@ async fn search_and_plan() -> bbdown_core::Result<()> {
 该示例只搜索一次，将这一页的条目交给 UI 选择，并从选中条目的 BVID 或 aid 规划。请将
 `choose_row_from_ui` 替换为应用自己的 UI；它应返回从传入 `items` 中选择的零基行偏移，或在用户尚未选择时返回
 `None`。
+这个直接 ID 示例用于锁定展示的普通视频身份，并沿用现有直接视频解析行为；它不会携带搜索选择上下文来识别 PGC。
+PGC 自动识别只在通过 `Input::VideoSearch` 选择时运行，该路径会重新查询。此路径确认 PGC 分集后，后续操作可使用
+plan 返回的 `epid` 构造 `Input::Episode(epid)`，以保持在同一分集。
 
 `VideoSearchOrder` 支持综合排序、播放量、发布时间、弹幕量、收藏量和评论量，对应上游值分别为
 `totalrank`、`click`、`pubdate`、`dm`、`stow` 和 `scores`。`VideoSearchPage` 提供 `page`、
@@ -211,11 +214,17 @@ async fn search_and_plan() -> bbdown_core::Result<()> {
 上游顺序可能变化，因此索引不会锁定之前展示的页面快照。`All` 只表示本次调用取到的单页。
 如果应用刚展示了一页 `VideoSearchPage`，并且用户选择了其中一个条目，请用该条目的 BVID 或 aid 构造
 `Input::Bvid` 或 `Input::Aid` 后直接调用 `plan`，如上例所示，这样会规划用户实际选中的稳定身份。
-选中结果会经普通视频解析器补充 metadata；按集合方式规划时只使用其
-第一个视频分 P（P1）。如需选择其他分 P，可用选中条目的 BVID 或 aid 作为普通视频输入，再在那里选择分 P。
+选中结果会经普通视频解析器补充 metadata；普通 UGC 结果按集合方式规划时只使用其第一个视频分 P（P1）。
+如需选择其他分 P，可用选中条目的 BVID 或 aid 作为普通视频输入，再在那里选择分 P。
 独立 `search_videos` 调用仍然只有 metadata。搜索通过 `api_base` 请求
 `/x/web-interface/nav` 和 `/x/web-interface/wbi/search/type`；所选服务必须同时支持这两个端点。
-PGC Web playurl 路由不代表支持搜索。是否可用取决于所选服务和调用方访问权限。
+PGC Web playurl 路由不代表支持搜索。搜索结果仍是普通视频 collection 条目，不会新增 PGC 分集字段。若选中 BVID 或 aid
+的官方 `view` 响应在 `data.redirect_url` 中返回 `bilibili.com` 或 `www.bilibili.com` 下匹配
+`/bangumi/play/ep<ID>` 的分集链接，解析器会通过 `pgc_base` 请求 `/pgc/view/web/season?ep_id=<ID>`。
+只有返回的 season 包含该分集且 aid 与选中视频一致时才接受识别。规划、播放和下载会保留已确认的 epid 和 cid。
+无法确认的分集重定向会明确报错，不猜测 PGC 身份，也不会把普通错误解释为区域限制。确认的 PGC 分集沿用现有
+PGC Web playurl 路由；Web 和 APP 沿用现有受限区域代理回退。TV playurl 语义不变。搜索 `api_base`、
+PGC metadata `pgc_base` 和 `PgcWebPlayurlRoute` 是分开的设置。是否可用取决于所选服务和调用方访问权限。
 
 `Input::VideoSearch` 和 `VideoCollectionKind::Search` 新增了公开枚举分支；下游穷尽匹配需要处理这些分支。
 现有 input 类型的运行时行为保持不变。

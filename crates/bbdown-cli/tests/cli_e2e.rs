@@ -927,6 +927,204 @@ fn download_search_hydrates_and_downloads_only_explicitly_selected_video() -> an
     Ok(())
 }
 
+#[test]
+#[allow(clippy::too_many_lines)]
+fn download_search_selected_pgc_uses_episode_and_restricted_area_proxy() -> anyhow::Result<()> {
+    let api_server = MockServer::start();
+    let pgc_server = MockServer::start();
+    let proxy_server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    mock_search_nav(&api_server);
+    let search = api_server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/wbi/search/type")
+            .query_param("keyword", "Rust")
+            .query_param("page", "1")
+            .query_param("order", "totalrank")
+            .query_param_exists("w_rid");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "numResults": 2,
+                "numPages": 1,
+                "pagesize": 2,
+                "result": [
+                    {
+                        "type": "video",
+                        "aid": 170_001,
+                        "title": "Unselected UGC result"
+                    },
+                    {
+                        "type": "video",
+                        "aid": 455_017_605,
+                        "bvid": "BV1Q541167Qg",
+                        "title": "Selected PGC episode"
+                    }
+                ]
+            }
+        }));
+    });
+    let selected_view = api_server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/view")
+            .query_param("bvid", "BV1Q541167Qg");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "aid": 455_017_605,
+                "bvid": "BV1Q541167Qg",
+                "title": "Selected PGC episode redirect",
+                "redirect_url": "https://www.bilibili.com/bangumi/play/ep1000"
+            }
+        }));
+    });
+    let unselected_view = api_server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/view")
+            .query_param("aid", "170001");
+        then.status(500).body("unselected item must not hydrate");
+    });
+    let episode_metadata = pgc_server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/view/web/season")
+            .query_param("ep_id", "1000");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "result": {
+                "season_id": 123,
+                "title": "Selected PGC season",
+                "episodes": [
+                    {
+                        "aid": 170_099,
+                        "cid": 99,
+                        "id": 999,
+                        "ep_id": 999,
+                        "title": "1",
+                        "long_title": "Other episode"
+                    },
+                    {
+                        "aid": 455_017_605,
+                        "bvid": "BV1Q541167Qg",
+                        "cid": 11,
+                        "id": 1000,
+                        "ep_id": 1000,
+                        "title": "2",
+                        "long_title": "Selected episode"
+                    }
+                ]
+            }
+        }));
+    });
+    let official_pgc_playurl = pgc_server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/player/web/v2/playurl")
+            .query_param("ep_id", "1000")
+            .query_param("avid", "455017605")
+            .query_param("cid", "11")
+            .query_param_missing("access_key")
+            .header_missing("cookie");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -40301,
+            "message": "area restricted"
+        }));
+    });
+    let proxy_pgc_playurl = proxy_server.mock(|when, then| {
+        when.method(GET)
+            .path("/proxy-playurl")
+            .query_param("ep_id", "1000")
+            .query_param("avid", "455017605")
+            .query_param("cid", "11")
+            .query_param("area", "hk")
+            .query_param_missing("access_key")
+            .header_missing("cookie");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "timelength": 3000,
+            "accept_quality": [80],
+            "accept_description": ["1080P"],
+            "support_formats": [{"quality": 80, "new_description": "1080P"}],
+            "dash": {
+                "duration": 3,
+                "video": [{
+                    "id": 80,
+                    "baseUrl": format!("{}/selected-pgc-video.m4s", proxy_server.base_url()),
+                    "base_url": format!("{}/selected-pgc-video.m4s", proxy_server.base_url())
+                }],
+                "audio": []
+            }
+        }));
+    });
+    let ordinary_ugc_playurl = api_server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/playurl")
+            .query_param("avid", "455017605");
+        then.status(500)
+            .body("selected result must use the PGC playurl route");
+    });
+    let unselected_ugc_playurl = api_server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/playurl")
+            .query_param("avid", "170001");
+        then.status(500)
+            .body("unselected UGC must not resolve playurl");
+    });
+    let selected_media = proxy_server.mock(|when, then| {
+        when.method(GET).path("/selected-pgc-video.m4s");
+        then.status(200).body("selected PGC media bytes");
+    });
+    let unselected_media = proxy_server.mock(|when, then| {
+        when.method(GET).path("/unselected-ugc-video.m4s");
+        then.status(500)
+            .body("unselected item must not download media");
+    });
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-preflight")
+        .arg("fail")
+        .arg("--api-base")
+        .arg(api_server.base_url())
+        .arg("--pgc-base")
+        .arg(pgc_server.base_url())
+        .arg("--restricted-area")
+        .arg("hk")
+        .arg("--restricted-area-proxy")
+        .arg(format!("hk={}/proxy-playurl", proxy_server.base_url()))
+        .arg("download")
+        .arg("search:Rust")
+        .arg("--select")
+        .arg("2")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--only")
+        .arg("video")
+        .arg("--no-cover")
+        .arg("--no-subtitles")
+        .arg("--no-danmaku")
+        .arg("--no-mux")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    let video_path = downloaded_file_path(&json, "video")?;
+    assert_eq!(fs::read(video_path)?, b"selected PGC media bytes");
+
+    search.assert_calls(1);
+    selected_view.assert_calls(1);
+    unselected_view.assert_calls(0);
+    episode_metadata.assert_calls(1);
+    official_pgc_playurl.assert_calls(1);
+    proxy_pgc_playurl.assert_calls(1);
+    ordinary_ugc_playurl.assert_calls(0);
+    unselected_ugc_playurl.assert_calls(0);
+    selected_media.assert_calls(1);
+    unselected_media.assert_calls(0);
+    Ok(())
+}
+
 fn mock_search_nav(server: &MockServer) -> httpmock::Mock<'_> {
     server.mock(|when, then| {
         when.method(GET).path("/x/web-interface/nav");

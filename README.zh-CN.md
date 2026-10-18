@@ -64,10 +64,14 @@ bbdown search "Rust async" --page 2 --order pubdate --json
 
 `search` 返回一页有界的普通视频关键词 metadata。若要解析、规划、播放或下载搜索结果，可将
 `search:<keyword>` 或官方搜索 URL 传给 `info`、`plan`、`playback` 或 `download`，并显式选择结果序号；只有
-被选中的结果会通过普通视频路径继续解析。页数限制和 Rust 示例见[用户指南](docs/user-guide.zh-CN.md)
+被选中的结果会继续解析。普通视频使用 P1，确认的 PGC 分集按下文所述进入 PGC 路径。页数限制和 Rust 示例见[用户指南](docs/user-guide.zh-CN.md)
 与[嵌入指南](docs/embedding.zh-CN.md)。
 已发布的 `v0.10.0` CLI 和 crate 不包含此功能；请使用包含该功能的源码检出，或后续实际包含它的版本。
-用搜索输入进行选择会重新查询；要精确指定刚展示的结果，请使用该条目的 BVID 或 aid。
+用搜索输入进行选择会重新查询；直接使用展示条目的 BVID 或 aid 可按现有直接视频行为指定该普通视频身份。
+PGC 自动识别只在通过搜索输入选择条目时运行；确认分集后，后续命令可使用 plan 返回的 `epid` / `ep` 精确指定分集。
+搜索列表仍是普通视频搜索。若选中 BVID 或 aid 的官方 view 响应包含官方 PGC 分集重定向，且身份校验通过，
+规划会保留分集身份并进入现有 PGC 路径。搜索 `api_base`、PGC metadata `pgc_base` 和 PGC Web playurl 路由分别配置；
+PGC Web 使用配置的 Web playurl 路由；Web 和 APP 沿用现有的受限区域代理回退，TV 语义保持不变。
 
 国内 PGC season metadata 会在 `info --json` 输出的 `episode_groups` 字段中包含按上游顺序排列的
 `main` 和 `section` 分集组。组成员使用完整 season 分集列表中的零基位置，因此即使 `--select` 只

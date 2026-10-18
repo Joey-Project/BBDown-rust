@@ -23,6 +23,7 @@ use md5::{Digest, Md5};
 use reqwest::header::{COOKIE, HeaderMap, HeaderValue, REFERER, USER_AGENT};
 use serde::Deserialize;
 use sha2::Sha256;
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -1190,7 +1191,7 @@ impl BiliClient {
                 order,
             } => {
                 let collection = self
-                    .fetch_video_search_collection(
+                    .fetch_video_search_resolution(
                         VideoSearchQuery::new(keyword)
                             .with_page(page)
                             .with_order(order),
@@ -1198,7 +1199,8 @@ impl BiliClient {
                         TagPolicy::Skip,
                     )
                     .await?;
-                self.plan_collection(collection, planning_mode).await
+                self.plan_video_search_resolution(collection, planning_mode)
+                    .await
             }
             collection_input @ (Input::SpaceVideos(_)
             | Input::FavoriteList { .. }
@@ -1431,6 +1433,13 @@ impl BiliClient {
         let mut url = Self::endpoint_url(&self.config.endpoints.api_base, "/x/web-interface/view")?;
         url.query_pairs_mut().append_pair("aid", &aid.to_string());
         self.fetch_video(url, tag_policy).await
+    }
+
+    async fn fetch_view_data_by_aid(&self, aid: u64) -> Result<ViewData> {
+        let mut url = Self::endpoint_url(&self.config.endpoints.api_base, "/x/web-interface/view")?;
+        url.query_pairs_mut().append_pair("aid", &aid.to_string());
+        let response: ApiData<ViewData> = self.get_json(url).await?;
+        response.into_data()
     }
 
     async fn fetch_video_by_bvid(
@@ -3256,6 +3265,17 @@ impl BiliClient {
         selection: Option<Selection>,
         tag_policy: TagPolicy,
     ) -> Result<VideoCollectionResolution> {
+        self.fetch_video_search_resolution(query, selection, tag_policy)
+            .await
+            .map(|resolution| resolution.collection)
+    }
+
+    async fn fetch_video_search_resolution(
+        &self,
+        query: VideoSearchQuery,
+        selection: Option<Selection>,
+        tag_policy: TagPolicy,
+    ) -> Result<SearchCollectionResolution> {
         let selection = selection.ok_or(Error::SelectionRequired {
             input_kind: "video search",
         })?;
@@ -3275,19 +3295,95 @@ impl BiliClient {
         let page = self.search_videos(query.clone()).await?;
         let selected = Self::select_video_search_items(&page.items, &selection)?;
         let mut items = Vec::with_capacity(selected.len());
+        let mut selected_episode_ids = HashMap::new();
         for (search_index, item) in selected {
-            let video = if let Some(bvid) = item.bvid.as_deref() {
-                self.fetch_video_by_bvid(bvid, tag_policy).await?
-            } else if let Some(aid) = item.aid {
-                self.fetch_video_by_aid(aid, tag_policy).await?
-            } else {
-                return Err(Error::MissingField("search result aid or bvid"));
-            };
-            let first_page = video
-                .pages
-                .first()
-                .ok_or(Error::MissingField("selected search video first page"))?;
-            items.push(VideoCollectionItem {
+            let (item, epid) = self
+                .hydrate_video_search_item(search_index, item, tag_policy)
+                .await?;
+            if let Some(epid) = epid {
+                selected_episode_ids.insert(search_index, epid);
+            }
+            items.push(item);
+        }
+        Ok(SearchCollectionResolution {
+            collection: VideoCollectionResolution {
+                collection: VideoCollectionMetadata {
+                    id: None,
+                    kind: VideoCollectionKind::Search,
+                    title: format!("Search: {}", query.keyword.trim()),
+                    description: format!("Video search results for {}", query.keyword.trim()),
+                    cover_url: None,
+                    pub_time: None,
+                    owner: None,
+                    items: items.clone(),
+                },
+                selected_items: items,
+            },
+            selected_episode_ids,
+        })
+    }
+
+    async fn hydrate_video_search_item(
+        &self,
+        search_index: u32,
+        item: VideoSearchItem,
+        tag_policy: TagPolicy,
+    ) -> Result<(VideoCollectionItem, Option<u64>)> {
+        let data = if let Some(bvid) = item.bvid.as_deref() {
+            self.fetch_view_data_by_bvid(bvid).await?
+        } else if let Some(aid) = item.aid {
+            self.fetch_view_data_by_aid(aid).await?
+        } else {
+            return Err(Error::MissingField("search result aid or bvid"));
+        };
+        validate_search_view_identity(&item, &data)?;
+        let pgc_epid = data
+            .redirect_url
+            .as_deref()
+            .map(parse_official_pgc_episode_redirect)
+            .transpose()?
+            .flatten();
+        if let Some(epid) = pgc_epid {
+            let season = self
+                .fetch_season_by_ep(epid, Some(Selection::Current))
+                .await?;
+            let episode = season
+                .selected_episodes
+                .into_iter()
+                .next()
+                .ok_or(Error::MissingField("selected search PGC episode"))?;
+            validate_search_episode_identity(&item, &data, &episode, epid)?;
+            return Ok((
+                VideoCollectionItem {
+                    index: search_index,
+                    aid: episode.aid,
+                    bvid: episode
+                        .bvid
+                        .clone()
+                        .or(data.bvid.clone())
+                        .or(item.bvid.clone()),
+                    cid: episode.cid,
+                    title: episode_display_title(&episode.title, episode.long_title.as_deref()),
+                    cover_url: data.pic.or(season.season.cover_url),
+                    description: data.desc.unwrap_or(season.season.description),
+                    pub_time: episode.pub_time.or(data.pubdate),
+                    owner: data.owner.map(|owner| Owner {
+                        mid: owner.mid,
+                        name: owner.name,
+                    }),
+                    duration_seconds: None,
+                },
+                Some(epid),
+            ));
+        }
+
+        let video = self.video_metadata_from_view(data, tag_policy).await?;
+        let first_page = video
+            .pages
+            .first()
+            .ok_or(Error::MissingField("selected search video first page"))?;
+        Ok((
+            VideoCollectionItem {
                 index: search_index,
                 aid: video.aid,
                 bvid: video.bvid,
@@ -3298,20 +3394,41 @@ impl BiliClient {
                 pub_time: video.pub_time,
                 owner: video.owner,
                 duration_seconds: first_page.duration_seconds,
-            });
-        }
-        Ok(VideoCollectionResolution {
-            collection: VideoCollectionMetadata {
-                id: None,
-                kind: VideoCollectionKind::Search,
-                title: format!("Search: {}", query.keyword.trim()),
-                description: format!("Video search results for {}", query.keyword.trim()),
-                cover_url: None,
-                pub_time: None,
-                owner: None,
-                items: items.clone(),
             },
-            selected_items: items,
+            None,
+        ))
+    }
+
+    async fn plan_video_search_resolution(
+        &self,
+        resolution: SearchCollectionResolution,
+        planning_mode: PlanningMode,
+    ) -> Result<DownloadPlan> {
+        let mut entries = Vec::with_capacity(resolution.collection.selected_items.len());
+        for item in resolution.collection.selected_items {
+            let epid = resolution.selected_episode_ids.get(&item.index).copied();
+            entries.push(
+                self.plan_entry(PlanEntrySeed {
+                    index: item.index,
+                    aid: item.aid,
+                    bvid: item.bvid,
+                    cid: item.cid,
+                    epid,
+                    title: item.title,
+                    cover_url: item.cover_url,
+                    source: if epid.is_some() {
+                        self.pgc_stream_source()
+                    } else {
+                        self.normal_stream_source()
+                    },
+                    planning_mode,
+                })
+                .await?,
+            );
+        }
+        Ok(DownloadPlan {
+            title: resolution.collection.collection.title,
+            entries,
         })
     }
 
@@ -4275,9 +4392,103 @@ struct ViewData {
     pic: Option<String>,
     pubdate: Option<i64>,
     owner: Option<ViewOwner>,
+    redirect_url: Option<String>,
     #[serde(default)]
     pages: Vec<ViewPage>,
     ugc_season: Option<ViewUgcSeason>,
+}
+
+struct SearchCollectionResolution {
+    collection: VideoCollectionResolution,
+    selected_episode_ids: HashMap<u32, u64>,
+}
+
+fn parse_official_pgc_episode_redirect(raw_url: &str) -> Result<Option<u64>> {
+    let Ok(url) = Url::parse(raw_url) else {
+        return Ok(None);
+    };
+    if !matches!(url.scheme(), "https" | "http")
+        || !matches!(url.host_str(), Some("www.bilibili.com" | "bilibili.com"))
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port().is_some()
+    {
+        return Ok(None);
+    }
+    let Some(episode_path) = url.path().strip_prefix("/bangumi/play/ep") else {
+        return Ok(None);
+    };
+    let episode_path = episode_path.strip_suffix('/').unwrap_or(episode_path);
+    if episode_path.is_empty() || !episode_path.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(Error::InvalidInput(
+            "selected search result has a malformed official PGC episode redirect".to_owned(),
+        ));
+    }
+    let epid = episode_path.parse::<u64>().map_err(|_| {
+        Error::InvalidInput(
+            "selected search result has an invalid official PGC episode redirect".to_owned(),
+        )
+    })?;
+    if epid == 0 {
+        return Err(Error::InvalidInput(
+            "selected search result has an invalid official PGC episode redirect".to_owned(),
+        ));
+    }
+    Ok(Some(epid))
+}
+
+fn validate_search_view_identity(item: &VideoSearchItem, data: &ViewData) -> Result<()> {
+    if let (Some(expected), Some(actual)) = (item.aid, data.aid)
+        && expected != actual
+    {
+        return Err(Error::InvalidInput(
+            "selected search result aid does not match its video details".to_owned(),
+        ));
+    }
+    if let (Some(expected), Some(actual)) = (item.bvid.as_deref(), data.bvid.as_deref())
+        && expected != actual
+    {
+        return Err(Error::InvalidInput(
+            "selected search result bvid does not match its video details".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_search_episode_identity(
+    item: &VideoSearchItem,
+    data: &ViewData,
+    episode: &EpisodeMetadata,
+    expected_epid: u64,
+) -> Result<()> {
+    if episode.epid != expected_epid {
+        return Err(Error::InvalidInput(
+            "PGC season response did not contain the redirected episode".to_owned(),
+        ));
+    }
+    let expected_aid = data.aid.or(item.aid).ok_or(Error::MissingField(
+        "selected search video aid for PGC identity validation",
+    ))?;
+    if episode.aid != expected_aid {
+        return Err(Error::InvalidInput(
+            "redirected PGC episode aid does not match the selected search result".to_owned(),
+        ));
+    }
+    for expected_bvid in [item.bvid.as_deref(), data.bvid.as_deref()]
+        .into_iter()
+        .flatten()
+    {
+        if episode
+            .bvid
+            .as_deref()
+            .is_some_and(|actual_bvid| expected_bvid != actual_bvid)
+        {
+            return Err(Error::InvalidInput(
+                "redirected PGC episode bvid does not match the selected search result".to_owned(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]

@@ -207,14 +207,31 @@ BVID or aid as an ordinary video input to target that exact result. Only selecte
 rows are hydrated through the ordinary video resolver for metadata, planning, playback, or download. The
 standalone `search` command does not hydrate video details, resolve streams, or download media. A
 credential store or named credential profile is not required or loaded by this anonymous command. A
-selected search result uses the first video part (P1), following collection-item planning behavior.
+selected ordinary UGC result uses the first video part (P1), following collection-item planning behavior.
 To choose another part, take the selected result's BVID or aid and pass it to the ordinary video
 input with its usual `--select` page index.
 
-Search uses `--api-base` / `BBDOWN_API_BASE` for `/x/web-interface/nav` and
+Using a displayed BVID or aid directly keeps the existing direct-video behavior. Automatic PGC
+episode recognition applies only when a result is selected through search input. After that path
+confirms a PGC episode, use the `epid` shown in its plan as `ep<ID>` for later commands that must keep
+the exact episode; direct BVID/aid input does not inherit the search selection's PGC context.
+
+Search results remain an ordinary-video listing and keep the existing collection JSON shape; the
+search item itself does not gain a PGC episode field. When the selected BVID or aid's official
+`view` response has a `data.redirect_url` on `bilibili.com` or `www.bilibili.com` matching
+`/bangumi/play/ep<ID>`, the resolver reads `/pgc/view/web/season?ep_id=<ID>` through `--pgc-base` /
+`BBDOWN_PGC_BASE`. It accepts the match only when the returned season contains that episode and its
+aid matches the selected video. Planning, playback, and download preserve the confirmed episode ID
+and cid. If an episode redirect cannot be confirmed, resolution fails explicitly; it does not guess
+a PGC identity or treat an ordinary error as a regional restriction. Confirmed PGC episodes use
+the configured PGC Web playurl route; Web and APP retain their existing restricted-area proxy
+fallback. TV playurl semantics do not change.
+
+Search metadata uses `--api-base` / `BBDOWN_API_BASE` for `/x/web-interface/nav` and
 `/x/web-interface/wbi/search/type`. A caller may point it at a trusted compatible service that
 implements both endpoints and their response shapes;
-the existing PGC Web playurl route only handles PGC Web playurl and does not provide search. Search
+the existing `--pgc-base` is used for PGC metadata, while `PgcWebPlayurlRoute` only controls PGC Web
+playurl. Search
 requests are anonymous and never receive configured credentials or cookies. After explicit result
 selection, hydration returns to the ordinary video resolver and follows its existing credential
 profile rules. The search endpoint makes at most two API requests per page, caps each JSON response

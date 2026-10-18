@@ -217,6 +217,11 @@ async fn search_and_plan() -> bbdown_core::Result<()> {
 The example searches once, passes those exact rows to the UI selection hook, and plans from the
 selected item's BVID or aid. Replace `choose_row_from_ui` with the application's UI; it should return
 the zero-based offset chosen from the supplied `items` slice or `None` when the user has not chosen.
+This direct-ID example pins the displayed ordinary-video identity and retains existing direct-video
+resolution behavior; it does not carry search-selection context for PGC detection. PGC auto-detection
+runs only when selecting through `Input::VideoSearch`, which performs a fresh query. After that path
+confirms a PGC episode, use its planned `epid` as `Input::Episode(epid)` to keep later operations on
+the same episode.
 
 `VideoSearchOrder` supports total rank, clicks, publication time, danmaku, favorites, and comments;
 the wire values are `totalrank`, `click`, `pubdate`, `dm`, `stow`, and `scores`. `VideoSearchPage`
@@ -233,12 +238,22 @@ index does not pin an earlier displayed snapshot. `All` means only the page fetc
 plan the exact result selected from a displayed `VideoSearchPage`, use its BVID or aid to construct
 `Input::Bvid` or `Input::Aid` and call `plan` directly, as in the example above. The
 selected result is hydrated through the ordinary video resolver; collection-style video planning
-uses its first video part (P1). To choose another part, use the selected item's BVID or aid as a
+uses its first video part (P1) for ordinary UGC results. To choose another part, use the selected item's BVID or aid as a
 normal video input and select its page there. The dedicated `search_videos` call remains metadata-only. Search
 uses `api_base` for `/x/web-interface/nav` and `/x/web-interface/wbi/search/type`, which must be
 supported by the selected service; the
-PGC Web playurl route does not imply search support. Availability depends on the selected service
-and the caller's access.
+PGC Web playurl route does not imply search support. Search results remain ordinary video collection
+items; they do not gain a PGC episode field. If a selected BVID or aid's official `view` response
+contains a `data.redirect_url` on `bilibili.com` or `www.bilibili.com` matching
+`/bangumi/play/ep<ID>`, the resolver requests `/pgc/view/web/season?ep_id=<ID>` through `pgc_base`.
+It accepts the match only if the returned season contains that episode and its aid matches the
+selected video. Planning, playback, and download preserve the confirmed episode ID and cid. If an
+episode redirect cannot be confirmed, resolution fails explicitly; it does not guess a PGC identity
+or interpret an ordinary error as a regional restriction. Confirmed PGC episodes use the existing
+configured PGC Web playurl route; Web and APP retain their existing restricted-area proxy fallback.
+TV playurl semantics do not change. Search `api_base`, PGC metadata `pgc_base`, and
+`PgcWebPlayurlRoute` are separate settings.
+Availability depends on the selected service and the caller's access.
 
 `Input::VideoSearch` and `VideoCollectionKind::Search` add public enum variants. Downstream
 exhaustive matches need to handle them; runtime behavior for existing input kinds is unchanged.

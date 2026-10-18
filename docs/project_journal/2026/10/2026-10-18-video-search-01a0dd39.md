@@ -16,7 +16,9 @@ superseded_by:
 
 - Add bounded ordinary-video keyword search with explicit ordering and page selection, while keeping
   result enumeration separate from selected-video metadata resolution, planning, and download.
-- Keep the existing PGC Web playurl route separate from metadata search endpoint capability.
+- Keep search results in the ordinary-video category. For a selected row only, recognize an
+  official PGC episode redirect when PGC metadata confirms the episode and selected video identity.
+- Keep search metadata `api_base`, PGC metadata `pgc_base`, and the PGC Web playurl route separate.
 
 ## Search API
 
@@ -35,6 +37,9 @@ superseded_by:
   rows, caps each response at 1 MiB, and uses the configured request timeout. Both requests are
   anonymous and never receive configured credentials or cookies. After explicit selection, video
   hydration follows the normal resolver's configured credential-profile rules.
+- PGC recognition is a selected-result hydration behavior, not a PGC-specific search category.
+  Search metadata continues to use `api_base`; PGC episode metadata is fetched through `pgc_base`,
+  and `PgcWebPlayurlRoute` only controls Web playurl routing.
 - The configured API base must support `/x/web-interface/nav` and
   `/x/web-interface/wbi/search/type`. This capability is independent of `PgcWebPlayurlRoute`; neither
   endpoint configuration nor a successful mock request guarantees regional availability.
@@ -48,9 +53,20 @@ superseded_by:
   keyword, page, and order parameters. Generic `info`, `plan`, `playback`, and `download` require an
   explicit numeric/index-range selection or `all`, scoped to the one fetched page. Only selected
   rows are hydrated through normal video resolution using its usual credential-profile behavior,
-  and planning uses the first video part (P1). Each search-input selection re-runs the query, so its
+  and ordinary UGC planning uses the first video part (P1). Each search-input selection re-runs the query, so its
   index is not pinned to a previously displayed snapshot; use that result's BVID or aid to target
   its stable video identity.
+- For PGC recognition, only a supported official episode redirect in `data.redirect_url` is
+  accepted; the resolver extracts its episode ID without following the redirect URL.
+  It requests `/pgc/view/web/season?ep_id=<ID>` through `pgc_base` and requires the season to include
+  that episode with an aid matching the selected video. Unconfirmed redirects fail explicitly;
+  ordinary errors are not treated as regional restrictions. Search `info` retains the existing
+  `VideoCollectionResolution` / `VideoCollectionItem` shape; no public item `epid` is added. Planning,
+  playback, and download preserve the confirmed PGC `epid` and `cid`. PGC Web uses its configured
+  Web playurl route; Web and APP retain their existing restricted-area proxy fallback. TV semantics
+  are unchanged.
+- Direct BVID/aid inputs keep their existing behavior and do not inherit search-only PGC detection.
+  For a confirmed episode that must be targeted again, use its plan `epid` with `ep<ID>` / `Input::Episode`.
 - `Input::VideoSearch` and `VideoCollectionKind::Search` are new public enum variants. Downstream
   exhaustive matches need to handle them; existing input runtime behavior is unchanged.
 - The standalone search command is metadata-only and does not resolve playback or download media.
@@ -63,24 +79,25 @@ superseded_by:
 
 ## Validation
 
-- `cargo test -p bbdown-core parses_keyword_video_search_inputs --locked` passed: 1 test covering
-  both input forms and keyword boundaries. The focused core search module passed 16 tests;
-  focused CLI search tests passed 14 tests.
-- After the final input, credential, and selector-bound fixes, `just ci` completed with exit 0
-  using rustc 1.99.1 and the Rust 1.95.0 MSRV check. Workspace test targets reported 909 passed
-  and 3 ignored across counts of 67, 174, 9 (2 ignored), 635, 21 (1 ignored), 1, and 2.
-  A separate CLI e2e run passed 174 tests; this is an
-  additional run, not part of the workspace total. The `bbdown-core` publish dry run packaged and
-  verified the crate, then aborted upload as expected for dry-run mode; no upload was made.
-- After the WBI and response-page fixes, an anonymous official Rust CLI metadata smoke for
-  `Rust!`, page 1, `totalrank`, exited 0.
-  It returned `page_size=20`, `total=1000`, `total_pages=50`, `next_page=2`, and 18 items; the JSON
-  output was 11,507 bytes and stderr was empty. The anonymous credentials file did not exist. The
-  request made no media request, so this confirms live metadata search only, not playback access,
-  planning, or download e2e. Later fixes changed input validation and CLI credential handling;
-  this is metadata-only evidence from before those changes.
-- The earlier initial-head `Rust 教程` metadata smoke returned 17 valid items. It is a separate
-  observation and is not a validation result for the PR #106 fixes.
+- Focused search tests passed: core 21/21 and CLI 15/15. The CLI set includes
+  `download_search_selected_pgc_uses_episode_and_restricted_area_proxy`.
+- The PGC mock e2e searches, selects a BVID whose official view redirects to `ep1000`, reads PGC
+  season metadata containing an unrelated `ep999`, handles an official Web playurl region error,
+  falls back to the restricted proxy, and verifies exact downloaded fixture bytes. It asserts that
+  the unselected UGC result does not trigger view, ordinary playurl, or media requests. This test is
+  mock-only; no real PGC/live request or credentials were used.
+- Final `just ci` completed with exit 0 using rustc 1.99.1 and the Rust 1.95.0 MSRV check. The gate
+  passed formatting, strict Clippy, MSRV check, workspace tests, CLI e2e, and publish dry run.
+  Log: `/private/tmp/bbdown-video-search.20261018-01a0dd39/pgc-search-just-ci-final.log` (92,422 bytes).
+  Workspace test targets reported 915 passed, 3 ignored, and 0 failed across counts of 67, 175,
+  9 (2 ignored), 640, 21 (1 ignored), 1, and 2. The CLI e2e target passed 175 tests, including the
+  PGC mock case. A separate CLI e2e rerun also passed 175 tests; this repeated run is not added to
+  the workspace total. The `bbdown-core` publish dry run packaged and verified the crate, then
+  aborted upload as expected; no upload was made.
+- The anonymous official Rust CLI metadata smokes for `Rust!` and `Rust 教程` are observations from
+  earlier heads, before this selected-PGC extension. The `Rust!` smoke returned 18 items with empty
+  stderr and no media request; the credentials file was absent. These observations confirm metadata
+  search only and provide no live PGC, playback, or download evidence.
 - Documentation validation: `project_journal.py validate` and `git diff --check` passed.
 
 ## PR #106 Review Fixes
@@ -100,6 +117,9 @@ superseded_by:
   preflight, including control characters, the UTF-8 byte limit, and empty normalized keywords.
 - Build the anonymous CLI search client without loading credential stores or selecting credential
   profiles. Malformed stores and absent named profiles do not block metadata-only searches.
+- Identify selected PGC episodes only through the official view redirect and PGC season identity
+  validation described above; preserve PGC episode identity through planning and playback. This
+  selected-search behavior leaves direct BV/aid inputs and the public collection item shape intact.
 - PR: [#106](https://github.com/Joey-Project/BBDown-rust/pull/106). Validation of these fixes is
   recorded above.
 

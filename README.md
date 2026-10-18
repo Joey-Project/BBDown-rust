@@ -68,12 +68,19 @@ bbdown search "Rust async" --page 2 --order pubdate --json
 
 `search` returns one bounded page of ordinary video keyword metadata. To resolve, plan, play back, or
 download a search result, pass `search:<keyword>` or an official search URL to `info`, `plan`,
-`playback`, or `download` and explicitly select result indexes; only selected results are hydrated
-through the normal video path.
+`playback`, or `download` and explicitly select result indexes; only selected results are hydrated.
+Ordinary videos use P1; confirmed PGC episodes follow the PGC path described below.
 This feature is not included in the published `v0.10.0` CLI or crate; use a source checkout that
 contains it, or a later release that includes it.
-Search-input selection runs a fresh query; use a displayed result's BVID or aid to target that exact
-video.
+Search-input selection runs a fresh query; using a displayed result's BVID or aid directly targets
+that exact video with existing direct-video behavior. PGC auto-detection applies only when resolving
+a selected search row. After it confirms an episode, use the plan's `epid` / `ep` input to target that
+exact episode in later commands.
+Search remains an ordinary-video listing. When a selected BVID or aid's official view response
+contains an official PGC episode redirect that matches its identity, planning preserves the episode
+identity and uses the existing PGC path. Search `api_base`, PGC metadata `pgc_base`, and the PGC Web
+playurl route are separate settings. PGC Web uses its configured Web playurl route; Web and APP keep
+their existing restricted-area proxy fallback, and TV semantics remain unchanged.
 See the [user guide](docs/user-guide.md) and [embedding guide](docs/embedding.md) for limits and
 Rust examples.
 

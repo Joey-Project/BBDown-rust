@@ -451,8 +451,14 @@ mod tests {
         SearchVideoRow, VideoSearchItem, VideoSearchOrder, VideoSearchQuery,
         clean_highlighted_text, decode_html_entities, search_videos, signed_video_search_query,
     };
-    use crate::client::TagPolicy;
-    use crate::{BiliClient, ClientConfig, Credentials, EndpointConfig, Error, Input, Selection};
+    use crate::client::{
+        PgcWebPlayurlRoute, PlayurlMode, RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy,
+        TagPolicy,
+    };
+    use crate::{
+        BiliClient, ClientConfig, Credentials, EndpointConfig, Error, Input, Selection,
+        StreamSource,
+    };
     use httpmock::prelude::*;
     use serde_json::{Value, json};
 
@@ -520,6 +526,114 @@ mod tests {
             Err(Error::InvalidInput(_))
         ));
         Ok(())
+    }
+
+    #[test]
+    fn official_pgc_redirect_parser_never_accepts_external_hosts_and_supports_http() {
+        assert!(matches!(
+            super::super::parse_official_pgc_episode_redirect(
+                "https://www.bilibili.com/bangumi/play/ep1000?from=search"
+            ),
+            Ok(Some(1000))
+        ));
+        assert!(matches!(
+            super::super::parse_official_pgc_episode_redirect(
+                "http://bilibili.com/bangumi/play/ep1000/"
+            ),
+            Ok(Some(1000))
+        ));
+        assert!(matches!(
+            super::super::parse_official_pgc_episode_redirect(
+                "https://www.bilibili.com.evil.example/bangumi/play/ep1000"
+            ),
+            Ok(None)
+        ));
+        assert!(matches!(
+            super::super::parse_official_pgc_episode_redirect(
+                "https://redirect.example/bangumi/play/ep1000"
+            ),
+            Ok(None)
+        ));
+        assert!(matches!(
+            super::super::parse_official_pgc_episode_redirect(
+                "https://www.bilibili.com/bangumi/play/epnot-a-number"
+            ),
+            Err(Error::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn search_pgc_episode_identity_rejects_wrong_episode_aid_and_bvid() {
+        let item = VideoSearchItem {
+            aid: Some(455_017_605),
+            bvid: Some("BV1Q541167Qg".to_owned()),
+            cid: None,
+            title: "search title".to_owned(),
+            author: None,
+            author_mid: None,
+            duration: None,
+            pub_time: None,
+            play_count: None,
+            comment_count: None,
+            danmaku_count: None,
+            favorite_count: None,
+            cover_url: None,
+            description: None,
+        };
+        let view = super::super::ViewData {
+            aid: Some(455_017_605),
+            bvid: Some("BV1Q541167Qg".to_owned()),
+            title: "video title".to_owned(),
+            desc: None,
+            pic: None,
+            pubdate: None,
+            owner: None,
+            redirect_url: None,
+            pages: Vec::new(),
+            ugc_season: None,
+        };
+        let episode = crate::EpisodeMetadata {
+            index: 1,
+            aid: 455_017_605,
+            bvid: Some("BV1Q541167Qg".to_owned()),
+            cid: 1011,
+            epid: 1000,
+            title: "episode".to_owned(),
+            long_title: None,
+            pub_time: None,
+        };
+        assert!(
+            super::super::validate_search_episode_identity(&item, &view, &episode, 1000).is_ok()
+        );
+        let mut episode_without_bvid = episode.clone();
+        episode_without_bvid.bvid = None;
+        assert!(
+            super::super::validate_search_episode_identity(
+                &item,
+                &view,
+                &episode_without_bvid,
+                1000,
+            )
+            .is_ok()
+        );
+        assert!(matches!(
+            super::super::validate_search_episode_identity(&item, &view, &episode, 1001),
+            Err(Error::InvalidInput(_))
+        ));
+
+        let mut wrong_aid = episode.clone();
+        wrong_aid.aid = 455_017_606;
+        assert!(matches!(
+            super::super::validate_search_episode_identity(&item, &view, &wrong_aid, 1000),
+            Err(Error::InvalidInput(_))
+        ));
+
+        let mut wrong_bvid = episode;
+        wrong_bvid.bvid = Some("BV1different".to_owned());
+        assert!(matches!(
+            super::super::validate_search_episode_identity(&item, &view, &wrong_bvid, 1000),
+            Err(Error::InvalidInput(_))
+        ));
     }
 
     #[test]
@@ -871,12 +985,13 @@ mod tests {
             then.status(200)
                 .json_body(view_response(455_017_605, "BV1Q541167Qg"));
         });
+        let second_aid = crate::bv::decode("BV1xx411c7mD")?;
         let second = server.mock(|when, then| {
             when.method(GET)
                 .path("/x/web-interface/view")
                 .query_param("bvid", "BV1xx411c7mD");
             then.status(200)
-                .json_body(view_response(170_001, "BV1xx411c7mD"));
+                .json_body(view_response(second_aid, "BV1xx411c7mD"));
         });
         let client = test_client(&server, false);
         let selected = client
@@ -891,6 +1006,221 @@ mod tests {
         assert_eq!(selected.selected_items[0].cid, 101);
         assert_eq!(first.calls(), 0);
         assert_eq!(second.calls(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn selected_search_pgc_keeps_exact_episode_and_uses_configured_proxy_after_region_error()
+    -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let _nav = server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/nav");
+            then.status(200).json_body(nav_response(-101));
+        });
+        let _search = server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/wbi/search/type");
+            then.status(200).json_body(search_response(
+                1,
+                1,
+                20,
+                &[video_row("BV1Q541167Qg", "search title")],
+            ));
+        });
+        let view = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("bvid", "BV1Q541167Qg");
+            then.status(200).json_body(json!({"code":0,"data":{
+                "aid":455_017_605,"bvid":"BV1Q541167Qg","title":"video title",
+                "desc":"video description","pic":"https://img.example/cover.jpg",
+                "pubdate":1_700_000_000,"owner":{"mid":42,"name":"Alice"},
+                "redirect_url":"https://www.bilibili.com/bangumi/play/ep1000",
+                "pages":[]
+            }}));
+        });
+        let season = server.mock(|when, then| {
+            when.method(GET)
+                .path("/pgc/view/web/season")
+                .query_param("ep_id", "1000");
+            then.status(200).json_body(json!({"code":0,"result":{
+                "season_id":123,"title":"A Season","episodes":[
+                    {"aid":999,"bvid":"BV1other","cid":99,"id":999,"title":"Other episode"},
+                    {"aid":455_017_605,"bvid":"BV1Q541167Qg","cid":1011,"id":1000,
+                     "title":"Selected episode","long_title":"Selected part"}
+                ]
+            }}));
+        });
+        let official = server.mock(|when, then| {
+            when.method(GET)
+                .path("/pgc/player/web/v2/playurl")
+                .query_param("ep_id", "1000")
+                .query_param("avid", "455017605")
+                .query_param("cid", "1011");
+            then.status(200)
+                .json_body(json!({"code":-40301,"message":"您所在地区不可观看"}));
+        });
+        let proxy = server.mock(|when, then| {
+            when.method(GET)
+                .path("/proxy-playurl")
+                .query_param("ep_id", "1000")
+                .query_param("avid", "455017605")
+                .query_param("cid", "1011")
+                .query_param("area", "hk");
+            then.status(200)
+                .json_body(json!({"code":0,"result":{"video_info":{"dash":{
+                    "duration":12,"video":[{"id":80,"baseUrl":"https://media.example/pgc.m4s",
+                    "base_url":"https://media.example/pgc.m4s"}],"audio":[]
+                }}}}));
+        });
+        let client = BiliClient::new(
+            ClientConfig::default()
+                .with_endpoints(
+                    EndpointConfig::default()
+                        .with_api_base(server.base_url())
+                        .with_pgc_base(server.base_url()),
+                )
+                .with_credentials(Credentials::default())
+                .with_restricted_area(
+                    RestrictedAreaConfig::default()
+                        .with_area_hint(RestrictedArea::Hk)
+                        .with_proxy(RestrictedAreaProxy::playurl(
+                            format!("{}/proxy-playurl", server.base_url()),
+                            Some(RestrictedArea::Hk),
+                        )),
+                )
+                .with_pgc_web_playurl_route(PgcWebPlayurlRoute::OfficialThenProxy)
+                .with_playurl_mode(PlayurlMode::Web),
+        );
+        let plan = client
+            .plan_with_mode(
+                Input::VideoSearch {
+                    keyword: "rust".to_owned(),
+                    page: 1,
+                    order: VideoSearchOrder::TotalRank,
+                },
+                Some(Selection::Page(1)),
+                super::super::PlanningMode::StreamsOnly,
+            )
+            .await?;
+        assert_eq!(plan.entries.len(), 1);
+        assert_eq!(plan.entries[0].epid, Some(1000));
+        assert_eq!(plan.entries[0].aid, 455_017_605);
+        assert_eq!(plan.entries[0].cid, 1011);
+        assert_eq!(plan.entries[0].source, StreamSource::PgcProxy);
+        assert_eq!(
+            plan.entries[0].streams.videos[0].base_url,
+            "https://media.example/pgc.m4s"
+        );
+        view.assert_calls(1);
+        season.assert_calls(1);
+        official.assert_calls(1);
+        proxy.assert_calls(1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn external_redirect_is_not_followed_and_keeps_ordinary_video_page() -> anyhow::Result<()>
+    {
+        let server = MockServer::start();
+        let _nav = server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/nav");
+            then.status(200).json_body(nav_response(-101));
+        });
+        let _search = server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/wbi/search/type");
+            then.status(200).json_body(search_response(
+                1,
+                1,
+                20,
+                &[video_row("BV1Q541167Qg", "search title")],
+            ));
+        });
+        let _view = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("bvid", "BV1Q541167Qg");
+            then.status(200).json_body(json!({"code":0,"data":{
+                "aid":455_017_605,"bvid":"BV1Q541167Qg","title":"ordinary video",
+                "redirect_url":"https://foreign.example/bangumi/play/ep1000",
+                "pages":[{"page":1,"cid":101,"part":"P1","duration":12}]
+            }}));
+        });
+        let pgc = server.mock(|when, then| {
+            when.method(GET).path("/pgc/view/web/season");
+            then.status(500);
+        });
+        let client = test_client(&server, false);
+        let collection = client
+            .fetch_video_search_collection(
+                VideoSearchQuery::new("rust"),
+                Some(Selection::Page(1)),
+                TagPolicy::Skip,
+            )
+            .await?;
+        assert_eq!(collection.selected_items[0].cid, 101);
+        assert_eq!(collection.selected_items[0].title, "ordinary video");
+        pgc.assert_calls(0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn supported_pgc_redirect_without_matching_episode_fails_without_p1_fallback()
+    -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let _nav = server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/nav");
+            then.status(200).json_body(nav_response(-101));
+        });
+        let _search = server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/wbi/search/type");
+            then.status(200).json_body(search_response(
+                1,
+                1,
+                20,
+                &[video_row("BV1Q541167Qg", "search title")],
+            ));
+        });
+        let _view = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("bvid", "BV1Q541167Qg");
+            then.status(200).json_body(json!({"code":0,"data":{
+                "aid":455_017_605,"bvid":"BV1Q541167Qg","title":"video title",
+                "redirect_url":"https://www.bilibili.com/bangumi/play/ep1000",
+                "pages":[{"page":1,"cid":101,"part":"P1","duration":12}]
+            }}));
+        });
+        let season = server.mock(|when, then| {
+            when.method(GET)
+                .path("/pgc/view/web/season")
+                .query_param("ep_id", "1000");
+            then.status(200).json_body(json!({"code":0,"result":{
+                "season_id":123,"title":"A Season","episodes":[
+                    {"aid":455_017_605,"bvid":"BV1Q541167Qg","cid":999,"id":999,"title":"Other"}
+                ]
+            }}));
+        });
+        let client = BiliClient::new(
+            ClientConfig::default()
+                .with_endpoints(
+                    EndpointConfig::default()
+                        .with_api_base(server.base_url())
+                        .with_pgc_base(server.base_url()),
+                )
+                .with_credentials(Credentials::default().with_cookie("tracking=local-only")),
+        );
+        assert!(matches!(
+            client
+                .fetch_video_search_collection(
+                    VideoSearchQuery::new("rust"),
+                    Some(Selection::Page(1)),
+                    TagPolicy::Skip,
+                )
+                .await,
+            Err(Error::MissingField("selected episode"))
+        ));
+        season.assert_calls(1);
         Ok(())
     }
 
