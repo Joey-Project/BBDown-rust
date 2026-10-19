@@ -31,10 +31,15 @@ use tokio::sync::Mutex;
 use url::Url;
 
 mod metadata_page;
+mod timetable;
 mod video_search;
 pub use metadata_page::{
     MetadataCollectionInfo, MetadataConsistency, MetadataCursor, MetadataPage, MetadataPageOptions,
     MetadataStopReason,
+};
+pub use timetable::{
+    PGC_TIMETABLE_MAX_DAYS, PGC_TIMETABLE_MAX_ROWS, PgcTimetable, PgcTimetableDay,
+    PgcTimetableEpisode, PgcTimetableKind,
 };
 pub use video_search::{
     VIDEO_SEARCH_MAX_ITEMS, VideoSearchItem, VideoSearchOrder, VideoSearchPage, VideoSearchQuery,
@@ -525,6 +530,14 @@ impl BiliClient {
     /// credentials, and limits the navigation and search response bodies.
     pub async fn search_videos(&self, query: VideoSearchQuery) -> Result<VideoSearchPage> {
         video_search::search_videos(self, query).await
+    }
+
+    /// Returns the bounded anime or guochuang PGC timetable metadata.
+    ///
+    /// This anonymous metadata request uses the configured PGC endpoint and does not
+    /// resolve episodes or request playurl, media, subtitle, or tag data.
+    pub async fn pgc_timetable(&self, kind: PgcTimetableKind) -> Result<PgcTimetable> {
+        timetable::pgc_timetable(self, kind).await
     }
 
     pub async fn check_credential_health(&self) -> CredentialHealthReport {

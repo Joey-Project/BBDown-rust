@@ -17,13 +17,13 @@ use bbdown_core::{
     DanmakuUpdatePolicy, DownloadArchive, DownloadCancellationToken, DownloadMode, DownloadOptions,
     DownloadPathTemplates, DownloadPlan, DownloadPreflight, DownloadProgressEvent,
     DownloadProgressSink, DownloadReport, DuplicateDecision, EndpointConfig, Input,
-    MediaHostOptions, MediaStream, MuxOptions, PlaybackPlan, PlayurlMode, QrLoginCredentials,
-    QrLoginCredentialsState, QrLoginKind, QrLoginTicket, QrLoginTicketOutput, ResolvedContent,
-    RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind,
-    RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet, StreamSource,
-    SubtitleAiPolicy, TvAccessKeyLoginCredentials, TvAccessKeyRefreshRequest,
-    VIDEO_SEARCH_MAX_ITEMS, VideoSearchOrder, VideoSearchQuery, WebCookieRefreshCredentials,
-    WebCookieRefreshRequest, archive_entry_allows_danmaku_update,
+    MediaHostOptions, MediaStream, MuxOptions, PgcTimetable, PgcTimetableKind, PlaybackPlan,
+    PlayurlMode, QrLoginCredentials, QrLoginCredentialsState, QrLoginKind, QrLoginTicket,
+    QrLoginTicketOutput, ResolvedContent, RestrictedArea, RestrictedAreaConfig,
+    RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection, StreamQuality,
+    StreamSelection, StreamSet, StreamSource, SubtitleAiPolicy, TvAccessKeyLoginCredentials,
+    TvAccessKeyRefreshRequest, VIDEO_SEARCH_MAX_ITEMS, VideoSearchOrder, VideoSearchQuery,
+    WebCookieRefreshCredentials, WebCookieRefreshRequest, archive_entry_allows_danmaku_update,
     credential_preflight_requirements_for_media_paths,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -188,6 +188,12 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    Timetable {
+        #[arg(long = "type", value_enum, default_value = "anime")]
+        kind: PgcTimetableKindArg,
+        #[arg(long)]
+        json: bool,
+    },
     Plan {
         url: String,
         #[arg(long)]
@@ -254,6 +260,21 @@ enum SearchOrderArg {
     Favorites,
     #[value(name = "scores")]
     Comments,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum PgcTimetableKindArg {
+    Anime,
+    Guochuang,
+}
+
+impl From<PgcTimetableKindArg> for PgcTimetableKind {
+    fn from(kind: PgcTimetableKindArg) -> Self {
+        match kind {
+            PgcTimetableKindArg::Anime => Self::Anime,
+            PgcTimetableKindArg::Guochuang => Self::Guochuang,
+        }
+    }
 }
 
 impl From<SearchOrderArg> for VideoSearchOrder {
@@ -1243,6 +1264,9 @@ async fn run() -> anyhow::Result<()> {
         } => {
             handle_video_search(&client_runtime, keyword, page, order, json).await?;
         }
+        Command::Timetable { kind, json } => {
+            handle_pgc_timetable(&client_runtime, kind, json).await?;
+        }
         Command::Plan { url, select, json } => {
             handle_plan(
                 &credential_runtime,
@@ -1914,6 +1938,79 @@ async fn handle_video_search(
         print_video_search_page(&result, &keyword, order)?;
     }
     Ok(())
+}
+
+async fn handle_pgc_timetable(
+    client_runtime: &ClientRuntimeConfig,
+    kind: PgcTimetableKindArg,
+    json: bool,
+) -> anyhow::Result<()> {
+    let client = BiliClient::new(client_runtime.client_config(Credentials::default()));
+    let timetable = client.pgc_timetable(kind.into()).await?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&timetable)?);
+    } else {
+        print_pgc_timetable(&timetable);
+    }
+    Ok(())
+}
+
+fn print_pgc_timetable(timetable: &PgcTimetable) {
+    let kind = match timetable.kind {
+        PgcTimetableKind::Anime => "anime",
+        PgcTimetableKind::Guochuang => "guochuang",
+    };
+    println!("timetable: {kind}");
+    println!("latest episodes:");
+    if timetable.latest.is_empty() {
+        println!("  (none)");
+    } else {
+        for episode in &timetable.latest {
+            print_timetable_episode(episode, "  ");
+        }
+    }
+    println!("timeline:");
+    for day in &timetable.days {
+        let today = if day.is_today { ", today" } else { "" };
+        println!("{} (weekday {}{})", day.date, day.day_of_week, today);
+        if day.episodes.is_empty() {
+            println!("  (no episodes)");
+        } else {
+            for episode in &day.episodes {
+                print_timetable_episode(episode, "  ");
+            }
+        }
+    }
+}
+
+fn print_timetable_episode(episode: &bbdown_core::PgcTimetableEpisode, indent: &str) {
+    let identity = episode.episode_id.map_or_else(
+        || {
+            format!(
+                "ss{} (choose an episode from this season)",
+                episode.season_id
+            )
+        },
+        |id| format!("ep{id} ss{}", episode.season_id),
+    );
+    let status = if episode.published {
+        "published"
+    } else {
+        "not yet published"
+    };
+    let delay = if episode.delayed {
+        format!(
+            " delay=index {} reason={}",
+            episode.delay_index.as_deref().unwrap_or("unknown"),
+            episode.delay_reason.as_deref().unwrap_or("unknown")
+        )
+    } else {
+        String::new()
+    };
+    println!(
+        "{indent}{identity} index={} time={} status={}{delay} title={}",
+        episode.pub_index, episode.pub_time, status, episode.title
+    );
 }
 
 fn print_video_search_page(

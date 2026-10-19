@@ -229,6 +229,47 @@ PGC metadata `pgc_base` 和 `PgcWebPlayurlRoute` 是分开的设置。是否可�
 `Input::VideoSearch` 和 `VideoCollectionKind::Search` 新增了公开枚举分支；下游穷尽匹配需要处理这些分支。
 现有 input 类型的运行时行为保持不变。
 
+### PGC 时间表 metadata
+
+已发布的 `bbdown-core` `0.10.0` package 不包含此 API。请使用包含该功能的源码检出，或后续实际包含它的版本。
+
+调用 `BiliClient::pgc_timetable`，为 `PgcTimetableKind::Anime` 或
+`PgcTimetableKind::Guochuang` 获取一份上游时间表响应：
+
+```rust,no_run
+use bbdown_core::{BiliClient, ClientConfig, PgcTimetableKind};
+
+async fn read_timetable() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let timetable = client.pgc_timetable(PgcTimetableKind::Anime).await?;
+
+    for day in &timetable.days {
+        println!("{} (weekday {})", day.date, day.day_of_week);
+        for episode in &day.episodes {
+            println!("{} {}", episode.pub_time, episode.title);
+        }
+    }
+    Ok(())
+}
+```
+
+方法通过配置的 `pgc_base` 向 `/pgc/web/timeline/v2` 发起一次匿名请求，只使用对应的
+`season_type` 值（番剧为 `1`，国创为 `4`）。响应上限为 1 MiB、32 个日期组和合计 4096 条原始记录；
+超限时会拒绝响应，不会静默截断。请求不会跟随重定向。所选兼容服务必须支持此端点和响应格式。
+`PgcWebPlayurlRoute` 只控制 PGC Web playurl 请求，不负责时间表 metadata 路由。请求不会发送已配置凭据或 Cookie。
+
+`PgcTimetable` 提供 `kind`、`latest` 和 `days`。日期组保留服务端顺序、空组，以及上游
+`date`、`date_ts`、`day_of_week` 和 `is_today` 字段。分集保留可选正数 `episode_id`、正数
+`season_id`、`title`、`pub_index`、`pub_time`、`pub_ts`、`published`、`delayed`、可选
+`delay_index`、可选 `delay_reason` 和可选 `cover_url` 字段。`latest` 保持为上游单独区块，
+不会推断其新旧语义。日期和发布时间字符串是服务端标签；此 API 不会转换为本地时区。端点返回服务端定义的窗口，
+没有日期范围或分页选项。
+
+这是 metadata API，不会新增 `Input` 变体或集合下载路径。若存在 `episode_id`，可将其作为
+`Input::Episode(id)` 用于现有 metadata、规划、播放或下载操作，并遵循这些操作原有的访问条件。
+缺少分集 ID 的行会保留 season ID，但不会合成分集 ID。`published: false` 不代表可以播放。
+影视分类列表仍是独立的后续功能。
+
 ### 有界动态元数据分页
 
 通过 `BiliClient::resolve_metadata_page(input, options)`，可从 `Input::FollowingFeed` 或

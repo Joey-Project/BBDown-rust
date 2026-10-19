@@ -240,6 +240,42 @@ does not guarantee regional availability.
 The anonymous live probe recorded for this feature confirms metadata search only; it does not
 establish real `view` or playurl access, playback planning, or download availability.
 
+## PGC Timetable
+
+The timetable command is not included in the published `v0.10.0` CLI. Use a source checkout that
+contains it, or a later release that includes it.
+
+Fetch the upstream timetable for anime (the default) or Chinese animation:
+
+```bash
+bbdown timetable --json
+bbdown timetable --type anime --json
+bbdown timetable --type guochuang --json
+```
+
+The command makes one anonymous request through the configured PGC metadata base (`--pgc-base` /
+`BBDOWN_PGC_BASE`) to `/pgc/web/timeline/v2`, with only `season_type=1` for anime or `season_type=4`
+for Chinese animation. The selected service must support this metadata endpoint and its response
+shape. This capability is separate from `PgcWebPlayurlRoute`, which covers PGC Web playurl only.
+The request does not send configured credentials or cookies.
+
+JSON returns the selected `kind`, the upstream `latest` block, and ordered `days`. Each day retains
+its source `date`, `date_ts`, `day_of_week`, `is_today`, and episode list, including empty days. Each
+episode carries its optional positive `episode_id`, `season_id`, title, `pub_index`, `pub_time`,
+`pub_ts`, `published` state, `delayed` state, optional `delay_index`, optional `delay_reason`, and
+optional `cover_url`. `latest` is preserved as the service's separate block; its name does
+not define any additional freshness or selection semantics. `date` and `pub_time` are service labels;
+the client does not convert them to the local timezone. The response is one server-defined window:
+the command has no date range, pagination, or local window option.
+
+When a row has an `episode_id`, its exact `ep<ID>` can be passed to the existing `info`, `plan`,
+`playback`, or `download` commands. A missing episode ID is not synthesized; the row retains its
+`ss<ID>` season ID, which still requires an explicit episode selection through the existing season
+workflow. Timetable output is metadata only. A `published: false` row is not a promise that it can
+be played or downloaded, and even a published episode remains subject to the existing account and
+regional access rules. Film and TV category listings are a separate follow-up and are not part of
+this command.
+
 ## Download Plans
 
 Use `plan` to resolve stream, subtitle, and danmaku availability:

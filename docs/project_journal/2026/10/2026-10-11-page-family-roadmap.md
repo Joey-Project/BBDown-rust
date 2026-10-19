@@ -3,7 +3,7 @@ id: 20261011-page-family-roadmap
 title: Page Family and Season Grouping Roadmap
 status: active
 created: 2026-10-11
-updated: 2026-10-18
+updated: 2026-10-19
 branch:
 pr:
 supersedes: []
@@ -21,6 +21,7 @@ superseded_by:
 
 - Domestic PGC season resolution preserves main and supplementary groups in `SeasonMetadata.episode_groups`, including section titles, available upstream IDs, empty groups, duplicate titles, and membership positions in the unchanged flat episode list. See `2026-10-18-pgc-season-grouping-01a0dd39.md`.
 - Ordinary video keyword search returns one bounded metadata page through a dedicated API and CLI surface. Generic input requires explicit selection from that page before selected results hydrate through the ordinary video resolver. See `2026-10-18-video-search-01a0dd39.md`.
+- Anime and Chinese-animation PGC timetable metadata is available through one bounded anonymous request and a dedicated CLI/Rust API. It preserves the upstream latest block and day groups without adding listing inputs or download behavior. Film and TV category listings remain pending. See `2026-10-19-pgc-timetable-01a0dd39.md`.
 - Intl modules and PUGV courses retain their existing flat metadata behavior; this domestic PGC section slice does not infer groups for those sources.
 - Standard UGC collections, series, favorites, and medialist inputs already have collection resolution and planning paths. Ordinary BV input keeps its single-video behavior; membership expansion is explicit.
 - Existing `PgcWebPlayurlRoute` controls PGC Web playurl requests only. It does not route season metadata or page listings through the restricted-area resolver chain.
@@ -30,7 +31,7 @@ superseded_by:
 
 1. **Completed: preserve domestic PGC season grouping.** Main episodes and supplementary sections retain their titles, upstream order, episode membership, and available stable identifiers through the public API and CLI metadata output. Existing flat episode order, index selection, exact episode selection, and the main-episode-only `Latest` behavior remain compatible.
 2. **Completed: add ordinary video search results.** Provide one bounded upstream page at a time, ordering, metadata output, and explicit result selection before ordinary video resolution, planning, or download.
-3. **Add the new-season anime timetable and film/TV category listings.** Treat these as listing inputs distinct from a single `ss`/`md` season page. Define their upstream listing scope and continuation behavior before implementation.
+3. **In progress: PGC listings.** Completed the metadata-only anime and Chinese-animation timetable in `2026-10-19-pgc-timetable-01a0dd39.md`. Film and TV category listings remain next; define their upstream listing scope and continuation behavior before implementation.
 4. **Popular and ranking feeds.** These are not urgent.
 5. **Category and channel lists.** These have lower priority than the preceding items.
 6. **Topic pages.** Schedule them after category and channel lists.
@@ -48,12 +49,13 @@ superseded_by:
 ## Validation Expectations
 
 - Grouping: mock normal and supplementary sections, duplicate or empty titles, missing optional identifiers, and API/CLI serialization; verify existing selection and planning behavior remains compatible.
-- New listings: mock pagination, filtering, ordering, continuation, and bounded request behavior. Search must fetch one requested page per call, cap each response at 1 MiB and each page at 20 rows, and require explicit result selection before selected video hydration.
+- Timetable: mock anime and Chinese-animation kind mapping, upstream ordering, empty day groups, optional episode IDs, aggregate bounds, anonymous metadata routing, and CLI JSON/human output. The endpoint provides one server-defined response without pagination.
+- Search: mock filtering, ordering, bounded request behavior, and explicit result selection before selected video hydration. Search fetches one requested page per call, caps each response at 1 MiB and each page at 20 rows.
 - Reverse resolvers: mock supported and unsupported endpoints, official/proxy routing, response compatibility, and failures; use opt-in live fixtures for exact configured service routes when execution is authorized.
 - Synchronize English and Simplified Chinese user and embedding documentation with each implementation slice.
 
 ## Evidence
 
-- Joey's 2026-10-11 instruction places season grouping before search, the anime timetable and film/TV category listings after search, and topic pages after category/channel lists.
+- Joey's 2026-10-11 instruction places season grouping before search, anime timetable before film/TV category listings, and topic pages after category/channel lists.
 - Current implementation references: `crates/bbdown/src/client.rs` (`PgcWebPlayurlRoute`, search API, and PGC season methods) and `crates/bbdown/src/models.rs` (`SeasonMetadata`).
-- The domestic PGC grouping implementation and its validation are recorded in `2026-10-18-pgc-season-grouping-01a0dd39.md`; ordinary search is recorded in `2026-10-18-video-search-01a0dd39.md`. Timetable, film/TV listings, and broader endpoint-specific API service support remain requirements, not completed implementations.
+- The domestic PGC grouping implementation and its validation are recorded in `2026-10-18-pgc-season-grouping-01a0dd39.md`; ordinary search is recorded in `2026-10-18-video-search-01a0dd39.md`; timetable metadata is recorded in `2026-10-19-pgc-timetable-01a0dd39.md`. Film/TV listings and broader endpoint-specific API service support remain requirements.

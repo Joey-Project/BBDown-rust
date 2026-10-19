@@ -22,8 +22,9 @@ mod selection;
 pub use cancellation::DownloadCancellationToken;
 pub use client::{
     BiliClient, ClientConfig, EndpointConfig, MetadataCollectionInfo, MetadataConsistency,
-    MetadataCursor, MetadataPage, MetadataPageOptions, MetadataStopReason, PgcWebPlayurlRoute,
-    PlayurlMode, RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy,
+    MetadataCursor, MetadataPage, MetadataPageOptions, MetadataStopReason, PGC_TIMETABLE_MAX_DAYS,
+    PGC_TIMETABLE_MAX_ROWS, PgcTimetable, PgcTimetableDay, PgcTimetableEpisode, PgcTimetableKind,
+    PgcWebPlayurlRoute, PlayurlMode, RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy,
     RestrictedAreaProxyKind, VIDEO_SEARCH_MAX_ITEMS, VideoSearchItem, VideoSearchOrder,
     VideoSearchPage, VideoSearchQuery,
 };

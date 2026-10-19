@@ -60,7 +60,12 @@ bbdown info https://www.bilibili.com/list/ml1103407912 --json
 bbdown info https://space.bilibili.com/123/dynamic --select latest --json
 bbdown info 'https://space.bilibili.com/123/lists/456?type=series' --json
 bbdown search "Rust async" --page 2 --order pubdate --json
+bbdown timetable --type anime --json
+bbdown timetable --type guochuang --json
 ```
+
+`timetable` 输出番剧或国创的上游 PGC 时间表 metadata。它只发起一次匿名请求，不会解析流或下载分集。
+已发布的 `v0.10.0` CLI 不包含此命令；请使用包含该功能的源码检出，或后续实际包含它的版本。
 
 `search` 返回一页有界的普通视频关键词 metadata。若要解析、规划、播放或下载搜索结果，可将
 `search:<keyword>` 或官方搜索 URL 传给 `info`、`plan`、`playback` 或 `download`，并显式选择结果序号；只有

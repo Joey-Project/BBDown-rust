@@ -258,6 +258,53 @@ Availability depends on the selected service and the caller's access.
 `Input::VideoSearch` and `VideoCollectionKind::Search` add public enum variants. Downstream
 exhaustive matches need to handle them; runtime behavior for existing input kinds is unchanged.
 
+### PGC Timetable Metadata
+
+This API is not included in the published `bbdown-core` `0.10.0` package. Use a source checkout that
+contains it, or a later release that includes it.
+
+Call `BiliClient::pgc_timetable` to fetch one upstream timetable response for
+`PgcTimetableKind::Anime` or `PgcTimetableKind::Guochuang`:
+
+```rust,no_run
+use bbdown_core::{BiliClient, ClientConfig, PgcTimetableKind};
+
+async fn read_timetable() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let timetable = client.pgc_timetable(PgcTimetableKind::Anime).await?;
+
+    for day in &timetable.days {
+        println!("{} (weekday {})", day.date, day.day_of_week);
+        for episode in &day.episodes {
+            println!("{} {}", episode.pub_time, episode.title);
+        }
+    }
+    Ok(())
+}
+```
+
+The method makes one anonymous request through the configured `pgc_base` to
+`/pgc/web/timeline/v2`, using only the matching `season_type` value (`1` for anime, `4` for Chinese
+animation). The response is capped at 1 MiB, 32 day groups, and 4096 aggregate raw rows; limits reject
+the response instead of silently truncating it. Redirects are not followed. A compatible configured
+service must support this endpoint and response shape. `PgcWebPlayurlRoute` applies only to PGC Web
+playurl requests and does not provide timetable metadata routing. Configured credentials and cookies
+are not sent.
+
+`PgcTimetable` exposes `kind`, `latest`, and `days`. Days retain service order, empty groups, and the
+upstream `date`, `date_ts`, `day_of_week`, and `is_today` fields. Episodes retain their optional
+positive `episode_id`, positive `season_id`, `title`, `pub_index`, `pub_time`, `pub_ts`, `published`,
+`delayed`, optional `delay_index`, optional `delay_reason`, and optional `cover_url` fields. `latest`
+remains a separate upstream block without inferred freshness semantics. Date and publication-time
+strings are service labels; this API does not convert them to the local timezone. The endpoint returns
+a server-defined window without a date-range or pagination option.
+
+This is a metadata-only API, not an `Input` variant or a collection download path. A present
+`episode_id` can be used as `Input::Episode(id)` for existing metadata, planning, playback, or download
+operations, subject to their normal access requirements. Rows without an episode ID retain their
+season ID but do not gain a synthesized episode ID. A false `published` value does not imply
+playability. Film and TV category listings remain a separate follow-up.
+
 ### Bounded Dynamic Metadata Pages
 
 Use `BiliClient::resolve_metadata_page(input, options)` for an explicit candidate window from

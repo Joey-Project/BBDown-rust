@@ -136,8 +136,11 @@
   configured API base only for compatible navigation/search endpoints; PGC playurl routing and
   credentials are not reused for search. See
   `docs/project_journal/2026/10/2026-10-18-video-search-01a0dd39.md`.
-- [pending] Add the new-season anime timetable and film/TV category listings, with explicitly
-  configured API services used only for endpoint capabilities they support. See
+- [completed] Add the bounded anonymous anime/Chinese-animation PGC timetable metadata command and
+  public Rust API. This slice does not add listing inputs or downloads. See
+  `docs/project_journal/2026/10/2026-10-19-pgc-timetable-01a0dd39.md`.
+- [pending] Add film and TV category listings, with explicitly configured API services used only
+  for endpoint capabilities they support. See
   `docs/project_journal/2026/10/2026-10-11-page-family-roadmap.md`.
 - [pending] Add popular/ranking feeds, then category/channel lists, then topic pages at lower
   priority. See `docs/project_journal/2026/10/2026-10-11-page-family-roadmap.md`.
