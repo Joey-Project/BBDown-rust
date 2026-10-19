@@ -22,11 +22,14 @@ mod selection;
 pub use cancellation::DownloadCancellationToken;
 pub use client::{
     BiliClient, ClientConfig, EndpointConfig, MetadataCollectionInfo, MetadataConsistency,
-    MetadataCursor, MetadataPage, MetadataPageOptions, MetadataStopReason, PGC_TIMETABLE_MAX_DAYS,
-    PGC_TIMETABLE_MAX_ROWS, PgcTimetable, PgcTimetableDay, PgcTimetableEpisode, PgcTimetableKind,
-    PgcWebPlayurlRoute, PlayurlMode, RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy,
-    RestrictedAreaProxyKind, VIDEO_SEARCH_MAX_ITEMS, VideoSearchItem, VideoSearchOrder,
-    VideoSearchPage, VideoSearchQuery,
+    MetadataCursor, MetadataPage, MetadataPageOptions, MetadataStopReason,
+    PGC_INDEX_MAX_FILTER_GROUPS, PGC_INDEX_MAX_FILTER_VALUES, PGC_INDEX_MAX_ORDERS,
+    PGC_INDEX_MAX_PAGE_SIZE, PGC_TIMETABLE_MAX_DAYS, PGC_TIMETABLE_MAX_ROWS, PgcIndexConditions,
+    PgcIndexFilter, PgcIndexFilterSelection, PgcIndexFilterValue, PgcIndexItem, PgcIndexKind,
+    PgcIndexOrder, PgcIndexOrderOption, PgcIndexPage, PgcIndexQuery, PgcIndexSort, PgcTimetable,
+    PgcTimetableDay, PgcTimetableEpisode, PgcTimetableKind, PgcWebPlayurlRoute, PlayurlMode,
+    RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind,
+    VIDEO_SEARCH_MAX_ITEMS, VideoSearchItem, VideoSearchOrder, VideoSearchPage, VideoSearchQuery,
 };
 pub use credential_preflight::{
     CredentialPreflightIssue, CredentialPreflightMode, CredentialPreflightReport,

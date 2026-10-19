@@ -268,7 +268,61 @@ async fn read_timetable() -> bbdown_core::Result<()> {
 这是 metadata API，不会新增 `Input` 变体或集合下载路径。若存在 `episode_id`，可将其作为
 `Input::Episode(id)` 用于现有 metadata、规划、播放或下载操作，并遵循这些操作原有的访问条件。
 缺少分集 ID 的行会保留 season ID，但不会合成分集 ID。`published: false` 不代表可以播放。
-影视分类列表仍是独立的后续功能。
+电影与电视剧分类索引 metadata 可通过下方独立 API 获取。
+
+### PGC 电影与电视剧索引 metadata
+
+已发布的 `bbdown-core` `0.10.0` package 不包含这些 API。请使用包含它们的源码检出，或实际包含它们的后续版本。
+
+使用 `BiliClient::pgc_index(PgcIndexQuery)` 获取一页电影或电视剧 metadata，使用
+`BiliClient::pgc_index_conditions(PgcIndexKind)` 获取相应类别的筛选与排序选项。
+`PgcIndexQuery::new(kind)` 选择类别，并默认页码 1、每页 20 条、播放量降序。可用 `with_page`、`with_page_size`、
+`with_order`、`with_sort` 和 `with_filters` 配置查询。电影排序支持播放量、更新时间、上映日期和评分；电视剧支持播放量、更新时间、弹幕、追番和评分。
+评分只支持降序；每页大小为 1–20。发送请求前会校验查询；筛选字符串必须非空、不含控制字符，且不超过 256 个 UTF-8 字节。
+
+```rust,no_run
+use bbdown_core::{
+    BiliClient, ClientConfig, PgcIndexFilterSelection, PgcIndexKind, PgcIndexOrder,
+    PgcIndexQuery, PgcIndexSort,
+};
+
+async fn list_movies() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let conditions = client.pgc_index_conditions(PgcIndexKind::Movie).await?;
+    let area_keyword = conditions
+        .filters
+        .iter()
+        .find(|filter| filter.field == "area")
+        .and_then(|filter| filter.values.first())
+        .map(|value| value.keyword.clone());
+    let query = PgcIndexQuery::new(PgcIndexKind::Movie)
+        .with_page(1)
+        .with_page_size(20)
+        .with_order(PgcIndexOrder::Play)
+        .with_sort(PgcIndexSort::Descending)
+        .with_filters(PgcIndexFilterSelection {
+            area: area_keyword,
+            ..PgcIndexFilterSelection::default()
+        });
+    let page = client.pgc_index(query).await?;
+    println!("page {} of {}", page.page, page.total);
+    if let Some(next_page) = page.next_page {
+        println!("next page: {next_page}");
+    }
+    Ok(())
+}
+```
+
+Conditions 会按源顺序保留不透明的 `field`、`keyword` 和展示用 `name` 字符串。筛选时请使用对应类别返回的原样 `keyword`；
+不要推断跨类别 ID，也不要把上映日期筛选值解析成年份，因为上游可能提供区间。conditions 响应最多包含 32 个筛选组、合计 4096 个筛选值和 64 个排序选项。列表请求只获取指定结果页，不会自动读取
+conditions、自动翻页、解析 season 详情或下载媒体。`PgcIndexPage` 报告服务端实际页码与每页大小、`total`、`has_next`，并在有更多结果时按实际页码计算 `next_page`；调用方需显式发起后续请求。`PgcIndexItem` 包含正数 `season_id`、可选 `media_id` 和 `first_episode_id`、标题，以及可选副标题、封面、
+`index_show`、完结状态、评分、排序文案和 season 状态。`first_episode_id` 是上游第一集，不是最新一集；缺失 ID 不会合成。
+
+每次 API 调用都会通过配置的 `pgc_base` 向对应的 `/pgc/season/index/result` 或
+`/pgc/season/index/condition` 端点发起一次匿名请求。所选服务必须支持对应端点及响应格式。请求不会加载凭据 profile 或发送已配置
+credentials、Cookie；不会跟随重定向，使用配置的 timeout，JSON 响应上限为 1 MiB。`PgcWebPlayurlRoute` 只覆盖 PGC Web playurl，
+不会路由索引 metadata。列表只提供 metadata：`ss<ID>` 或 `md<ID>` 仍须通过现有 season 解析流程并显式选择分集；`latest` 保留其正片语义。
+已存在的精确分集 ID 可使用现有 `ep<ID>` 流程。不会增加通用 input、自动 hydration 或下载路径。
 
 ### 有界动态元数据分页
 

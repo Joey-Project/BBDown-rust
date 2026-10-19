@@ -31,11 +31,18 @@ use tokio::sync::Mutex;
 use url::Url;
 
 mod metadata_page;
+mod pgc_index;
 mod timetable;
 mod video_search;
 pub use metadata_page::{
     MetadataCollectionInfo, MetadataConsistency, MetadataCursor, MetadataPage, MetadataPageOptions,
     MetadataStopReason,
+};
+pub use pgc_index::{
+    PGC_INDEX_MAX_FILTER_GROUPS, PGC_INDEX_MAX_FILTER_VALUES, PGC_INDEX_MAX_ORDERS,
+    PGC_INDEX_MAX_PAGE_SIZE, PgcIndexConditions, PgcIndexFilter, PgcIndexFilterSelection,
+    PgcIndexFilterValue, PgcIndexItem, PgcIndexKind, PgcIndexOrder, PgcIndexOrderOption,
+    PgcIndexPage, PgcIndexQuery, PgcIndexSort,
 };
 pub use timetable::{
     PGC_TIMETABLE_MAX_DAYS, PGC_TIMETABLE_MAX_ROWS, PgcTimetable, PgcTimetableDay,
@@ -538,6 +545,22 @@ impl BiliClient {
     /// resolve episodes or request playurl, media, subtitle, or tag data.
     pub async fn pgc_timetable(&self, kind: PgcTimetableKind) -> Result<PgcTimetable> {
         timetable::pgc_timetable(self, kind).await
+    }
+
+    /// Returns one bounded page of anonymous movie or TV PGC index metadata.
+    ///
+    /// The operation uses the configured PGC endpoint and does not resolve episodes
+    /// or request playurl, media, subtitle, or tag data.
+    pub async fn pgc_index(&self, query: PgcIndexQuery) -> Result<PgcIndexPage> {
+        pgc_index::pgc_index(self, query).await
+    }
+
+    /// Returns the service-provided PGC index filters and sorting choices.
+    ///
+    /// Choice keywords and labels are preserved as returned and can be passed to
+    /// `pgc_index` through `PgcIndexFilterSelection`.
+    pub async fn pgc_index_conditions(&self, kind: PgcIndexKind) -> Result<PgcIndexConditions> {
+        pgc_index::pgc_index_conditions(self, kind).await
     }
 
     pub async fn check_credential_health(&self) -> CredentialHealthReport {

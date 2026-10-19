@@ -273,8 +273,48 @@ When a row has an `episode_id`, its exact `ep<ID>` can be passed to the existing
 `ss<ID>` season ID, which still requires an explicit episode selection through the existing season
 workflow. Timetable output is metadata only. A `published: false` row is not a promise that it can
 be played or downloaded, and even a published episode remains subject to the existing account and
-regional access rules. Film and TV category listings are a separate follow-up and are not part of
-this command.
+regional access rules. Movie and TV category-index metadata is available through the separate
+`pgc-index` command described below.
+
+## PGC Movie and TV Index
+
+The `pgc-index` command is not included in the published `v0.10.0` CLI. Use a source checkout that
+contains it, or a later release that includes it.
+
+List one page of movie results (the default type) or TV series, or inspect that category's filters:
+
+```bash
+bbdown pgc-index list --type movie --page 1 --page-size 20 --order play --json
+bbdown pgc-index list --type tv --order follow --ascending --area '<keyword from filters output>' --json
+bbdown pgc-index filters --type movie --json
+```
+
+The list command returns one metadata page. Its defaults are movie, page 1, 20 rows, and descending
+play order. Page size can be 1–20. Movie supports `play`, `updated`, `release-date`, and `score`;
+TV supports `play`, `updated`, `danmaku`, `follow`, and `score`. Score supports descending order
+only. `--ascending` selects ascending order for other supported sorts. Filter arguments accept the
+opaque `keyword` values returned by the corresponding `filters` command (`--style` maps to the
+upstream `style_id` field); filter names, IDs, and release-date intervals can differ by category and
+are passed through without cross-category interpretation.
+
+Each command makes one anonymous request through `--pgc-base` / `BBDOWN_PGC_BASE` to its matching
+PGC metadata endpoint. Listing does not fetch filter conditions automatically, paginate, hydrate
+season metadata, or resolve streams. Both endpoints must be supported by a configured compatible
+service; `PgcWebPlayurlRoute` only selects PGC Web playurl routing. Requests do not load credential
+profiles or send configured credentials or cookies, do not follow redirects, use the configured
+request timeout, and cap each JSON response at 1 MiB. Filter values must be non-empty, contain no
+control characters, and fit within 256 UTF-8 bytes. The filters response is bounded to 32 filter
+groups, 4096 aggregate values, and 64 order choices. List output includes the actual service page
+and page size, total count, and a `next_page` hint when another page is available.
+
+Rows expose the positive `season_id`, optional `media_id` and `first_episode_id`, title, and optional
+subtitle, cover, `index_show`, finished state, score, display order, and season status. The episode
+ID is the upstream first episode, not the newest episode. Missing IDs remain absent; a listing row
+does not promise that its season or episodes can be accessed. Use an explicit `ss<ID>` or `md<ID>`
+with the existing season workflow and select an episode; `latest` retains its existing meaning of
+the last main episode. An available exact episode ID can be passed as `ep<ID>` under the existing
+access rules. This metadata command does not add generic inputs, automatic page hydration, or
+download behavior. Other PGC categories and popular/ranking lists are separate work.
 
 ## Download Plans
 

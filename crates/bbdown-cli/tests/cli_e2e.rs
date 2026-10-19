@@ -366,6 +366,521 @@ fn timetable_json_and_human_output_use_metadata_route_without_credentials() -> a
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
+fn pgc_index_list_preserves_server_page_and_opaque_filters_anonymously() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let sentinel = b"malformed credential data that must remain untouched";
+    fs::write(&credential_file, sentinel)?;
+    let list = server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/season/index/result")
+            .query_param("type", "1")
+            .query_param("season_type", "2")
+            .query_param("order", "2")
+            .query_param("sort", "1")
+            .query_param("page", "3")
+            .query_param("pagesize", "7")
+            .query_param("area", "-1")
+            .query_param("style_id", "动作,奇幻")
+            .query_param("release_date", "2019-01,2024-12")
+            .query_param("season_status", "13")
+            .header_missing("cookie")
+            .query_param_missing("access_key");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "has_next": 1,
+                "list": [{
+                    "season_id": 41937,
+                    "media_id": 28_338_128,
+                    "first_ep": {"ep_id": 604_275},
+                    "title": "Movie title",
+                    "subTitle": "A subtitle",
+                    "cover": "https://example.invalid/cover.jpg",
+                    "index_show": "全1话",
+                    "is_finish": 1,
+                    "score": "9.2",
+                    "order": "100万",
+                    "season_status": 13,
+                    "season_type": 2
+                }],
+                "num": 2,
+                "size": 7,
+                "total": 780
+            }
+        }));
+    });
+    let nav = server.mock(|when, then| {
+        when.method(GET).path("/x/web-interface/nav");
+        then.status(500);
+    });
+    let preflight = server.mock(|when, then| {
+        when.method(POST).path("/passport-login/web/cookie/refresh");
+        then.status(500);
+    });
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("missing-profile")
+        .arg("--credential-preflight")
+        .arg("fail")
+        .arg("--pgc-base")
+        .arg(server.base_url())
+        .arg("pgc-index")
+        .arg("list")
+        .arg("--type")
+        .arg("movie")
+        .arg("--page")
+        .arg("3")
+        .arg("--page-size")
+        .arg("7")
+        .arg("--order")
+        .arg("play")
+        .arg("--ascending")
+        .arg("--area=-1")
+        .arg("--style")
+        .arg("动作,奇幻")
+        .arg("--release-date")
+        .arg("2019-01,2024-12")
+        .arg("--season-status")
+        .arg("13")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    assert_eq!(json["kind"], "movie");
+    assert_eq!(json["page"], 2);
+    assert_eq!(json["page_size"], 7);
+    assert_eq!(json["has_next"], true);
+    assert_eq!(json["next_page"], 3);
+    assert_eq!(json["total"], 780);
+    assert_eq!(json["items"][0]["season_id"], 41937);
+    assert_eq!(json["items"][0]["media_id"], 28_338_128);
+    assert_eq!(json["items"][0]["first_episode_id"], 604_275);
+    assert_eq!(json["items"][0]["title"], "Movie title");
+    assert_eq!(fs::read(&credential_file)?, sentinel);
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--pgc-base")
+        .arg(server.base_url())
+        .arg("pgc-index")
+        .arg("list")
+        .arg("--page")
+        .arg("3")
+        .arg("--page-size")
+        .arg("7")
+        .arg("--ascending")
+        .arg("--area=-1")
+        .arg("--style")
+        .arg("动作,奇幻")
+        .arg("--release-date")
+        .arg("2019-01,2024-12")
+        .arg("--season-status")
+        .arg("13");
+    let human = String::from_utf8(command.assert().success().get_output().stdout.clone())?;
+    assert!(human.contains("type: movie"));
+    assert!(human.contains("next page: 3"));
+    assert!(human.contains("ss41937 md28338128"));
+    assert!(human.contains("first ep: ep604275"));
+    assert!(human.contains("select a season explicitly"));
+    list.assert_calls(2);
+    nav.assert_calls(0);
+    preflight.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+fn pgc_index_filters_exposes_service_choices_without_credentials() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let conditions = server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/season/index/condition")
+            .query_param("type", "1")
+            .query_param("season_type", "5")
+            .header_missing("cookie")
+            .query_param_missing("access_key");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "filter": [{
+                    "field": "area",
+                    "name": "地区",
+                    "values": [
+                        {"keyword": "-1", "name": "全部"},
+                        {"keyword": "jp", "name": "日本"}
+                    ]
+                }],
+                "order": [{"field": "2", "name": "播放数量", "sort": "0,1"}]
+            }
+        }));
+    });
+    let mut command = bbdown_command()?;
+    command
+        .arg("--pgc-base")
+        .arg(server.base_url())
+        .arg("pgc-index")
+        .arg("filters")
+        .arg("--type")
+        .arg("tv")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    assert_eq!(json["kind"], "tv");
+    assert_eq!(json["filters"][0]["field"], "area");
+    assert_eq!(json["filters"][0]["values"][0]["keyword"], "-1");
+    assert_eq!(json["orders"][0]["sort"], "0,1");
+    let mut command = bbdown_command()?;
+    command
+        .arg("--pgc-base")
+        .arg(server.base_url())
+        .arg("pgc-index")
+        .arg("filters")
+        .arg("--type")
+        .arg("tv");
+    let human = String::from_utf8(command.assert().success().get_output().stdout.clone())?;
+    assert!(human.contains("全部 = -1"));
+    assert!(human.contains("播放数量 (2) sort=0,1"));
+    conditions.assert_calls(2);
+
+    let mut help = bbdown_command()?;
+    let output = help
+        .arg("pgc-index")
+        .arg("list")
+        .arg("--help")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let help = String::from_utf8(output)?;
+    for option in [
+        "--type",
+        "--page",
+        "--page-size",
+        "--order",
+        "--ascending",
+        "--area",
+        "--style",
+        "--release-date",
+        "--season-status",
+        "--json",
+    ] {
+        assert!(help.contains(option), "missing {option} in help: {help}");
+    }
+    Ok(())
+}
+
+#[test]
+fn pgc_index_defaults_to_first_movie_page_without_unspecified_filters() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let list = server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/season/index/result")
+            .query_param("type", "1")
+            .query_param("season_type", "2")
+            .query_param("order", "2")
+            .query_param("sort", "0")
+            .query_param("page", "1")
+            .query_param("pagesize", "20")
+            .query_param_missing("area")
+            .query_param_missing("style_id")
+            .query_param_missing("release_date")
+            .query_param_missing("season_status");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "has_next": 0,
+                "list": [],
+                "num": 1,
+                "size": 20,
+                "total": 0
+            }
+        }));
+    });
+    let mut command = bbdown_command()?;
+    command
+        .arg("--pgc-base")
+        .arg(server.base_url())
+        .arg("pgc-index")
+        .arg("list")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    assert_eq!(json["kind"], "movie");
+    assert_eq!(json["page"], 1);
+    assert_eq!(json["page_size"], 20);
+    assert_eq!(json["items"], serde_json::json!([]));
+    list.assert();
+    Ok(())
+}
+
+#[test]
+fn invalid_pgc_index_options_fail_before_any_metadata_request() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let list = server.mock(|when, then| {
+        when.method(GET).path("/pgc/season/index/result");
+        then.status(500);
+    });
+    let conditions = server.mock(|when, then| {
+        when.method(GET).path("/pgc/season/index/condition");
+        then.status(500);
+    });
+    let invalid = [
+        vec!["movie", "--order", "danmaku"],
+        vec!["movie", "--order", "follow"],
+        vec!["tv", "--order", "release-date"],
+        vec!["tv", "--order", "score", "--ascending"],
+    ];
+    for options in invalid {
+        let mut command = bbdown_command()?;
+        command
+            .arg("--pgc-base")
+            .arg(server.base_url())
+            .arg("pgc-index")
+            .arg("list")
+            .arg("--type")
+            .arg(options[0]);
+        for option in &options[1..] {
+            command.arg(option);
+        }
+        let stderr = command.assert().failure().get_output().stderr.clone();
+        assert!(String::from_utf8(stderr)?.contains("not supported"));
+    }
+    for invalid_size in ["0", "21"] {
+        let mut command = bbdown_command()?;
+        command
+            .arg("--pgc-base")
+            .arg(server.base_url())
+            .arg("pgc-index")
+            .arg("list")
+            .arg("--page-size")
+            .arg(invalid_size);
+        command.assert().failure();
+    }
+    let mut missing_filter = bbdown_command()?;
+    missing_filter
+        .arg("--pgc-base")
+        .arg(server.base_url())
+        .arg("pgc-index")
+        .arg("list")
+        .arg("--area")
+        .arg("--json");
+    missing_filter.assert().failure();
+    list.assert_calls(0);
+    conditions.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn pgc_index_first_episode_flows_through_existing_proxy_download() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let output_dir = temp.path().join("downloads");
+    let media_bytes: Vec<u8> = (0_u8..=250).cycle().take(64 * 1024).collect();
+    let origin = RangeMediaServer::start(media_bytes.clone())?;
+    let media_url = format!("http://{}/selected-index-video.m4s?mock=1", origin.host);
+    let index = server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/season/index/result")
+            .query_param("type", "1")
+            .query_param("season_type", "5");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "has_next": 0,
+                "list": [{
+                    "season_id": 904,
+                    "media_id": 9004,
+                    "first_ep": {"ep_id": 1701},
+                    "title": "Selected TV season",
+                    "subTitle": "Season subtitle",
+                    "index_show": "第1话",
+                    "is_finish": 1,
+                    "season_type": 5
+                }, {
+                    "season_id": 905,
+                    "media_id": 9005,
+                    "first_ep": {"ep_id": 1702},
+                    "title": "Unselected TV season",
+                    "index_show": "第1话",
+                    "season_type": 5
+                }],
+                "num": 1,
+                "size": 2,
+                "total": 2
+            }
+        }));
+    });
+    let season = server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/view/web/season")
+            .query_param("ep_id", "1701");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "result": {
+                "season_id": 904,
+                "title": "Selected season",
+                "episodes": [{
+                    "aid": 90,
+                    "bvid": "BV1aa",
+                    "cid": 9041,
+                    "id": 1701,
+                    "ep_id": 1701,
+                    "title": "1",
+                    "long_title": "Selected episode"
+                }]
+            }
+        }));
+    });
+    let unselected_season = server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/view/web/season")
+            .query_param("ep_id", "1702");
+        then.status(500);
+    });
+    let official = server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/player/web/v2/playurl")
+            .query_param("ep_id", "1701");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -40301,
+            "message": "area restricted"
+        }));
+    });
+    let proxy = server.mock(|when, then| {
+        when.method(GET)
+            .path("/timeline-proxy/pgc/player/web/playurl")
+            .query_param("ep_id", "1701")
+            .query_param("area", "hk")
+            .query_param_missing("access_key")
+            .header_missing("cookie");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "timelength": 3000,
+            "accept_quality": [80],
+            "accept_description": ["1080P"],
+            "support_formats": [{"quality": 80, "new_description": "1080P"}],
+            "dash": {
+                "duration": 3,
+                "video": [{"id": 80, "baseUrl": media_url, "base_url": media_url}],
+                "audio": []
+            }
+        }));
+    });
+    let ugc_view = server.mock(|when, then| {
+        when.method(GET).path("/x/web-interface/view");
+        then.status(500);
+    });
+    let ugc_playurl = server.mock(|when, then| {
+        when.method(GET).path("/x/player/playurl");
+        then.status(500);
+    });
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/v2")
+            .query_param("aid", "90")
+            .query_param("cid", "9041");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {"subtitle": {"subtitles": []}}
+        }));
+    });
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--pgc-base")
+        .arg(server.base_url())
+        .arg("pgc-index")
+        .arg("list")
+        .arg("--type")
+        .arg("tv")
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    let selected_episode = json["items"][0]["first_episode_id"]
+        .as_u64()
+        .ok_or_else(|| anyhow::anyhow!("PGC index first episode ID was missing"))?;
+    assert_eq!(selected_episode, 1701);
+    assert_eq!(json["items"][1]["season_id"], 905);
+    index.assert();
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--pgc-base")
+        .arg(server.base_url())
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--restricted-area")
+        .arg("hk")
+        .arg("--restricted-api-proxy")
+        .arg(format!("hk={}/timeline-proxy", server.base_url()))
+        .arg("plan")
+        .arg(format!("ep{selected_episode}"))
+        .arg("--json");
+    let output = command.assert().success().get_output().stdout.clone();
+    let plan: Value = serde_json::from_slice(&output)?;
+    assert_eq!(plan["entries"][0]["epid"], selected_episode);
+    assert_eq!(plan["entries"][0]["source"], "pgc_proxy");
+
+    let mut command = bbdown_command()?;
+    command
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--pgc-base")
+        .arg(server.base_url())
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--restricted-area")
+        .arg("hk")
+        .arg("--restricted-api-proxy")
+        .arg(format!("hk={}/timeline-proxy", server.base_url()))
+        .arg("download")
+        .arg(format!("ep{selected_episode}"))
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--only")
+        .arg("video")
+        .arg("--no-mux")
+        .arg("--no-subtitles")
+        .arg("--no-danmaku")
+        .arg("--no-cover")
+        .arg("--cdn-host")
+        .arg(&origin.host)
+        .arg("--json");
+    let output = command.output()?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "mock PGC index episode download failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let report: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(report["entries"][0]["files"][0]["kind"], "video");
+    let downloaded = downloaded_file_path(&report, "video")?;
+    assert_eq!(fs::read(downloaded)?, media_bytes);
+    season.assert_calls(2);
+    official.assert_calls(2);
+    unselected_season.assert_calls(0);
+    proxy.assert_calls(2);
+    ugc_view.assert_calls(0);
+    ugc_playurl.assert_calls(0);
+    Ok(())
+}
+
+#[test]
 fn timetable_guochuang_uses_its_supported_category_and_help_is_bounded() -> anyhow::Result<()> {
     let server = MockServer::start();
     let timeline = server.mock(|when, then| {
