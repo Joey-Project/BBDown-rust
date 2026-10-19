@@ -5,10 +5,11 @@ use bbdown_core::{
     CredentialProfileMetadata, CredentialProfiles, DanmakuUpdateOptions, DanmakuUpdatePolicy,
     DownloadCancellationToken, DownloadOptions, DownloadProgressEvent, DownloadProgressSink,
     DownloadReportSummary, Input, MetadataPageOptions, NoopDownloadProgress,
-    PgcIndexFilterSelection, PgcIndexKind, PgcIndexOrder, PgcIndexQuery, PgcIndexSort,
-    PgcTimetable, PgcTimetableDay, PgcTimetableEpisode, PgcTimetableKind, PlayurlMode,
-    RestrictedAreaConfig, SeasonEpisodeGroup, SeasonEpisodeGroupKind, StreamSelection,
-    SubtitleAiPolicy, UgcCollectionKind, UgcCollectionReference, VideoCollectionKind,
+    POPULAR_VIDEO_MAX_PAGE_SIZE, PgcIndexFilterSelection, PgcIndexKind, PgcIndexOrder,
+    PgcIndexQuery, PgcIndexSort, PgcTimetable, PgcTimetableDay, PgcTimetableEpisode,
+    PgcTimetableKind, PlayurlMode, PopularVideoQuery, PopularVideoStats, RestrictedAreaConfig,
+    SeasonEpisodeGroup, SeasonEpisodeGroupKind, StreamSelection, SubtitleAiPolicy,
+    UgcCollectionKind, UgcCollectionReference, VideoCollectionKind,
 };
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
@@ -161,4 +162,19 @@ fn pgc_index_query_types_are_reexported() {
     assert_eq!(query.page, 2);
     assert_eq!(query.page_size, 5);
     assert_eq!(query.filters.area.as_deref(), Some("1"));
+}
+
+#[test]
+fn popular_video_types_are_reexported() {
+    let query = PopularVideoQuery::default().with_page(2).with_page_size(5);
+    assert_eq!(query.page, 2);
+    assert_eq!(query.page_size, 5);
+    assert_eq!(POPULAR_VIDEO_MAX_PAGE_SIZE, 20);
+
+    let stats = PopularVideoStats {
+        view: Some(10),
+        ..PopularVideoStats::default()
+    };
+    assert_eq!(stats.view, Some(10));
+    assert_eq!(stats.like, None);
 }

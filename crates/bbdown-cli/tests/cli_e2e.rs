@@ -152,6 +152,270 @@ fn search_json_uses_configured_api_base_and_only_requests_metadata() -> anyhow::
 }
 
 #[test]
+fn popular_json_keeps_source_order_and_only_hydrates_an_explicit_bvid_plan() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let popular = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/popular")
+            .query_param("pn", "2")
+            .query_param("ps", "2")
+            .query_param_missing("access_key")
+            .header_missing("cookie");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "no_more": false,
+                "list": [
+                    {
+                        "aid": 455_017_605,
+                        "bvid": "BV1Q541167Qg",
+                        "title": "First source row",
+                        "owner": {"mid": 42, "name": "First author"},
+                        "duration": 73,
+                        "stat": {"view": 1234, "like": 56}
+                    },
+                    {
+                        "aid": 170_001,
+                        "title": "Second source row",
+                        "owner": {"name": "Second author"}
+                    }
+                ]
+            }
+        }));
+    });
+    let view = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/view")
+            .query_param("bvid", "BV1Q541167Qg");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "aid": 455_017_605,
+                "bvid": "BV1Q541167Qg",
+                "title": "Planned video",
+                "owner": {"mid": 1, "name": "Planner"},
+                "pages": [{"page": 1, "cid": 2, "part": "Main"}]
+            }
+        }));
+    });
+    let playurl = server.mock(|when, then| {
+        when.method(GET).path("/x/player/playurl");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -404,
+            "message": "must not be requested while listing"
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("popular")
+        .arg("--page")
+        .arg("2")
+        .arg("--page-size")
+        .arg("2")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    assert_eq!(json["requested_page"], 2);
+    assert_eq!(json["requested_page_size"], 2);
+    assert_eq!(json["has_next"], true);
+    assert_eq!(json["next_page"], 3);
+    assert_eq!(json["items"][0]["title"], "First source row");
+    assert_eq!(json["items"][0]["author"], "First author");
+    assert_eq!(json["items"][0]["stats"]["view"], 1234);
+    assert_eq!(json["items"][1]["title"], "Second source row");
+    popular.assert_calls(1);
+    view.assert_calls(0);
+    playurl.assert_calls(0);
+
+    let selected_bvid = json["items"][0]["bvid"]
+        .as_str()
+        .context("first popular item should include its BVID")?;
+    let plan = bbdown_command()?
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("plan")
+        .arg(selected_bvid)
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8(plan)?;
+    assert!(stderr.contains("must not be requested while listing"));
+    view.assert_calls(1);
+    playurl.assert_calls(1);
+    Ok(())
+}
+
+#[test]
+fn popular_human_output_shows_targets_and_keeps_page_size_for_continuation() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let popular = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/popular")
+            .query_param("pn", "4")
+            .query_param("ps", "3");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "no_more": false,
+                "list": [{
+                    "aid": 455_017_605,
+                    "bvid": "BV1Q541167Qg",
+                    "title": "Human row",
+                    "owner": {"name": "Creator"},
+                    "stat": {"view": 99}
+                }]
+            }
+        }));
+    });
+
+    let output = String::from_utf8(
+        bbdown_command()?
+            .arg("--api-base")
+            .arg(server.base_url())
+            .arg("popular")
+            .arg("--page")
+            .arg("4")
+            .arg("--page-size")
+            .arg("3")
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone(),
+    )?;
+    assert!(output.contains("requested page: 4"));
+    assert!(output.contains("requested page size: 3"));
+    assert!(output.contains("rows: 1"));
+    assert!(output.contains("1. source-order target=BV1Q541167Qg / av455017605"));
+    assert!(output.contains("author=Creator title=Human row"));
+    assert!(output.contains("stats: view=99"));
+    assert!(output.contains("next page: 5 (keep --page-size 3)"));
+    popular.assert_calls(1);
+    Ok(())
+}
+
+#[test]
+fn popular_ignores_credential_profile_preflight_resolver_and_proxy_configuration()
+-> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let sentinel = b"malformed credential data that must remain untouched";
+    fs::write(&credential_file, sentinel)?;
+    let popular = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/popular")
+            .query_param("pn", "1")
+            .query_param("ps", "20")
+            .query_param_missing("access_key")
+            .header_missing("cookie");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {"no_more": true, "list": []}
+        }));
+    });
+    let nav = server.mock(|when, then| {
+        when.method(GET).path("/x/web-interface/nav");
+        then.status(500);
+    });
+
+    bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("missing-profile")
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("--resolver")
+        .arg("unknown-resolver")
+        .arg("--restricted-area-proxy")
+        .arg("not a valid proxy")
+        .arg("--restricted-api-proxy")
+        .arg("not a valid api proxy")
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("popular")
+        .arg("--json")
+        .assert()
+        .success();
+
+    assert_eq!(fs::read(&credential_file)?, sentinel);
+    popular.assert_calls(1);
+    nav.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+fn popular_rejects_invalid_and_missing_pagination_before_network_requests() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let popular = server.mock(|when, then| {
+        when.method(GET).path("/x/web-interface/popular");
+        then.status(500);
+    });
+
+    for args in [
+        vec!["popular", "--page", "0"],
+        vec!["popular", "--page-size", "0"],
+        vec!["popular", "--page-size", "21"],
+        vec!["popular", "--page"],
+        vec!["popular", "--page-size"],
+    ] {
+        let mut command = bbdown_command()?;
+        command
+            .arg("--api-base")
+            .arg(server.base_url())
+            .args(args)
+            .assert()
+            .failure();
+    }
+    popular.assert_calls(0);
+
+    let help = bbdown_command()?
+        .args(["popular", "--help"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let help = String::from_utf8(help)?;
+    assert!(help.contains("--page <PAGE>"));
+    assert!(help.contains("--page-size <PAGE_SIZE>"));
+    assert!(help.contains("--json"));
+    Ok(())
+}
+
+#[test]
+fn popular_reports_an_unsupported_endpoint_response() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let unsupported = server.mock(|when, then| {
+        when.method(GET).path("/x/web-interface/popular");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -404,
+            "message": "unsupported endpoint"
+        }));
+    });
+
+    bbdown_command()?
+        .arg("--api-base")
+        .arg(server.base_url())
+        .args(["popular", "--json"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("unsupported endpoint"));
+    unsupported.assert_calls(1);
+    Ok(())
+}
+
+#[test]
 fn search_ignores_invalid_credential_store_and_selected_profile() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;

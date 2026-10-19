@@ -258,6 +258,57 @@ Availability depends on the selected service and the caller's access.
 `Input::VideoSearch` and `VideoCollectionKind::Search` add public enum variants. Downstream
 exhaustive matches need to handle them; runtime behavior for existing input kinds is unchanged.
 
+### Popular Video Metadata
+
+This API is not included in the published `bbdown-core` `0.10.0` package. Use a source checkout
+that contains it, or a later release that includes it.
+
+Call `BiliClient::popular_videos` to fetch one bounded metadata page. The default query is page 1
+with 20 rows; page size is limited to 1–20.
+
+```rust,no_run
+use bbdown_core::{BiliClient, ClientConfig, PopularVideoQuery};
+
+async fn read_popular() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let page = client
+        .popular_videos(PopularVideoQuery::new().with_page(2).with_page_size(10))
+        .await?;
+
+    println!("requested page {} (size {})", page.requested_page, page.requested_page_size);
+    for item in &page.items {
+        println!("{} {} {:?}", item.aid, item.title, item.bvid);
+    }
+    if let Some(next_page) = page.next_page {
+        println!("request page {next_page} explicitly");
+    }
+    Ok(())
+}
+```
+
+Each call makes one anonymous GET through the configured `api_base` to
+`/x/web-interface/popular?pn=<page>&ps=<page-size>`, with a 1 MiB response cap and the configured
+request timeout. Redirects are not followed. The request uses only `api_base` and the configured
+timeout; it does not inspect credential profiles or run credential preflight, renewal, resolver,
+restricted-area, or PGC configuration. Credentials, cookies, and access keys are not loaded or sent.
+A configured service must support this endpoint and response shape.
+
+`PopularVideoPage` exposes the requested page and page size, `has_next`, `next_page`, and `items`.
+The upstream response only contains `data.list` and `data.no_more`; it does not return a page or
+total count. `no_more` controls continuation, while the page fields preserve the request parameters.
+Because the list is dynamic, separate requests do not share a fixed snapshot or guaranteed stable
+ordering. The API does not automatically fetch another page.
+
+`PopularVideoItem` exposes positive `aid`, optional `bvid`, `title`, optional `author`,
+`author_mid`, `duration_seconds`, `pub_time`, `cover_url`, `description`, `category_name`,
+`recommendation_reason`, and `stats`. Optional statistics include view, danmaku, reply, favorite,
+coin, share, and like counts. When present, a BVID is format-checked and its decoded aid must match
+the row's `aid`; conflicting identifiers reject the response. Missing BVID values are not
+synthesized. This API does not hydrate details, resolve playurl, request images or
+media, or add a generic `Input` variant. To use a displayed item in an existing flow, explicitly
+construct `Input::Bvid` or `Input::Aid`; this uses the existing direct-video behavior and access
+rules, without carrying selected-row PGC detection. Ranking remains a separate follow-up.
+
 ### PGC Timetable Metadata
 
 This API is not included in the published `bbdown-core` `0.10.0` package. Use a source checkout that
