@@ -22,7 +22,8 @@ use bbdown_core::{
     RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind,
     RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet, StreamSource,
     SubtitleAiPolicy, TvAccessKeyLoginCredentials, TvAccessKeyRefreshRequest,
-    WebCookieRefreshCredentials, WebCookieRefreshRequest, archive_entry_allows_danmaku_update,
+    VIDEO_SEARCH_MAX_ITEMS, VideoSearchOrder, VideoSearchQuery, WebCookieRefreshCredentials,
+    WebCookieRefreshRequest, archive_entry_allows_danmaku_update,
     credential_preflight_requirements_for_media_paths,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -178,6 +179,15 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    Search {
+        keyword: String,
+        #[arg(long, default_value_t = 1)]
+        page: u32,
+        #[arg(long, value_enum, default_value = "totalrank")]
+        order: SearchOrderArg,
+        #[arg(long)]
+        json: bool,
+    },
     Plan {
         url: String,
         #[arg(long)]
@@ -228,6 +238,48 @@ enum ResolverCatalogCommand {
         #[arg(long)]
         server: String,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum SearchOrderArg {
+    #[value(name = "totalrank")]
+    TotalRank,
+    #[value(name = "click")]
+    Click,
+    #[value(name = "pubdate")]
+    PubDate,
+    #[value(name = "dm")]
+    Danmaku,
+    #[value(name = "stow")]
+    Favorites,
+    #[value(name = "scores")]
+    Comments,
+}
+
+impl From<SearchOrderArg> for VideoSearchOrder {
+    fn from(order: SearchOrderArg) -> Self {
+        match order {
+            SearchOrderArg::TotalRank => Self::TotalRank,
+            SearchOrderArg::Click => Self::Click,
+            SearchOrderArg::PubDate => Self::PubDate,
+            SearchOrderArg::Danmaku => Self::Danmaku,
+            SearchOrderArg::Favorites => Self::Favorites,
+            SearchOrderArg::Comments => Self::Comments,
+        }
+    }
+}
+
+impl SearchOrderArg {
+    const fn api_value(self) -> &'static str {
+        match self {
+            Self::TotalRank => "totalrank",
+            Self::Click => "click",
+            Self::PubDate => "pubdate",
+            Self::Danmaku => "dm",
+            Self::Favorites => "stow",
+            Self::Comments => "scores",
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -1131,6 +1183,7 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 async fn run() -> anyhow::Result<()> {
     let raw_args = std::env::args_os().collect::<Vec<_>>();
     let cli = Cli::parse_from(raw_args.clone());
@@ -1181,6 +1234,14 @@ async fn run() -> anyhow::Result<()> {
         }
         Command::Info { url, select, json } => {
             handle_info(&credential_runtime, &client_runtime, url, select, json).await?;
+        }
+        Command::Search {
+            keyword,
+            page,
+            order,
+            json,
+        } => {
+            handle_video_search(&client_runtime, keyword, page, order, json).await?;
         }
         Command::Plan { url, select, json } => {
             handle_plan(
@@ -1829,6 +1890,81 @@ async fn handle_info(
         print_human_summary(&resolved);
     }
     Ok(())
+}
+
+async fn handle_video_search(
+    client_runtime: &ClientRuntimeConfig,
+    keyword: String,
+    page: u32,
+    order: SearchOrderArg,
+    json: bool,
+) -> anyhow::Result<()> {
+    ensure!(page > 0, "--page must be greater than 0");
+    let client = BiliClient::new(client_runtime.client_config(Credentials::default()));
+    let result = client
+        .search_videos(
+            VideoSearchQuery::new(keyword.clone())
+                .with_page(page)
+                .with_order(order.into()),
+        )
+        .await?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    } else {
+        print_video_search_page(&result, &keyword, order)?;
+    }
+    Ok(())
+}
+
+fn print_video_search_page(
+    page: &bbdown_core::VideoSearchPage,
+    keyword: &str,
+    order: SearchOrderArg,
+) -> anyhow::Result<()> {
+    println!("page: {}", page.page);
+    println!("page size: {}", page.page_size);
+    println!("total: {}", page.total);
+    println!("total pages: {}", page.total_pages);
+    if let Some(next_page) = page.next_page {
+        println!("next page: {next_page}");
+    } else {
+        println!("next page: none");
+    }
+    for (index, item) in page.items.iter().enumerate() {
+        let bvid = item.bvid.as_deref().unwrap_or("unknown");
+        let aid = item
+            .aid
+            .map_or_else(|| "unknown".to_owned(), |aid| aid.to_string());
+        let creator = item.author.as_deref().unwrap_or("unknown");
+        println!(
+            "{}. bvid={} aid={} creator={} title={}",
+            index + 1,
+            bvid,
+            aid,
+            creator,
+            item.title
+        );
+    }
+    if !page.items.is_empty() {
+        let mut search_url = url::Url::parse("https://search.bilibili.com/video")?;
+        search_url
+            .query_pairs_mut()
+            .append_pair("keyword", keyword)
+            .append_pair("page", &page.page.to_string())
+            .append_pair("order", order.api_value());
+        let search_url = shell_quote_single(search_url.as_str());
+        println!(
+            "select results from this page with --select INDEX or INDEX-RANGE; use the same page and order with: bbdown plan {search_url} --select INDEX"
+        );
+        println!(
+            "for the exact item, plan by its BVID or aid; selecting the search URL runs a fresh search and ranking may change"
+        );
+    }
+    Ok(())
+}
+
+fn shell_quote_single(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 async fn prepare_credentials_for_media_request(
@@ -2668,6 +2804,31 @@ fn ensure_input_selection_for_media_preflight(
     input: &Input,
     selection: Option<&Selection>,
 ) -> anyhow::Result<()> {
+    if matches!(input, Input::VideoSearch { .. }) {
+        let selection = selection.ok_or(bbdown_core::Error::SelectionRequired {
+            input_kind: "video search",
+        })?;
+        let max_index = u32::try_from(VIDEO_SEARCH_MAX_ITEMS).unwrap_or(u32::MAX);
+        return match selection {
+            Selection::All => Ok(()),
+            Selection::Page(0) => Err(bbdown_core::Error::InvalidInput(
+                "video search result indices are 1-based".to_owned(),
+            )
+            .into()),
+            Selection::Page(page) if *page <= max_index => Ok(()),
+            Selection::Indices(indices) if indices.max_index() <= max_index => Ok(()),
+            Selection::Page(_) | Selection::Indices(_) => Err(bbdown_core::Error::InvalidInput(
+                format!("video search result indices must be between 1 and {max_index}"),
+            )
+            .into()),
+            Selection::Current | Selection::Latest | Selection::Episode(_) => {
+                Err(bbdown_core::Error::InvalidInput(
+                    "video search requires an explicit numeric, range, or all selection".to_owned(),
+                )
+                .into())
+            }
+        };
+    }
     if selection.is_none()
         && let Some(input_kind) = selection_required_input_kind(input)
     {
@@ -2681,6 +2842,7 @@ fn selection_required_input_kind(input: &Input) -> Option<&'static str> {
         Input::Season(_) => Some("season"),
         Input::Media(_) => Some("media"),
         Input::CheeseSeason(_) => Some("cheese season"),
+        Input::VideoSearch { .. } => Some("video search"),
         _ => None,
     }
 }
@@ -2699,7 +2861,11 @@ fn input_media_preflight_playurl_mode(
 fn input_may_use_restricted_area_proxy(input: &Input) -> bool {
     matches!(
         input,
-        Input::Episode(_) | Input::Season(_) | Input::Media(_) | Input::ShortLink(_)
+        Input::Episode(_)
+            | Input::Season(_)
+            | Input::Media(_)
+            | Input::ShortLink(_)
+            | Input::VideoSearch { .. }
     )
 }
 
@@ -7290,7 +7456,7 @@ mod tests {
         CredentialProfiles, CredentialRefreshSecret, CredentialStore, Credentials,
         DownloadCancellationToken, DownloadMode, DownloadOutputConflict, DownloadPreflight,
         DuplicateDecision, EndpointConfig, Input, PlayurlMode, QrLoginCredentials, QrLoginKind,
-        RestrictedAreaConfig, RestrictedAreaProxy,
+        RestrictedAreaConfig, RestrictedAreaProxy, VideoSearchOrder,
     };
     use clap::Parser as _;
     use std::fs;
@@ -7331,6 +7497,11 @@ mod tests {
         assert!(input_may_use_restricted_area_proxy(&Input::ShortLink(
             "https://b23.tv/example".to_owned()
         )));
+        assert!(input_may_use_restricted_area_proxy(&Input::VideoSearch {
+            keyword: "Rust".to_owned(),
+            page: 1,
+            order: VideoSearchOrder::TotalRank,
+        }));
         assert!(!input_may_use_restricted_area_proxy(&Input::Aid(170_001)));
         assert!(!input_may_use_restricted_area_proxy(&Input::Bvid(
             "BV1xx411c7mD".to_owned()

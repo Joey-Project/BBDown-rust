@@ -14,12 +14,13 @@ superseded_by:
 
 ## Summary
 
-- Record Joey's page-family priorities and the shared requirement to support explicitly configured reverse API resolver services where their endpoint capabilities permit it.
-- Preserve PGC season section titles and grouping before adding ordinary video search results.
+- Record Joey's page-family priorities and the shared requirement to use explicitly configured API services only for endpoint capabilities they support.
+- Preserve PGC season section titles and grouping before ordinary video search; keep search metadata selection separate from selected-video resolution and planning.
 
 ## Current State
 
 - Domestic PGC season resolution preserves main and supplementary groups in `SeasonMetadata.episode_groups`, including section titles, available upstream IDs, empty groups, duplicate titles, and membership positions in the unchanged flat episode list. See `2026-10-18-pgc-season-grouping-01a0dd39.md`.
+- Ordinary video keyword search returns one bounded metadata page through a dedicated API and CLI surface. Generic input requires explicit selection from that page before selected results hydrate through the ordinary video resolver. See `2026-10-18-video-search-01a0dd39.md`.
 - Intl modules and PUGV courses retain their existing flat metadata behavior; this domestic PGC section slice does not infer groups for those sources.
 - Standard UGC collections, series, favorites, and medialist inputs already have collection resolution and planning paths. Ordinary BV input keeps its single-video behavior; membership expansion is explicit.
 - Existing `PgcWebPlayurlRoute` controls PGC Web playurl requests only. It does not route season metadata or page listings through the restricted-area resolver chain.
@@ -28,7 +29,7 @@ superseded_by:
 ## Ordered Backlog
 
 1. **Completed: preserve domestic PGC season grouping.** Main episodes and supplementary sections retain their titles, upstream order, episode membership, and available stable identifiers through the public API and CLI metadata output. Existing flat episode order, index selection, exact episode selection, and the main-episode-only `Latest` behavior remain compatible.
-2. **Add ordinary video search results.** Define explicit input, pagination, ordering, selection, and bounded metadata behavior on top of the shared feed/list layer.
+2. **Completed: add ordinary video search results.** Provide one bounded upstream page at a time, ordering, metadata output, and explicit result selection before ordinary video resolution, planning, or download.
 3. **Add the new-season anime timetable and film/TV category listings.** Treat these as listing inputs distinct from a single `ss`/`md` season page. Define their upstream listing scope and continuation behavior before implementation.
 4. **Popular and ranking feeds.** These are not urgent.
 5. **Category and channel lists.** These have lower priority than the preceding items.
@@ -38,8 +39,8 @@ superseded_by:
 
 ## Shared Reverse Resolver Requirement
 
-- Aim to support caller-selected reverse API resolver services for existing season/collection/list pages and the new page families, so metadata enumeration as well as playback resolution can work when official regional access is unavailable.
-- Cover metadata and listing endpoints explicitly; do not assume the existing PGC playurl fallback also resolves season metadata, search, timetable, or category data.
+- Aim to support caller-selected API services for existing season/collection/list pages and the new page families only where their endpoint capabilities permit it, so metadata enumeration as well as playback resolution can work when official regional access is unavailable.
+- Cover metadata and listing endpoints explicitly; do not assume the existing PGC playurl fallback also resolves season metadata, search, timetable, or category data. Ordinary video search uses `api_base` for `/x/web-interface/nav` and `/x/web-interface/wbi/search/type`; it does not inherit `PgcWebPlayurlRoute` behavior or forward configured credentials.
 - Prefer reusing endpoint configuration, the bundled resolver catalog, and existing route conventions where compatible. Define service capabilities and caller-selectable routing; a service that only supports playurl must not be presented as a metadata/list resolver.
 - Preserve required request parameters, signing, pagination, group titles, and episode identities when a service supports the route. Make unsupported endpoints and regional access failures visible in diagnostics.
 - Keep credential requirements and forwarding scope explicit for each configured service. Resolver support depends on the service's endpoint coverage and access rights; it does not guarantee availability for every region or account.
@@ -47,12 +48,12 @@ superseded_by:
 ## Validation Expectations
 
 - Grouping: mock normal and supplementary sections, duplicate or empty titles, missing optional identifiers, and API/CLI serialization; verify existing selection and planning behavior remains compatible.
-- New listings: mock pagination, filtering, ordering, continuation, and bounded request behavior.
+- New listings: mock pagination, filtering, ordering, continuation, and bounded request behavior. Search must fetch one requested page per call, cap each response at 1 MiB and each page at 20 rows, and require explicit result selection before selected video hydration.
 - Reverse resolvers: mock supported and unsupported endpoints, official/proxy routing, response compatibility, and failures; use opt-in live fixtures for exact configured service routes when execution is authorized.
 - Synchronize English and Simplified Chinese user and embedding documentation with each implementation slice.
 
 ## Evidence
 
 - Joey's 2026-10-11 instruction places season grouping before search, the anime timetable and film/TV category listings after search, and topic pages after category/channel lists.
-- Current implementation references: `crates/bbdown/src/client.rs` (`PgcWebPlayurlRoute`, `fetch_season_by_ep`, `fetch_season_by_season_id`, `fetch_season_by_media_id`, and `season_from_pgc`) and `crates/bbdown/src/models.rs` (`SeasonMetadata`).
-- The domestic PGC grouping implementation and its validation are recorded in `2026-10-18-pgc-season-grouping-01a0dd39.md`. Remaining listing items and reverse-resolver expansion are requirements, not completed implementations.
+- Current implementation references: `crates/bbdown/src/client.rs` (`PgcWebPlayurlRoute`, search API, and PGC season methods) and `crates/bbdown/src/models.rs` (`SeasonMetadata`).
+- The domestic PGC grouping implementation and its validation are recorded in `2026-10-18-pgc-season-grouping-01a0dd39.md`; ordinary search is recorded in `2026-10-18-video-search-01a0dd39.md`. Timetable, film/TV listings, and broader endpoint-specific API service support remain requirements, not completed implementations.

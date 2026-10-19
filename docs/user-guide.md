@@ -163,6 +163,83 @@ device-cookie values when a new feed request needs `buvid3` or `buvid4` and the 
 no non-empty value for that name. It uses a temporary request header and a clone-shared in-memory
 cache; configured credentials are not changed. Following feeds do not use this initializer.
 
+## Ordinary Video Search
+
+Ordinary video search is not included in the published `v0.10.0` CLI. Use a source checkout that
+contains this feature, or a later release that includes it.
+
+Use `search` to fetch one bounded page of ordinary video keyword results as metadata:
+
+```bash
+bbdown search "Rust async" --json
+bbdown search "Rust async" --page 2 --order pubdate --json
+```
+
+The keyword must be 1 to 200 UTF-8 bytes after trimming and must not contain control characters;
+invalid keywords are rejected, not silently shortened. Before WBI signing and sending, search
+normalization removes ASCII `!`, `'`, `(`, `)`, and `*`, then trims surrounding whitespace again;
+a keyword that becomes empty is rejected.
+
+`--page` defaults to `1` and accepts any positive page number. `--order` defaults to `totalrank`; supported
+values are `totalrank`, `click` (play count), `pubdate`, `dm` (danmaku count), `stow` (favorites), and
+`scores` (comments). Each upstream page is fetched as a whole, with at most 20 raw rows; there is no
+local page-size option that could skip upstream rows.
+Output includes the service-reported positive page (or the requested page when the response omits
+that field), page size, reported total and total page count, and `next_page` when the API reports a
+continuation. `next_page` is derived from the actual page. Pass another explicit `--page` to request
+another page.
+
+To resolve search results through the existing video path, use `search:<keyword>` or an official
+Bilibili video-search URL with its `keyword`, `page`, and `order` query parameters. For example:
+
+```bash
+bbdown info 'search:Rust async' --select 1,3-4 --json
+bbdown plan 'search:Rust async' --select 2 --json
+bbdown playback 'search:Rust async' --select 2 --json
+bbdown download 'search:Rust async' --select 2 --output-dir downloads
+```
+
+These generic commands require an explicit numeric selection, range, or `all`. Indexes are
+one-based within the page fetched by that command; `all` means all results from that one bounded
+page. Each use of `search:<keyword>` or a search URL runs a fresh query, so the upstream order may
+change and `--select N` does not pin an item from a page shown earlier. Use the displayed item's
+BVID or aid as an ordinary video input to target that exact result. Only selected
+rows are hydrated through the ordinary video resolver for metadata, planning, playback, or download. The
+standalone `search` command does not hydrate video details, resolve streams, or download media. A
+credential store or named credential profile is not required or loaded by this anonymous command. A
+selected ordinary UGC result uses the first video part (P1), following collection-item planning behavior.
+To choose another part, take the selected result's BVID or aid and pass it to the ordinary video
+input with its usual `--select` page index.
+
+Using a displayed BVID or aid directly keeps the existing direct-video behavior. Automatic PGC
+episode recognition applies only when a result is selected through search input. After that path
+confirms a PGC episode, use the `epid` shown in its plan as `ep<ID>` for later commands that must keep
+the exact episode; direct BVID/aid input does not inherit the search selection's PGC context.
+
+Search results remain an ordinary-video listing and keep the existing collection JSON shape; the
+search item itself does not gain a PGC episode field. When the selected BVID or aid's official
+`view` response has a `data.redirect_url` on `bilibili.com` or `www.bilibili.com` matching
+`/bangumi/play/ep<ID>`, the resolver reads `/pgc/view/web/season?ep_id=<ID>` through `--pgc-base` /
+`BBDOWN_PGC_BASE`. It accepts the match only when the returned season contains that episode and its
+aid matches the selected video. Planning, playback, and download preserve the confirmed episode ID
+and cid. If an episode redirect cannot be confirmed, resolution fails explicitly; it does not guess
+a PGC identity or treat an ordinary error as a regional restriction. Confirmed PGC episodes use
+the configured PGC Web playurl route; Web and APP retain their existing restricted-area proxy
+fallback. TV playurl semantics do not change.
+
+Search metadata uses `--api-base` / `BBDOWN_API_BASE` for `/x/web-interface/nav` and
+`/x/web-interface/wbi/search/type`. A caller may point it at a trusted compatible service that
+implements both endpoints and their response shapes;
+the existing `--pgc-base` is used for PGC metadata, while `PgcWebPlayurlRoute` only controls PGC Web
+playurl. Search
+requests are anonymous and never receive configured credentials or cookies. After explicit result
+selection, hydration returns to the ordinary video resolver and follows its existing credential
+profile rules. The search endpoint makes at most two API requests per page, caps each JSON response
+at 1 MiB, and uses the configured request timeout. A compatible endpoint or successful request
+does not guarantee regional availability.
+The anonymous live probe recorded for this feature confirms metadata search only; it does not
+establish real `view` or playurl access, playback planning, or download availability.
+
 ## Download Plans
 
 Use `plan` to resolve stream, subtitle, and danmaku availability:
@@ -720,7 +797,10 @@ playurl requires `tv_access_key`, APP playurl accepts either generic `access_key
 generic keys are checked before TV keys, while `bili_intl_oauth2` keys and legacy profiles with no
 provider metadata yield to TV keys. Restricted-area proxy fallback checks generic `access_key` only when that key is configured for
 an input where proxy fallback may run. Missing generic keys do not block restricted-area proxy URLs
-that authenticate themselves or allow anonymous fallback. Intl/Bstar episode media and subtitle
+that authenticate themselves or allow anonymous fallback. A valid explicit `search:<keyword>`
+selection may resolve to PGC, so it receives the same restricted-proxy preflight when proxies are
+configured and a generic key is present; a missing key remains optional, and invalid selections are
+rejected before credential preflight. Intl/Bstar episode media and subtitle
 paths require the generic `access_key` used by the official intl metadata, playurl, and subtitle
 requests. Cover-only and danmaku-only intl episode downloads skip this access-key preflight because
 they only need metadata and sidecar endpoints; if an access key is present, metadata requests still

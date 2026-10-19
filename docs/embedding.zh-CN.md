@@ -132,6 +132,103 @@ API。不带 selector 时，集合类输入会选择全部解析条目；传入 
 `Selection::Latest` 可选择上游列表顺序中的第一个解析条目。空集合会表示为空 item 列表，
 而不是 missing-field 错误。
 
+### 普通视频搜索
+
+已发布的 `bbdown-core` `0.10.0` package 不包含这些搜索 API。请使用包含该功能的源码检出，或后续实际包含它的版本。
+
+使用 `BiliClient::search_videos` 和 `VideoSearchQuery` 获取普通视频关键词搜索的一页 metadata。
+每页最多读取 20 条上游记录，不会按本地 page-size 设置截断；页码必须为正数。
+`VideoSearchQuery::new` 默认页码为 1，排序为 `VideoSearchOrder::TotalRank`，需要时可使用
+`with_page` 和 `with_order` 修改。每次调用最多发起两次 API 请求（导航和搜索），每个 JSON 响应上限为
+1 MiB，并使用已配置的请求超时。搜索使用配置的 `api_base`，这两个搜索请求均为匿名请求，不会收到已配置的
+credentials 或 Cookie。显式选择结果后，普通视频 hydration 会遵循现有 credential profile 规则。
+
+关键词去除首尾空白后须为 1 至 200 个 UTF-8 字节，且不能包含控制字符；不符合要求的值会被拒绝，不会截短。
+WBI 签名和发送请求前，搜索规范化会移除 ASCII `!`、`'`、`(`、`)` 和 `*`，并再次去除首尾空白；
+规范化后若关键词为空，则会报错拒绝请求。
+
+```rust,no_run
+use bbdown_core::{
+    BiliClient, ClientConfig, Input, Selection, VideoSearchItem, VideoSearchOrder,
+    VideoSearchQuery,
+};
+
+fn choose_row_from_ui(items: &[VideoSearchItem]) -> Option<usize> {
+    let _ = items;
+    None // Replace with a UI choice from these exact rows.
+}
+
+async fn search_and_plan() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let page = client
+        .search_videos(
+            VideoSearchQuery::new("Rust async")
+                .with_page(2)
+                .with_order(VideoSearchOrder::PubDate),
+        )
+        .await?;
+
+    println!("page {} of {}", page.page, page.total_pages);
+    for (index, item) in page.items.iter().enumerate() {
+        println!("{}. {} {:?} {:?}", index + 1, item.title, item.bvid, item.aid);
+    }
+
+    // Ask the UI about this exact page before resolving or planning a result.
+    let selected_index = choose_row_from_ui(&page.items);
+    if let Some(selected_index) = selected_index {
+        if let Some(item) = page.items.get(selected_index) {
+            let input = if let Some(bvid) = &item.bvid {
+                Some(Input::Bvid(bvid.clone()))
+            } else {
+                item.aid.map(Input::Aid)
+            };
+
+            if let Some(input) = input {
+                let plan = client
+                    .plan(input, Some(Selection::Page(1)))
+                    .await?;
+                println!("planned {} entries", plan.entries.len());
+            }
+        }
+    }
+
+    Ok(())
+}
+```
+
+该示例只搜索一次，将这一页的条目交给 UI 选择，并从选中条目的 BVID 或 aid 规划。请将
+`choose_row_from_ui` 替换为应用自己的 UI；它应返回从传入 `items` 中选择的零基行偏移，或在用户尚未选择时返回
+`None`。
+这个直接 ID 示例用于锁定展示的普通视频身份，并沿用现有直接视频解析行为；它不会携带搜索选择上下文来识别 PGC。
+PGC 自动识别只在通过 `Input::VideoSearch` 选择时运行，该路径会重新查询。此路径确认 PGC 分集后，后续操作可使用
+plan 返回的 `epid` 构造 `Input::Episode(epid)`，以保持在同一分集。
+
+`VideoSearchOrder` 支持综合排序、播放量、发布时间、弹幕量、收藏量和评论量，对应上游值分别为
+`totalrank`、`click`、`pubdate`、`dm`、`stow` 和 `scores`。`VideoSearchPage` 提供 `page`、
+`page_size`、`total`、`total_pages`、`next_page` 和 `items`。`page` 使用服务端返回的正页码；响应缺少该字段时
+回退为请求页码。`next_page` 根据实际 `page` 计算。搜索条目包含可选 BVID、aid、cid，以及标题、作者、时长、
+发布时间、各类计数、封面 URL 和描述；JSON 字段使用 snake_case，上游没有提供的标识会保持缺失。
+
+对 `Input::VideoSearch`，`resolve_input`、`plan`、`plan_download` 和 `plan_playback` 必须显式传入 `Selection::Page`、
+`Selection::Indices` 或 `Selection::All`。序号从 1 开始，作用于本次重新查询后经筛选和去重的条目；
+上游顺序可能变化，因此索引不会锁定之前展示的页面快照。`All` 只表示本次调用取到的单页。
+如果应用刚展示了一页 `VideoSearchPage`，并且用户选择了其中一个条目，请用该条目的 BVID 或 aid 构造
+`Input::Bvid` 或 `Input::Aid` 后直接调用 `plan`，如上例所示，这样会规划用户实际选中的稳定身份。
+选中结果会经普通视频解析器补充 metadata；普通 UGC 结果按集合方式规划时只使用其第一个视频分 P（P1）。
+如需选择其他分 P，可用选中条目的 BVID 或 aid 作为普通视频输入，再在那里选择分 P。
+独立 `search_videos` 调用仍然只有 metadata。搜索通过 `api_base` 请求
+`/x/web-interface/nav` 和 `/x/web-interface/wbi/search/type`；所选服务必须同时支持这两个端点。
+PGC Web playurl 路由不代表支持搜索。搜索结果仍是普通视频 collection 条目，不会新增 PGC 分集字段。若选中 BVID 或 aid
+的官方 `view` 响应在 `data.redirect_url` 中返回 `bilibili.com` 或 `www.bilibili.com` 下匹配
+`/bangumi/play/ep<ID>` 的分集链接，解析器会通过 `pgc_base` 请求 `/pgc/view/web/season?ep_id=<ID>`。
+只有返回的 season 包含该分集且 aid 与选中视频一致时才接受识别。规划、播放和下载会保留已确认的 epid 和 cid。
+无法确认的分集重定向会明确报错，不猜测 PGC 身份，也不会把普通错误解释为区域限制。确认的 PGC 分集沿用现有
+PGC Web playurl 路由；Web 和 APP 沿用现有受限区域代理回退。TV playurl 语义不变。搜索 `api_base`、
+PGC metadata `pgc_base` 和 `PgcWebPlayurlRoute` 是分开的设置。是否可用取决于所选服务和调用方访问权限。
+
+`Input::VideoSearch` 和 `VideoCollectionKind::Search` 新增了公开枚举分支；下游穷尽匹配需要处理这些分支。
+现有 input 类型的运行时行为保持不变。
+
 ### 有界动态元数据分页
 
 通过 `BiliClient::resolve_metadata_page(input, options)`，可从 `Input::FollowingFeed` 或
@@ -525,8 +622,11 @@ playurl 要求 `tv_access_key`；APP playurl 接受 `tv_access_key` 或通用 `a
 `CredentialPreflightRequirement::authenticated_web_api_cookie()`；公开的 space dynamic 页面可以匿名访问，
 不应加入这个 required-cookie preflight。restricted-area proxy fallback
 会把通用 `access_key` 视为 optional：已存在的 key 会被检查并可能由 resolver 转发，缺失 key 不会阻断
-自带认证或允许匿名 fallback 的 proxy URL。intl/Bstar episode 的 media 和 subtitle path 会要求官方
-intl metadata、playurl 和 subtitle 请求实际使用的通用 `access_key`。cover-only 和 danmaku-only 的
+自带认证或允许匿名 fallback 的 proxy URL。
+显式选择的 `Input::VideoSearch` 也可能解析到 PGC；配置受限区域代理时，若通用 key 存在，embedding app 应执行相同的
+proxy preflight。缺失 key 仍为 optional；无效 selection 应先拒绝，再进行 credential preflight。
+intl/Bstar episode 的 media 和 subtitle path 会要求官方 intl metadata、playurl 和 subtitle 请求实际使用的通用
+`access_key`。cover-only 和 danmaku-only 的
 intl episode path 应跳过这个 access-key requirement，因为它们只需要 metadata 和 sidecar endpoint；
 如果 profile 里存在 access key，metadata 请求仍可带上它。
 intl/Bstar 和 PUGV/cheese 这类固定来源输入不应继承调用方的全局 TV/APP playurl credential

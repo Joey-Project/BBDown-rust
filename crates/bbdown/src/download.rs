@@ -4373,6 +4373,9 @@ fn input_progress_title(input: &Input) -> String {
         Input::SpaceDynamic(mid) => format!("space/{mid}/dynamic"),
         Input::History => "history".to_owned(),
         Input::WatchLater => "watchlater".to_owned(),
+        Input::VideoSearch { page, order, .. } => {
+            format!("search-page-{}/{}", page, order.api_value())
+        }
         Input::IntlEpisode(epid) => format!("intl/ep{epid}"),
         Input::ShortLink(url) => url.clone(),
     }

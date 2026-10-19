@@ -141,6 +141,66 @@ WEB cookie，目前只输出普通视频 `archive` 记录；PGC、直播或专�
 `buvid4` 没有非空值，会获取服务器签发的设备 Cookie 值。值只用于临时请求 header，并缓存在克隆共享的客户端内存中；
 不会修改已配置凭据。Following feed 不使用此初始化流程。
 
+## 普通视频搜索
+
+已发布的 `v0.10.0` CLI 不包含普通视频搜索。请使用包含此功能的源码检出，或后续实际包含它的版本。
+
+使用 `search` 获取一页有界的普通视频关键词搜索 metadata：
+
+```bash
+bbdown search "Rust async" --json
+bbdown search "Rust async" --page 2 --order pubdate --json
+```
+
+关键词去除首尾空白后须为 1 至 200 个 UTF-8 字节，且不能包含控制字符；不符合要求时会报错，不会静默截短。
+WBI 签名和发送请求前，搜索规范化会移除 ASCII `!`、`'`、`(`、`)` 和 `*`，并再次去除首尾空白；
+规范化后若关键词为空，则会报错拒绝请求。
+
+`--page` 默认为 `1`，可使用任意正整数页码。`--order` 默认为 `totalrank`，支持
+`totalrank`（综合排序）、`click`（播放量）、`pubdate`（发布时间）、`dm`（弹幕量）、`stow`（收藏量）和
+`scores`（评论量）。每次按上游完整页面读取，最多 20 条原始记录；
+没有会跳过上游结果的本地 page-size 参数。输出包括服务端返回的正页码（若响应缺少该字段，则使用请求页码）、
+页大小、上游报告的总条数和总页数；如果 API 提供续页，会包含基于实际页码计算的 `next_page`。
+需要下一页时显式传入另一个 `--page`。
+
+如需通过现有普通视频路径解析搜索结果，可使用 `search:<keyword>` 或带有 `keyword`、`page` 和
+`order` 查询参数的 Bilibili 官方视频搜索 URL：
+
+```bash
+bbdown info 'search:Rust async' --select 1,3-4 --json
+bbdown plan 'search:Rust async' --select 2 --json
+bbdown playback 'search:Rust async' --select 2 --json
+bbdown download 'search:Rust async' --select 2 --output-dir downloads
+```
+
+这些通用命令必须显式传入数字选择、范围或 `all`。序号是该命令本次查询页面内的一基序号；`all` 表示该
+有界页面中的全部结果。每次使用 `search:<keyword>` 或搜索 URL 都会重新查询，上游顺序可能变化，
+因此 `--select N` 不会锁定之前展示页面里的条目。要精确处理刚展示的搜索结果，请将页面条目的 BVID 或 aid
+作为普通视频输入。只有选中的条目会交给普通视频解析器补充 metadata、规划、播放或下载。独立的
+`search` 命令不会补充视频详情、解析流或下载媒体，也不会加载凭据文件或要求指定的 credential profile 存在。
+选中的普通 UGC 结果按集合条目行为只使用第一个视频分 P（P1）。
+如需选择其他分 P，可取出已选结果的 BVID 或 aid，再将其作为普通视频输入并使用原有的 `--select` 页码。
+
+直接使用已展示条目的 BVID 或 aid 会保留现有直接视频行为。PGC 自动识别只在通过搜索输入选择条目时运行。
+此路径确认 PGC 分集后，如需后续命令固定到同一分集，请使用 plan 中返回的 `epid`，并传入 `ep<ID>`；
+直接 BV/aid 输入不会继承搜索选择中的 PGC 上下文。
+
+搜索列表仍是普通视频搜索，保留现有 collection JSON 形状；搜索条目本身不会新增 PGC 分集字段。若选中 BVID 或 aid
+的官方 `view` 响应在 `data.redirect_url` 中返回 `bilibili.com` 或 `www.bilibili.com` 下匹配
+`/bangumi/play/ep<ID>` 的分集链接，解析器会通过 `--pgc-base` / `BBDOWN_PGC_BASE` 请求
+`/pgc/view/web/season?ep_id=<ID>`。只有返回的 season 包含该分集且 aid 与选中视频一致时才接受识别。
+规划、播放和下载会保留已确认的 epid 和 cid。无法确认的分集重定向会明确报错，不猜测 PGC 身份，
+也不会把普通错误当作区域限制。PGC Web 使用配置的 Web playurl 路由；Web 和 APP 沿用现有受限区域代理回退。
+TV playurl 语义不变。
+
+搜索 metadata 使用 `--api-base` / `BBDOWN_API_BASE` 请求 `/x/web-interface/nav` 和
+`/x/web-interface/wbi/search/type`。调用方可指定可信且兼容的服务，但该服务必须实现这两个端点及其响应格式；
+`--pgc-base` 用于 PGC metadata，`PgcWebPlayurlRoute` 只控制 PGC Web playurl。这两个搜索请求以匿名方式发送，
+不会收到已配置的 credentials 或 Cookie。显式选择结果后，metadata hydration 会回到普通视频解析器，
+并遵循它现有的 credential profile 规则。搜索每页最多发起两次 API 请求，每个 JSON 响应上限为
+1 MiB，并使用已配置的请求超时。兼容服务或请求成功都不保证特定区域可用。
+本功能记录的匿名实时探测只确认搜索 metadata 可用；它不能证明实际 `view` 或 playurl 可访问，也不能证明播放规划或下载可用。
+
 ## 下载计划
 
 使用 `plan` 解析流、字幕和弹幕可用性：
@@ -621,6 +681,8 @@ required-cookie preflight。TV playurl 要求 `tv_access_key`；APP playurl 接�
 provider metadata 的旧版 profile 会让位给 TV key。
 restricted-area proxy fallback 只会在当前输入可能触发 fallback 且已配置通用 `access_key` 时检查
 该 token；缺失通用 key 不会阻断自带认证或允许匿名 fallback 的 restricted-area proxy URL。
+有效且显式选择结果的 `search:<keyword>` 可能解析到 PGC，因此配置了代理且通用 key 存在时也会执行相同的
+restricted-proxy preflight；缺失 key 仍为 optional，无效选择会先被拒绝，不会进入 credential preflight。
 intl/Bstar episode 的 media 和 subtitle path 会要求官方 intl metadata、playurl 和 subtitle 请求实际使用的通用
 `access_key`。cover-only 和 danmaku-only 的 intl episode download 会跳过这个 access-key
 preflight，因为它们只需要 metadata 和 sidecar endpoint；如果 profile 里存在 access key，metadata

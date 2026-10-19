@@ -144,6 +144,120 @@ and series APIs. Without a selector, collection-like inputs select all parsed it
 `Selection::Latest` for the first parsed item in the upstream list order. Empty collections are
 represented as empty item lists, not as missing-field errors.
 
+### Ordinary Video Search
+
+These search APIs are not included in the published `bbdown-core` `0.10.0` package. Use a source
+checkout that contains this feature, or a later release that includes it.
+
+Use `BiliClient::search_videos` with a `VideoSearchQuery` to fetch exactly one bounded page of
+ordinary video search metadata. The page contains at most 20 raw rows; the requested page must be
+positive, and the upstream page is not truncated by a local page-size setting. `VideoSearchQuery::new`
+defaults to page 1 and `VideoSearchOrder::TotalRank`; use `with_page` and `with_order` to choose
+otherwise. Each call uses at most two API requests (navigation plus search), each JSON response is
+capped at 1 MiB, and requests use the configured timeout. Search uses the configured `api_base` and
+both search requests are anonymous; they never receive configured credentials or cookies. After an
+explicit selection, normal video hydration follows the existing configured credential profile
+rules.
+
+The trimmed keyword must contain 1 to 200 UTF-8 bytes and must not contain control characters;
+invalid values are rejected rather than truncated. Before WBI signing and sending, the search
+normalization removes ASCII `!`, `'`, `(`, `)`, and `*`, then trims surrounding whitespace again.
+If normalization leaves an empty keyword,
+the request is rejected.
+
+```rust,no_run
+use bbdown_core::{
+    BiliClient, ClientConfig, Input, Selection, VideoSearchItem, VideoSearchOrder,
+    VideoSearchQuery,
+};
+
+fn choose_row_from_ui(items: &[VideoSearchItem]) -> Option<usize> {
+    let _ = items;
+    None // Replace with a UI choice from these exact rows.
+}
+
+async fn search_and_plan() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let page = client
+        .search_videos(
+            VideoSearchQuery::new("Rust async")
+                .with_page(2)
+                .with_order(VideoSearchOrder::PubDate),
+        )
+        .await?;
+
+    println!("page {} of {}", page.page, page.total_pages);
+    for (index, item) in page.items.iter().enumerate() {
+        println!("{}. {} {:?} {:?}", index + 1, item.title, item.bvid, item.aid);
+    }
+
+    // Ask the UI about this exact page before resolving or planning a result.
+    let selected_index = choose_row_from_ui(&page.items);
+    if let Some(selected_index) = selected_index {
+        if let Some(item) = page.items.get(selected_index) {
+            let input = if let Some(bvid) = &item.bvid {
+                Some(Input::Bvid(bvid.clone()))
+            } else {
+                item.aid.map(Input::Aid)
+            };
+
+            if let Some(input) = input {
+                let plan = client
+                    .plan(input, Some(Selection::Page(1)))
+                    .await?;
+                println!("planned {} entries", plan.entries.len());
+            }
+        }
+    }
+
+    Ok(())
+}
+```
+
+The example searches once, passes those exact rows to the UI selection hook, and plans from the
+selected item's BVID or aid. Replace `choose_row_from_ui` with the application's UI; it should return
+the zero-based offset chosen from the supplied `items` slice or `None` when the user has not chosen.
+This direct-ID example pins the displayed ordinary-video identity and retains existing direct-video
+resolution behavior; it does not carry search-selection context for PGC detection. PGC auto-detection
+runs only when selecting through `Input::VideoSearch`, which performs a fresh query. After that path
+confirms a PGC episode, use its planned `epid` as `Input::Episode(epid)` to keep later operations on
+the same episode.
+
+`VideoSearchOrder` supports total rank, clicks, publication time, danmaku, favorites, and comments;
+the wire values are `totalrank`, `click`, `pubdate`, `dm`, `stow`, and `scores`. `VideoSearchPage`
+reports `page`, `page_size`, `total`, `total_pages`, `next_page`, and `items`. `page` uses the
+positive page reported by the service, or the requested page when the response omits that field;
+`next_page` is derived from the actual `page`. Serialized fields use snake_case. Search items expose
+optional BVID, aid, and cid values along with title, author, duration, publication time, counts,
+cover URL, and description; absent upstream identifiers stay absent.
+
+For `Input::VideoSearch`, `resolve_input`, `plan`, `plan_download`, and `plan_playback` require an explicit
+`Selection::Page`, `Selection::Indices`, or `Selection::All`. Indexes are one-based in the filtered
+and deduplicated results from a fresh query; the upstream order can change between calls, so an
+index does not pin an earlier displayed snapshot. `All` means only the page fetched by that call. To
+plan the exact result selected from a displayed `VideoSearchPage`, use its BVID or aid to construct
+`Input::Bvid` or `Input::Aid` and call `plan` directly, as in the example above. The
+selected result is hydrated through the ordinary video resolver; collection-style video planning
+uses its first video part (P1) for ordinary UGC results. To choose another part, use the selected item's BVID or aid as a
+normal video input and select its page there. The dedicated `search_videos` call remains metadata-only. Search
+uses `api_base` for `/x/web-interface/nav` and `/x/web-interface/wbi/search/type`, which must be
+supported by the selected service; the
+PGC Web playurl route does not imply search support. Search results remain ordinary video collection
+items; they do not gain a PGC episode field. If a selected BVID or aid's official `view` response
+contains a `data.redirect_url` on `bilibili.com` or `www.bilibili.com` matching
+`/bangumi/play/ep<ID>`, the resolver requests `/pgc/view/web/season?ep_id=<ID>` through `pgc_base`.
+It accepts the match only if the returned season contains that episode and its aid matches the
+selected video. Planning, playback, and download preserve the confirmed episode ID and cid. If an
+episode redirect cannot be confirmed, resolution fails explicitly; it does not guess a PGC identity
+or interpret an ordinary error as a regional restriction. Confirmed PGC episodes use the existing
+configured PGC Web playurl route; Web and APP retain their existing restricted-area proxy fallback.
+TV playurl semantics do not change. Search `api_base`, PGC metadata `pgc_base`, and
+`PgcWebPlayurlRoute` are separate settings.
+Availability depends on the selected service and the caller's access.
+
+`Input::VideoSearch` and `VideoCollectionKind::Search` add public enum variants. Downstream
+exhaustive matches need to handle them; runtime behavior for existing input kinds is unchanged.
+
 ### Bounded Dynamic Metadata Pages
 
 Use `BiliClient::resolve_metadata_page(input, options)` for an explicit candidate window from
@@ -584,6 +698,9 @@ authenticated WEB APIs before selecting media streams. Public space dynamic page
 anonymously and should not add that required-cookie preflight. Restricted-area proxy fallback
 treats the generic `access_key` as optional: present keys are checked and may be forwarded by the
 resolver, but missing keys do not block proxy URLs that authenticate themselves or allow anonymous fallback.
+An explicitly selected `Input::VideoSearch` may resolve to PGC; when restricted-area proxies are
+configured, embedders should apply the same proxy preflight if a generic key is present. A missing
+key remains optional. Reject invalid selections before running credential preflight.
 Intl/Bstar episode media and subtitle paths require the generic `access_key` used by official intl
 metadata, playurl, and subtitle requests. Cover-only and danmaku-only intl episode paths should skip
 that access-key requirement because they only need metadata and sidecar endpoints; metadata requests

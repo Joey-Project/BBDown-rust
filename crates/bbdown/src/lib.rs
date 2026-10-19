@@ -24,7 +24,8 @@ pub use client::{
     BiliClient, ClientConfig, EndpointConfig, MetadataCollectionInfo, MetadataConsistency,
     MetadataCursor, MetadataPage, MetadataPageOptions, MetadataStopReason, PgcWebPlayurlRoute,
     PlayurlMode, RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy,
-    RestrictedAreaProxyKind,
+    RestrictedAreaProxyKind, VIDEO_SEARCH_MAX_ITEMS, VideoSearchItem, VideoSearchOrder,
+    VideoSearchPage, VideoSearchQuery,
 };
 pub use credential_preflight::{
     CredentialPreflightIssue, CredentialPreflightMode, CredentialPreflightReport,
