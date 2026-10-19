@@ -201,6 +201,35 @@ TV playurl 语义不变。
 1 MiB，并使用已配置的请求超时。兼容服务或请求成功都不保证特定区域可用。
 本功能记录的匿名实时探测只确认搜索 metadata 可用；它不能证明实际 `view` 或 playurl 可访问，也不能证明播放规划或下载可用。
 
+## PGC 时间表
+
+已发布的 `v0.10.0` CLI 不包含时间表命令。请使用包含该功能的源码检出，或后续实际包含它的版本。
+
+获取番剧（默认类型）或国创的上游时间表：
+
+```bash
+bbdown timetable --json
+bbdown timetable --type anime --json
+bbdown timetable --type guochuang --json
+```
+
+命令通过配置的 PGC metadata base（`--pgc-base` / `BBDOWN_PGC_BASE`）向
+`/pgc/web/timeline/v2` 发起一次匿名请求；番剧只传 `season_type=1`，国创只传
+`season_type=4`。所选服务必须支持此 metadata 端点及其响应格式。此能力与只负责 PGC Web
+playurl 的 `PgcWebPlayurlRoute` 分开。请求不会发送已配置的 credentials 或 Cookie。
+
+JSON 包含所选 `kind`、上游单独返回的 `latest` 区块，以及按上游顺序排列的 `days`。每一天会保留来源的
+`date`、`date_ts`、`day_of_week`、`is_today` 和分集列表，包括空日期。每个分集包含可选正数
+`episode_id`、`season_id`、标题、`pub_index`、`pub_time`、`pub_ts`、`published` 状态、`delayed`
+状态、可选 `delay_index`、可选 `delay_reason` 和可选 `cover_url`。
+`latest` 原样作为服务端单独区块保留；字段名本身不代表额外的新旧判断或选择语义。`date` 与
+`pub_time` 是服务端提供的标签；客户端不会将其转换为本地时区。响应是服务端定义的单个窗口；命令不提供日期范围、分页或本地窗口参数。
+
+如果某行带有 `episode_id`，可将对应的精确 `ep<ID>` 传给现有 `info`、`plan`、`playback` 或
+`download` 命令。没有分集 ID 时不会合成 ID；该行仍保留 `ss<ID>` season ID，后续须通过现有
+season 流程显式选择分集。时间表只提供 metadata。`published: false` 不保证分集可播放或可下载；
+已发布分集仍受现有账号与区域访问条件限制。影视分类列表是独立的后续功能，不属于此命令。
+
 ## 下载计划
 
 使用 `plan` 解析流、字幕和弹幕可用性：

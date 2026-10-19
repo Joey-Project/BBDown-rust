@@ -4,9 +4,10 @@ use bbdown_core::{
     CredentialLifecycleStatus, CredentialPreflightMode, CredentialPreflightReport,
     CredentialProfileMetadata, CredentialProfiles, DanmakuUpdateOptions, DanmakuUpdatePolicy,
     DownloadCancellationToken, DownloadOptions, DownloadProgressEvent, DownloadProgressSink,
-    DownloadReportSummary, Input, MetadataPageOptions, NoopDownloadProgress, PlayurlMode,
-    RestrictedAreaConfig, SeasonEpisodeGroup, SeasonEpisodeGroupKind, StreamSelection,
-    SubtitleAiPolicy, UgcCollectionKind, UgcCollectionReference, VideoCollectionKind,
+    DownloadReportSummary, Input, MetadataPageOptions, NoopDownloadProgress, PgcTimetable,
+    PgcTimetableDay, PgcTimetableEpisode, PgcTimetableKind, PlayurlMode, RestrictedAreaConfig,
+    SeasonEpisodeGroup, SeasonEpisodeGroupKind, StreamSelection, SubtitleAiPolicy,
+    UgcCollectionKind, UgcCollectionReference, VideoCollectionKind,
 };
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
@@ -109,4 +110,38 @@ fn season_episode_group_types_are_reexported() {
         episode_positions: vec![0, 1],
     };
     assert_eq!(group.episode_positions, vec![0, 1]);
+}
+
+#[test]
+fn pgc_timetable_types_are_reexported() -> anyhow::Result<()> {
+    let episode = PgcTimetableEpisode {
+        episode_id: None,
+        season_id: 456,
+        title: "Example episode".to_owned(),
+        pub_index: "第1话".to_owned(),
+        pub_time: "20:00".to_owned(),
+        pub_ts: 1_792_430_400,
+        published: false,
+        delayed: true,
+        delay_index: Some("延期".to_owned()),
+        delay_reason: Some("schedule change".to_owned()),
+        cover_url: Some("https://example.test/episode.jpg".to_owned()),
+    };
+    let timetable = PgcTimetable {
+        kind: PgcTimetableKind::Anime,
+        latest: vec![episode.clone()],
+        days: vec![PgcTimetableDay {
+            date: "10-20".to_owned(),
+            date_ts: 1_792_454_400,
+            day_of_week: 2,
+            is_today: true,
+            episodes: vec![episode],
+        }],
+    };
+    let serialized = serde_json::to_value(timetable)?;
+    assert_eq!(serialized["kind"], "anime");
+    assert!(serialized["latest"][0]["episode_id"].is_null());
+    assert_eq!(serialized["days"][0]["episodes"][0]["season_id"], 456);
+    assert_eq!(serialized["days"][0]["episodes"][0]["published"], false);
+    Ok(())
 }
