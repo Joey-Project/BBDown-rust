@@ -303,7 +303,76 @@ This is a metadata-only API, not an `Input` variant or a collection download pat
 `episode_id` can be used as `Input::Episode(id)` for existing metadata, planning, playback, or download
 operations, subject to their normal access requirements. Rows without an episode ID retain their
 season ID but do not gain a synthesized episode ID. A false `published` value does not imply
-playability. Film and TV category listings remain a separate follow-up.
+playability. Movie and TV category-index metadata is available through the separate APIs below.
+
+### PGC Movie and TV Index Metadata
+
+These APIs are not included in the published `bbdown-core` `0.10.0` package. Use a source checkout
+that contains them, or a later release that includes them.
+
+Use `BiliClient::pgc_index(PgcIndexQuery)` to fetch one movie or TV metadata page, and
+`BiliClient::pgc_index_conditions(PgcIndexKind)` to fetch that category's filter and order choices.
+`PgcIndexQuery::new(kind)` selects the category and defaults to page 1, page size 20, and descending
+play order. Use `with_page`, `with_page_size`, `with_order`, `with_sort`, and `with_filters` to
+configure a query.
+Movie ordering supports play, updated, release date, and score; TV supports play, updated, danmaku,
+follow, and score. Score is descending-only. Page size is 1–20. Each query is validated before a
+request; filter strings must be non-empty, contain no control characters, and be at most 256 UTF-8
+bytes. The conditions response is bounded to 32 filter groups, 4096 aggregate values, and 64 order
+choices.
+
+```rust,no_run
+use bbdown_core::{
+    BiliClient, ClientConfig, PgcIndexFilterSelection, PgcIndexKind, PgcIndexOrder,
+    PgcIndexQuery, PgcIndexSort,
+};
+
+async fn list_movies() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let conditions = client.pgc_index_conditions(PgcIndexKind::Movie).await?;
+    let area_keyword = conditions
+        .filters
+        .iter()
+        .find(|filter| filter.field == "area")
+        .and_then(|filter| filter.values.first())
+        .map(|value| value.keyword.clone());
+    let query = PgcIndexQuery::new(PgcIndexKind::Movie)
+        .with_page(1)
+        .with_page_size(20)
+        .with_order(PgcIndexOrder::Play)
+        .with_sort(PgcIndexSort::Descending)
+        .with_filters(PgcIndexFilterSelection {
+            area: area_keyword,
+            ..PgcIndexFilterSelection::default()
+        });
+    let page = client.pgc_index(query).await?;
+    println!("page {} of {}", page.page, page.total);
+    if let Some(next_page) = page.next_page {
+        println!("next page: {next_page}");
+    }
+    Ok(())
+}
+```
+
+Conditions preserve the source order and opaque `field`, `keyword`, and display `name` strings.
+Use the `keyword` returned for the specific category as the matching selection value. Do not infer
+cross-category IDs or parse release-date values as years; the upstream value can be an interval.
+Listing fetches only the requested result page and does not fetch conditions, automatically paginate,
+resolve season details, or download media. `PgcIndexPage` reports the actual page and page size from
+the service, `total`, `has_next`, the `next_page` derived from the actual page when more results
+exist, and its items. Use `next_page` for an explicit later call. `PgcIndexItem` exposes the positive
+`season_id`, optional `media_id` and `first_episode_id`, title, and optional subtitle, cover,
+`index_show`, finished state, score, order text, and season status. `first_episode_id` is the first
+upstream episode, not the latest one; absent IDs are not synthesized.
+
+Each API call makes one anonymous request through configured `pgc_base` to the corresponding
+`/pgc/season/index/result` or `/pgc/season/index/condition` endpoint. The service must support that
+endpoint and response shape. Requests do not load credential profiles or send configured credentials
+or cookies, do not follow redirects, use the configured timeout, and cap JSON responses at 1 MiB.
+`PgcWebPlayurlRoute` covers PGC Web playurl only and does not route index metadata. The listing is
+metadata only: an `ss<ID>` or `md<ID>` must still go through existing season resolution with an
+explicit selection; `latest` keeps its main-episode meaning. An available exact episode ID can use
+existing `ep<ID>` flows. No generic input, automatic hydration, or download path is added.
 
 ### Bounded Dynamic Metadata Pages
 

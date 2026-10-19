@@ -66,11 +66,18 @@ bbdown info 'https://space.bilibili.com/123/lists/456?type=series' --json
 bbdown search "Rust async" --page 2 --order pubdate --json
 bbdown timetable --type anime --json
 bbdown timetable --type guochuang --json
+bbdown pgc-index list --type movie --page 1 --page-size 20 --order play --json
+bbdown pgc-index filters --type tv --json
 ```
 
 `timetable` prints the upstream PGC timetable metadata for anime or Chinese animation. It makes one
 anonymous request and does not resolve streams or download episodes. This command is not included in
 the published `v0.10.0` CLI; use a source checkout that contains it, or a later release that includes it.
+
+`pgc-index` lists one metadata page of PGC movies or TV series and can return the category's
+available filter values. It is anonymous metadata only; it does not resolve or download listed
+seasons. The published `v0.10.0` CLI and crate do not include this feature. See the
+[user guide](docs/user-guide.md) and [embedding guide](docs/embedding.md) for query and routing details.
 
 `search` returns one bounded page of ordinary video keyword metadata. To resolve, plan, play back, or
 download a search result, pass `search:<keyword>` or an official search URL to `info`, `plan`,

@@ -228,7 +228,35 @@ JSON 包含所选 `kind`、上游单独返回的 `latest` 区块，以及按上�
 如果某行带有 `episode_id`，可将对应的精确 `ep<ID>` 传给现有 `info`、`plan`、`playback` 或
 `download` 命令。没有分集 ID 时不会合成 ID；该行仍保留 `ss<ID>` season ID，后续须通过现有
 season 流程显式选择分集。时间表只提供 metadata。`published: false` 不保证分集可播放或可下载；
-已发布分集仍受现有账号与区域访问条件限制。影视分类列表是独立的后续功能，不属于此命令。
+已发布分集仍受现有账号与区域访问条件限制。电影与电视剧分类索引 metadata 可通过下文单独的 `pgc-index` 命令读取。
+
+## PGC 电影与电视剧索引
+
+已发布的 `v0.10.0` CLI 不包含 `pgc-index` 命令。请使用包含此功能的源码检出，或实际包含它的后续版本。
+
+按页读取电影（默认类型）或电视剧列表，也可读取该类别的筛选条件：
+
+```bash
+bbdown pgc-index list --type movie --page 1 --page-size 20 --order play --json
+bbdown pgc-index list --type tv --order follow --ascending --area '<keyword from filters output>' --json
+bbdown pgc-index filters --type movie --json
+```
+
+list 命令只返回一页 metadata。默认类型为电影、页码为 1、每页 20 条，按播放量降序；每页大小为 1–20。
+电影支持 `play`、`updated`、`release-date` 和 `score` 排序；电视剧支持 `play`、`updated`、`danmaku`、
+`follow` 和 `score`。`score` 只支持降序。其它支持的排序可用 `--ascending` 选择升序。筛选参数使用对应
+`filters` 命令返回的原样 `keyword` 值（`--style` 对应上游 `style_id` 字段）；不同类别的名称、ID 和上映日期区间可能不同，
+客户端会按原值传递，不会推断跨类别映射。
+
+每条命令通过 `--pgc-base` / `BBDOWN_PGC_BASE` 向对应的 PGC metadata 端点发起一次匿名请求。列表调用不会自动读取筛选条件、
+自动翻页、加载 season metadata 或解析流。配置的兼容服务需要支持相应端点；`PgcWebPlayurlRoute` 只选择 PGC Web playurl 路由。
+请求不会加载凭据 profile，也不会发送已配置 credentials 或 Cookie；请求不会跟随重定向，使用配置的 request timeout，单个 JSON
+响应上限为 1 MiB。筛选值必须非空、不含控制字符，且不超过 256 个 UTF-8 字节。filters 响应最多包含 32 个筛选组、合计 4096 个筛选值和 64 个排序选项。列表输出包含服务端实际页码和每页大小、总数，并在有后续页面时提供 `next_page` 提示。
+
+列表项包含正数 `season_id`、可选 `media_id` 和 `first_episode_id`、标题，以及可选副标题、封面、`index_show`、完结状态、评分、排序文案
+和 season 状态。episode ID 指上游的第一集，不一定是最新一集。缺失的 ID 会保持为空；列表条目不保证 season 或分集实际可访问。
+可将 `ss<ID>` 或 `md<ID>` 显式传给现有 season 流程并选择分集；`latest` 仍表示现有语义中的最后一集正片。已存在的精确分集 ID
+可以在既有访问条件下作为 `ep<ID>` 使用。此 metadata 命令不会增加通用 input、自动分页 hydration 或下载行为。其它 PGC 类别与热门/排行榜列表属于独立工作。
 
 ## 下载计划
 

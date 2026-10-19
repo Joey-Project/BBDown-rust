@@ -62,10 +62,16 @@ bbdown info 'https://space.bilibili.com/123/lists/456?type=series' --json
 bbdown search "Rust async" --page 2 --order pubdate --json
 bbdown timetable --type anime --json
 bbdown timetable --type guochuang --json
+bbdown pgc-index list --type movie --page 1 --page-size 20 --order play --json
+bbdown pgc-index filters --type tv --json
 ```
 
 `timetable` 输出番剧或国创的上游 PGC 时间表 metadata。它只发起一次匿名请求，不会解析流或下载分集。
 已发布的 `v0.10.0` CLI 不包含此命令；请使用包含该功能的源码检出，或后续实际包含它的版本。
+
+`pgc-index` 可按页列出 PGC 电影或电视剧 metadata，也可读取该类别支持的筛选值。它只提供匿名 metadata，
+不会解析或下载列表中的 season。已发布的 `v0.10.0` CLI 和 crate 不包含此功能。查询与路由说明见
+[用户指南](docs/user-guide.zh-CN.md)和[嵌入指南](docs/embedding.zh-CN.md)。
 
 `search` 返回一页有界的普通视频关键词 metadata。若要解析、规划、播放或下载搜索结果，可将
 `search:<keyword>` 或官方搜索 URL 传给 `info`、`plan`、`playback` 或 `download`，并显式选择结果序号；只有

@@ -4,10 +4,11 @@ use bbdown_core::{
     CredentialLifecycleStatus, CredentialPreflightMode, CredentialPreflightReport,
     CredentialProfileMetadata, CredentialProfiles, DanmakuUpdateOptions, DanmakuUpdatePolicy,
     DownloadCancellationToken, DownloadOptions, DownloadProgressEvent, DownloadProgressSink,
-    DownloadReportSummary, Input, MetadataPageOptions, NoopDownloadProgress, PgcTimetable,
-    PgcTimetableDay, PgcTimetableEpisode, PgcTimetableKind, PlayurlMode, RestrictedAreaConfig,
-    SeasonEpisodeGroup, SeasonEpisodeGroupKind, StreamSelection, SubtitleAiPolicy,
-    UgcCollectionKind, UgcCollectionReference, VideoCollectionKind,
+    DownloadReportSummary, Input, MetadataPageOptions, NoopDownloadProgress,
+    PgcIndexFilterSelection, PgcIndexKind, PgcIndexOrder, PgcIndexQuery, PgcIndexSort,
+    PgcTimetable, PgcTimetableDay, PgcTimetableEpisode, PgcTimetableKind, PlayurlMode,
+    RestrictedAreaConfig, SeasonEpisodeGroup, SeasonEpisodeGroupKind, StreamSelection,
+    SubtitleAiPolicy, UgcCollectionKind, UgcCollectionReference, VideoCollectionKind,
 };
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
@@ -144,4 +145,20 @@ fn pgc_timetable_types_are_reexported() -> anyhow::Result<()> {
     assert_eq!(serialized["days"][0]["episodes"][0]["season_id"], 456);
     assert_eq!(serialized["days"][0]["episodes"][0]["published"], false);
     Ok(())
+}
+
+#[test]
+fn pgc_index_query_types_are_reexported() {
+    let query = PgcIndexQuery::new(PgcIndexKind::Movie)
+        .with_order(PgcIndexOrder::ReleaseDate)
+        .with_sort(PgcIndexSort::Ascending)
+        .with_page(2)
+        .with_page_size(5)
+        .with_filters(PgcIndexFilterSelection {
+            area: Some("1".to_owned()),
+            ..PgcIndexFilterSelection::default()
+        });
+    assert_eq!(query.page, 2);
+    assert_eq!(query.page_size, 5);
+    assert_eq!(query.filters.area.as_deref(), Some("1"));
 }

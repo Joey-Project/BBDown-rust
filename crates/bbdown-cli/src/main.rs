@@ -17,7 +17,8 @@ use bbdown_core::{
     DanmakuUpdatePolicy, DownloadArchive, DownloadCancellationToken, DownloadMode, DownloadOptions,
     DownloadPathTemplates, DownloadPlan, DownloadPreflight, DownloadProgressEvent,
     DownloadProgressSink, DownloadReport, DuplicateDecision, EndpointConfig, Input,
-    MediaHostOptions, MediaStream, MuxOptions, PgcTimetable, PgcTimetableKind, PlaybackPlan,
+    MediaHostOptions, MediaStream, MuxOptions, PgcIndexFilterSelection, PgcIndexKind,
+    PgcIndexOrder, PgcIndexQuery, PgcIndexSort, PgcTimetable, PgcTimetableKind, PlaybackPlan,
     PlayurlMode, QrLoginCredentials, QrLoginCredentialsState, QrLoginKind, QrLoginTicket,
     QrLoginTicketOutput, ResolvedContent, RestrictedArea, RestrictedAreaConfig,
     RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection, StreamQuality,
@@ -194,6 +195,10 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    PgcIndex {
+        #[command(subcommand)]
+        command: PgcIndexCommand,
+    },
     Plan {
         url: String,
         #[arg(long)]
@@ -246,6 +251,38 @@ enum ResolverCatalogCommand {
     },
 }
 
+#[derive(Debug, Subcommand)]
+enum PgcIndexCommand {
+    List {
+        #[arg(long = "type", value_enum, default_value = "movie")]
+        kind: PgcIndexKindArg,
+        #[arg(long, default_value_t = 1)]
+        page: u32,
+        #[arg(long = "page-size", default_value_t = 20, value_parser = clap::value_parser!(u8).range(1..=20))]
+        page_size: u8,
+        #[arg(long, value_enum, default_value = "play")]
+        order: PgcIndexOrderArg,
+        #[arg(long)]
+        ascending: bool,
+        #[arg(long)]
+        area: Option<String>,
+        #[arg(long)]
+        style: Option<String>,
+        #[arg(long = "release-date")]
+        release_date: Option<String>,
+        #[arg(long = "season-status")]
+        season_status: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    Filters {
+        #[arg(long = "type", value_enum, default_value = "movie")]
+        kind: PgcIndexKindArg,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 enum SearchOrderArg {
     #[value(name = "totalrank")]
@@ -266,6 +303,45 @@ enum SearchOrderArg {
 enum PgcTimetableKindArg {
     Anime,
     Guochuang,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum PgcIndexKindArg {
+    Movie,
+    Tv,
+}
+
+impl From<PgcIndexKindArg> for PgcIndexKind {
+    fn from(kind: PgcIndexKindArg) -> Self {
+        match kind {
+            PgcIndexKindArg::Movie => Self::Movie,
+            PgcIndexKindArg::Tv => Self::Tv,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum PgcIndexOrderArg {
+    Play,
+    Updated,
+    Score,
+    #[value(name = "release-date")]
+    ReleaseDate,
+    Danmaku,
+    Follow,
+}
+
+impl From<PgcIndexOrderArg> for PgcIndexOrder {
+    fn from(order: PgcIndexOrderArg) -> Self {
+        match order {
+            PgcIndexOrderArg::Play => Self::Play,
+            PgcIndexOrderArg::Updated => Self::Updated,
+            PgcIndexOrderArg::Score => Self::Score,
+            PgcIndexOrderArg::ReleaseDate => Self::ReleaseDate,
+            PgcIndexOrderArg::Danmaku => Self::Danmaku,
+            PgcIndexOrderArg::Follow => Self::Follow,
+        }
+    }
 }
 
 impl From<PgcTimetableKindArg> for PgcTimetableKind {
@@ -1267,6 +1343,9 @@ async fn run() -> anyhow::Result<()> {
         Command::Timetable { kind, json } => {
             handle_pgc_timetable(&client_runtime, kind, json).await?;
         }
+        Command::PgcIndex { command } => {
+            handle_pgc_index(&client_runtime, command).await?;
+        }
         Command::Plan { url, select, json } => {
             handle_plan(
                 &credential_runtime,
@@ -1953,6 +2032,179 @@ async fn handle_pgc_timetable(
         print_pgc_timetable(&timetable);
     }
     Ok(())
+}
+
+async fn handle_pgc_index(
+    client_runtime: &ClientRuntimeConfig,
+    command: PgcIndexCommand,
+) -> anyhow::Result<()> {
+    let client = BiliClient::new(client_runtime.client_config(Credentials::default()));
+    match command {
+        PgcIndexCommand::List {
+            kind,
+            page,
+            page_size,
+            order,
+            ascending,
+            area,
+            style,
+            release_date,
+            season_status,
+            json,
+        } => {
+            ensure!(page > 0, "--page must be greater than 0");
+            validate_pgc_index_order(kind, order, ascending)?;
+            let filters = PgcIndexFilterSelection {
+                area,
+                style_id: style,
+                release_date,
+                season_status,
+            };
+            let result = client
+                .pgc_index(
+                    PgcIndexQuery::new(kind.into())
+                        .with_page(page)
+                        .with_page_size(page_size)
+                        .with_order(order.into())
+                        .with_sort(if ascending {
+                            PgcIndexSort::Ascending
+                        } else {
+                            PgcIndexSort::Descending
+                        })
+                        .with_filters(filters),
+                )
+                .await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                print_pgc_index_page(&result);
+            }
+        }
+        PgcIndexCommand::Filters { kind, json } => {
+            let conditions = client.pgc_index_conditions(kind.into()).await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&conditions)?);
+            } else {
+                print_pgc_index_conditions(&conditions);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_pgc_index_order(
+    kind: PgcIndexKindArg,
+    order: PgcIndexOrderArg,
+    ascending: bool,
+) -> anyhow::Result<()> {
+    ensure!(
+        !(kind == PgcIndexKindArg::Movie
+            && matches!(order, PgcIndexOrderArg::Danmaku | PgcIndexOrderArg::Follow)),
+        "order `{}` is not supported for movie listings",
+        pgc_index_order_name(order)
+    );
+    ensure!(
+        !(kind == PgcIndexKindArg::Tv && order == PgcIndexOrderArg::ReleaseDate),
+        "order `release-date` is not supported for TV listings"
+    );
+    ensure!(
+        !(ascending && order == PgcIndexOrderArg::Score),
+        "ascending score order is not supported"
+    );
+    Ok(())
+}
+
+const fn pgc_index_order_name(order: PgcIndexOrderArg) -> &'static str {
+    match order {
+        PgcIndexOrderArg::Play => "play",
+        PgcIndexOrderArg::Updated => "updated",
+        PgcIndexOrderArg::Score => "score",
+        PgcIndexOrderArg::ReleaseDate => "release-date",
+        PgcIndexOrderArg::Danmaku => "danmaku",
+        PgcIndexOrderArg::Follow => "follow",
+    }
+}
+
+fn print_pgc_index_page(page: &bbdown_core::PgcIndexPage) {
+    let kind = match page.kind {
+        PgcIndexKind::Movie => "movie",
+        PgcIndexKind::Tv => "tv",
+        _ => "unknown",
+    };
+    println!("type: {kind}");
+    println!("page: {}", page.page);
+    println!("page size: {}", page.page_size);
+    println!("total: {}", page.total);
+    if let Some(next_page) = page.next_page {
+        println!("next page: {next_page}");
+    } else {
+        println!("next page: (none)");
+    }
+    if page.items.is_empty() {
+        println!("(no seasons)");
+        return;
+    }
+    for (index, item) in page.items.iter().enumerate() {
+        let subtitle = item
+            .subtitle
+            .as_deref()
+            .map_or_else(String::new, |value| format!(" | {value}"));
+        let score = item
+            .score
+            .as_deref()
+            .map_or_else(String::new, |value| format!(" | score {value}"));
+        let first_episode = item.first_episode_id.map_or_else(
+            || "first ep: (unavailable)".to_owned(),
+            |id| format!("first ep: ep{id} (first episode; not necessarily latest)"),
+        );
+        let media = item
+            .media_id
+            .map_or_else(String::new, |id| format!(" md{id}"));
+        let index_show = item.index_show.as_deref().unwrap_or("index unavailable");
+        let order_text = item
+            .order_text
+            .as_deref()
+            .map_or_else(String::new, |value| format!(" | {value}"));
+        let finished = item.finished.map_or_else(String::new, |finished| {
+            format!(" | {}", if finished { "finished" } else { "ongoing" })
+        });
+        println!(
+            "{}. ss{}{media} {}{} | {}{}{}{} | {}",
+            index + 1,
+            item.season_id,
+            item.title,
+            subtitle,
+            index_show,
+            order_text,
+            score,
+            finished,
+            first_episode
+        );
+        if item.first_episode_id.is_none() {
+            println!("   choose a season explicitly before planning or downloading");
+        }
+    }
+    println!("select a season explicitly; for example: bbdown info ss<ID> --select latest --json");
+}
+
+fn print_pgc_index_conditions(conditions: &bbdown_core::PgcIndexConditions) {
+    let kind = match conditions.kind {
+        PgcIndexKind::Movie => "movie",
+        PgcIndexKind::Tv => "tv",
+        _ => "unknown",
+    };
+    println!("filters: {kind}");
+    for filter in &conditions.filters {
+        println!("{} ({})", filter.name, filter.field);
+        for value in &filter.values {
+            println!("  {} = {}", value.name, value.keyword);
+        }
+    }
+    println!("orders:");
+    for order in &conditions.orders {
+        println!("  {} ({}) sort={}", order.name, order.field, order.sort);
+    }
+    println!("Use opaque values exactly; for example pass --area=-1 for the all-area option.");
 }
 
 fn print_pgc_timetable(timetable: &PgcTimetable) {

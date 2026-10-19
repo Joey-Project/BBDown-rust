@@ -139,9 +139,9 @@
 - [completed] Add the bounded anonymous anime/Chinese-animation PGC timetable metadata command and
   public Rust API. This slice does not add listing inputs or downloads. See
   `docs/project_journal/2026/10/2026-10-19-pgc-timetable-01a0dd39.md`.
-- [pending] Add film and TV category listings, with explicitly configured API services used only
-  for endpoint capabilities they support. See
-  `docs/project_journal/2026/10/2026-10-11-page-family-roadmap.md`.
+- [completed] Add bounded anonymous PGC movie and TV category-index metadata with separate list
+  and filter-values commands/API. This does not add listing inputs or downloads. See
+  `docs/project_journal/2026/10/2026-10-19-pgc-season-index-01a0dd39.md`.
 - [pending] Add popular/ranking feeds, then category/channel lists, then topic pages at lower
   priority. See `docs/project_journal/2026/10/2026-10-11-page-family-roadmap.md`.
 - [completed] Add the `0.8.0` preserving danmaku refresh API and CLI: deduplicate XML comments by
