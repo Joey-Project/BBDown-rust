@@ -33,6 +33,7 @@ use url::Url;
 mod metadata_page;
 mod pgc_index;
 mod popular;
+mod ranking;
 mod timetable;
 mod video_search;
 pub use metadata_page::{
@@ -49,6 +50,7 @@ pub use popular::{
     POPULAR_VIDEO_MAX_PAGE_SIZE, PopularVideoItem, PopularVideoPage, PopularVideoQuery,
     PopularVideoStats,
 };
+pub use ranking::{RANKING_VIDEO_MAX_ITEMS, RankingVideoItem, RankingVideoPage, RankingVideoStats};
 pub use timetable::{
     PGC_TIMETABLE_MAX_DAYS, PGC_TIMETABLE_MAX_ROWS, PgcTimetable, PgcTimetableDay,
     PgcTimetableEpisode, PgcTimetableKind,
@@ -550,6 +552,14 @@ impl BiliClient {
     /// details or request playurl, media, subtitle, or tag data.
     pub async fn popular_videos(&self, query: PopularVideoQuery) -> Result<PopularVideoPage> {
         popular::popular_videos(self, query).await
+    }
+
+    /// Returns one bounded page of anonymous all-site ranking metadata.
+    ///
+    /// The rank reflects the source list position. The operation uses the configured
+    /// API endpoint and does not request playurl, media, subtitle, or tag data.
+    pub async fn ranking_videos(&self) -> Result<RankingVideoPage> {
+        ranking::ranking_videos(self).await
     }
 
     /// Returns the bounded anime or guochuang PGC timetable metadata.

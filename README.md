@@ -70,6 +70,7 @@ bbdown pgc-index list --type movie --page 1 --page-size 20 --order play --json
 bbdown pgc-index filters --type tv --json
 bbdown popular --json
 bbdown popular --page 2 --page-size 10 --json
+bbdown ranking --json
 ```
 
 `timetable` prints the upstream PGC timetable metadata for anime or Chinese animation. It makes one
@@ -83,9 +84,16 @@ seasons. The published `v0.10.0` CLI and crate do not include this feature. See 
 
 `popular` returns one bounded page of anonymous popular-video metadata using only the API base and
 request timeout; it does not inspect credential profiles, resolve streams, or download listed
-videos. Ranking remains a separate follow-up. The published `v0.10.0` CLI and crate do not include
-this source-only feature. See the [user guide](docs/user-guide.md) and
+videos. The published `v0.10.0` CLI and crate do not include this source-only feature. See the
+[user guide](docs/user-guide.md) and
 [embedding guide](docs/embedding.md) for request limits and Rust examples.
+
+`ranking` returns one bounded anonymous page of the global ranking (`rid=0`, `type=all`). It uses
+only the API base and request timeout, with limits of 1 MiB per response and 100 raw rows. It does not
+inspect credentials, hydrate details, resolve playurl, or request media. The ranking has no fixed
+time period; order is dynamic, with no fixed snapshot or total guarantee. The published `v0.10.0` CLI and crate do not
+include this source-only feature. See the [user guide](docs/user-guide.md) and
+[embedding guide](docs/embedding.md) for the Rust API and item fields.
 
 `search` returns one bounded page of ordinary video keyword metadata. To resolve, plan, play back, or
 download a search result, pass `search:<keyword>` or an official search URL to `info`, `plan`,

@@ -225,7 +225,33 @@ JSON 返回 `requested_page`、`requested_page_size`、`has_next`、`next_page` 
 aid 必须与该条目的 aid 相符；冲突时会拒绝整个响应。缺少 BVID 时保持缺失，不会合成。这是纯 metadata：
 命令不会补充视频详情、解析 playurl，也不会请求图片或媒体内容。它不会增加通用 input，也不会对选中行做
 PGC 自动识别。如需指定展示条目，请显式把其 BVID 或 aid 传给现有命令；后续沿用普通直接视频行为和既有访问规则。
-排行榜是独立后续工作，此命令不提供排行榜。
+全站排行榜由单独的 `bbdown ranking` 命令提供。
+
+## 全站排行榜 metadata
+
+已发布的 `v0.10.0` CLI 不包含 `ranking` 命令。请使用包含此功能的源码检出，或后续实际包含它的版本。
+
+获取当前全站排行榜：
+
+```bash
+bbdown ranking
+bbdown ranking --json
+```
+
+每次调用通过 `--api-base` / `BBDOWN_API_BASE` 向
+`/x/web-interface/ranking/v2?rid=0&type=all` 发起一次匿名 GET。本切片固定使用全站分区和默认类型。
+响应上限为 1 MiB，最多接受 100 条原始记录；超出任一限制会拒绝响应而不截断，并使用配置的请求超时；请求不跟随重定向。此命令只使用
+`api_base` 和请求超时，不会读取凭据 profile、执行凭据预检或续期，也不会运行 resolver、受限区域、PGC 或导航/WBI 初始化逻辑。
+不会读取或发送凭据、Cookie 或 access key。配置的服务必须支持此路由及其响应格式。
+API 错误会沿用命令的正常错误返回路径；端点兼容不代表请求一定成功。
+
+JSON 结果包含可选的 `note` 和 `items`。每个条目包含一基的 `rank`（按响应中的位置生成）、`aid`、可选 `bvid` 和
+`title`。可选字段包括 `author`、`author_mid`、`duration_seconds`、`pub_time`、`cover_url`、`description`、
+`category_name` 和 `stats`。`stats` 包含可选的播放、弹幕、评论、收藏、投币、分享和点赞计数。列表没有固定时间周期且会动态变化，
+不同请求不共享固定快照，API 不承诺总数或稳定顺序。本切片不提供分页，也不支持配置分类或类型。
+
+此命令只返回 metadata，不会补充详情、解析 playurl 或请求图片、媒体。它不会增加通用 input，也不会对选中行做
+PGC 自动识别。如需指定某个条目，请显式把其 BVID 或 aid 传给现有命令；后续沿用普通直接视频行为和既有访问规则。
 
 ## PGC 时间表
 

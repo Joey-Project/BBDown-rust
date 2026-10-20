@@ -29,9 +29,10 @@ pub use client::{
     PgcIndexFilterValue, PgcIndexItem, PgcIndexKind, PgcIndexOrder, PgcIndexOrderOption,
     PgcIndexPage, PgcIndexQuery, PgcIndexSort, PgcTimetable, PgcTimetableDay, PgcTimetableEpisode,
     PgcTimetableKind, PgcWebPlayurlRoute, PlayurlMode, PopularVideoItem, PopularVideoPage,
-    PopularVideoQuery, PopularVideoStats, RestrictedArea, RestrictedAreaConfig,
-    RestrictedAreaProxy, RestrictedAreaProxyKind, VIDEO_SEARCH_MAX_ITEMS, VideoSearchItem,
-    VideoSearchOrder, VideoSearchPage, VideoSearchQuery,
+    PopularVideoQuery, PopularVideoStats, RANKING_VIDEO_MAX_ITEMS, RankingVideoItem,
+    RankingVideoPage, RankingVideoStats, RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy,
+    RestrictedAreaProxyKind, VIDEO_SEARCH_MAX_ITEMS, VideoSearchItem, VideoSearchOrder,
+    VideoSearchPage, VideoSearchQuery,
 };
 pub use credential_preflight::{
     CredentialPreflightIssue, CredentialPreflightMode, CredentialPreflightReport,

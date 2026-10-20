@@ -292,6 +292,8 @@ request timeout. Redirects are not followed. The request uses only `api_base` an
 timeout; it does not inspect credential profiles or run credential preflight, renewal, resolver,
 restricted-area, or PGC configuration. Credentials, cookies, and access keys are not loaded or sent.
 A configured service must support this endpoint and response shape.
+API errors use the ordinary `Result` error path; endpoint compatibility does not guarantee request
+success.
 
 `PopularVideoPage` exposes the requested page and page size, `has_next`, `next_page`, and `items`.
 The upstream response only contains `data.list` and `data.no_more`; it does not return a page or
@@ -307,7 +309,50 @@ the row's `aid`; conflicting identifiers reject the response. Missing BVID value
 synthesized. This API does not hydrate details, resolve playurl, request images or
 media, or add a generic `Input` variant. To use a displayed item in an existing flow, explicitly
 construct `Input::Bvid` or `Input::Aid`; this uses the existing direct-video behavior and access
-rules, without carrying selected-row PGC detection. Ranking remains a separate follow-up.
+rules, without carrying selected-row PGC detection.
+
+### Global Ranking Metadata
+
+This API is not included in the published `bbdown-core` `0.10.0` package. Use a source checkout
+that contains it, or a later release that includes it.
+
+Call `BiliClient::ranking_videos` to fetch one bounded global ranking response:
+
+```rust,no_run
+use bbdown_core::{BiliClient, ClientConfig};
+
+async fn read_ranking() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let page = client.ranking_videos().await?;
+
+    if let Some(note) = &page.note {
+        println!("{note}");
+    }
+    for item in &page.items {
+        println!("{} {} {}", item.rank, item.aid, item.title);
+    }
+    Ok(())
+}
+```
+
+Each call makes one anonymous GET through `EndpointConfig.api_base` to
+`/x/web-interface/ranking/v2?rid=0&type=all`. The request uses the fixed global ranking parameters,
+a 1 MiB response cap, a 100-row raw-item cap, and the configured timeout. Exceeding either cap
+rejects the response instead of truncating it. Redirects are not followed.
+Only the API base and timeout are used; credentials, cookies, and access keys are not loaded or sent,
+and credential, resolver, restricted-area, PGC, and navigation/WBI initialization is not performed.
+A configured service must support this endpoint and response shape.
+
+`RankingVideoPage` contains an optional `note` and `items`. Each `RankingVideoItem` has one-based
+`rank` from its source position, `aid`, optional `bvid`, `title`, optional author and display metadata,
+and a `RankingVideoStats` value with seven optional counters: view, danmaku, reply, favorite, coin,
+share, and like. The ranking has no fixed time period, and source order may change between requests;
+there is no snapshot, total, pagination, or category/type configuration guarantee.
+
+This API is metadata only: it does not hydrate details, resolve playurl, request images or media, add
+a generic `Input` variant, or add selected-row PGC detection. To target an item through an existing
+flow, explicitly construct `Input::Bvid` or `Input::Aid`; ordinary direct-video behavior and access
+rules apply.
 
 ### PGC Timetable Metadata
 

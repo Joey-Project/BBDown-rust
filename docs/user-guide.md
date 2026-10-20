@@ -272,8 +272,44 @@ display metadata and counters. When a BVID is present, its decoded aid must agre
 a conflicting pair rejects the response. A missing BVID remains absent. This is metadata only: the command does not hydrate video details,
 resolve playurl, or request image or media content. It does not add a generic input or selected-row
 PGC detection. To target a displayed result, explicitly pass its BVID or aid to an existing command,
-which then follows the ordinary direct-video behavior and its existing access rules. Ranking is a
-separate follow-up and is not provided by this command.
+which then follows the ordinary direct-video behavior and its existing access rules. The global
+ranking is available separately through `bbdown ranking`.
+
+## Global Ranking Metadata
+
+The `ranking` command is not included in the published `v0.10.0` CLI. Use a source checkout that
+contains this feature, or a later release that includes it.
+
+Fetch the current global ranking:
+
+```bash
+bbdown ranking
+bbdown ranking --json
+```
+
+Each invocation makes one anonymous GET through `--api-base` / `BBDOWN_API_BASE` to
+`/x/web-interface/ranking/v2?rid=0&type=all`. The category and ranking type are fixed for this
+slice. The response is limited to 1 MiB and at most 100 raw rows; exceeding either limit rejects the
+response instead of truncating it. The configured request timeout applies. Redirects are not followed.
+This command uses only `api_base` and the
+request timeout; it does not inspect credential profiles or run credential preflight, renewal,
+resolver, restricted-area, PGC, or navigation/WBI initialization. Credentials, cookies, and access
+keys are not loaded or sent. A configured endpoint must support this route and response shape.
+API errors are returned through the normal command error path; a compatible endpoint does not
+guarantee that a request will succeed.
+
+The JSON result contains an optional `note` and `items`. Each item has a one-based `rank` derived
+from its position in the response, plus `aid`, optional `bvid`, and `title`. Optional fields are
+`author`, `author_mid`, `duration_seconds`, `pub_time`, `cover_url`, `description`, `category_name`,
+and `stats`. `stats` contains optional view, danmaku, reply, favorite, coin, share, and like counters.
+The list is dynamic: it has no fixed time period, requests do not share a fixed snapshot, and the API
+does not promise a total or stable ordering. There is no pagination or configurable category/type in
+this slice.
+
+This is metadata only. The command does not hydrate details, resolve playurl, or request images or
+media. It does not add a generic input or selected-row PGC detection. To target an item, explicitly
+pass its BVID or aid to an existing command; it follows ordinary direct-video behavior and existing
+access rules.
 
 ## PGC Timetable
 

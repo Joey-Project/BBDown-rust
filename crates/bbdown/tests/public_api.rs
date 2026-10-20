@@ -7,9 +7,9 @@ use bbdown_core::{
     DownloadReportSummary, Input, MetadataPageOptions, NoopDownloadProgress,
     POPULAR_VIDEO_MAX_PAGE_SIZE, PgcIndexFilterSelection, PgcIndexKind, PgcIndexOrder,
     PgcIndexQuery, PgcIndexSort, PgcTimetable, PgcTimetableDay, PgcTimetableEpisode,
-    PgcTimetableKind, PlayurlMode, PopularVideoQuery, PopularVideoStats, RestrictedAreaConfig,
-    SeasonEpisodeGroup, SeasonEpisodeGroupKind, StreamSelection, SubtitleAiPolicy,
-    UgcCollectionKind, UgcCollectionReference, VideoCollectionKind,
+    PgcTimetableKind, PlayurlMode, PopularVideoQuery, PopularVideoStats, RANKING_VIDEO_MAX_ITEMS,
+    RestrictedAreaConfig, SeasonEpisodeGroup, SeasonEpisodeGroupKind, StreamSelection,
+    SubtitleAiPolicy, UgcCollectionKind, UgcCollectionReference, VideoCollectionKind,
 };
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
@@ -177,4 +177,35 @@ fn popular_video_types_are_reexported() {
     };
     assert_eq!(stats.view, Some(10));
     assert_eq!(stats.like, None);
+}
+
+#[test]
+fn ranking_video_types_are_reexported() {
+    let _client = BiliClient::new(ClientConfig::default());
+    assert_eq!(RANKING_VIDEO_MAX_ITEMS, 100);
+    let page = bbdown_core::RankingVideoPage {
+        note: None,
+        items: vec![bbdown_core::RankingVideoItem {
+            rank: 1,
+            aid: 42,
+            bvid: None,
+            title: "Example".to_owned(),
+            author: None,
+            author_mid: None,
+            duration_seconds: None,
+            pub_time: None,
+            cover_url: None,
+            description: None,
+            category_name: None,
+            stats: Some(bbdown_core::RankingVideoStats {
+                view: Some(7),
+                ..bbdown_core::RankingVideoStats::default()
+            }),
+        }],
+    };
+    assert_eq!(page.items[0].rank, 1);
+    assert_eq!(
+        page.items[0].stats.as_ref().and_then(|stats| stats.view),
+        Some(7)
+    );
 }

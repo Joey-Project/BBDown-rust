@@ -416,6 +416,302 @@ fn popular_reports_an_unsupported_endpoint_response() -> anyhow::Result<()> {
 }
 
 #[test]
+fn ranking_json_preserves_source_order_and_optional_metadata() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let ranking = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/ranking/v2")
+            .query_param("rid", "0")
+            .query_param("type", "all")
+            .query_param_missing("access_key")
+            .header_missing("cookie");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "note": "Results can change",
+                "list": [
+                    {
+                        "aid": 455_017_605,
+                        "bvid": "BV1Q541167Qg",
+                        "title": "First source row",
+                        "owner": {"mid": 42, "name": "First author"},
+                        "duration": 73,
+                        "pubdate": 1_700_000_000,
+                        "pic": "https://example.test/cover.jpg",
+                        "desc": "Description",
+                        "tname": "Category",
+                        "stat": {"view": 1234, "like": 56}
+                    },
+                    {
+                        "aid": 170_001,
+                        "title": "Second source row"
+                    }
+                ]
+            }
+        }));
+    });
+    let view = server.mock(|when, then| {
+        when.method(GET).path("/x/web-interface/view");
+        then.status(500);
+    });
+    let playurl = server.mock(|when, then| {
+        when.method(GET).path("/x/player/playurl");
+        then.status(500);
+    });
+
+    let output = bbdown_command()?
+        .arg("--api-base")
+        .arg(server.base_url())
+        .args(["ranking", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    assert_eq!(json["note"], "Results can change");
+    assert_eq!(json["items"][0]["rank"], 1);
+    assert_eq!(json["items"][0]["bvid"], "BV1Q541167Qg");
+    assert_eq!(json["items"][0]["author"], "First author");
+    assert_eq!(json["items"][0]["author_mid"], 42);
+    assert_eq!(json["items"][0]["duration_seconds"], 73);
+    assert_eq!(json["items"][0]["pub_time"], 1_700_000_000);
+    assert_eq!(
+        json["items"][0]["cover_url"],
+        "https://example.test/cover.jpg"
+    );
+    assert_eq!(json["items"][0]["description"], "Description");
+    assert_eq!(json["items"][0]["category_name"], "Category");
+    assert_eq!(json["items"][0]["stats"]["view"], 1234);
+    assert_eq!(json["items"][0]["stats"]["like"], 56);
+    assert_eq!(json["items"][1]["rank"], 2);
+    assert_eq!(json["items"][1]["bvid"], Value::Null);
+    ranking.assert_calls(1);
+    view.assert_calls(0);
+    playurl.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+fn ranking_human_output_shows_source_rank_targets_and_dynamic_scope() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let ranking = server.mock(|when, then| {
+        when.method(GET).path("/x/web-interface/ranking/v2");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "list": [
+                    {"aid": 455_017_605, "bvid": "BV1Q541167Qg", "title": "Ranked row"},
+                    {"aid": 170_001, "title": "No BVID row"}
+                ]
+            }
+        }));
+    });
+    let output = String::from_utf8(
+        bbdown_command()?
+            .arg("--api-base")
+            .arg(server.base_url())
+            .arg("ranking")
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone(),
+    )?;
+    assert!(output.contains("dynamic full-site ranking metadata"));
+    assert!(output.contains("1. target=BV1Q541167Qg / av455017605"));
+    assert!(output.contains("2. target=av170001"));
+    ranking.assert_calls(1);
+    Ok(())
+}
+
+#[test]
+fn ranking_ignores_invalid_credential_profile_preflight_resolver_and_proxy_configuration()
+-> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let sentinel = b"malformed credential data that must remain untouched";
+    fs::write(&credential_file, sentinel)?;
+    let ranking = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/ranking/v2")
+            .query_param("rid", "0")
+            .query_param("type", "all")
+            .query_param_missing("access_key")
+            .header_missing("cookie");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {"list": []}
+        }));
+    });
+    let nav = server.mock(|when, then| {
+        when.method(GET).path("/x/web-interface/nav");
+        then.status(500);
+    });
+
+    bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("missing-profile")
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("--resolver")
+        .arg("unknown-resolver")
+        .arg("--restricted-area-proxy")
+        .arg("not a valid proxy")
+        .arg("--restricted-api-proxy")
+        .arg("not a valid api proxy")
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("ranking")
+        .arg("--json")
+        .assert()
+        .success();
+
+    assert_eq!(fs::read(&credential_file)?, sentinel);
+    ranking.assert_calls(1);
+    nav.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+fn ranking_rejects_unrelated_options_and_zero_timeout_before_network_requests() -> anyhow::Result<()>
+{
+    let server = MockServer::start();
+    let ranking = server.mock(|when, then| {
+        when.method(GET).path("/x/web-interface/ranking/v2");
+        then.status(500);
+    });
+    for args in [
+        vec!["ranking", "--page", "2"],
+        vec!["ranking", "--type", "all"],
+    ] {
+        bbdown_command()?
+            .arg("--api-base")
+            .arg(server.base_url())
+            .args(args)
+            .assert()
+            .failure();
+    }
+    bbdown_command()?
+        .arg("--request-timeout-seconds")
+        .arg("0")
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("ranking")
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("greater than 0"));
+    ranking.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+fn ranking_reports_an_unsupported_endpoint_response() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let unsupported = server.mock(|when, then| {
+        when.method(GET).path("/x/web-interface/ranking/v2");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -404,
+            "message": "unsupported endpoint"
+        }));
+    });
+
+    bbdown_command()?
+        .arg("--api-base")
+        .arg(server.base_url())
+        .args(["ranking", "--json"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("unsupported endpoint"));
+    unsupported.assert_calls(1);
+    Ok(())
+}
+
+#[test]
+fn ranking_bvid_can_be_passed_to_existing_plan_explicitly() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let ranking = server.mock(|when, then| {
+        when.method(GET).path("/x/web-interface/ranking/v2");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "list": [{
+                    "aid": 455_017_605,
+                    "bvid": "BV1Q541167Qg",
+                    "title": "Listed only"
+                }]
+            }
+        }));
+    });
+    let view = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/view")
+            .query_param("bvid", "BV1Q541167Qg");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "aid": 455_017_605,
+                "bvid": "BV1Q541167Qg",
+                "title": "Explicitly planned video",
+                "owner": {"mid": 1, "name": "Planner"},
+                "pages": [{"page": 1, "cid": 2, "part": "Main"}]
+            }
+        }));
+    });
+    let playurl = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/player/playurl")
+            .query_param("avid", "455017605")
+            .query_param("try_look", "1");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "dash": {
+                    "duration": 3,
+                    "video": [{
+                        "id": 80,
+                        "baseUrl": "https://video.example/80.m4s",
+                        "base_url": "https://video.example/80.m4s"
+                    }],
+                    "audio": []
+                }
+            }
+        }));
+    });
+    let listing = bbdown_command()?
+        .arg("--api-base")
+        .arg(server.base_url())
+        .args(["ranking", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&listing)?;
+    let bvid = json["items"][0]["bvid"]
+        .as_str()
+        .context("ranking item should include its BVID")?;
+    ranking.assert_calls(1);
+    view.assert_calls(0);
+    playurl.assert_calls(0);
+
+    bbdown_command()?
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("plan")
+        .arg(bvid)
+        .arg("--json")
+        .assert()
+        .success();
+    view.assert_calls(1);
+    playurl.assert_calls(1);
+    Ok(())
+}
+
+#[test]
 fn search_ignores_invalid_credential_store_and_selected_profile() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;
