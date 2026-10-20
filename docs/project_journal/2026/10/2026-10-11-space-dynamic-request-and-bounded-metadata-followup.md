@@ -3,7 +3,7 @@ id: 20261011-space-dynamic-request-and-bounded-metadata-followup
 title: Space Dynamic Request And Bounded Metadata Follow-up
 status: active
 created: 2026-10-11
-updated: 2026-10-14
+updated: 2026-10-20
 branch:
 pr:
 supersedes: []
@@ -61,6 +61,9 @@ superseded_by:
 
 ### Remaining Consumer Acceptance
 
+- The `0.11.0` [playback acceptance follow-up](2026-10-20-dynamic-playback-acceptance-01a0dd39.md)
+  adds a direct public-API mock regression and an explicitly configured ignored live entry point.
+  Its current evidence does not establish authenticated live candidate or consumer V2 acceptance.
 - Obtain playable candidates meeting the consumer's existing requirements through bounded real
   Rust metadata/playback resolution, then pass the real V2 focused smoke before resuming long
   download, disconnection/recovery, HLS, or native-playback validation.
