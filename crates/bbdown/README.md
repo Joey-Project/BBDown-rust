@@ -27,6 +27,11 @@ resolution in this version can initialize missing device-cookie values from the 
 temporary request header. Metadata paging leaves full `resolve`/`info` behavior unchanged. These
 APIs require the `0.10` dependency line; a `0.9` dependency does not include them. If the `0.10.0`
 registry package is not available, use the matching source checkout or a local path dependency.
+The `0.11.0` source release adds search (`VideoSearchQuery` / `BiliClient::search_videos`), PGC
+timetable and index metadata, popular-video metadata, and global ranking metadata APIs. It also adds
+domestic PGC episode groups. Check [crates.io](https://crates.io/crates/bbdown-core) for current
+package availability; the [official releases](https://github.com/Joey-Project/BBDown-rust/releases)
+page lists CLI archives.
 
 The crate provides staged XML-history-preserving danmaku refresh, deduplicates comments by positive
 IDs with a complete-parameter-and-decoded-text fallback, and regenerates ASS from merged XML. It
@@ -92,8 +97,9 @@ including `https://m.bilibili.com/video/...`. They resolve one finite batch, pre
 order, filter the source, invalid, and OGV items, and deduplicate by aid. Selection indexes this
 result list; it is not paginated or recursive. The endpoint uses the normal web API client and may
 send its configured cookie, while anonymous requests may be restricted upstream.
-Per-video related recommendations were introduced in `bbdown-core` `0.10.0`; use the `0.10`
-dependency line for this API. Version `0.9.0` does not include it.
+Per-video related recommendations were introduced in `bbdown-core` `0.10.0`; version `0.9.0` does
+not include this API. Check [crates.io](https://crates.io/crates/bbdown-core) for package
+availability, or use a matching source checkout or local path dependency.
 Recommendation input fetches homepage recommendation batches and currently emits normal-video `av`
 cards, walking additional `fresh_idx` refresh batches within a safety cap when needed to cover
 explicit index selection. History, watch-later, and dynamic feed inputs require a cookie in client

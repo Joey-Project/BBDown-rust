@@ -38,6 +38,13 @@ line; version `0.9.0` does not include them. If the `0.10.0` registry package is
 matching source checkout or a local path dependency. Catalog snapshots are CLI inputs selected by
 users; they do not implement an automatic routing policy. Callers should read fields or serialize
 output values rather than treating output structs as stable construction targets.
+The `0.11.0` source release adds bounded ordinary-video search and selected-row PGC recognition,
+domestic PGC episode groups, anime/Chinese-animation timetable metadata, movie/TV category-index
+metadata, popular-video metadata, and global ranking metadata. Ranking returns all valid rows in
+source order without an arbitrary row-count cap and applies its configured response limit separately
+to each response. These additions do not implement channel/topic feeds, automatic CDN selection,
+persistent CDN health, or adaptive CDN policy. See the [v0.11.0 release notes](../release-notes/v0.11.0.md)
+and [official releases](https://github.com/Joey-Project/BBDown-rust/releases) for archive availability.
 
 ## Resolver Model
 

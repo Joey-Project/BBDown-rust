@@ -36,6 +36,12 @@ sample invocations, sequential download was faster than either Range control for
 its related-recommendation input and `bbdown-core = "0.10"` for its new library APIs; `0.9.0` does
 not include them. If a matching `0.10.0` binary or crate package is not available, use the matching
 source checkout or a local path dependency.
+The `0.11.0` source release adds ordinary-video search and selected-row PGC recognition, domestic
+PGC episode groups, timetable and movie/TV index metadata, popular-video metadata, and global ranking
+metadata. Ranking no longer has an arbitrary 100-row cap and defaults to a 1 MiB cap per response.
+These features do not add channels, topics, automatic CDN routing, persistent CDN health, or adaptive
+CDN policy. See the [v0.11.0 release notes](release-notes/v0.11.0.md) and
+[official releases](https://github.com/Joey-Project/BBDown-rust/releases) for archive availability.
 The `0.8.0` release added preserving danmaku refresh and credential-account identity APIs to the earlier
 `0.7.0` networking and downloader features. The published networking controls focus on opt-in CDN
 selection, probing and parallel transfer, bundled network catalogs, and independent PGC Web playurl routing. These controls require explicit selection; the
@@ -142,8 +148,7 @@ with `--select all`, info returns the full batch, while plan/download process al
 `latest` means the first returned related video. Homepage aliases and the homepage URL keep their
 existing homepage-feed meaning. The endpoint uses the ordinary web API request path and may accept
 the configured cookie; anonymous upstream requests may be restricted. Related recommendations were
-introduced in `0.10.0`; version `0.9.0` does not include this input. Use the `0.10.0` CLI, or a
-matching source checkout if its release archive is not available.
+introduced in `0.10.0`; version `0.9.0` does not include this input. Check [official releases](https://github.com/Joey-Project/BBDown-rust/releases) for CLI archive availability.
 Watch-history input accepts `history` and `https://www.bilibili.com/account/history`. It requires an
 authenticated web cookie and currently emits normal-video `archive` records; other history business
 types such as PGC, live, or article records are skipped until those item shapes have dedicated
@@ -165,8 +170,7 @@ cache; configured credentials are not changed. Following feeds do not use this i
 
 ## Ordinary Video Search
 
-Ordinary video search is not included in the published `v0.10.0` CLI. Use a source checkout that
-contains this feature, or a later release that includes it.
+Ordinary video search is available in the `v0.11.0` source release. Check [official releases](https://github.com/Joey-Project/BBDown-rust/releases) for CLI archive availability.
 
 Use `search` to fetch one bounded page of ordinary video keyword results as metadata:
 
@@ -242,8 +246,7 @@ establish real `view` or playurl access, playback planning, or download availabi
 
 ## Popular Video Metadata
 
-The `popular` command is not included in the published `v0.10.0` CLI. Use a source checkout that
-contains this feature, or a later release that includes it.
+The `popular` command is available in the `v0.11.0` source release. Check [official releases](https://github.com/Joey-Project/BBDown-rust/releases) for CLI archive availability.
 
 Fetch one page of popular-video metadata:
 
@@ -277,8 +280,7 @@ ranking is available separately through `bbdown ranking`.
 
 ## Global Ranking Metadata
 
-The `ranking` command is not included in the published `v0.10.0` CLI. Use a source checkout that
-contains this feature, or a later release that includes it.
+The `ranking` command is available in the `v0.11.0` source release. Check [official releases](https://github.com/Joey-Project/BBDown-rust/releases) for CLI archive availability.
 
 Fetch the current global ranking:
 
@@ -322,8 +324,7 @@ access rules.
 
 ## PGC Timetable
 
-The timetable command is not included in the published `v0.10.0` CLI. Use a source checkout that
-contains it, or a later release that includes it.
+The timetable command is available in the `v0.11.0` source release. Check [official releases](https://github.com/Joey-Project/BBDown-rust/releases) for CLI archive availability.
 
 Fetch the upstream timetable for anime (the default) or Chinese animation:
 
@@ -358,8 +359,7 @@ regional access rules. Movie and TV category-index metadata is available through
 
 ## PGC Movie and TV Index
 
-The `pgc-index` command is not included in the published `v0.10.0` CLI. Use a source checkout that
-contains it, or a later release that includes it.
+The `pgc-index` command is available in the `v0.11.0` source release. Check [official releases](https://github.com/Joey-Project/BBDown-rust/releases) for CLI archive availability.
 
 List one page of movie results (the default type) or TV series, or inspect that category's filters:
 
@@ -669,7 +669,7 @@ attempt emits no progress for discarded staging bytes. The event excludes signed
 
 ### Re-running the opt-in live CDN benchmark
 
-See the [CDN benchmark measurement notes](cdn-benchmark.md) for the distinction between consumed
+See the [CDN benchmark measurement notes](https://github.com/Joey-Project/BBDown-rust/blob/master/docs/cdn-benchmark.md) for the distinction between consumed
 response-body bytes, published shard bytes, and the limits of the current sample.
 
 The ignored integration harness in `crates/bbdown/tests/cdn_benchmark.rs` makes public HTTP

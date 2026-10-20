@@ -29,7 +29,7 @@ crates.io 发布目标是可复用的 `bbdown-core` library package。使用 `ju
 SpaceDynamic 初始化。它还记录可复现的 CDN 性能 baseline；两次新增样本中，各自的顺序下载都快于对应的 Range
 对照组。`0.10.0` 未实现自动 CDN 路由或自适应策略。相关推荐 CLI 输入需要 `0.10.0` CLI，新的库 API 需要
 `bbdown-core = "0.10"`；`0.9.0` 不包含这些功能。如果 `0.10.0` 二进制或 crate package 尚不可用，请使用对应的源码检出
-或本地 path dependency。`0.8.0` 增加了保留历史的弹幕刷新和账号身份 API，并延续
+或本地 path dependency。`0.11.0` 源码版本增加普通视频搜索及选中条目的 PGC 识别、国内 PGC 分集分组、时间表与电影/电视剧索引 metadata、热门视频 metadata 和全站排行榜 metadata。排行榜不再有任意设置的 100 条上限，每个响应默认限制为 1 MiB。这些功能不增加频道、话题、自动 CDN 路由、持久化 CDN 健康状态或自适应 CDN 策略。请参阅 [v0.11.0 发布说明](release-notes/v0.11.0.zh-CN.md)，并查看[官方 Releases](https://github.com/Joey-Project/BBDown-rust/releases)了解归档可用性。`0.8.0` 增加了保留历史的弹幕刷新和账号身份 API，并延续
 `0.7.0` 的网络与下载器功能。已发布的网络功能包括可选 CDN 选择、探测和并行传输、内置网络目录，以及独立的 PGC Web playurl 路由。
 这些控制都需要显式选择；目录是快照，
 只有用户运行探测或选定路由时才会检查列出的端点。嵌入调用方仍应优先使用
@@ -125,7 +125,7 @@ OGV 条目，并按 aid 去重。`--select` 按结果列表序号选择；不带
 `--select all` 时，`info` 返回整批结果，`plan`/`download` 处理所有选中条目。`latest` 表示
 上游返回的第一条相关推荐。首页 aliases 和首页 URL 仍然表示首页推荐 feed。该端点沿用普通
 WEB API 请求路径，也可能接受已配置的 cookie；上游可能限制匿名请求。
-单视频相关推荐于 `0.10.0` 引入；`0.9.0` 不包含此输入。使用 `0.10.0` CLI；若对应 release 归档尚不可用，可使用匹配的源码检出。
+单视频相关推荐于 `0.10.0` 引入；`0.9.0` 不包含此输入。请查看[官方 Releases](https://github.com/Joey-Project/BBDown-rust/releases)了解 CLI 归档可用性。
 观看历史输入支持 `history` 和 `https://www.bilibili.com/account/history`。它需要已认证的
 WEB cookie，目前只输出普通视频 `archive` 记录；PGC、直播或专栏等其它历史记录 business
 类型会被跳过，直到这些条目形态有专门的 collection planning 支持。
@@ -143,7 +143,7 @@ WEB cookie，目前只输出普通视频 `archive` 记录；PGC、直播或专�
 
 ## 普通视频搜索
 
-已发布的 `v0.10.0` CLI 不包含普通视频搜索。请使用包含此功能的源码检出，或后续实际包含它的版本。
+普通视频搜索包含在 `v0.11.0` 源码版本中。请查看[官方 Releases](https://github.com/Joey-Project/BBDown-rust/releases)了解 CLI 归档可用性。
 
 使用 `search` 获取一页有界的普通视频关键词搜索 metadata：
 
@@ -203,7 +203,7 @@ TV playurl 语义不变。
 
 ## 热门视频 metadata
 
-已发布的 `v0.10.0` CLI 不包含 `popular` 命令。请使用包含此功能的源码检出，或后续实际包含它的版本。
+`popular` 命令包含在 `v0.11.0` 源码版本中。请查看[官方 Releases](https://github.com/Joey-Project/BBDown-rust/releases)了解 CLI 归档可用性。
 
 获取一页热门视频 metadata：
 
@@ -229,7 +229,7 @@ PGC 自动识别。如需指定展示条目，请显式把其 BVID 或 aid 传�
 
 ## 全站排行榜 metadata
 
-已发布的 `v0.10.0` CLI 不包含 `ranking` 命令。请使用包含此功能的源码检出，或后续实际包含它的版本。
+`ranking` 命令包含在 `v0.11.0` 源码版本中。请查看[官方 Releases](https://github.com/Joey-Project/BBDown-rust/releases)了解 CLI 归档可用性。
 
 获取当前全站排行榜：
 
@@ -258,7 +258,7 @@ PGC 自动识别。如需指定某个条目，请显式把其 BVID 或 aid 传�
 
 ## PGC 时间表
 
-已发布的 `v0.10.0` CLI 不包含时间表命令。请使用包含该功能的源码检出，或后续实际包含它的版本。
+时间表命令包含在 `v0.11.0` 源码版本中。请查看[官方 Releases](https://github.com/Joey-Project/BBDown-rust/releases)了解 CLI 归档可用性。
 
 获取番剧（默认类型）或国创的上游时间表：
 
@@ -287,7 +287,7 @@ season 流程显式选择分集。时间表只提供 metadata。`published: fals
 
 ## PGC 电影与电视剧索引
 
-已发布的 `v0.10.0` CLI 不包含 `pgc-index` 命令。请使用包含此功能的源码检出，或实际包含它的后续版本。
+`pgc-index` 命令包含在 `v0.11.0` 源码版本中。请查看[官方 Releases](https://github.com/Joey-Project/BBDown-rust/releases)了解 CLI 归档可用性。
 
 按页读取电影（默认类型）或电视剧列表，也可读取该类别的筛选条件：
 
@@ -549,7 +549,7 @@ DASH/FLV 媒体，要求服务器返回有效字节范围和一致的总长度�
 
 ### 复跑可选的实时 CDN 基准
 
-参见 [CDN 基准测量说明](cdn-benchmark.zh-CN.md)，了解已读取响应正文、已发布分片字节数和当前样本
+参见 [CDN 基准测量说明](https://github.com/Joey-Project/BBDown-rust/blob/master/docs/cdn-benchmark.zh-CN.md)，了解已读取响应正文、已发布分片字节数和当前样本
 限制之间的区别。
 
 `crates/bbdown/tests/cdn_benchmark.rs` 中的 ignored 集成测试只有显式运行时才会发起公开

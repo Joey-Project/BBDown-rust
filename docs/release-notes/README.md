@@ -8,6 +8,9 @@ embedding-facing shape of each source line and shipped release.
 
 ## Versions
 
+- [v0.11.0 source preparation (unpublished as of 2026-10-20)](v0.11.0.md): domestic PGC episode
+  groups, ordinary-video search, anime/Chinese-animation timetable, movie/TV category indexes,
+  popular videos, and global ranking metadata.
 - [v0.10.0 source preparation (unpublished as of 2026-10-14)](v0.10.0.md): related
   recommendations, bounded metadata pages and SpaceDynamic cookie initialization, plus expanded
   opt-in CDN measurements.

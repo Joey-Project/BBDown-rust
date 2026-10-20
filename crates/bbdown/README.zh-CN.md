@@ -21,6 +21,7 @@ cancellation token。原始输入解析覆盖普
 `bbdown-core` `0.10.0` 引入。此版本的认证 SpaceDynamic feed 解析可为临时请求 header 初始化缺失的设备
 Cookie 值。元数据分页不改变完整 `resolve`/`info` 行为。使用这些 API 需要 `0.10` 依赖版本线；`0.9` 依赖不包含这些
 API。如果 registry 中尚无 `0.10.0` package，请使用对应的源码检出或本地 path dependency。
+`0.11.0` 源码版本增加搜索 API（`VideoSearchQuery` / `BiliClient::search_videos`）、PGC 时间表与索引 metadata、热门视频 metadata 和全站排行榜 metadata API，也增加国内 PGC 分集分组。请查看[crates.io](https://crates.io/crates/bbdown-core)了解当前 package 可用性；[官方 Releases](https://github.com/Joey-Project/BBDown-rust/releases)页面列出 CLI 归档。
 
 crate 提供 staged XML 历史保留弹幕刷新，按有效的正 `p[7]` ID 去重；ID 缺失、为零或无效时，使用完整
 `p` 属性和解码文本作为匹配依据。它从合并 XML 重新生成 ASS，同时包含 CDN 控制和独立 PGC Web 路由 API。PGC 区域与代理解析独立于媒体
@@ -86,7 +87,7 @@ selection)`。`<video>` 可为 aid/`av`/`BV` 标识或 B 站官方桌面站/移�
 `https://m.bilibili.com/video/...`）。它只读取一批有限结果，保留上游顺序，过滤源视频、无效和 OGV 条目，并按 aid
 去重。`Selection` 作用于这份相关推荐列表；接口不会翻页或递归请求。它复用普通 web API
 client，也可能发送已配置的 cookie；上游可能限制匿名请求。
-单视频相关推荐 API 于 `bbdown-core` `0.10.0` 引入；使用 `0.10` 依赖版本线即可调用。`0.9.0` 不包含此 API。
+单视频相关推荐 API 于 `bbdown-core` `0.10.0` 引入；`0.9.0` 不包含此 API。请查看[crates.io](https://crates.io/crates/bbdown-core)了解 package 可用性，或使用匹配的源码检出或本地 path dependency。
 
 library 默认保留 plan 中的媒体 URL。嵌入应用需要自定义 UPOS host、强制替换，或
 CLI-compatible PCDN fallback 处理时，应显式设置 `MediaHostOptions`。

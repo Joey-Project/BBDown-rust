@@ -15,7 +15,7 @@ Bilibili 元数据、下载计划、媒体下载、字幕和弹幕旁路文件�
 builder 风格 API，并将元数据和 plan 结构体视为只读输出。这样 crate 增加字段时，嵌入代码更不容易
 受到影响。
 单视频相关推荐和有界元数据分页 API 于 `bbdown-core` `0.10.0` 引入。使用这些 API 需要 `0.10`
-依赖版本线；`0.9.0` 不包含这些 API。如果 registry 中尚无 `0.10.0` package，请使用对应的源码检出或本地 path dependency。
+依赖版本线；`0.9.0` 不包含这些 API。`0.11.0` 源码版本增加 `VideoSearchQuery`、PGC 时间表与索引、热门视频和排行榜 metadata API，也包含国内 PGC 分集分组和搜索结果选中后的 PGC 识别。请查看[crates.io](https://crates.io/crates/bbdown-core)了解 package 可用性；[官方 Releases](https://github.com/Joey-Project/BBDown-rust/releases)页面列出 CLI 归档。
 
 ## 仅规划
 
@@ -134,7 +134,7 @@ API。不带 selector 时，集合类输入会选择全部解析条目；传入 
 
 ### 普通视频搜索
 
-已发布的 `bbdown-core` `0.10.0` package 不包含这些搜索 API。请使用包含该功能的源码检出，或后续实际包含它的版本。
+这些搜索 API 包含在 `v0.11.0` 源码版本中。请查看[crates.io](https://crates.io/crates/bbdown-core)了解 package 可用性。
 
 使用 `BiliClient::search_videos` 和 `VideoSearchQuery` 获取普通视频关键词搜索的一页 metadata。
 每页最多读取 20 条上游记录，不会按本地 page-size 设置截断；页码必须为正数。
@@ -231,7 +231,7 @@ PGC metadata `pgc_base` 和 `PgcWebPlayurlRoute` 是分开的设置。是否可�
 
 ### 热门视频 metadata
 
-已发布的 `bbdown-core` `0.10.0` package 不包含此 API。请使用包含它的源码检出，或后续实际包含它的版本。
+此 API 包含在 `v0.11.0` 源码版本中。请查看[crates.io](https://crates.io/crates/bbdown-core)了解 package 可用性。
 
 调用 `BiliClient::popular_videos` 获取一页有界 metadata。默认查询页码为 1、每页 20 条；每页条数范围为 1–20。
 
@@ -274,7 +274,7 @@ API 错误会沿用普通 `Result` 错误路径；端点兼容不保证请求成
 
 ### 全站排行榜 metadata
 
-已发布的 `bbdown-core` `0.10.0` package 不包含此 API。请使用包含它的源码检出，或后续实际包含它的版本。
+此 API 包含在 `v0.11.0` 源码版本中。请查看[crates.io](https://crates.io/crates/bbdown-core)了解 package 可用性。
 
 调用 `BiliClient::ranking_videos` 获取一份有界的全站排行榜响应：
 
@@ -319,7 +319,7 @@ PGC 自动识别。如需在现有流程中指定条目，请显式构造 `Input
 
 ### PGC 时间表 metadata
 
-已发布的 `bbdown-core` `0.10.0` package 不包含此 API。请使用包含该功能的源码检出，或后续实际包含它的版本。
+此 API 包含在 `v0.11.0` 源码版本中。请查看[crates.io](https://crates.io/crates/bbdown-core)了解 package 可用性。
 
 调用 `BiliClient::pgc_timetable`，为 `PgcTimetableKind::Anime` 或
 `PgcTimetableKind::Guochuang` 获取一份上游时间表响应：
@@ -360,7 +360,7 @@ async fn read_timetable() -> bbdown_core::Result<()> {
 
 ### PGC 电影与电视剧索引 metadata
 
-已发布的 `bbdown-core` `0.10.0` package 不包含这些 API。请使用包含它们的源码检出，或实际包含它们的后续版本。
+这些 API 包含在 `v0.11.0` 源码版本中。请查看[crates.io](https://crates.io/crates/bbdown-core)了解 package 可用性。
 
 使用 `BiliClient::pgc_index(PgcIndexQuery)` 获取一页电影或电视剧 metadata，使用
 `BiliClient::pgc_index_conditions(PgcIndexKind)` 获取相应类别的筛选与排序选项。
@@ -525,7 +525,7 @@ flowchart TD
     C -->|额度耗尽或源结束| K[返回条目、用量、停止原因和游标]
 ```
 
-此 API 于 `bbdown-core` `0.10.0` 引入；`0.9.0` 不包含此 API。使用 `0.10` 依赖版本线；registry package 尚不可用时，可用匹配的源码检出。认证 actual-core 端到端检查使用
+此 API 于 `bbdown-core` `0.10.0` 引入；`0.9.0` 不包含此 API。请查看[crates.io](https://crates.io/crates/bbdown-core)了解 package 可用性，或使用匹配的源码检出或本地 path dependency。认证 actual-core 端到端检查使用
 原始已存 Cookie，由库自动初始化。首次调用用 3 个请求额度，在视频详情前停止；续页用
 2 个请求返回 2 条视频元数据，合计 5 个请求、检查 3 条源记录。这验证了元数据初始化、
 请求计数和续页。续页消费了缓冲的源记录并请求其视频详情，没有请求新的动态 feed，因此
@@ -547,7 +547,7 @@ selection)` 则是直接调用的公共 API，返回 `VideoCollectionResolution`
 批列表中的 1-based 序号。默认或 all 选择允许空结果。`Current` 和 `Episode` 会在请求端点
 前被拒绝。调用会复用普通 web API client 配置，也可能发送已配置的 cookie；匿名请求可能被
 上游限制。API 错误沿用正常 `Result` 错误返回路径，不需增加 client 配置。
-此功能于 `bbdown-core` `0.10.0` 引入；`0.9.0` 不包含此功能。使用 `0.10` 依赖版本线；registry package 尚不可用时，可用匹配的源码检出。
+此功能于 `bbdown-core` `0.10.0` 引入；`0.9.0` 不包含此功能。请查看[crates.io](https://crates.io/crates/bbdown-core)了解 package 可用性，或使用匹配的源码检出或本地 path dependency。
 
 ```rust,no_run
 use bbdown_core::{BiliClient, ClientConfig, Input, ResolvedContent, Selection};

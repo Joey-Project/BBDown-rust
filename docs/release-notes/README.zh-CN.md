@@ -7,6 +7,8 @@
 
 ## 版本
 
+- [v0.11.0 源码准备（截至 2026-10-20 尚未发布）](v0.11.0.zh-CN.md)：国内 PGC episode 分组、普通视频搜索、
+  番剧/国创时间表、电影/电视剧分类索引、热门视频和全站排行榜 metadata。
 - [v0.10.0 源码准备（截至 2026-10-14 尚未发布）](v0.10.0.zh-CN.md)：单视频相关推荐、有界 metadata
   页面和 SpaceDynamic Cookie 初始化，以及扩展的可选 CDN 测量。
 - [v0.9.0（截至 2026-10-14 已发布）](v0.9.0.zh-CN.md)：为 progress callback 和 CLI JSON 增加结构化

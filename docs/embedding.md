@@ -19,6 +19,10 @@ Per-video related-recommendation and bounded metadata-page APIs were introduced 
 `0.10.0`. Use the `0.10` dependency line for these APIs; version `0.9.0` does not include them. If
 the `0.10.0` registry package is not available, use the matching source checkout or a local path
 dependency.
+The `0.11.0` source release adds the `VideoSearchQuery`, PGC timetable and index, popular-video,
+and ranking metadata APIs. It also includes domestic PGC season episode groups and selected-search-row
+PGC recognition. Check [crates.io](https://crates.io/crates/bbdown-core) for package availability;
+the [official releases](https://github.com/Joey-Project/BBDown-rust/releases) page lists CLI archives.
 Prefer constructors and builder-style APIs for configuration, and treat metadata and plan
 structs as read-only output surfaces. This keeps embedding code resilient when new fields are added
 while the crate matures.
@@ -146,8 +150,8 @@ represented as empty item lists, not as missing-field errors.
 
 ### Ordinary Video Search
 
-These search APIs are not included in the published `bbdown-core` `0.10.0` package. Use a source
-checkout that contains this feature, or a later release that includes it.
+These search APIs are available in the `v0.11.0` source release. Check
+[crates.io](https://crates.io/crates/bbdown-core) for package availability.
 
 Use `BiliClient::search_videos` with a `VideoSearchQuery` to fetch exactly one bounded page of
 ordinary video search metadata. The page contains at most 20 raw rows; the requested page must be
@@ -260,8 +264,8 @@ exhaustive matches need to handle them; runtime behavior for existing input kind
 
 ### Popular Video Metadata
 
-This API is not included in the published `bbdown-core` `0.10.0` package. Use a source checkout
-that contains it, or a later release that includes it.
+This API is available in the `v0.11.0` source release. Check
+[crates.io](https://crates.io/crates/bbdown-core) for package availability.
 
 Call `BiliClient::popular_videos` to fetch one bounded metadata page. The default query is page 1
 with 20 rows; page size is limited to 1–20.
@@ -313,8 +317,8 @@ rules, without carrying selected-row PGC detection.
 
 ### Global Ranking Metadata
 
-This API is not included in the published `bbdown-core` `0.10.0` package. Use a source checkout
-that contains it, or a later release that includes it.
+This API is available in the `v0.11.0` source release. Check
+[crates.io](https://crates.io/crates/bbdown-core) for package availability.
 
 Call `BiliClient::ranking_videos` to fetch one bounded global ranking response:
 
@@ -370,8 +374,8 @@ rules apply.
 
 ### PGC Timetable Metadata
 
-This API is not included in the published `bbdown-core` `0.10.0` package. Use a source checkout that
-contains it, or a later release that includes it.
+This API is available in the `v0.11.0` source release. Check
+[crates.io](https://crates.io/crates/bbdown-core) for package availability.
 
 Call `BiliClient::pgc_timetable` to fetch one upstream timetable response for
 `PgcTimetableKind::Anime` or `PgcTimetableKind::Guochuang`:
@@ -417,8 +421,8 @@ playability. Movie and TV category-index metadata is available through the separ
 
 ### PGC Movie and TV Index Metadata
 
-These APIs are not included in the published `bbdown-core` `0.10.0` package. Use a source checkout
-that contains them, or a later release that includes them.
+These APIs are available in the `v0.11.0` source release. Check
+[crates.io](https://crates.io/crates/bbdown-core) for package availability.
 
 Use `BiliClient::pgc_index(PgcIndexQuery)` to fetch one movie or TV metadata page, and
 `BiliClient::pgc_index_conditions(PgcIndexKind)` to fetch that category's filter and order choices.
@@ -610,8 +614,9 @@ flowchart TD
     C -->|Limit or source end| K[Return items, usage, stop reason, and cursor]
 ```
 
-This API was introduced in `bbdown-core` `0.10.0`; version `0.9.0` does not include it. Use the
-`0.10` dependency line, or the matching source checkout while the registry package is unavailable.
+This API was introduced in `bbdown-core` `0.10.0`; version `0.9.0` does not include it. Check
+[crates.io](https://crates.io/crates/bbdown-core) for package availability, or use a matching source
+checkout or local path dependency.
 An authenticated actual-core end-to-end check used the original stored cookie and automatic
 initialization. Its initial three-request call stopped before video details; a two-request
 continuation returned two video metadata items, with five requests and three examined source
@@ -639,8 +644,9 @@ empty default/all result is a valid empty collection. `Current` and `Episode` se
 before the endpoint request. The call uses the ordinary web API client configuration and may send its
 configured cookie; anonymous requests may be restricted by the upstream service. API errors are
 returned through the normal `Result` error path. No additional client configuration is required.
-This feature was introduced in `bbdown-core` `0.10.0`; version `0.9.0` does not include it. Use the
-`0.10` dependency line, or the matching source checkout while the registry package is unavailable.
+This feature was introduced in `bbdown-core` `0.10.0`; version `0.9.0` does not include it. Check
+[crates.io](https://crates.io/crates/bbdown-core) for package availability, or use a matching source
+checkout or local path dependency.
 
 ```rust,no_run
 use bbdown_core::{BiliClient, ClientConfig, Input, ResolvedContent, Selection};
