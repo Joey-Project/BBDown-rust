@@ -19,13 +19,13 @@ use bbdown_core::{
     DownloadProgressSink, DownloadReport, DuplicateDecision, EndpointConfig, Input,
     MediaHostOptions, MediaStream, MuxOptions, PgcIndexFilterSelection, PgcIndexKind,
     PgcIndexOrder, PgcIndexQuery, PgcIndexSort, PgcTimetable, PgcTimetableKind, PlaybackPlan,
-    PlayurlMode, QrLoginCredentials, QrLoginCredentialsState, QrLoginKind, QrLoginTicket,
-    QrLoginTicketOutput, ResolvedContent, RestrictedArea, RestrictedAreaConfig,
-    RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection, StreamQuality,
-    StreamSelection, StreamSet, StreamSource, SubtitleAiPolicy, TvAccessKeyLoginCredentials,
-    TvAccessKeyRefreshRequest, VIDEO_SEARCH_MAX_ITEMS, VideoSearchOrder, VideoSearchQuery,
-    WebCookieRefreshCredentials, WebCookieRefreshRequest, archive_entry_allows_danmaku_update,
-    credential_preflight_requirements_for_media_paths,
+    PlayurlMode, PopularVideoPage, PopularVideoQuery, QrLoginCredentials, QrLoginCredentialsState,
+    QrLoginKind, QrLoginTicket, QrLoginTicketOutput, ResolvedContent, RestrictedArea,
+    RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection,
+    StreamQuality, StreamSelection, StreamSet, StreamSource, SubtitleAiPolicy,
+    TvAccessKeyLoginCredentials, TvAccessKeyRefreshRequest, VIDEO_SEARCH_MAX_ITEMS,
+    VideoSearchOrder, VideoSearchQuery, WebCookieRefreshCredentials, WebCookieRefreshRequest,
+    archive_entry_allows_danmaku_update, credential_preflight_requirements_for_media_paths,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Deserialize;
@@ -186,6 +186,14 @@ enum Command {
         page: u32,
         #[arg(long, value_enum, default_value = "totalrank")]
         order: SearchOrderArg,
+        #[arg(long)]
+        json: bool,
+    },
+    Popular {
+        #[arg(long, default_value_t = 1)]
+        page: u32,
+        #[arg(long = "page-size", default_value_t = 20, value_parser = clap::value_parser!(u8).range(1..=20))]
+        page_size: u8,
         #[arg(long)]
         json: bool,
     },
@@ -1288,6 +1296,20 @@ async fn run() -> anyhow::Result<()> {
         cli.request_timeout_seconds > 0,
         "--request-timeout-seconds must be greater than 0"
     );
+    if let Command::Popular {
+        page,
+        page_size,
+        json,
+    } = &cli.command
+    {
+        let runtime = ClientRuntimeConfig::new(
+            EndpointConfig::default().with_api_base(cli.api_base.clone()),
+            RestrictedAreaConfig::default(),
+            PlayurlMode::default(),
+            Duration::from_secs(cli.request_timeout_seconds),
+        );
+        return handle_popular_videos(&runtime, *page, *page_size, *json).await;
+    }
     let endpoints = endpoints_from_cli(&cli);
     let mut restricted_area = restricted_area_from_cli_with_args(&cli, raw_args)?;
     if let Some(name) = cli.resolver.as_deref() {
@@ -1339,6 +1361,9 @@ async fn run() -> anyhow::Result<()> {
             json,
         } => {
             handle_video_search(&client_runtime, keyword, page, order, json).await?;
+        }
+        Command::Popular { .. } => {
+            unreachable!("popular commands return before credential initialization");
         }
         Command::Timetable { kind, json } => {
             handle_pgc_timetable(&client_runtime, kind, json).await?;
@@ -2017,6 +2042,75 @@ async fn handle_video_search(
         print_video_search_page(&result, &keyword, order)?;
     }
     Ok(())
+}
+
+async fn handle_popular_videos(
+    client_runtime: &ClientRuntimeConfig,
+    page: u32,
+    page_size: u8,
+    json: bool,
+) -> anyhow::Result<()> {
+    ensure!(page > 0, "--page must be greater than 0");
+    let client = BiliClient::new(client_runtime.client_config(Credentials::default()));
+    let result = client
+        .popular_videos(
+            PopularVideoQuery::new()
+                .with_page(page)
+                .with_page_size(page_size),
+        )
+        .await?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    } else {
+        print_popular_video_page(&result);
+    }
+    Ok(())
+}
+
+fn print_popular_video_page(page: &PopularVideoPage) {
+    println!("requested page: {}", page.requested_page);
+    println!("requested page size: {}", page.requested_page_size);
+    println!("rows: {}", page.items.len());
+    for (index, item) in page.items.iter().enumerate() {
+        let author = item.author.as_deref().unwrap_or("unknown");
+        let mut targets = Vec::with_capacity(2);
+        if let Some(bvid) = item.bvid.as_deref() {
+            targets.push(bvid.to_owned());
+        }
+        targets.push(format!("av{}", item.aid));
+        println!(
+            "{}. source-order target={} author={} title={}",
+            index + 1,
+            targets.join(" / "),
+            author,
+            item.title
+        );
+        if let Some(stats) = item.stats.as_ref() {
+            let values = [
+                ("view", stats.view),
+                ("danmaku", stats.danmaku),
+                ("reply", stats.reply),
+                ("favorite", stats.favorite),
+                ("coin", stats.coin),
+                ("share", stats.share),
+                ("like", stats.like),
+            ]
+            .into_iter()
+            .filter_map(|(name, value)| value.map(|value| format!("{name}={value}")))
+            .collect::<Vec<_>>();
+            if !values.is_empty() {
+                println!("   stats: {}", values.join(" "));
+            }
+        }
+    }
+    if let Some(next_page) = page.next_page {
+        println!(
+            "next page: {next_page} (keep --page-size {})",
+            page.requested_page_size
+        );
+    } else {
+        println!("next page: none");
+    }
 }
 
 async fn handle_pgc_timetable(

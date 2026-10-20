@@ -201,6 +201,32 @@ TV playurl 语义不变。
 1 MiB，并使用已配置的请求超时。兼容服务或请求成功都不保证特定区域可用。
 本功能记录的匿名实时探测只确认搜索 metadata 可用；它不能证明实际 `view` 或 playurl 可访问，也不能证明播放规划或下载可用。
 
+## 热门视频 metadata
+
+已发布的 `v0.10.0` CLI 不包含 `popular` 命令。请使用包含此功能的源码检出，或后续实际包含它的版本。
+
+获取一页热门视频 metadata：
+
+```bash
+bbdown popular --json
+bbdown popular --page 2 --page-size 10 --json
+```
+
+页码默认是 1，每页条数默认是 20，范围为 1–20。每次调用通过 `--api-base` / `BBDOWN_API_BASE`
+向 `/x/web-interface/popular?pn=<page>&ps=<page-size>` 发起一次匿名 GET。响应上限为 1 MiB，使用配置的请求超时。
+请求不跟随重定向。此命令只使用 `api_base` 和请求超时；不会读取凭据 profile，也不会执行凭据预检、续期、resolver、
+受限区域或 PGC 配置逻辑。它不会读取或发送已配置的凭据、Cookie 或 access key。配置的兼容端点需要支持此路由及其响应格式。
+
+JSON 返回 `requested_page`、`requested_page_size`、`has_next`、`next_page` 和 `items`。上游响应只提供
+`data.list` 和 `data.no_more`，不回显页码或总数，因此结果中的页码字段表示请求参数；是否有下一页由
+`no_more` 决定。热门列表可能在请求之间变化，因此本 API 不承诺固定快照、稳定顺序或总数，也不会自动翻页。
+
+条目包含正数 `aid`、可选 `bvid`、`title`、可选作者、时长，以及可选展示 metadata 和计数。如果存在 BVID，其解码后的
+aid 必须与该条目的 aid 相符；冲突时会拒绝整个响应。缺少 BVID 时保持缺失，不会合成。这是纯 metadata：
+命令不会补充视频详情、解析 playurl，也不会请求图片或媒体内容。它不会增加通用 input，也不会对选中行做
+PGC 自动识别。如需指定展示条目，请显式把其 BVID 或 aid 传给现有命令；后续沿用普通直接视频行为和既有访问规则。
+排行榜是独立后续工作，此命令不提供排行榜。
+
 ## PGC 时间表
 
 已发布的 `v0.10.0` CLI 不包含时间表命令。请使用包含该功能的源码检出，或后续实际包含它的版本。

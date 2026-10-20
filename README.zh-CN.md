@@ -64,6 +64,8 @@ bbdown timetable --type anime --json
 bbdown timetable --type guochuang --json
 bbdown pgc-index list --type movie --page 1 --page-size 20 --order play --json
 bbdown pgc-index filters --type tv --json
+bbdown popular --json
+bbdown popular --page 2 --page-size 10 --json
 ```
 
 `timetable` 输出番剧或国创的上游 PGC 时间表 metadata。它只发起一次匿名请求，不会解析流或下载分集。
@@ -71,6 +73,10 @@ bbdown pgc-index filters --type tv --json
 
 `pgc-index` 可按页列出 PGC 电影或电视剧 metadata，也可读取该类别支持的筛选值。它只提供匿名 metadata，
 不会解析或下载列表中的 season。已发布的 `v0.10.0` CLI 和 crate 不包含此功能。查询与路由说明见
+[用户指南](docs/user-guide.zh-CN.md)和[嵌入指南](docs/embedding.zh-CN.md)。
+
+`popular` 只使用 API base 和请求超时，返回一页有界的匿名热门视频 metadata；不会读取凭据 profile、解析流或下载列表中的视频。
+排行榜仍是独立的后续工作。已发布的 `v0.10.0` CLI 和 crate 不包含此源码功能。请求限制和 Rust 示例见
 [用户指南](docs/user-guide.zh-CN.md)和[嵌入指南](docs/embedding.zh-CN.md)。
 
 `search` 返回一页有界的普通视频关键词 metadata。若要解析、规划、播放或下载搜索结果，可将

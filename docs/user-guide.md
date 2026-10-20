@@ -240,6 +240,41 @@ does not guarantee regional availability.
 The anonymous live probe recorded for this feature confirms metadata search only; it does not
 establish real `view` or playurl access, playback planning, or download availability.
 
+## Popular Video Metadata
+
+The `popular` command is not included in the published `v0.10.0` CLI. Use a source checkout that
+contains this feature, or a later release that includes it.
+
+Fetch one page of popular-video metadata:
+
+```bash
+bbdown popular --json
+bbdown popular --page 2 --page-size 10 --json
+```
+
+Page defaults to 1 and page size defaults to 20; page size must be 1–20. Each invocation makes one
+anonymous GET through `--api-base` / `BBDOWN_API_BASE` to
+`/x/web-interface/popular?pn=<page>&ps=<page-size>`. The response is limited to 1 MiB and uses the
+configured request timeout. Redirects are not followed. This command uses only `api_base` and the
+request timeout; it does not inspect credential profiles or run credential preflight, renewal,
+resolver, restricted-area, or PGC configuration. It does not load or send configured credentials,
+cookies, or access keys. A compatible configured endpoint must support this route and its response
+shape.
+
+JSON reports `requested_page`, `requested_page_size`, `has_next`, `next_page`, and `items`. The
+upstream response supplies `data.list` and `data.no_more`, but does not echo the page or a total;
+page fields in the result describe the request. `no_more` determines whether `next_page` is present.
+The popular list can change between requests, so this API does not promise a fixed snapshot, stable
+ordering, or a total count. It does not follow pages automatically.
+
+Items expose a positive `aid`, optional `bvid`, `title`, optional `author`, duration, and optional
+display metadata and counters. When a BVID is present, its decoded aid must agree with the row's aid;
+a conflicting pair rejects the response. A missing BVID remains absent. This is metadata only: the command does not hydrate video details,
+resolve playurl, or request image or media content. It does not add a generic input or selected-row
+PGC detection. To target a displayed result, explicitly pass its BVID or aid to an existing command,
+which then follows the ordinary direct-video behavior and its existing access rules. Ranking is a
+separate follow-up and is not provided by this command.
+
 ## PGC Timetable
 
 The timetable command is not included in the published `v0.10.0` CLI. Use a source checkout that

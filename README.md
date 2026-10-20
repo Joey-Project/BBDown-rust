@@ -68,6 +68,8 @@ bbdown timetable --type anime --json
 bbdown timetable --type guochuang --json
 bbdown pgc-index list --type movie --page 1 --page-size 20 --order play --json
 bbdown pgc-index filters --type tv --json
+bbdown popular --json
+bbdown popular --page 2 --page-size 10 --json
 ```
 
 `timetable` prints the upstream PGC timetable metadata for anime or Chinese animation. It makes one
@@ -78,6 +80,12 @@ the published `v0.10.0` CLI; use a source checkout that contains it, or a later 
 available filter values. It is anonymous metadata only; it does not resolve or download listed
 seasons. The published `v0.10.0` CLI and crate do not include this feature. See the
 [user guide](docs/user-guide.md) and [embedding guide](docs/embedding.md) for query and routing details.
+
+`popular` returns one bounded page of anonymous popular-video metadata using only the API base and
+request timeout; it does not inspect credential profiles, resolve streams, or download listed
+videos. Ranking remains a separate follow-up. The published `v0.10.0` CLI and crate do not include
+this source-only feature. See the [user guide](docs/user-guide.md) and
+[embedding guide](docs/embedding.md) for request limits and Rust examples.
 
 `search` returns one bounded page of ordinary video keyword metadata. To resolve, plan, play back, or
 download a search result, pass `search:<keyword>` or an official search URL to `info`, `plan`,
