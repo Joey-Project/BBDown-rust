@@ -62,12 +62,20 @@ BBDOWN_DYNAMIC_LIVE_CREDENTIAL_FILE=/path/to/credentials.json \
 
 ## Current Evidence And Remaining Work
 
-- No authenticated live request has been made in this follow-up. The local sample manifest's
-  credential-file target is absent; an existing file/profile must be selected before the live run.
-- Actual-core live playback-candidate acceptance remains pending. Run the ignored test once with
-  the selected existing Web credential, record the source revision and UTC time, and diagnose any
-  failure at the reported stage without treating historical HTTP 412 as a current confirmed bug.
-- The downstream consumer's V2 smoke remains a separate acceptance gate. This repository test
+- Actual-core playback-candidate acceptance passed once on source revision
+  `d3276044dd1f01d4a3d10b562d0cfa1e16a4364e` (`bbdown-core` `0.11.0`; the production source matched
+  the scoped base `98eadf00bf0cd8a7774c1043a07d22061983bfe4`). The single legacy planning call used
+  the existing TVD credential store's default profile and copied only its Web cookie into the test
+  client. No credential path or secret is recorded here.
+- The result was observed at `2026-10-20 20:04:33 UTC`: one entry, 36 variants, aid `117474083274912`,
+  cid `42906226371`, duration 433 seconds, quality IDs `80,64,32,16`, and video codec family H264.
+  The call returned a candidate and did not report HTTP 412. The harness had no API request observer,
+  so this does not establish per-request counts or statuses, prove a root cause, or demonstrate a
+  general fix. Login health was not checked separately.
+- The run did not perform QR login, credential refresh or store writes, use access keys or a proxy,
+  fetch media, or play it. BBDown's other local credential store received only static structure
+  inspection and no authenticated request.
+- The downstream consumer's V2 smoke remains a separate acceptance gate. The actual-core result
   does not run that consumer, HLS, long downloads, or native playback. The `/x/player/v2` subtitle
   API is unrelated to the consumer's V2 smoke terminology.
 
@@ -80,3 +88,12 @@ BBDOWN_DYNAMIC_LIVE_CREDENTIAL_FILE=/path/to/credentials.json \
   test formatting/lint issues. Rust/Cargo `1.99.1` followed the repository's stable toolchain.
 - `cargo fmt --all -- --check` and project-journal validation: passed.
 - `git diff --check`: passed.
+- The ignored `legacy_space_dynamic_playback_plan_live_acceptance` test then ran once against the
+  explicitly selected existing store's default profile and passed in 2.97 seconds. This confirms
+  actual-core candidate production for this run only; it is not a consumer smoke or media-playback
+  result.
+- On the same frozen source head, `just ci` passed with 979 workspace tests passed and 4 ignored;
+  stable Rust/Cargo `1.99.1` and MSRV `1.95.0` checks passed. The standalone CLI E2E rerun passed
+  197 tests and is separate from that workspace count. Core publish dry-run packaging validation
+  passed without publishing. The existing `spin 0.9.8` yanked-dependency warning was retained; no
+  dependency or version change was made.

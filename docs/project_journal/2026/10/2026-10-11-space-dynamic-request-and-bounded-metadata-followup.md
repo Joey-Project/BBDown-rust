@@ -16,18 +16,20 @@ superseded_by:
 
 - Keep the completed [personal-space WBI signing workstream](2026-10-10-space-dynamic-wbi-signing.md)
   and PR #93 completed. The explicit bounded API and device-cookie initialization have now landed
-  in PRs #99 and #100. Consumer playback acceptance remains a separate pending follow-up.
+  in PRs #99 and #100. The downstream consumer's V2 smoke remains a separate pending follow-up.
 - The downstream consumer reported this evidence against `bbdown-core 0.9.0`, pinned to
   `e422a159cdf70c5bec72b4120e2a70e5bd749088`, using the public fixture
   `https://space.bilibili.com/441167301/dynamic`. No credentials, raw responses, private data, or
   signed URLs were supplied for this record. The publication-preparation thread made no new live
   requests. The repair thread's subsequent implementation and live evidence are recorded below.
-- The consumer's focused dynamic playback gate has no successful acceptance evidence. This does not make the deterministic
-  workspace/release-validation gate fail, nor establish a general failure for every dynamic input.
+- The historical consumer report below is evidence for its `0.9.0` source and time only. A later
+  actual-core candidate check passed once on `0.11.0` source; it does not establish consumer V2
+  acceptance or a general result for every dynamic input. Neither result affects the deterministic
+  workspace/release-validation gate.
 
 ## A. Initial Space Dynamic HTTP 412
 
-**Status:** device initialization implemented; consumer V2 playback acceptance pending.
+**Status:** device initialization implemented; actual-core candidate acceptance passed once; consumer V2 smoke pending.
 
 ### Implemented Resolution
 
@@ -63,10 +65,13 @@ superseded_by:
 
 - The `0.11.0` [playback acceptance follow-up](2026-10-20-dynamic-playback-acceptance-01a0dd39.md)
   adds a direct public-API mock regression and an explicitly configured ignored live entry point.
-  Its current evidence does not establish authenticated live candidate or consumer V2 acceptance.
-- Obtain playable candidates meeting the consumer's existing requirements through bounded real
-  Rust metadata/playback resolution, then pass the real V2 focused smoke before resuming long
-  download, disconnection/recovery, HLS, or native-playback validation.
+  One actual-core legacy planning call then produced a candidate on `0.11.0` source. The call did
+  not report HTTP 412, but no API request observer recorded individual request counts or statuses;
+  this does not identify the historical cause or prove a general fix. Login health was not checked.
+- Run the downstream consumer's focused V2 smoke using the candidate-producing source. The core
+  planning result does not establish that consumer acceptance, media download, or playback passed.
+  Continue to long download, disconnection/recovery, HLS, and native-playback validation only after
+  the consumer smoke passes.
 - Do not substitute unbounded retries, risk-control bypasses, guessed headers, or weaker candidate
   standards for acceptance. Do not request a new QR login without explicit credential-rejection
   evidence.
