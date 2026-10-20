@@ -37,6 +37,7 @@ SpaceDynamic 请求缺少设备 Cookie 值时的初始化逻辑。它还记录�
 各自的顺序下载都快于对应的 Range 对照组。`0.10.0` 未实现自动 CDN 路由或自适应策略。使用新的库 API 需要
 `bbdown-core = "0.10"`；`0.9` 依赖不包含这些 API。如果 registry 中尚无 `0.10.0` package，请使用对应的源码检出
 或本地 path dependency。
+`0.11.0` 源码版本增加普通视频搜索及选中条目的 PGC 识别、国内 PGC 分集分组、番剧与国创时间表 metadata、电影/电视剧索引 metadata、热门视频 metadata 和全站排行榜 metadata。排行榜会返回所有有效条目，不再使用此前任意设置的 100 条上限；每个响应的默认大小上限为 1 MiB。这些功能不实现频道、话题、自动 CDN 路由、持久化 CDN 健康状态或自适应 CDN 策略。请参阅 [v0.11.0 发布说明](docs/release-notes/v0.11.0.zh-CN.md)，并查看[官方 Releases](https://github.com/Joey-Project/BBDown-rust/releases)了解归档可用性。
 
 ## 当前 CLI
 
@@ -71,26 +72,26 @@ bbdown ranking --max-response-bytes 2097152 --json
 ```
 
 `timetable` 输出番剧或国创的上游 PGC 时间表 metadata。它只发起一次匿名请求，不会解析流或下载分集。
-已发布的 `v0.10.0` CLI 不包含此命令；请使用包含该功能的源码检出，或后续实际包含它的版本。
+该命令包含在 `v0.11.0` 源码版本中。请查看[官方 Releases](https://github.com/Joey-Project/BBDown-rust/releases)了解 CLI 归档可用性。
 
 `pgc-index` 可按页列出 PGC 电影或电视剧 metadata，也可读取该类别支持的筛选值。它只提供匿名 metadata，
-不会解析或下载列表中的 season。已发布的 `v0.10.0` CLI 和 crate 不包含此功能。查询与路由说明见
+不会解析或下载列表中的 season。该功能包含在 `v0.11.0` 源码版本中。请查看[官方 Releases](https://github.com/Joey-Project/BBDown-rust/releases)了解 CLI 归档可用性，并查看[crates.io](https://crates.io/crates/bbdown-core)了解 crate package 可用性。查询与路由说明见
 [用户指南](docs/user-guide.zh-CN.md)和[嵌入指南](docs/embedding.zh-CN.md)。
 
 `popular` 只使用 API base 和请求超时，返回一页有界的匿名热门视频 metadata；不会读取凭据 profile、解析流或下载列表中的视频。
-已发布的 `v0.10.0` CLI 和 crate 不包含此源码功能。请求限制和 Rust 示例见
+该功能包含在 `v0.11.0` 源码版本中。请查看[官方 Releases](https://github.com/Joey-Project/BBDown-rust/releases)了解 CLI 归档可用性，并查看[crates.io](https://crates.io/crates/bbdown-core)了解 crate package 可用性。请求限制和 Rust 示例见
 [用户指南](docs/user-guide.zh-CN.md)和[嵌入指南](docs/embedding.zh-CN.md)。
 
 `ranking` 返回一页有界的匿名全站排行榜（`rid=0`、`type=all`、`web_location=333.934`），使用配置的 API base、请求超时和响应大小选项。它最多先向 `/x/web-interface/nav` 发起一次匿名请求以获取公开 WBI 密钥，再发起一次签名排行榜请求；`--max-response-bytes` 设置一个字节上限，并将同一上限分别应用于每个响应；每个响应都可使用完整上限，不共用合计字节预算，默认上限为 1 MiB。所有有效条目均按上游顺序返回，不设任意条目数上限。
 它不会读取凭据、补充详情、解析 playurl 或请求媒体。排行榜没有固定时间周期，顺序会变化，响应不承诺固定快照或总数。
-已发布的 `v0.10.0` CLI 和 crate 不包含此源码功能。Rust API 和条目字段见
+该功能包含在 `v0.11.0` 源码版本中。请查看[官方 Releases](https://github.com/Joey-Project/BBDown-rust/releases)了解 CLI 归档可用性，并查看[crates.io](https://crates.io/crates/bbdown-core)了解 crate package 可用性。Rust API 和条目字段见
 [用户指南](docs/user-guide.zh-CN.md)和[嵌入指南](docs/embedding.zh-CN.md)。
 
 `search` 返回一页有界的普通视频关键词 metadata。若要解析、规划、播放或下载搜索结果，可将
 `search:<keyword>` 或官方搜索 URL 传给 `info`、`plan`、`playback` 或 `download`，并显式选择结果序号；只有
 被选中的结果会继续解析。普通视频使用 P1，确认的 PGC 分集按下文所述进入 PGC 路径。页数限制和 Rust 示例见[用户指南](docs/user-guide.zh-CN.md)
 与[嵌入指南](docs/embedding.zh-CN.md)。
-已发布的 `v0.10.0` CLI 和 crate 不包含此功能；请使用包含该功能的源码检出，或后续实际包含它的版本。
+该功能包含在 `v0.11.0` 源码版本中。请查看[官方 Releases](https://github.com/Joey-Project/BBDown-rust/releases)了解 CLI 归档可用性，并查看[crates.io](https://crates.io/crates/bbdown-core)了解 crate package 可用性。
 用搜索输入进行选择会重新查询；直接使用展示条目的 BVID 或 aid 可按现有直接视频行为指定该普通视频身份。
 PGC 自动识别只在通过搜索输入选择条目时运行；确认分集后，后续命令可使用 plan 返回的 `epid` / `ep` 精确指定分集。
 搜索列表仍是普通视频搜索。若选中 BVID 或 aid 的官方 view 响应包含官方 PGC 分集重定向，且身份校验通过，
@@ -241,8 +242,7 @@ bbdown info ss26801 --select page:1
 `https://m.bilibili.com/video/...`）。它只读取该源视频的一批有限相关推荐，不会
 翻页或递归抓取相关推荐；结果按上游顺序排列，排除源视频、无效条目和 OGV 条目，并按 aid
 去重。`--select` 按这份结果列表的序号选择；homepage aliases 和首页 URL 仍表示首页推荐。
-此功能于 `0.10.0` 引入；`0.9` 版本不包含此功能。使用对应的 `bbdown-core` 依赖版本线；若 registry package 尚不可用，
-可使用匹配的源码检出。
+此功能于 `0.10.0` 引入；`0.9` 版本不包含此功能。请查看[crates.io](https://crates.io/crates/bbdown-core)了解 package 可用性，或使用匹配的源码检出或本地 path dependency。
 观看历史输入可使用 `history` 或 `https://www.bilibili.com/account/history`，需要已认证的
 WEB cookie，目前只包含普通视频 `archive` 历史记录。稍后再看输入可使用 `watchlater`、
 `watch-later`、`watch_later`、`later`、`toview` 或
@@ -425,8 +425,7 @@ just ci
 
 - Crate API 说明：可发布 package 是 `bbdown-core`，导入时使用 `bbdown_core`。`0.7.0` 发布版
   增加了可选 CDN host 选择、探测和并行传输、内置网络目录，以及独立的 PGC Web playurl 路由
-  API；目录不会触发自动 CDN 路由。单视频相关推荐和有界元数据分页 API 于 `0.10.0` 引入；`0.9` crate 不包含这些 API。
-  使用 `bbdown-core = "0.10"`，或在 registry package 尚不可用时使用匹配的源码检出。
+  API；目录不会触发自动 CDN 路由。单视频相关推荐和有界元数据分页 API 于 `0.10.0` 引入；`0.9` crate 不包含这些 API。`0.11.0` 源码版本增加搜索、PGC 时间表与索引、热门视频和排行榜 metadata API。请查看[crates.io](https://crates.io/crates/bbdown-core)了解 package 可用性，或使用当前源码检出或本地 path dependency。
   `0.5.0` 的 download API 仍包含
   `DownloadProgressEvent` callback、基于 `DownloadCancellationToken` 的 graceful
   cancellation，以及当 plan 条目暴露章节时的 ffmpeg 章节 metadata mux；嵌入项目应优先使用
@@ -448,5 +447,6 @@ just ci
 - 英文嵌入指南：[docs/embedding.md](docs/embedding.md)
 - 英文架构指南：[docs/architecture/rust-rewrite.md](docs/architecture/rust-rewrite.md)
 - 英文版本说明：[docs/release-notes/README.md](docs/release-notes/README.md)
-- 面向 agent 的项目跟踪文档，不做本地化：[项目状态](docs/PROJECT_STATE.md)、
-  [项目 TODO](docs/PROJECT_TODO.md)、[工作流日志](docs/project_journal/)。
+- 面向 agent 的项目跟踪文档，不做本地化：[项目状态](https://github.com/Joey-Project/BBDown-rust/blob/master/docs/PROJECT_STATE.md)、
+  [项目 TODO](https://github.com/Joey-Project/BBDown-rust/blob/master/docs/PROJECT_TODO.md)、
+  [工作流日志](https://github.com/Joey-Project/BBDown-rust/tree/master/docs/project_journal/)。

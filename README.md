@@ -33,6 +33,13 @@ invocations, sequential download was faster than either Range control for that f
 `0.10.0` line does not implement automatic CDN routing or adaptive policy. Use `bbdown-core = "0.10"`
 for the new library APIs; a `0.9` dependency does not include them. If the `0.10.0` package is not
 available in your registry, use the matching source checkout or a local path dependency.
+The `0.11.0` source release adds ordinary-video search with selected-row PGC recognition, domestic
+PGC episode groups, anime and Chinese-animation timetable metadata, movie/TV index metadata,
+popular-video metadata, and global ranking metadata. Ranking returns all valid rows without the former
+arbitrary 100-row cap and uses a positive 1 MiB default limit per response. These additions do not
+implement channels, topics, automatic CDN routing, persistent CDN health, or adaptive CDN policy.
+See the [v0.11.0 release notes](docs/release-notes/v0.11.0.md) and
+[official releases](https://github.com/Joey-Project/BBDown-rust/releases) for archive availability.
 Input parsing covers normal videos, PGC and intl episodes, PUGV/cheese courses, B23 short links,
 favorite lists, space videos, collections, series, homepage recommendations, per-video related
 recommendations, watch history, watch-later lists, following video feeds, and space dynamic video
@@ -75,17 +82,22 @@ bbdown ranking --max-response-bytes 2097152 --json
 ```
 
 `timetable` prints the upstream PGC timetable metadata for anime or Chinese animation. It makes one
-anonymous request and does not resolve streams or download episodes. This command is not included in
-the published `v0.10.0` CLI; use a source checkout that contains it, or a later release that includes it.
+anonymous request and does not resolve streams or download episodes. Available in the `v0.11.0`
+source release. Check [official releases](https://github.com/Joey-Project/BBDown-rust/releases) for
+CLI archive availability.
 
 `pgc-index` lists one metadata page of PGC movies or TV series and can return the category's
 available filter values. It is anonymous metadata only; it does not resolve or download listed
-seasons. The published `v0.10.0` CLI and crate do not include this feature. See the
+seasons. Available in the `v0.11.0` source release. Check
+[official releases](https://github.com/Joey-Project/BBDown-rust/releases) for CLI archive availability
+and [crates.io](https://crates.io/crates/bbdown-core) for crate package availability. See the
 [user guide](docs/user-guide.md) and [embedding guide](docs/embedding.md) for query and routing details.
 
 `popular` returns one bounded page of anonymous popular-video metadata using only the API base and
 request timeout; it does not inspect credential profiles, resolve streams, or download listed
-videos. The published `v0.10.0` CLI and crate do not include this source-only feature. See the
+videos. Available in the `v0.11.0` source release. Check
+[official releases](https://github.com/Joey-Project/BBDown-rust/releases) for CLI archive availability
+and [crates.io](https://crates.io/crates/bbdown-core) for crate package availability. See the
 [user guide](docs/user-guide.md) and
 [embedding guide](docs/embedding.md) for request limits and Rust examples.
 
@@ -95,16 +107,19 @@ make one anonymous `/x/web-interface/nav` request for public WBI keys, then make
 request. Each response defaults to a 1 MiB cap. `--max-response-bytes` sets one byte-cap value applied separately to each response; each response gets that full cap, and they do not share a combined byte budget. All valid rows are returned
 in source order without an arbitrary row limit. It does not
 inspect credentials, hydrate details, resolve playurl, or request media. The ranking has no fixed
-time period; order is dynamic, with no fixed snapshot or total guarantee. The published `v0.10.0` CLI and crate do not
-include this source-only feature. See the [user guide](docs/user-guide.md) and
+time period; order is dynamic, with no fixed snapshot or total guarantee. Available in the `v0.11.0`
+source release. Check [official releases](https://github.com/Joey-Project/BBDown-rust/releases) for
+CLI archive availability and [crates.io](https://crates.io/crates/bbdown-core) for crate package
+availability. See the [user guide](docs/user-guide.md) and
 [embedding guide](docs/embedding.md) for the Rust API and item fields.
 
 `search` returns one bounded page of ordinary video keyword metadata. To resolve, plan, play back, or
 download a search result, pass `search:<keyword>` or an official search URL to `info`, `plan`,
 `playback`, or `download` and explicitly select result indexes; only selected results are hydrated.
 Ordinary videos use P1; confirmed PGC episodes follow the PGC path described below.
-This feature is not included in the published `v0.10.0` CLI or crate; use a source checkout that
-contains it, or a later release that includes it.
+Available in the `v0.11.0` source release. Check
+[official releases](https://github.com/Joey-Project/BBDown-rust/releases) for CLI archive availability
+and [crates.io](https://crates.io/crates/bbdown-core) for crate package availability.
 Search-input selection runs a fresh query; using a displayed result's BVID or aid directly targets
 that exact video with existing direct-video behavior. PGC auto-detection applies only when resolving
 a selected search row. After it confirms an episode, use the plan's `epid` / `ep` input to target that
@@ -275,8 +290,8 @@ batch for that source video; they do not paginate or recursively fetch recommend
 exclude the source, invalid entries, and OGV entries, preserve upstream order, and deduplicate by
 aid. `--select` indexes this result list; homepage aliases and homepage URL continue to request the
 homepage recommendation feed. This feature was introduced in `0.10.0`; a `0.9` release does not
-include it. Use the matching `bbdown-core` dependency line, or a matching source checkout if the
-registry package is not available. History
+include it. Check [crates.io](https://crates.io/crates/bbdown-core) for package availability, or use
+a matching source checkout or local path dependency. History
 input uses `history` or
 `https://www.bilibili.com/account/history`, requires an authenticated web cookie, and currently
 includes normal-video `archive` history records. Watch-later input uses `watchlater`,
@@ -478,8 +493,10 @@ running, so sample behavior is driven by the manifest rather than shell state.
   release added the networking/downloader features described here, including opt-in CDN host
   selection, probing and parallel transfer, bundled network catalogs, and an independent PGC Web
   playurl route API. Per-video related-recommendation and bounded metadata-page APIs were introduced
-  in `0.10.0`; a `0.9` crate does not include them. Use `bbdown-core = "0.10"`, or a matching source
-  checkout if the registry package is not available. The download APIs
+  in `0.10.0`; a `0.9` crate does not include them. The `0.11.0` source release adds search, PGC
+  timetable and index, popular-video, and ranking metadata APIs. Check
+  [crates.io](https://crates.io/crates/bbdown-core) for package availability, or use this source
+  checkout or a local path dependency. The download APIs
   from `0.5.0` still include
   `DownloadProgressEvent` callbacks,
   `DownloadCancellationToken`-based graceful cancellation, and ffmpeg chapter metadata muxing when
@@ -505,5 +522,6 @@ running, so sample behavior is driven by the manifest rather than shell state.
   [docs/architecture/rust-rewrite.zh-CN.md](docs/architecture/rust-rewrite.zh-CN.md)
 - Simplified Chinese release notes:
   [docs/release-notes/README.zh-CN.md](docs/release-notes/README.zh-CN.md)
-- Agent-facing project tracking, not localized: [Project state](docs/PROJECT_STATE.md),
-  [Project TODO](docs/PROJECT_TODO.md), and [workstream journals](docs/project_journal/).
+- Agent-facing project tracking, not localized: [Project state](https://github.com/Joey-Project/BBDown-rust/blob/master/docs/PROJECT_STATE.md),
+  [Project TODO](https://github.com/Joey-Project/BBDown-rust/blob/master/docs/PROJECT_TODO.md), and
+  [workstream journals](https://github.com/Joey-Project/BBDown-rust/tree/master/docs/project_journal/).

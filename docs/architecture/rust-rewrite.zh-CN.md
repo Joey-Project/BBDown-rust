@@ -35,6 +35,7 @@ playurl 路由选择器。`0.9.0` 增加类型化 CDN 传输诊断，以及通�
 依赖版本线；`0.9.0` 不包含这些功能。如果 registry 中尚无 `0.10.0` package，请使用匹配的源码检出
 或本地 path dependency。目录快照由 CLI 用户显式选择，不构成自动路由策略；调用方应读取字段或序列化
 输出值，而不是把输出结构体视为稳定的构造目标。
+`0.11.0` 源码版本增加有界普通视频搜索及选中条目的 PGC 识别、国内 PGC 分集分组、番剧/国创时间表 metadata、电影/电视剧类别索引 metadata、热门视频 metadata 和全站排行榜 metadata。排行榜会按上游顺序返回所有有效条目，不设任意条目数上限，并将配置的响应大小上限分别应用于每个响应。这些功能不实现频道/话题 feed、自动 CDN 选择、持久化 CDN 健康状态或自适应 CDN 策略。请参阅 [v0.11.0 发布说明](../release-notes/v0.11.0.zh-CN.md)，并查看[官方 Releases](https://github.com/Joey-Project/BBDown-rust/releases)了解归档可用性。
 
 ## 解析器模型
 

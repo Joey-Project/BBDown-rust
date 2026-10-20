@@ -99,6 +99,10 @@
   `docs/project_journal/2026/10/2026-10-11-cdn-performance-baseline-53887b35.md`,
   `docs/project_journal/2026/10/2026-10-11-cdn-expanded-live-measurement-01a12c87.md`, and
   `docs/project_journal/2026/10/2026-10-11-dynamic-request-and-bounded-metadata.md`.
+- The `0.11.0` source-preparation notes cover PRs #105–#110 and are dated 2026-10-20; this is not a
+  publication announcement. `0.10.0` remains the latest published release. Current-head release
+  validation and the later RC/publication workflow are tracked in
+  `docs/project_journal/2026/10/2026-10-20-v0-11-release-prep-01a0dd39.md`.
 
 ## Recovery Pointers
 

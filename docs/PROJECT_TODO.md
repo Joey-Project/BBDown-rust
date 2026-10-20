@@ -160,6 +160,10 @@
 - [completed] Publish `v0.9.0` as a GitHub Release and crates.io `bbdown-core` package through the
   protected release-candidate and promotion workflows. See
   `docs/project_journal/2026/10/2026-10-10-v0-9-release-prep.md`.
+- [pending] After the `v0.11.0` source-preparation PR is accepted and merged, create and verify an RC
+  from `master`, then complete the separately approved promotion workflow. `0.10.0` remains the
+  latest published release until publication succeeds. See
+  `docs/project_journal/2026/10/2026-10-20-v0-11-release-prep-01a0dd39.md`.
 - [completed] Record the opt-in CDN three-way comparison and deterministic local transfer baseline
   for the `0.10.0` source line, without adding a global automatic route. See
   `docs/project_journal/2026/10/2026-10-11-cdn-performance-baseline-53887b35.md`.
