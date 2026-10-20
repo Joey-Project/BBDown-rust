@@ -258,7 +258,8 @@ async fn read_popular() -> bbdown_core::Result<()> {
 每次调用通过配置的 `api_base` 向 `/x/web-interface/popular?pn=<page>&ps=<page-size>` 发起一次匿名 GET，
 响应上限为 1 MiB，并使用配置的请求超时。请求不跟随重定向。此调用只使用 `api_base` 和配置的超时；不会读取凭据
 profile，也不会执行凭据预检、续期、resolver、受限区域或 PGC 配置逻辑。它不会读取或发送凭据、Cookie 或 access key。
-配置的服务必须支持此端点及其响应格式。
+配置的服务必须支持此端点、这些查询参数及响应格式。
+API 错误会沿用普通 `Result` 错误路径；端点兼容不保证请求成功。
 
 `PopularVideoPage` 暴露请求页码与每页条数、`has_next`、`next_page` 和 `items`。上游响应只包含
 `data.list` 和 `data.no_more`，不返回页码或总数。续页由 `no_more` 决定，页码字段保留请求参数。热门列表是动态的，
@@ -269,7 +270,52 @@ profile，也不会执行凭据预检、续期、resolver、受限区域或 PGC 
 弹幕、评论、收藏、投币、分享和点赞数。如果存在 BVID，会校验格式并检查其解码后的 aid 与条目 `aid` 一致；标识冲突时
 拒绝整个响应。缺少 BVID 时不会合成。此 API 不补充详情、不解析 playurl、不请求图片或媒体，也不新增通用
 `Input` 分支。如需在现有流程中使用展示条目，请显式构造 `Input::Bvid` 或 `Input::Aid`；这会使用现有直接视频
-行为和访问规则，不会携带选中行 PGC 自动识别上下文。排行榜仍是独立后续工作。
+行为和访问规则，不会携带选中行 PGC 自动识别上下文。
+
+### 全站排行榜 metadata
+
+已发布的 `bbdown-core` `0.10.0` package 不包含此 API。请使用包含它的源码检出，或后续实际包含它的版本。
+
+调用 `BiliClient::ranking_videos` 获取一份有界的全站排行榜响应：
+
+```rust,no_run
+use bbdown_core::{BiliClient, ClientConfig, RankingVideoOptions};
+
+async fn read_ranking() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let page = client
+        .ranking_videos_with_options(RankingVideoOptions {
+            max_response_bytes: 2 * 1024 * 1024,
+        })
+        .await?;
+
+    if let Some(note) = &page.note {
+        println!("{note}");
+    }
+    for item in &page.items {
+        println!("{} {} {}", item.rank, item.aid, item.title);
+    }
+    Ok(())
+}
+```
+
+每次调用使用配置的 `EndpointConfig.api_base`，并且最多先向 `/x/web-interface/nav` 发起一次匿名 GET，以获取公开的
+`wbi_img` 密钥。`code` 为 `0` 或 `-101` 时会接受该响应并提取密钥。随后向
+`/x/web-interface/ranking/v2?rid=0&type=all&web_location=333.934` 发起一次 WBI 签名 GET；现有签名器会添加 `wts` 和
+`w_rid`。排行榜分区和类型固定。每个请求分别使用配置的超时且不跟随重定向。`RankingVideoOptions.max_response_bytes` 设置一个字节上限，并将同一上限分别应用于每个响应；每个响应都可使用完整上限，不共用合计字节预算。默认值为
+1 MiB，并通过 `DEFAULT_RANKING_VIDEO_MAX_RESPONSE_BYTES` 暴露。该值必须大于 0；传入 0 会在发起任何 HTTP 请求前被拒绝。
+不带 options 的 `ranking_videos()` 保持 1 MiB 默认值。条目数没有任意上限，所有有效条目均按上游顺序返回。不会引入导航密钥缓存。
+
+调用只使用 API base、超时和响应大小选项；不会读取或发送凭据、Cookie 或 access key。它不会执行凭据续期、设备 Cookie 初始化、ticket 请求、resolver、受限区域或 PGC 初始化。
+配置的服务必须支持导航和排行榜两个端点、相应查询参数及响应格式，并能转发签名后的排行榜查询。
+API 错误会沿用普通 `Result` 错误路径；端点兼容不保证请求成功。
+
+`RankingVideoPage` 包含可选的 `note` 和 `items`。每个 `RankingVideoItem` 包含一基的 `rank`（按上游响应位置生成）、
+`aid`、可选 `bvid`、`title`、可选作者和展示 metadata。缺失、null、空字符串或仅含空白的 BVID 会保持缺失。
+另外还包含七种可选计数的 `RankingVideoStats`：播放、弹幕、评论、收藏、投币、分享和点赞。排行榜没有固定时间周期，上游顺序可能在请求间变化；API 不承诺快照或总数，也不提供分页或分类/类型配置。
+
+此 API 只返回 metadata：不会补充详情、解析 playurl、请求图片或媒体、增加通用 `Input` 分支，也不会对选中行做
+PGC 自动识别。如需在现有流程中指定条目，请显式构造 `Input::Bvid` 或 `Input::Aid`；后续遵循普通直接视频行为和访问规则。
 
 ### PGC 时间表 metadata
 

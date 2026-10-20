@@ -272,8 +272,53 @@ display metadata and counters. When a BVID is present, its decoded aid must agre
 a conflicting pair rejects the response. A missing BVID remains absent. This is metadata only: the command does not hydrate video details,
 resolve playurl, or request image or media content. It does not add a generic input or selected-row
 PGC detection. To target a displayed result, explicitly pass its BVID or aid to an existing command,
-which then follows the ordinary direct-video behavior and its existing access rules. Ranking is a
-separate follow-up and is not provided by this command.
+which then follows the ordinary direct-video behavior and its existing access rules. The global
+ranking is available separately through `bbdown ranking`.
+
+## Global Ranking Metadata
+
+The `ranking` command is not included in the published `v0.10.0` CLI. Use a source checkout that
+contains this feature, or a later release that includes it.
+
+Fetch the current global ranking:
+
+```bash
+bbdown ranking
+bbdown ranking --json
+bbdown ranking --max-response-bytes 2097152 --json
+```
+
+Each invocation uses `--api-base` / `BBDOWN_API_BASE` and may first make at most one anonymous GET to
+`/x/web-interface/nav` for public `wbi_img` keys. Navigation codes `0` and `-101` are accepted for
+key extraction. It then makes one WBI-signed GET to
+`/x/web-interface/ranking/v2?rid=0&type=all&web_location=333.934`; the signer adds `wts` and `w_rid`.
+The ranking category and type are fixed. Each request uses the configured per-request timeout, does
+not follow redirects, and has a 1 MiB response cap by default. `--max-response-bytes` changes the
+one byte-cap value applied separately to each response; each response gets that full cap, and they do not share a combined byte budget. The value must be positive; zero is rejected before
+any HTTP request. No navigation-key cache is introduced. All valid ranking rows are returned in
+source order, with no arbitrary row-count limit.
+
+Only `api_base`, the request timeout, and the response-size option are used. This command does not inspect credential profiles,
+run credential preflight or renewal, initialize device cookies, or use account credentials, cookies,
+ticket endpoints, resolver, restricted-area, or PGC paths. A configured endpoint must support both the
+navigation and ranking routes, the query parameters, and the response shapes, including forwarding
+the signed ranking query.
+API errors are returned through the normal command error path; a compatible endpoint does not
+guarantee that a request will succeed.
+
+The JSON result contains an optional `note` and `items`. Each item has a one-based `rank` derived
+from its position in the response, plus `aid`, optional `bvid`, and `title`. Optional fields are
+`author`, `author_mid`, `duration_seconds`, `pub_time`, `cover_url`, `description`, `category_name`,
+and `stats`. A missing, null, empty, or whitespace-only BVID remains absent. `stats` contains
+optional view, danmaku, reply, favorite, coin, share, and like counters.
+The list is dynamic: it has no fixed time period, requests do not share a fixed snapshot, and the API
+does not promise a total or stable ordering. There is no pagination or configurable category/type in
+this slice.
+
+This is metadata only. The command does not hydrate details, resolve playurl, or request images or
+media. It does not add a generic input or selected-row PGC detection. To target an item, explicitly
+pass its BVID or aid to an existing command; it follows ordinary direct-video behavior and existing
+access rules.
 
 ## PGC Timetable
 

@@ -13,19 +13,21 @@ use bbdown_core::{
     CredentialPreflightMode, CredentialPreflightReport, CredentialPreflightRequestPath,
     CredentialPreflightRequirement, CredentialPreflightRequirementStatus,
     CredentialProfileLifecycleStatus, CredentialProfileSelection, CredentialProfiles,
-    CredentialRefreshSecret, CredentialStore, Credentials, DanmakuFormat, DanmakuUpdateOptions,
+    CredentialRefreshSecret, CredentialStore, Credentials,
+    DEFAULT_RANKING_VIDEO_MAX_RESPONSE_BYTES, DanmakuFormat, DanmakuUpdateOptions,
     DanmakuUpdatePolicy, DownloadArchive, DownloadCancellationToken, DownloadMode, DownloadOptions,
     DownloadPathTemplates, DownloadPlan, DownloadPreflight, DownloadProgressEvent,
     DownloadProgressSink, DownloadReport, DuplicateDecision, EndpointConfig, Input,
     MediaHostOptions, MediaStream, MuxOptions, PgcIndexFilterSelection, PgcIndexKind,
     PgcIndexOrder, PgcIndexQuery, PgcIndexSort, PgcTimetable, PgcTimetableKind, PlaybackPlan,
     PlayurlMode, PopularVideoPage, PopularVideoQuery, QrLoginCredentials, QrLoginCredentialsState,
-    QrLoginKind, QrLoginTicket, QrLoginTicketOutput, ResolvedContent, RestrictedArea,
-    RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind, RetryPolicy, Selection,
-    StreamQuality, StreamSelection, StreamSet, StreamSource, SubtitleAiPolicy,
-    TvAccessKeyLoginCredentials, TvAccessKeyRefreshRequest, VIDEO_SEARCH_MAX_ITEMS,
-    VideoSearchOrder, VideoSearchQuery, WebCookieRefreshCredentials, WebCookieRefreshRequest,
-    archive_entry_allows_danmaku_update, credential_preflight_requirements_for_media_paths,
+    QrLoginKind, QrLoginTicket, QrLoginTicketOutput, RankingVideoOptions, RankingVideoPage,
+    ResolvedContent, RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy,
+    RestrictedAreaProxyKind, RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet,
+    StreamSource, SubtitleAiPolicy, TvAccessKeyLoginCredentials, TvAccessKeyRefreshRequest,
+    VIDEO_SEARCH_MAX_ITEMS, VideoSearchOrder, VideoSearchQuery, WebCookieRefreshCredentials,
+    WebCookieRefreshRequest, archive_entry_allows_danmaku_update,
+    credential_preflight_requirements_for_media_paths,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Deserialize;
@@ -194,6 +196,16 @@ enum Command {
         page: u32,
         #[arg(long = "page-size", default_value_t = 20, value_parser = clap::value_parser!(u8).range(1..=20))]
         page_size: u8,
+        #[arg(long)]
+        json: bool,
+    },
+    Ranking {
+        #[arg(
+            long = "max-response-bytes",
+            value_parser = parse_positive_usize,
+            default_value_t = DEFAULT_RANKING_VIDEO_MAX_RESPONSE_BYTES
+        )]
+        max_response_bytes: usize,
         #[arg(long)]
         json: bool,
     },
@@ -1276,6 +1288,16 @@ struct CredentialRenewalArgs {
     expiring_within_seconds: u64,
 }
 
+fn parse_positive_usize(value: &str) -> Result<usize, String> {
+    let parsed = value
+        .parse::<usize>()
+        .map_err(|_| "must be a positive integer".to_owned())?;
+    if parsed == 0 {
+        return Err("must be greater than 0".to_owned());
+    }
+    Ok(parsed)
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     if let Err(error) = run().await {
@@ -1309,6 +1331,19 @@ async fn run() -> anyhow::Result<()> {
             Duration::from_secs(cli.request_timeout_seconds),
         );
         return handle_popular_videos(&runtime, *page, *page_size, *json).await;
+    }
+    if let Command::Ranking {
+        max_response_bytes,
+        json,
+    } = &cli.command
+    {
+        let runtime = ClientRuntimeConfig::new(
+            EndpointConfig::default().with_api_base(cli.api_base.clone()),
+            RestrictedAreaConfig::default(),
+            PlayurlMode::default(),
+            Duration::from_secs(cli.request_timeout_seconds),
+        );
+        return handle_ranking_videos(&runtime, *max_response_bytes, *json).await;
     }
     let endpoints = endpoints_from_cli(&cli);
     let mut restricted_area = restricted_area_from_cli_with_args(&cli, raw_args)?;
@@ -1364,6 +1399,9 @@ async fn run() -> anyhow::Result<()> {
         }
         Command::Popular { .. } => {
             unreachable!("popular commands return before credential initialization");
+        }
+        Command::Ranking { .. } => {
+            unreachable!("ranking commands return before credential initialization");
         }
         Command::Timetable { kind, json } => {
             handle_pgc_timetable(&client_runtime, kind, json).await?;
@@ -2065,6 +2103,59 @@ async fn handle_popular_videos(
         print_popular_video_page(&result);
     }
     Ok(())
+}
+
+async fn handle_ranking_videos(
+    client_runtime: &ClientRuntimeConfig,
+    max_response_bytes: usize,
+    json: bool,
+) -> anyhow::Result<()> {
+    let client = BiliClient::new(client_runtime.client_config(Credentials::default()));
+    let result = client
+        .ranking_videos_with_options(RankingVideoOptions { max_response_bytes })
+        .await?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    } else {
+        print_ranking_video_page(&result);
+    }
+    Ok(())
+}
+
+fn print_ranking_video_page(page: &RankingVideoPage) {
+    println!("rows: {}", page.items.len());
+    println!("scope: dynamic full-site ranking metadata; source order may change");
+    for item in &page.items {
+        let author = item.author.as_deref().unwrap_or("unknown");
+        let target = item.bvid.as_deref().map_or_else(
+            || format!("av{}", item.aid),
+            |bvid| format!("{bvid} / av{}", item.aid),
+        );
+        println!(
+            "{}. target={} author={} title={}",
+            item.rank, target, author, item.title
+        );
+        if let Some(stats) = item.stats.as_ref() {
+            let values = [
+                ("view", stats.view),
+                ("danmaku", stats.danmaku),
+                ("reply", stats.reply),
+                ("favorite", stats.favorite),
+                ("coin", stats.coin),
+                ("share", stats.share),
+                ("like", stats.like),
+            ]
+            .into_iter()
+            .filter_map(|(name, value)| value.map(|value| format!("{name}={value}")))
+            .collect::<Vec<_>>();
+            if !values.is_empty() {
+                println!("   stats: {}", values.join(" "));
+            }
+        }
+    }
+    if let Some(note) = page.note.as_deref() {
+        println!("note: {note}");
+    }
 }
 
 fn print_popular_video_page(page: &PopularVideoPage) {

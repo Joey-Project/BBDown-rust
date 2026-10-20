@@ -142,10 +142,11 @@
 - [completed] Add bounded anonymous PGC movie and TV category-index metadata with separate list
   and filter-values commands/API. This does not add listing inputs or downloads. See
   `docs/project_journal/2026/10/2026-10-19-pgc-season-index-01a0dd39.md`.
-- [completed] Add one bounded page of anonymous popular-video metadata. Ranking remains a separate
-  follow-up. See `docs/project_journal/2026/10/2026-10-19-popular-videos-01a0dd39.md`.
-- [pending] Add ranking feeds as a separate metadata slice; it is not covered by the popular-video
-  endpoint. See `docs/project_journal/2026/10/2026-10-11-page-family-roadmap.md`.
+- [completed] Add one bounded page of anonymous popular-video metadata. See
+  `docs/project_journal/2026/10/2026-10-19-popular-videos-01a0dd39.md`.
+- [completed] Add bounded anonymous global ranking metadata through a separate API and CLI command.
+  Category/channel lists and topic pages remain future page-family work. See
+  `docs/project_journal/2026/10/2026-10-20-ranking-videos-01a0dd39.md`.
 - [pending] Add category/channel lists, then topic pages at lower priority. See
   `docs/project_journal/2026/10/2026-10-11-page-family-roadmap.md`.
 - [completed] Add the `0.8.0` preserving danmaku refresh API and CLI: deduplicate XML comments by

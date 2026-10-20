@@ -70,6 +70,8 @@ bbdown pgc-index list --type movie --page 1 --page-size 20 --order play --json
 bbdown pgc-index filters --type tv --json
 bbdown popular --json
 bbdown popular --page 2 --page-size 10 --json
+bbdown ranking --json
+bbdown ranking --max-response-bytes 2097152 --json
 ```
 
 `timetable` prints the upstream PGC timetable metadata for anime or Chinese animation. It makes one
@@ -83,9 +85,19 @@ seasons. The published `v0.10.0` CLI and crate do not include this feature. See 
 
 `popular` returns one bounded page of anonymous popular-video metadata using only the API base and
 request timeout; it does not inspect credential profiles, resolve streams, or download listed
-videos. Ranking remains a separate follow-up. The published `v0.10.0` CLI and crate do not include
-this source-only feature. See the [user guide](docs/user-guide.md) and
+videos. The published `v0.10.0` CLI and crate do not include this source-only feature. See the
+[user guide](docs/user-guide.md) and
 [embedding guide](docs/embedding.md) for request limits and Rust examples.
+
+`ranking` returns one bounded anonymous page of the global ranking
+(`rid=0`, `type=all`, `web_location=333.934`). It uses the configured API base, request timeout, and response-size option. It may
+make one anonymous `/x/web-interface/nav` request for public WBI keys, then makes one signed ranking
+request. Each response defaults to a 1 MiB cap. `--max-response-bytes` sets one byte-cap value applied separately to each response; each response gets that full cap, and they do not share a combined byte budget. All valid rows are returned
+in source order without an arbitrary row limit. It does not
+inspect credentials, hydrate details, resolve playurl, or request media. The ranking has no fixed
+time period; order is dynamic, with no fixed snapshot or total guarantee. The published `v0.10.0` CLI and crate do not
+include this source-only feature. See the [user guide](docs/user-guide.md) and
+[embedding guide](docs/embedding.md) for the Rust API and item fields.
 
 `search` returns one bounded page of ordinary video keyword metadata. To resolve, plan, play back, or
 download a search result, pass `search:<keyword>` or an official search URL to `info`, `plan`,
