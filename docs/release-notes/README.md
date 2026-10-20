@@ -8,9 +8,10 @@ embedding-facing shape of each source line and shipped release.
 
 ## Versions
 
-- [v0.11.0 source preparation (unpublished as of 2026-10-20)](v0.11.0.md): domestic PGC episode
+- [v0.11.0 (published 2026-10-20; source-preparation notes)](v0.11.0.md): domestic PGC episode
   groups, ordinary-video search, anime/Chinese-animation timetable, movie/TV category indexes,
-  popular videos, and global ranking metadata.
+  popular videos, and global ranking metadata. [GitHub Release](https://github.com/Joey-Project/BBDown-rust/releases/tag/v0.11.0),
+  [crates.io](https://crates.io/crates/bbdown-core/0.11.0).
 - [v0.10.0 source preparation (unpublished as of 2026-10-14)](v0.10.0.md): related
   recommendations, bounded metadata pages and SpaceDynamic cookie initialization, plus expanded
   opt-in CDN measurements.
