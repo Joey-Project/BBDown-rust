@@ -2,12 +2,12 @@ use bbdown_core::{
     BiliClient, ClientConfig, CredentialHealthSummaryStatus, CredentialKind,
     CredentialLifecycleMetadata, CredentialLifecyclePolicy, CredentialLifecycleSource,
     CredentialLifecycleStatus, CredentialPreflightMode, CredentialPreflightReport,
-    CredentialProfileMetadata, CredentialProfiles, DanmakuUpdateOptions, DanmakuUpdatePolicy,
-    DownloadCancellationToken, DownloadOptions, DownloadProgressEvent, DownloadProgressSink,
-    DownloadReportSummary, Input, MetadataPageOptions, NoopDownloadProgress,
-    POPULAR_VIDEO_MAX_PAGE_SIZE, PgcIndexFilterSelection, PgcIndexKind, PgcIndexOrder,
-    PgcIndexQuery, PgcIndexSort, PgcTimetable, PgcTimetableDay, PgcTimetableEpisode,
-    PgcTimetableKind, PlayurlMode, PopularVideoQuery, PopularVideoStats, RANKING_VIDEO_MAX_ITEMS,
+    CredentialProfileMetadata, CredentialProfiles, DEFAULT_RANKING_VIDEO_MAX_RESPONSE_BYTES,
+    DanmakuUpdateOptions, DanmakuUpdatePolicy, DownloadCancellationToken, DownloadOptions,
+    DownloadProgressEvent, DownloadProgressSink, DownloadReportSummary, Input, MetadataPageOptions,
+    NoopDownloadProgress, POPULAR_VIDEO_MAX_PAGE_SIZE, PgcIndexFilterSelection, PgcIndexKind,
+    PgcIndexOrder, PgcIndexQuery, PgcIndexSort, PgcTimetable, PgcTimetableDay, PgcTimetableEpisode,
+    PgcTimetableKind, PlayurlMode, PopularVideoQuery, PopularVideoStats, RankingVideoOptions,
     RestrictedAreaConfig, SeasonEpisodeGroup, SeasonEpisodeGroupKind, StreamSelection,
     SubtitleAiPolicy, UgcCollectionKind, UgcCollectionReference, VideoCollectionKind,
 };
@@ -180,9 +180,16 @@ fn popular_video_types_are_reexported() {
 }
 
 #[test]
-fn ranking_video_types_are_reexported() {
-    let _client = BiliClient::new(ClientConfig::default());
-    assert_eq!(RANKING_VIDEO_MAX_ITEMS, 100);
+fn ranking_video_types_and_options_are_reexported() {
+    let client = BiliClient::new(ClientConfig::default());
+    assert_eq!(DEFAULT_RANKING_VIDEO_MAX_RESPONSE_BYTES, 1024 * 1024);
+    assert_eq!(
+        RankingVideoOptions::default().max_response_bytes,
+        DEFAULT_RANKING_VIDEO_MAX_RESPONSE_BYTES
+    );
+    let _configured_call = client.ranking_videos_with_options(RankingVideoOptions {
+        max_response_bytes: DEFAULT_RANKING_VIDEO_MAX_RESPONSE_BYTES * 2,
+    });
     let page = bbdown_core::RankingVideoPage {
         note: None,
         items: vec![bbdown_core::RankingVideoItem {

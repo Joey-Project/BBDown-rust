@@ -279,11 +279,15 @@ API 错误会沿用普通 `Result` 错误路径；端点兼容不保证请求成
 调用 `BiliClient::ranking_videos` 获取一份有界的全站排行榜响应：
 
 ```rust,no_run
-use bbdown_core::{BiliClient, ClientConfig};
+use bbdown_core::{BiliClient, ClientConfig, RankingVideoOptions};
 
 async fn read_ranking() -> bbdown_core::Result<()> {
     let client = BiliClient::new(ClientConfig::default());
-    let page = client.ranking_videos().await?;
+    let page = client
+        .ranking_videos_with_options(RankingVideoOptions {
+            max_response_bytes: 2 * 1024 * 1024,
+        })
+        .await?;
 
     if let Some(note) = &page.note {
         println!("{note}");
@@ -298,10 +302,11 @@ async fn read_ranking() -> bbdown_core::Result<()> {
 每次调用使用配置的 `EndpointConfig.api_base`，并且最多先向 `/x/web-interface/nav` 发起一次匿名 GET，以获取公开的
 `wbi_img` 密钥。`code` 为 `0` 或 `-101` 时会接受该响应并提取密钥。随后向
 `/x/web-interface/ranking/v2?rid=0&type=all&web_location=333.934` 发起一次 WBI 签名 GET；现有签名器会添加 `wts` 和
-`w_rid`。排行榜分区和类型固定。每个请求分别使用配置的超时、不跟随重定向，且每个响应上限为 1 MiB；超出响应限制会拒绝响应而不截断。
-排行榜原始条目超过 100 条也会拒绝响应。不会引入导航密钥缓存。
+`w_rid`。排行榜分区和类型固定。每个请求分别使用配置的超时且不跟随重定向。`RankingVideoOptions.max_response_bytes` 设置一个字节上限，并将同一上限分别应用于每个响应；每个响应都可使用完整上限，不共用合计字节预算。默认值为
+1 MiB，并通过 `DEFAULT_RANKING_VIDEO_MAX_RESPONSE_BYTES` 暴露。该值必须大于 0；传入 0 会在发起任何 HTTP 请求前被拒绝。
+不带 options 的 `ranking_videos()` 保持 1 MiB 默认值。条目数没有任意上限，所有有效条目均按上游顺序返回。不会引入导航密钥缓存。
 
-调用只使用 API base 和超时；不会读取或发送凭据、Cookie 或 access key。它不会执行凭据续期、设备 Cookie 初始化、ticket 请求、resolver、受限区域或 PGC 初始化。
+调用只使用 API base、超时和响应大小选项；不会读取或发送凭据、Cookie 或 access key。它不会执行凭据续期、设备 Cookie 初始化、ticket 请求、resolver、受限区域或 PGC 初始化。
 配置的服务必须支持导航和排行榜两个端点、相应查询参数及响应格式，并能转发签名后的排行榜查询。
 API 错误会沿用普通 `Result` 错误路径；端点兼容不保证请求成功。
 

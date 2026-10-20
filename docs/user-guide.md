@@ -285,6 +285,7 @@ Fetch the current global ranking:
 ```bash
 bbdown ranking
 bbdown ranking --json
+bbdown ranking --max-response-bytes 2097152 --json
 ```
 
 Each invocation uses `--api-base` / `BBDOWN_API_BASE` and may first make at most one anonymous GET to
@@ -292,10 +293,12 @@ Each invocation uses `--api-base` / `BBDOWN_API_BASE` and may first make at most
 key extraction. It then makes one WBI-signed GET to
 `/x/web-interface/ranking/v2?rid=0&type=all&web_location=333.934`; the signer adds `wts` and `w_rid`.
 The ranking category and type are fixed. Each request uses the configured per-request timeout, does
-not follow redirects, and has a 1 MiB response cap. More than 100 raw ranking rows rejects the
-response rather than truncating it. No navigation-key cache is introduced.
+not follow redirects, and has a 1 MiB response cap by default. `--max-response-bytes` changes the
+one byte-cap value applied separately to each response; each response gets that full cap, and they do not share a combined byte budget. The value must be positive; zero is rejected before
+any HTTP request. No navigation-key cache is introduced. All valid ranking rows are returned in
+source order, with no arbitrary row-count limit.
 
-Only `api_base` and the request timeout are used. This command does not inspect credential profiles,
+Only `api_base`, the request timeout, and the response-size option are used. This command does not inspect credential profiles,
 run credential preflight or renewal, initialize device cookies, or use account credentials, cookies,
 ticket endpoints, resolver, restricted-area, or PGC paths. A configured endpoint must support both the
 navigation and ranking routes, the query parameters, and the response shapes, including forwarding

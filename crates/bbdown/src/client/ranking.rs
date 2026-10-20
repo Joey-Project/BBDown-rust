@@ -4,9 +4,21 @@ use super::{
 use crate::{Error, Result, bv};
 use serde::{Deserialize, Serialize};
 
-pub const RANKING_VIDEO_MAX_ITEMS: usize = 100;
-const RANKING_VIDEO_RESPONSE_MAX_BYTES: usize = 1024 * 1024;
+pub const DEFAULT_RANKING_VIDEO_MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const RANKING_VIDEO_ENDPOINT: &str = "/x/web-interface/ranking/v2";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RankingVideoOptions {
+    pub max_response_bytes: usize,
+}
+
+impl Default for RankingVideoOptions {
+    fn default() -> Self {
+        Self {
+            max_response_bytes: DEFAULT_RANKING_VIDEO_MAX_RESPONSE_BYTES,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RankingVideoPage {
@@ -117,6 +129,18 @@ fn nonempty(value: String) -> Option<String> {
 }
 
 pub(super) async fn ranking_videos(client: &BiliClient) -> Result<RankingVideoPage> {
+    ranking_videos_with_options(client, RankingVideoOptions::default()).await
+}
+
+pub(super) async fn ranking_videos_with_options(
+    client: &BiliClient,
+    options: RankingVideoOptions,
+) -> Result<RankingVideoPage> {
+    if options.max_response_bytes == 0 {
+        return Err(Error::InvalidInput(
+            "ranking response byte limit must be greater than zero".to_owned(),
+        ));
+    }
     let mut bounded_client = client.clone();
     bounded_client.http = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -125,7 +149,9 @@ pub(super) async fn ranking_videos(client: &BiliClient) -> Result<RankingVideoPa
 
     let nav_url =
         BiliClient::endpoint_url(&client.config.endpoints.api_base, "/x/web-interface/nav")?;
-    let nav: ApiData<NavData> = get_bounded_json_without_cookie(&bounded_client, nav_url).await?;
+    let nav: ApiData<NavData> =
+        get_bounded_json_without_cookie(&bounded_client, nav_url, options.max_response_bytes)
+            .await?;
     if nav.code != 0 && nav.code != -101 {
         return Err(Error::Api {
             code: nav.code,
@@ -157,14 +183,10 @@ pub(super) async fn ranking_videos(client: &BiliClient) -> Result<RankingVideoPa
     ranking_url.set_query(Some(&signed_query));
 
     let envelope: ApiData<RankingData> =
-        get_bounded_json_without_cookie(&bounded_client, ranking_url).await?;
+        get_bounded_json_without_cookie(&bounded_client, ranking_url, options.max_response_bytes)
+            .await?;
     let data = envelope.into_data()?;
     let list = data.list.ok_or(Error::MissingField("data.list"))?;
-    if list.len() > RANKING_VIDEO_MAX_ITEMS {
-        return Err(Error::InvalidInput(format!(
-            "ranking video response contained more than {RANKING_VIDEO_MAX_ITEMS} rows"
-        )));
-    }
     let items = list
         .into_iter()
         .enumerate()
@@ -182,7 +204,11 @@ pub(super) async fn ranking_videos(client: &BiliClient) -> Result<RankingVideoPa
     })
 }
 
-async fn get_bounded_json_without_cookie<T>(client: &BiliClient, url: url::Url) -> Result<T>
+async fn get_bounded_json_without_cookie<T>(
+    client: &BiliClient,
+    url: url::Url,
+    max_response_bytes: usize,
+) -> Result<T>
 where
     T: for<'de> Deserialize<'de>,
 {
@@ -204,9 +230,9 @@ where
         .map_err(BiliClient::http_error_without_url)?;
     if response
         .content_length()
-        .is_some_and(|length| length > RANKING_VIDEO_RESPONSE_MAX_BYTES as u64)
+        .is_some_and(|length| length > max_response_bytes as u64)
     {
-        return Err(response_too_large());
+        return Err(response_too_large(max_response_bytes));
     }
     let mut body = Vec::new();
     while let Some(chunk) = response
@@ -214,23 +240,26 @@ where
         .await
         .map_err(BiliClient::http_error_without_url)?
     {
-        if body.len().saturating_add(chunk.len()) > RANKING_VIDEO_RESPONSE_MAX_BYTES {
-            return Err(response_too_large());
+        if body.len().saturating_add(chunk.len()) > max_response_bytes {
+            return Err(response_too_large(max_response_bytes));
         }
         body.extend_from_slice(&chunk);
     }
     serde_json::from_slice(&body).map_err(Error::from)
 }
 
-fn response_too_large() -> Error {
+fn response_too_large(max_response_bytes: usize) -> Error {
     Error::InvalidInput(format!(
-        "ranking API response exceeded the {RANKING_VIDEO_RESPONSE_MAX_BYTES}-byte limit"
+        "ranking API response exceeded the configured {max_response_bytes}-byte limit"
     ))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{RANKING_VIDEO_MAX_ITEMS, RankingVideoStats, ranking_videos};
+    use super::{
+        DEFAULT_RANKING_VIDEO_MAX_RESPONSE_BYTES, RankingVideoOptions, RankingVideoStats,
+        get_bounded_json_without_cookie, ranking_videos, ranking_videos_with_options,
+    };
     use crate::{BiliClient, ClientConfig, Credentials, EndpointConfig, Error};
     use httpmock::prelude::*;
     use serde_json::{Value, json};
@@ -318,6 +347,28 @@ mod tests {
         nav.assert_calls(1);
         ranking.assert_calls(1);
         unexpected_request.assert_calls(0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn accepts_more_than_one_hundred_rows_and_preserves_every_source_rank()
+    -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let nav = mock_nav(&server, 0);
+        let rows = (1..=125).map(row).collect::<Vec<_>>();
+        let ranking = server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/ranking/v2");
+            then.status(200)
+                .json_body(json!({"code": 0, "data": {"list": rows}}));
+        });
+
+        let page = ranking_videos(&client(&server)).await?;
+        assert_eq!(page.items.len(), 125);
+        assert_eq!(page.items[99].rank, 100);
+        assert_eq!(page.items[100].rank, 101);
+        assert_eq!(page.items[124].rank, 125);
+        nav.assert_calls(1);
+        ranking.assert_calls(1);
         Ok(())
     }
 
@@ -471,24 +522,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_more_than_max_items_and_oversized_body() {
-        let server = MockServer::start();
-        let nav = mock_nav(&server, 0);
-        let rows = (1..=RANKING_VIDEO_MAX_ITEMS + 1)
-            .map(|aid| row(aid as u64))
-            .collect::<Vec<_>>();
-        let too_many = server.mock(|when, then| {
-            when.method(GET).path("/x/web-interface/ranking/v2");
-            then.status(200)
-                .json_body(json!({"code": 0, "data": {"list": rows}}));
-        });
-        assert!(matches!(
-            ranking_videos(&client(&server)).await,
-            Err(Error::InvalidInput(_))
-        ));
-        nav.assert_calls(1);
-        too_many.assert_calls(1);
-
+    async fn configurable_byte_limit_is_applied_to_both_response_legs() -> anyhow::Result<()> {
         let server = MockServer::start();
         let nav = mock_nav(&server, 0);
         let oversized_body = format!(
@@ -502,11 +536,116 @@ mod tests {
                 .body(oversized_body);
         });
         assert!(matches!(
-            ranking_videos(&client(&server)).await,
-            Err(Error::InvalidInput(_))
+            ranking_videos_with_options(
+                &client(&server),
+                RankingVideoOptions {
+                    max_response_bytes: DEFAULT_RANKING_VIDEO_MAX_RESPONSE_BYTES,
+                },
+            )
+            .await,
+            Err(Error::InvalidInput(message)) if message.contains("1048576-byte limit")
         ));
         nav.assert_calls(1);
         oversized.assert_calls(1);
+
+        let server = MockServer::start();
+        let oversized_nav_body = format!(
+            "{{\"code\":0,\"message\":\"nav\",\"data\":{{\"wbi_img\":{{\"img_url\":\"https://i0.hdslb.com/bfs/wbi/0123456789abcdef0123456789abcdef.png\",\"sub_url\":\"https://i0.hdslb.com/bfs/wbi/fedcba9876543210fedcba9876543210.png\"}},\"padding\":\"{}\"}}}}",
+            "x".repeat(DEFAULT_RANKING_VIDEO_MAX_RESPONSE_BYTES)
+        );
+        let oversized_nav = server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/nav");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(oversized_nav_body);
+        });
+        let ranking = server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/ranking/v2");
+            then.status(200)
+                .json_body(json!({"code": 0, "data": {"list": []}}));
+        });
+        assert!(matches!(
+            ranking_videos_with_options(
+                &client(&server),
+                RankingVideoOptions {
+                    max_response_bytes: DEFAULT_RANKING_VIDEO_MAX_RESPONSE_BYTES,
+                },
+            )
+            .await,
+            Err(Error::InvalidInput(message)) if message.contains("1048576-byte limit")
+        ));
+        oversized_nav.assert_calls(1);
+        ranking.assert_calls(0);
+
+        let server = MockServer::start();
+        let nav = mock_nav(&server, 0);
+        let large_body = format!(
+            "{{\"code\":0,\"data\":{{\"list\":[],\"padding\":\"{}\"}}}}",
+            "x".repeat(DEFAULT_RANKING_VIDEO_MAX_RESPONSE_BYTES)
+        );
+        let oversized = server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/ranking/v2");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(large_body);
+        });
+        let page = ranking_videos_with_options(
+            &client(&server),
+            RankingVideoOptions {
+                max_response_bytes: DEFAULT_RANKING_VIDEO_MAX_RESPONSE_BYTES * 2,
+            },
+        )
+        .await?;
+        assert_eq!(page.items, Vec::new());
+        nav.assert_calls(1);
+        oversized.assert_calls(1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rejects_zero_limit_before_any_http_request() {
+        let server = MockServer::start();
+        let unexpected = server.mock(|when, then| {
+            when.any_request();
+            then.status(500);
+        });
+        assert!(matches!(
+            ranking_videos_with_options(
+                &client(&server),
+                RankingVideoOptions {
+                    max_response_bytes: 0,
+                },
+            )
+            .await,
+            Err(Error::InvalidInput(message)) if message.contains("greater than zero")
+        ));
+        unexpected.assert_calls(0);
+    }
+
+    #[tokio::test]
+    async fn enforces_exact_byte_limit_and_one_byte_over() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let exact = server.mock(|when, then| {
+            when.method(GET).path("/exact");
+            then.status(200).body("null");
+        });
+        let url = url::Url::parse(&format!("{}/exact", server.base_url()))?;
+        let value: Value = get_bounded_json_without_cookie(&client(&server), url, 4).await?;
+        assert!(value.is_null());
+        exact.assert_calls(1);
+
+        let server = MockServer::start();
+        let over = server.mock(|when, then| {
+            when.method(GET).path("/over");
+            then.status(200).body("null");
+        });
+        let url = url::Url::parse(&format!("{}/over", server.base_url()))?;
+        assert!(matches!(
+            get_bounded_json_without_cookie::<Value>(&client(&server), url, 3).await,
+            Err(Error::InvalidInput(message)) if message.contains("3-byte limit")
+        ));
+        over.assert_calls(1);
+        Ok(())
     }
 
     #[tokio::test]

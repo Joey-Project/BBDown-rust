@@ -50,7 +50,10 @@ pub use popular::{
     POPULAR_VIDEO_MAX_PAGE_SIZE, PopularVideoItem, PopularVideoPage, PopularVideoQuery,
     PopularVideoStats,
 };
-pub use ranking::{RANKING_VIDEO_MAX_ITEMS, RankingVideoItem, RankingVideoPage, RankingVideoStats};
+pub use ranking::{
+    DEFAULT_RANKING_VIDEO_MAX_RESPONSE_BYTES, RankingVideoItem, RankingVideoOptions,
+    RankingVideoPage, RankingVideoStats,
+};
 pub use timetable::{
     PGC_TIMETABLE_MAX_DAYS, PGC_TIMETABLE_MAX_ROWS, PgcTimetable, PgcTimetableDay,
     PgcTimetableEpisode, PgcTimetableKind,
@@ -560,6 +563,16 @@ impl BiliClient {
     /// API endpoint and does not request playurl, media, subtitle, or tag data.
     pub async fn ranking_videos(&self) -> Result<RankingVideoPage> {
         ranking::ranking_videos(self).await
+    }
+
+    /// Returns one page of anonymous all-site ranking metadata with a response-byte cap.
+    ///
+    /// The byte cap applies independently to the navigation and ranking responses.
+    pub async fn ranking_videos_with_options(
+        &self,
+        options: RankingVideoOptions,
+    ) -> Result<RankingVideoPage> {
+        ranking::ranking_videos_with_options(self, options).await
     }
 
     /// Returns the bounded anime or guochuang PGC timetable metadata.

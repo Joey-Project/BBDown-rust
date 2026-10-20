@@ -236,15 +236,16 @@ PGC 自动识别。如需指定展示条目，请显式把其 BVID 或 aid 传�
 ```bash
 bbdown ranking
 bbdown ranking --json
+bbdown ranking --max-response-bytes 2097152 --json
 ```
 
 每次调用使用 `--api-base` / `BBDOWN_API_BASE`，并且最多先向 `/x/web-interface/nav` 发起一次匿名 GET，以获取公开的
 `wbi_img` 密钥。`code` 为 `0` 或 `-101` 时会接受该响应并提取密钥。随后发起一次 WBI 签名 GET，请求路径为
 `/x/web-interface/ranking/v2?rid=0&type=all&web_location=333.934`；签名器会添加 `wts` 和 `w_rid`。排行榜分区和类型固定。
-每个请求分别使用配置的请求超时，不跟随重定向，每个响应上限为 1 MiB；排行榜原始记录超过 100 条会拒绝响应，不会截断。
-不会引入导航密钥缓存。
+每个请求使用配置的请求超时且不跟随重定向；每个响应默认上限为 1 MiB。`--max-response-bytes` 设置一个正数字节上限，并将同一上限分别应用于每个响应；每个响应都可使用完整上限，不共用合计字节预算。
+该值必须大于 0；传入 0 会在发起任何 HTTP 请求前被拒绝。不会引入导航密钥缓存。所有有效排行榜条目均按上游顺序返回，不设任意条目数上限。
 
-调用只使用 `api_base` 和请求超时。命令不会读取凭据 profile、执行凭据预检或续期、初始化设备 Cookie，也不会使用账号凭据、Cookie、ticket 端点、resolver、受限区域或 PGC 路径。配置的服务必须支持导航和排行榜两个路由、查询参数及响应格式，并能转发签名后的排行榜查询。
+调用只使用 `api_base`、请求超时和响应大小选项。命令不会读取凭据 profile、执行凭据预检或续期、初始化设备 Cookie，也不会使用账号凭据、Cookie、ticket 端点、resolver、受限区域或 PGC 路径。配置的服务必须支持导航和排行榜两个路由、查询参数及响应格式，并能转发签名后的排行榜查询。
 API 错误会沿用命令的正常错误返回路径；端点兼容不代表请求一定成功。
 
 JSON 结果包含可选的 `note` 和 `items`。每个条目包含一基的 `rank`（按响应中的位置生成）、`aid`、可选 `bvid` 和

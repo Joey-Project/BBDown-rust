@@ -319,11 +319,15 @@ that contains it, or a later release that includes it.
 Call `BiliClient::ranking_videos` to fetch one bounded global ranking response:
 
 ```rust,no_run
-use bbdown_core::{BiliClient, ClientConfig};
+use bbdown_core::{BiliClient, ClientConfig, RankingVideoOptions};
 
 async fn read_ranking() -> bbdown_core::Result<()> {
     let client = BiliClient::new(ClientConfig::default());
-    let page = client.ranking_videos().await?;
+    let page = client
+        .ranking_videos_with_options(RankingVideoOptions {
+            max_response_bytes: 2 * 1024 * 1024,
+        })
+        .await?;
 
     if let Some(note) = &page.note {
         println!("{note}");
@@ -340,11 +344,13 @@ to `/x/web-interface/nav` for public `wbi_img` keys. Navigation response codes `
 accepted for key extraction. It then makes one WBI-signed GET to
 `/x/web-interface/ranking/v2?rid=0&type=all&web_location=333.934`; the existing signer adds `wts` and
 `w_rid`. The ranking category and type are fixed. Each request uses the configured per-request
-timeout, does not follow redirects, and has a 1 MiB response cap; exceeding either response cap
-rejects the response rather than truncating it. More than 100 raw ranking rows also rejects the
-response. No navigation-key cache is introduced.
+timeout and does not follow redirects. `RankingVideoOptions.max_response_bytes` sets one byte-cap value applied separately to each response;
+each response gets that full cap, and they do not share a combined byte budget. Its default is exposed by
+`DEFAULT_RANKING_VIDEO_MAX_RESPONSE_BYTES` (1 MiB). The value must be positive; zero is rejected
+before any HTTP request. `ranking_videos()` keeps the 1 MiB default. There is no arbitrary row-count
+limit: all valid rows are returned in source order. No navigation-key cache is introduced.
 
-Only the API base and timeout are used; credentials, cookies, and access keys are not loaded or sent.
+Only the API base, timeout, and response-size option are used; credentials, cookies, and access keys are not loaded or sent.
 The operation does not perform credential renewal, device-cookie initialization, ticket requests,
 resolver, restricted-area, or PGC initialization. A configured service must support both navigation
 and ranking endpoints, their query parameters and response shapes, and forward the signed ranking

@@ -4,7 +4,8 @@ use bbdown_core::{
     AccessKeyProvider, AccessKeyProviderSecret, AccessKeyRefreshKeypair, AccessKeyRefreshProvider,
     CredentialKind, CredentialLifecycleMetadata, CredentialLifecycleSource,
     CredentialProfileMetadata, CredentialProfileSecrets, CredentialProfiles,
-    CredentialRefreshSecret, CredentialStore, Credentials, VIDEO_SEARCH_MAX_ITEMS,
+    CredentialRefreshSecret, CredentialStore, Credentials,
+    DEFAULT_RANKING_VIDEO_MAX_RESPONSE_BYTES, VIDEO_SEARCH_MAX_ITEMS,
 };
 use httpmock::MockServer;
 use httpmock::prelude::*;
@@ -502,6 +503,70 @@ fn ranking_json_preserves_source_order_and_optional_metadata() -> anyhow::Result
 }
 
 #[test]
+fn ranking_max_response_bytes_allows_more_than_one_hundred_rows_and_rejects_default_overflow()
+-> anyhow::Result<()> {
+    let server = MockServer::start();
+    let nav = mock_ranking_nav(&server);
+    let long_description = "x".repeat(11_000);
+    let list = (1..=101)
+        .map(|index| {
+            serde_json::json!({
+                "aid": index,
+                "title": format!("Source row {index}"),
+                "desc": long_description.clone(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let body = serde_json::json!({ "code": 0, "data": { "list": list } }).to_string();
+    assert!(body.len() > DEFAULT_RANKING_VIDEO_MAX_RESPONSE_BYTES);
+    let ranking = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/ranking/v2")
+            .query_param("rid", "0")
+            .query_param("type", "all")
+            .query_param("web_location", "333.934")
+            .query_param_exists("wts")
+            .query_param_exists("w_rid")
+            .query_param_count(".*", ".*", 5)
+            .query_param_missing("access_key")
+            .header_missing("cookie")
+            .header_missing("authorization");
+        then.status(200).body(body.clone());
+    });
+    let unexpected = mock_unexpected_request(&server);
+
+    let output = bbdown_command()?
+        .arg("--api-base")
+        .arg(server.base_url())
+        .args(["ranking", "--max-response-bytes", "2097152", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    assert_eq!(json["items"].as_array().map(Vec::len), Some(101));
+    assert_eq!(json["items"][0]["rank"], 1);
+    assert_eq!(json["items"][0]["aid"], 1);
+    assert_eq!(json["items"][100]["rank"], 101);
+    assert_eq!(json["items"][100]["aid"], 101);
+
+    bbdown_command()?
+        .arg("--api-base")
+        .arg(server.base_url())
+        .args(["ranking", "--json"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(format!(
+            "exceeded the configured {DEFAULT_RANKING_VIDEO_MAX_RESPONSE_BYTES}-byte limit"
+        )));
+    nav.assert_calls(2);
+    ranking.assert_calls(2);
+    unexpected.assert_calls(0);
+    Ok(())
+}
+
+#[test]
 fn ranking_human_output_shows_source_rank_targets_and_dynamic_scope() -> anyhow::Result<()> {
     let server = MockServer::start();
     let nav = mock_ranking_nav(&server);
@@ -625,6 +690,13 @@ fn ranking_rejects_unrelated_options_and_zero_timeout_before_network_requests() 
     for args in [
         vec!["ranking", "--page", "2"],
         vec!["ranking", "--type", "all"],
+        vec!["ranking", "--max-response-bytes", "0"],
+        vec!["ranking", "--max-response-bytes", "nope"],
+        vec![
+            "ranking",
+            "--max-response-bytes",
+            "999999999999999999999999999999999999",
+        ],
     ] {
         bbdown_command()?
             .arg("--api-base")
