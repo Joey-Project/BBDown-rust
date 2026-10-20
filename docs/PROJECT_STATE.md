@@ -99,10 +99,12 @@
   `docs/project_journal/2026/10/2026-10-11-cdn-performance-baseline-53887b35.md`,
   `docs/project_journal/2026/10/2026-10-11-cdn-expanded-live-measurement-01a12c87.md`, and
   `docs/project_journal/2026/10/2026-10-11-dynamic-request-and-bounded-metadata.md`.
-- The `0.11.0` source-preparation notes cover PRs #105–#110 and are dated 2026-10-20; this is not a
-  publication announcement. `0.10.0` remains the latest published release. Current-head release
-  validation and the later RC/publication workflow are tracked in
-  `docs/project_journal/2026/10/2026-10-20-v0-11-release-prep-01a0dd39.md`.
+- `v0.11.0` is published as a GitHub Release and crates.io `bbdown-core` package. PR #111 merged
+  source commit `0a3ccd624647017e10ec893ffd9f3d73bf507631`; RC creation succeeded in run
+  `39446096681`, and promotion completed successfully in run `39450042368`. The final annotated tag
+  peels to the same source commit. See
+  `docs/project_journal/2026/10/2026-10-20-v0-11-release-prep-01a0dd39.md` and
+  `docs/project_journal/2026/10/2026-10-20-v0-11-publication-01a0dd39.md`.
 
 ## Recovery Pointers
 
