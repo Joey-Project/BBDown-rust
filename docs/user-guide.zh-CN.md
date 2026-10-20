@@ -238,15 +238,17 @@ bbdown ranking
 bbdown ranking --json
 ```
 
-每次调用通过 `--api-base` / `BBDOWN_API_BASE` 向
-`/x/web-interface/ranking/v2?rid=0&type=all` 发起一次匿名 GET。本切片固定使用全站分区和默认类型。
-响应上限为 1 MiB，最多接受 100 条原始记录；超出任一限制会拒绝响应而不截断，并使用配置的请求超时；请求不跟随重定向。此命令只使用
-`api_base` 和请求超时，不会读取凭据 profile、执行凭据预检或续期，也不会运行 resolver、受限区域、PGC 或导航/WBI 初始化逻辑。
-不会读取或发送凭据、Cookie 或 access key。配置的服务必须支持此路由及其响应格式。
+每次调用使用 `--api-base` / `BBDOWN_API_BASE`，并且最多先向 `/x/web-interface/nav` 发起一次匿名 GET，以获取公开的
+`wbi_img` 密钥。`code` 为 `0` 或 `-101` 时会接受该响应并提取密钥。随后发起一次 WBI 签名 GET，请求路径为
+`/x/web-interface/ranking/v2?rid=0&type=all&web_location=333.934`；签名器会添加 `wts` 和 `w_rid`。排行榜分区和类型固定。
+每个请求分别使用配置的请求超时，不跟随重定向，每个响应上限为 1 MiB；排行榜原始记录超过 100 条会拒绝响应，不会截断。
+不会引入导航密钥缓存。
+
+调用只使用 `api_base` 和请求超时。命令不会读取凭据 profile、执行凭据预检或续期、初始化设备 Cookie，也不会使用账号凭据、Cookie、ticket 端点、resolver、受限区域或 PGC 路径。配置的服务必须支持导航和排行榜两个路由、查询参数及响应格式，并能转发签名后的排行榜查询。
 API 错误会沿用命令的正常错误返回路径；端点兼容不代表请求一定成功。
 
 JSON 结果包含可选的 `note` 和 `items`。每个条目包含一基的 `rank`（按响应中的位置生成）、`aid`、可选 `bvid` 和
-`title`。可选字段包括 `author`、`author_mid`、`duration_seconds`、`pub_time`、`cover_url`、`description`、
+`title`。缺失、null、空字符串或仅含空白的 BVID 会保持缺失。可选字段包括 `author`、`author_mid`、`duration_seconds`、`pub_time`、`cover_url`、`description`、
 `category_name` 和 `stats`。`stats` 包含可选的播放、弹幕、评论、收藏、投币、分享和点赞计数。列表没有固定时间周期且会动态变化，
 不同请求不共享固定快照，API 不承诺总数或稳定顺序。本切片不提供分页，也不支持配置分类或类型。
 

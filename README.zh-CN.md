@@ -80,8 +80,8 @@ bbdown ranking --json
 已发布的 `v0.10.0` CLI 和 crate 不包含此源码功能。请求限制和 Rust 示例见
 [用户指南](docs/user-guide.zh-CN.md)和[嵌入指南](docs/embedding.zh-CN.md)。
 
-`ranking` 返回一页有界的匿名全站排行榜（`rid=0`、`type=all`），只使用 API base 和请求超时；每个响应上限为
-1 MiB，最多接受 100 条原始记录。它不会读取凭据、补充详情、解析 playurl 或请求媒体。排行榜没有固定时间周期，顺序会变化，响应不承诺固定快照或总数。
+`ranking` 返回一页有界的匿名全站排行榜（`rid=0`、`type=all`、`web_location=333.934`），只使用 API base 和请求超时。它最多先向 `/x/web-interface/nav` 发起一次匿名请求以获取公开 WBI 密钥，再发起一次签名排行榜请求；两个响应上限均为 1 MiB，排行榜原始记录超过 100 条会拒绝响应。
+它不会读取凭据、补充详情、解析 playurl 或请求媒体。排行榜没有固定时间周期，顺序会变化，响应不承诺固定快照或总数。
 已发布的 `v0.10.0` CLI 和 crate 不包含此源码功能。Rust API 和条目字段见
 [用户指南](docs/user-guide.zh-CN.md)和[嵌入指南](docs/embedding.zh-CN.md)。
 

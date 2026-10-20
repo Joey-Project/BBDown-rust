@@ -291,7 +291,7 @@ Each call makes one anonymous GET through the configured `api_base` to
 request timeout. Redirects are not followed. The request uses only `api_base` and the configured
 timeout; it does not inspect credential profiles or run credential preflight, renewal, resolver,
 restricted-area, or PGC configuration. Credentials, cookies, and access keys are not loaded or sent.
-A configured service must support this endpoint and response shape.
+A configured service must support this endpoint, its query parameters, and the response shape.
 API errors use the ordinary `Result` error path; endpoint compatibility does not guarantee request
 success.
 
@@ -335,17 +335,25 @@ async fn read_ranking() -> bbdown_core::Result<()> {
 }
 ```
 
-Each call makes one anonymous GET through `EndpointConfig.api_base` to
-`/x/web-interface/ranking/v2?rid=0&type=all`. The request uses the fixed global ranking parameters,
-a 1 MiB response cap, a 100-row raw-item cap, and the configured timeout. Exceeding either cap
-rejects the response instead of truncating it. Redirects are not followed.
-Only the API base and timeout are used; credentials, cookies, and access keys are not loaded or sent,
-and credential, resolver, restricted-area, PGC, and navigation/WBI initialization is not performed.
-A configured service must support this endpoint and response shape.
+Each call uses the configured `EndpointConfig.api_base` and may first make at most one anonymous GET
+to `/x/web-interface/nav` for public `wbi_img` keys. Navigation response codes `0` and `-101` are
+accepted for key extraction. It then makes one WBI-signed GET to
+`/x/web-interface/ranking/v2?rid=0&type=all&web_location=333.934`; the existing signer adds `wts` and
+`w_rid`. The ranking category and type are fixed. Each request uses the configured per-request
+timeout, does not follow redirects, and has a 1 MiB response cap; exceeding either response cap
+rejects the response rather than truncating it. More than 100 raw ranking rows also rejects the
+response. No navigation-key cache is introduced.
+
+Only the API base and timeout are used; credentials, cookies, and access keys are not loaded or sent.
+The operation does not perform credential renewal, device-cookie initialization, ticket requests,
+resolver, restricted-area, or PGC initialization. A configured service must support both navigation
+and ranking endpoints, their query parameters and response shapes, and forward the signed ranking
+query.
 
 `RankingVideoPage` contains an optional `note` and `items`. Each `RankingVideoItem` has one-based
-`rank` from its source position, `aid`, optional `bvid`, `title`, optional author and display metadata,
-and a `RankingVideoStats` value with seven optional counters: view, danmaku, reply, favorite, coin,
+`rank` from its source position, `aid`, optional `bvid`, `title`, optional author and display metadata.
+Missing, null, empty, and whitespace-only BVID values remain absent. The item also has a
+`RankingVideoStats` value with seven optional counters: view, danmaku, reply, favorite, coin,
 share, and like. The ranking has no fixed time period, and source order may change between requests;
 there is no snapshot, total, pagination, or category/type configuration guarantee.
 

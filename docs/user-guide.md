@@ -287,21 +287,27 @@ bbdown ranking
 bbdown ranking --json
 ```
 
-Each invocation makes one anonymous GET through `--api-base` / `BBDOWN_API_BASE` to
-`/x/web-interface/ranking/v2?rid=0&type=all`. The category and ranking type are fixed for this
-slice. The response is limited to 1 MiB and at most 100 raw rows; exceeding either limit rejects the
-response instead of truncating it. The configured request timeout applies. Redirects are not followed.
-This command uses only `api_base` and the
-request timeout; it does not inspect credential profiles or run credential preflight, renewal,
-resolver, restricted-area, PGC, or navigation/WBI initialization. Credentials, cookies, and access
-keys are not loaded or sent. A configured endpoint must support this route and response shape.
+Each invocation uses `--api-base` / `BBDOWN_API_BASE` and may first make at most one anonymous GET to
+`/x/web-interface/nav` for public `wbi_img` keys. Navigation codes `0` and `-101` are accepted for
+key extraction. It then makes one WBI-signed GET to
+`/x/web-interface/ranking/v2?rid=0&type=all&web_location=333.934`; the signer adds `wts` and `w_rid`.
+The ranking category and type are fixed. Each request uses the configured per-request timeout, does
+not follow redirects, and has a 1 MiB response cap. More than 100 raw ranking rows rejects the
+response rather than truncating it. No navigation-key cache is introduced.
+
+Only `api_base` and the request timeout are used. This command does not inspect credential profiles,
+run credential preflight or renewal, initialize device cookies, or use account credentials, cookies,
+ticket endpoints, resolver, restricted-area, or PGC paths. A configured endpoint must support both the
+navigation and ranking routes, the query parameters, and the response shapes, including forwarding
+the signed ranking query.
 API errors are returned through the normal command error path; a compatible endpoint does not
 guarantee that a request will succeed.
 
 The JSON result contains an optional `note` and `items`. Each item has a one-based `rank` derived
 from its position in the response, plus `aid`, optional `bvid`, and `title`. Optional fields are
 `author`, `author_mid`, `duration_seconds`, `pub_time`, `cover_url`, `description`, `category_name`,
-and `stats`. `stats` contains optional view, danmaku, reply, favorite, coin, share, and like counters.
+and `stats`. A missing, null, empty, or whitespace-only BVID remains absent. `stats` contains
+optional view, danmaku, reply, favorite, coin, share, and like counters.
 The list is dynamic: it has no fixed time period, requests do not share a fixed snapshot, and the API
 does not promise a total or stable ordering. There is no pagination or configurable category/type in
 this slice.

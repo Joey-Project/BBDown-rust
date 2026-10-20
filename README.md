@@ -88,8 +88,10 @@ videos. The published `v0.10.0` CLI and crate do not include this source-only fe
 [user guide](docs/user-guide.md) and
 [embedding guide](docs/embedding.md) for request limits and Rust examples.
 
-`ranking` returns one bounded anonymous page of the global ranking (`rid=0`, `type=all`). It uses
-only the API base and request timeout, with limits of 1 MiB per response and 100 raw rows. It does not
+`ranking` returns one bounded anonymous page of the global ranking
+(`rid=0`, `type=all`, `web_location=333.934`). It uses only the API base and request timeout. It may
+make one anonymous `/x/web-interface/nav` request for public WBI keys, then makes one signed ranking
+request. Each response is capped at 1 MiB; more than 100 raw ranking rows rejects the response. It does not
 inspect credentials, hydrate details, resolve playurl, or request media. The ranking has no fixed
 time period; order is dynamic, with no fixed snapshot or total guarantee. The published `v0.10.0` CLI and crate do not
 include this source-only feature. See the [user guide](docs/user-guide.md) and

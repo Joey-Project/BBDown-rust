@@ -418,13 +418,19 @@ fn popular_reports_an_unsupported_endpoint_response() -> anyhow::Result<()> {
 #[test]
 fn ranking_json_preserves_source_order_and_optional_metadata() -> anyhow::Result<()> {
     let server = MockServer::start();
+    let nav = mock_ranking_nav(&server);
     let ranking = server.mock(|when, then| {
         when.method(GET)
             .path("/x/web-interface/ranking/v2")
             .query_param("rid", "0")
             .query_param("type", "all")
+            .query_param("web_location", "333.934")
+            .query_param_exists("wts")
+            .query_param_exists("w_rid")
+            .query_param_count(".*", ".*", 5)
             .query_param_missing("access_key")
-            .header_missing("cookie");
+            .header_missing("cookie")
+            .header_missing("authorization");
         then.status(200).json_body_obj(&serde_json::json!({
             "code": 0,
             "data": {
@@ -458,6 +464,7 @@ fn ranking_json_preserves_source_order_and_optional_metadata() -> anyhow::Result
         when.method(GET).path("/x/player/playurl");
         then.status(500);
     });
+    let unexpected = mock_unexpected_request(&server);
 
     let output = bbdown_command()?
         .arg("--api-base")
@@ -486,17 +493,30 @@ fn ranking_json_preserves_source_order_and_optional_metadata() -> anyhow::Result
     assert_eq!(json["items"][0]["stats"]["like"], 56);
     assert_eq!(json["items"][1]["rank"], 2);
     assert_eq!(json["items"][1]["bvid"], Value::Null);
+    nav.assert_calls(1);
     ranking.assert_calls(1);
     view.assert_calls(0);
     playurl.assert_calls(0);
+    unexpected.assert_calls(0);
     Ok(())
 }
 
 #[test]
 fn ranking_human_output_shows_source_rank_targets_and_dynamic_scope() -> anyhow::Result<()> {
     let server = MockServer::start();
+    let nav = mock_ranking_nav(&server);
     let ranking = server.mock(|when, then| {
-        when.method(GET).path("/x/web-interface/ranking/v2");
+        when.method(GET)
+            .path("/x/web-interface/ranking/v2")
+            .query_param("rid", "0")
+            .query_param("type", "all")
+            .query_param("web_location", "333.934")
+            .query_param_exists("wts")
+            .query_param_exists("w_rid")
+            .query_param_count(".*", ".*", 5)
+            .query_param_missing("access_key")
+            .header_missing("cookie")
+            .header_missing("authorization");
         then.status(200).json_body_obj(&serde_json::json!({
             "code": 0,
             "data": {
@@ -507,6 +527,7 @@ fn ranking_human_output_shows_source_rank_targets_and_dynamic_scope() -> anyhow:
             }
         }));
     });
+    let unexpected = mock_unexpected_request(&server);
     let output = String::from_utf8(
         bbdown_command()?
             .arg("--api-base")
@@ -521,7 +542,9 @@ fn ranking_human_output_shows_source_rank_targets_and_dynamic_scope() -> anyhow:
     assert!(output.contains("dynamic full-site ranking metadata"));
     assert!(output.contains("1. target=BV1Q541167Qg / av455017605"));
     assert!(output.contains("2. target=av170001"));
+    nav.assert_calls(1);
     ranking.assert_calls(1);
+    unexpected.assert_calls(0);
     Ok(())
 }
 
@@ -533,22 +556,25 @@ fn ranking_ignores_invalid_credential_profile_preflight_resolver_and_proxy_confi
     let credential_file = temp.path().join("credentials.json");
     let sentinel = b"malformed credential data that must remain untouched";
     fs::write(&credential_file, sentinel)?;
+    let nav = mock_ranking_nav(&server);
     let ranking = server.mock(|when, then| {
         when.method(GET)
             .path("/x/web-interface/ranking/v2")
             .query_param("rid", "0")
             .query_param("type", "all")
+            .query_param("web_location", "333.934")
+            .query_param_exists("wts")
+            .query_param_exists("w_rid")
+            .query_param_count(".*", ".*", 5)
             .query_param_missing("access_key")
-            .header_missing("cookie");
+            .header_missing("cookie")
+            .header_missing("authorization");
         then.status(200).json_body_obj(&serde_json::json!({
             "code": 0,
             "data": {"list": []}
         }));
     });
-    let nav = server.mock(|when, then| {
-        when.method(GET).path("/x/web-interface/nav");
-        then.status(500);
-    });
+    let unexpected = mock_unexpected_request(&server);
 
     bbdown_command()?
         .arg("--credential-file")
@@ -571,8 +597,9 @@ fn ranking_ignores_invalid_credential_profile_preflight_resolver_and_proxy_confi
         .success();
 
     assert_eq!(fs::read(&credential_file)?, sentinel);
+    nav.assert_calls(1);
     ranking.assert_calls(1);
-    nav.assert_calls(0);
+    unexpected.assert_calls(0);
     Ok(())
 }
 
@@ -580,8 +607,19 @@ fn ranking_ignores_invalid_credential_profile_preflight_resolver_and_proxy_confi
 fn ranking_rejects_unrelated_options_and_zero_timeout_before_network_requests() -> anyhow::Result<()>
 {
     let server = MockServer::start();
+    let nav = mock_ranking_nav(&server);
     let ranking = server.mock(|when, then| {
-        when.method(GET).path("/x/web-interface/ranking/v2");
+        when.method(GET)
+            .path("/x/web-interface/ranking/v2")
+            .query_param("rid", "0")
+            .query_param("type", "all")
+            .query_param("web_location", "333.934")
+            .query_param_exists("wts")
+            .query_param_exists("w_rid")
+            .query_param_count(".*", ".*", 5)
+            .query_param_missing("access_key")
+            .header_missing("cookie")
+            .header_missing("authorization");
         then.status(500);
     });
     for args in [
@@ -604,6 +642,7 @@ fn ranking_rejects_unrelated_options_and_zero_timeout_before_network_requests() 
         .assert()
         .failure()
         .stderr(predicates::str::contains("greater than 0"));
+    nav.assert_calls(0);
     ranking.assert_calls(0);
     Ok(())
 }
@@ -611,8 +650,19 @@ fn ranking_rejects_unrelated_options_and_zero_timeout_before_network_requests() 
 #[test]
 fn ranking_reports_an_unsupported_endpoint_response() -> anyhow::Result<()> {
     let server = MockServer::start();
+    let nav = mock_ranking_nav(&server);
     let unsupported = server.mock(|when, then| {
-        when.method(GET).path("/x/web-interface/ranking/v2");
+        when.method(GET)
+            .path("/x/web-interface/ranking/v2")
+            .query_param("rid", "0")
+            .query_param("type", "all")
+            .query_param("web_location", "333.934")
+            .query_param_exists("wts")
+            .query_param_exists("w_rid")
+            .query_param_count(".*", ".*", 5)
+            .query_param_missing("access_key")
+            .header_missing("cookie")
+            .header_missing("authorization");
         then.status(200).json_body_obj(&serde_json::json!({
             "code": -404,
             "message": "unsupported endpoint"
@@ -626,6 +676,7 @@ fn ranking_reports_an_unsupported_endpoint_response() -> anyhow::Result<()> {
         .assert()
         .failure()
         .stderr(predicates::str::contains("unsupported endpoint"));
+    nav.assert_calls(1);
     unsupported.assert_calls(1);
     Ok(())
 }
@@ -633,8 +684,19 @@ fn ranking_reports_an_unsupported_endpoint_response() -> anyhow::Result<()> {
 #[test]
 fn ranking_bvid_can_be_passed_to_existing_plan_explicitly() -> anyhow::Result<()> {
     let server = MockServer::start();
+    let nav = mock_ranking_nav(&server);
     let ranking = server.mock(|when, then| {
-        when.method(GET).path("/x/web-interface/ranking/v2");
+        when.method(GET)
+            .path("/x/web-interface/ranking/v2")
+            .query_param("rid", "0")
+            .query_param("type", "all")
+            .query_param("web_location", "333.934")
+            .query_param_exists("wts")
+            .query_param_exists("w_rid")
+            .query_param_count(".*", ".*", 5)
+            .query_param_missing("access_key")
+            .header_missing("cookie")
+            .header_missing("authorization");
         then.status(200).json_body_obj(&serde_json::json!({
             "code": 0,
             "data": {
@@ -681,6 +743,7 @@ fn ranking_bvid_can_be_passed_to_existing_plan_explicitly() -> anyhow::Result<()
             }
         }));
     });
+    let unexpected = mock_unexpected_request(&server);
     let listing = bbdown_command()?
         .arg("--api-base")
         .arg(server.base_url())
@@ -694,9 +757,11 @@ fn ranking_bvid_can_be_passed_to_existing_plan_explicitly() -> anyhow::Result<()
     let bvid = json["items"][0]["bvid"]
         .as_str()
         .context("ranking item should include its BVID")?;
+    nav.assert_calls(1);
     ranking.assert_calls(1);
     view.assert_calls(0);
     playurl.assert_calls(0);
+    unexpected.assert_calls(0);
 
     bbdown_command()?
         .arg("--api-base")
@@ -708,6 +773,8 @@ fn ranking_bvid_can_be_passed_to_existing_plan_explicitly() -> anyhow::Result<()
         .success();
     view.assert_calls(1);
     playurl.assert_calls(1);
+    nav.assert_calls(1);
+    ranking.assert_calls(1);
     Ok(())
 }
 
@@ -2610,6 +2677,32 @@ fn download_search_selected_pgc_uses_episode_and_restricted_area_proxy() -> anyh
     selected_media.assert_calls(1);
     unselected_media.assert_calls(0);
     Ok(())
+}
+
+fn mock_ranking_nav(server: &MockServer) -> httpmock::Mock<'_> {
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/nav")
+            .query_param_missing("access_key")
+            .header_missing("cookie")
+            .header_missing("authorization");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "wbi_img": {
+                    "img_url": "https://i0.hdslb.com/bfs/wbi/0123456789abcdef0123456789abcdef.png",
+                    "sub_url": "https://i0.hdslb.com/bfs/wbi/fedcba9876543210fedcba9876543210.png"
+                }
+            }
+        }));
+    })
+}
+
+fn mock_unexpected_request(server: &MockServer) -> httpmock::Mock<'_> {
+    server.mock(|when, then| {
+        when.any_request();
+        then.status(500).body("unexpected request");
+    })
 }
 
 fn mock_search_nav(server: &MockServer) -> httpmock::Mock<'_> {

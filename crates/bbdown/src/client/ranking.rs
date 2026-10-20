@@ -1,4 +1,6 @@
-use super::{ApiData, BiliClient};
+use super::{
+    ApiData, BiliClient, NavData, current_unix_timestamp, wbi_mixin_key, wbi_signed_query,
+};
 use crate::{Error, Result, bv};
 use serde::{Deserialize, Serialize};
 
@@ -78,7 +80,10 @@ impl RankingVideoRow {
                 "ranking video returned an empty title".to_owned(),
             ));
         }
-        let bvid = self.bvid.map(|value| value.trim().to_owned());
+        let bvid = self
+            .bvid
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
         if let Some(value) = bvid.as_deref()
             && (!value.starts_with("BV") || bv::decode(value)? != self.aid)
         {
@@ -118,47 +123,41 @@ pub(super) async fn ranking_videos(client: &BiliClient) -> Result<RankingVideoPa
         .build()
         .map_err(BiliClient::http_error_without_url)?;
 
-    let mut url =
+    let nav_url =
+        BiliClient::endpoint_url(&client.config.endpoints.api_base, "/x/web-interface/nav")?;
+    let nav: ApiData<NavData> = get_bounded_json_without_cookie(&bounded_client, nav_url).await?;
+    if nav.code != 0 && nav.code != -101 {
+        return Err(Error::Api {
+            code: nav.code,
+            message: nav.message,
+        });
+    }
+    let nav_data = nav.data.ok_or(Error::MissingField("data.wbi_img"))?;
+    let mixin_key = wbi_mixin_key(
+        nav_data
+            .wbi_img
+            .img_url
+            .as_deref()
+            .ok_or(Error::MissingField("data.wbi_img.img_url"))?,
+        nav_data
+            .wbi_img
+            .sub_url
+            .as_deref()
+            .ok_or(Error::MissingField("data.wbi_img.sub_url"))?,
+    )?;
+    let params = vec![
+        ("rid", "0".to_owned()),
+        ("type", "all".to_owned()),
+        ("web_location", "333.934".to_owned()),
+        ("wts", current_unix_timestamp().to_string()),
+    ];
+    let signed_query = wbi_signed_query(params, &mixin_key);
+    let mut ranking_url =
         BiliClient::endpoint_url(&client.config.endpoints.api_base, RANKING_VIDEO_ENDPOINT)?;
-    url.query_pairs_mut()
-        .append_pair("rid", "0")
-        .append_pair("type", "all");
+    ranking_url.set_query(Some(&signed_query));
 
-    let response = bounded_client
-        .http
-        .get(url)
-        .headers(bounded_client.anonymous_headers()?)
-        .timeout(client.config.request_timeout)
-        .send()
-        .await
-        .map_err(BiliClient::http_error_without_url)?;
-    if response.status().is_redirection() {
-        return Err(Error::InvalidInput(
-            "ranking video API endpoint redirected; redirect was not followed".to_owned(),
-        ));
-    }
-    let mut response = response
-        .error_for_status()
-        .map_err(BiliClient::http_error_without_url)?;
-    if response
-        .content_length()
-        .is_some_and(|length| length > RANKING_VIDEO_RESPONSE_MAX_BYTES as u64)
-    {
-        return Err(response_too_large());
-    }
-    let mut body = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(BiliClient::http_error_without_url)?
-    {
-        if body.len().saturating_add(chunk.len()) > RANKING_VIDEO_RESPONSE_MAX_BYTES {
-            return Err(response_too_large());
-        }
-        body.extend_from_slice(&chunk);
-    }
-
-    let envelope: ApiData<RankingData> = serde_json::from_slice(&body)?;
+    let envelope: ApiData<RankingData> =
+        get_bounded_json_without_cookie(&bounded_client, ranking_url).await?;
     let data = envelope.into_data()?;
     let list = data.list.ok_or(Error::MissingField("data.list"))?;
     if list.len() > RANKING_VIDEO_MAX_ITEMS {
@@ -183,9 +182,49 @@ pub(super) async fn ranking_videos(client: &BiliClient) -> Result<RankingVideoPa
     })
 }
 
+async fn get_bounded_json_without_cookie<T>(client: &BiliClient, url: url::Url) -> Result<T>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let response = client
+        .http
+        .get(url)
+        .headers(client.anonymous_headers()?)
+        .timeout(client.config.request_timeout)
+        .send()
+        .await
+        .map_err(BiliClient::http_error_without_url)?;
+    if response.status().is_redirection() {
+        return Err(Error::InvalidInput(
+            "ranking API endpoint redirected; redirect was not followed".to_owned(),
+        ));
+    }
+    let mut response = response
+        .error_for_status()
+        .map_err(BiliClient::http_error_without_url)?;
+    if response
+        .content_length()
+        .is_some_and(|length| length > RANKING_VIDEO_RESPONSE_MAX_BYTES as u64)
+    {
+        return Err(response_too_large());
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(BiliClient::http_error_without_url)?
+    {
+        if body.len().saturating_add(chunk.len()) > RANKING_VIDEO_RESPONSE_MAX_BYTES {
+            return Err(response_too_large());
+        }
+        body.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&body).map_err(Error::from)
+}
+
 fn response_too_large() -> Error {
     Error::InvalidInput(format!(
-        "ranking video response exceeded the {RANKING_VIDEO_RESPONSE_MAX_BYTES}-byte limit"
+        "ranking API response exceeded the {RANKING_VIDEO_RESPONSE_MAX_BYTES}-byte limit"
     ))
 }
 
@@ -223,18 +262,41 @@ mod tests {
         json!({"aid": aid, "title": format!("Video {aid}")})
     }
 
+    fn nav_response(code: i64) -> Value {
+        json!({"code": code, "message": "nav", "data": {"wbi_img": {
+            "img_url": "https://i0.hdslb.com/bfs/wbi/0123456789abcdef0123456789abcdef.png",
+            "sub_url": "https://i0.hdslb.com/bfs/wbi/fedcba9876543210fedcba9876543210.png"
+        }}})
+    }
+
+    fn mock_nav(server: &MockServer, code: i64) -> httpmock::Mock<'_> {
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/nav")
+                .query_param_missing("access_key")
+                .header_missing("cookie")
+                .header_missing("authorization");
+            then.status(200).json_body(nav_response(code));
+        })
+    }
+
     #[tokio::test]
     async fn requests_fixed_all_site_ranking_anonymously_once_and_uses_source_position()
     -> anyhow::Result<()> {
         let server = MockServer::start();
+        let nav = mock_nav(&server, -101);
         let ranking = server.mock(|when, then| {
             when.method(GET)
                 .path("/x/web-interface/ranking/v2")
                 .query_param("rid", "0")
                 .query_param("type", "all")
-                .query_param_count(".*", ".*", 2)
+                .query_param("web_location", "333.934")
+                .query_param_exists("wts")
+                .query_param_exists("w_rid")
+                .query_param_count(".*", ".*", 5)
                 .query_param_missing("access_key")
-                .header_missing("cookie");
+                .header_missing("cookie")
+                .header_missing("authorization");
             then.status(200).json_body(json!({
                 "code": 0,
                 "data": {"note": "  editorial note  ", "list": [
@@ -253,6 +315,7 @@ mod tests {
         assert_eq!(page.items[0].rank, 1);
         assert_eq!(page.items[1].rank, 2);
         assert_eq!(page.items[0].aid, page.items[1].aid);
+        nav.assert_calls(1);
         ranking.assert_calls(1);
         unexpected_request.assert_calls(0);
         Ok(())
@@ -265,6 +328,7 @@ mod tests {
             json!({"code": 0, "data": {"note": "  ", "list": []}}),
         ] {
             let server = MockServer::start();
+            let nav = mock_nav(&server, 0);
             let mock = server.mock(|when, then| {
                 when.method(GET)
                     .path("/x/web-interface/ranking/v2")
@@ -280,6 +344,7 @@ mod tests {
                 assert_eq!(page.items[0].author, None);
                 assert_eq!(page.items[0].stats, None);
             }
+            nav.assert_calls(1);
             mock.assert_calls(1);
         }
         Ok(())
@@ -288,6 +353,7 @@ mod tests {
     #[tokio::test]
     async fn maps_optional_metadata_and_stats() -> anyhow::Result<()> {
         let server = MockServer::start();
+        let nav = mock_nav(&server, 0);
         let mock = server.mock(|when, then| {
             when.method(GET).path("/x/web-interface/ranking/v2");
             then.status(200).json_body(json!({
@@ -328,6 +394,37 @@ mod tests {
                 ..RankingVideoStats::default()
             })
         );
+        nav.assert_calls(1);
+        mock.assert_calls(1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn normalizes_missing_and_blank_bvids_without_shifting_source_ranks() -> anyhow::Result<()>
+    {
+        let server = MockServer::start();
+        let nav = mock_nav(&server, 0);
+        let mock = server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/ranking/v2");
+            then.status(200).json_body(json!({
+                "code": 0,
+                "data": {"list": [
+                    {"aid": 7, "title": "Missing"},
+                    {"aid": 7, "bvid": null, "title": "Null"},
+                    {"aid": 7, "bvid": "", "title": "Empty"},
+                    {"aid": 7, "bvid": "  \t ", "title": "Whitespace"}
+                ]}
+            }));
+        });
+
+        let page = ranking_videos(&client(&server)).await?;
+        assert_eq!(page.items.len(), 4);
+        assert_eq!(
+            page.items.iter().map(|item| item.rank).collect::<Vec<_>>(),
+            [1, 2, 3, 4]
+        );
+        assert!(page.items.iter().all(|item| item.bvid.is_none()));
+        nav.assert_calls(1);
         mock.assert_calls(1);
         Ok(())
     }
@@ -346,6 +443,7 @@ mod tests {
         ];
         for (invalid_row, _) in invalid_responses {
             let server = MockServer::start();
+            let nav = mock_nav(&server, 0);
             let mock = server.mock(|when, then| {
                 when.method(GET).path("/x/web-interface/ranking/v2");
                 then.status(200).json_body(json!({
@@ -353,10 +451,12 @@ mod tests {
                 }));
             });
             assert!(ranking_videos(&client(&server)).await.is_err());
+            nav.assert_calls(1);
             mock.assert_calls(1);
         }
 
         let server = MockServer::start();
+        let nav = mock_nav(&server, 0);
         let missing_list = server.mock(|when, then| {
             when.method(GET).path("/x/web-interface/ranking/v2");
             then.status(200)
@@ -366,12 +466,14 @@ mod tests {
             ranking_videos(&client(&server)).await,
             Err(Error::MissingField("data.list"))
         ));
+        nav.assert_calls(1);
         missing_list.assert_calls(1);
     }
 
     #[tokio::test]
     async fn rejects_more_than_max_items_and_oversized_body() {
         let server = MockServer::start();
+        let nav = mock_nav(&server, 0);
         let rows = (1..=RANKING_VIDEO_MAX_ITEMS + 1)
             .map(|aid| row(aid as u64))
             .collect::<Vec<_>>();
@@ -384,9 +486,11 @@ mod tests {
             ranking_videos(&client(&server)).await,
             Err(Error::InvalidInput(_))
         ));
+        nav.assert_calls(1);
         too_many.assert_calls(1);
 
         let server = MockServer::start();
+        let nav = mock_nav(&server, 0);
         let oversized_body = format!(
             "{{\"code\":0,\"data\":{{\"list\":[],\"padding\":\"{}\"}}}}",
             "x".repeat(1024 * 1024)
@@ -401,18 +505,21 @@ mod tests {
             ranking_videos(&client(&server)).await,
             Err(Error::InvalidInput(_))
         ));
+        nav.assert_calls(1);
         oversized.assert_calls(1);
     }
 
     #[tokio::test]
     async fn rejects_api_errors_redirects_and_timeouts() {
         let server = MockServer::start();
+        let nav = mock_nav(&server, 0);
         let api_error = server.mock(|when, then| {
             when.method(GET).path("/x/web-interface/ranking/v2");
             then.status(200)
                 .json_body(json!({"code": -1, "message": "failed", "data": null}));
         });
         assert!(ranking_videos(&client(&server)).await.is_err());
+        nav.assert_calls(1);
         api_error.assert_calls(1);
 
         let redirect_server = MockServer::start();
@@ -421,6 +528,7 @@ mod tests {
             when.any_request();
             then.status(200);
         });
+        let nav = mock_nav(&redirect_server, 0);
         let redirect = redirect_server.mock(|when, then| {
             when.method(GET).path("/x/web-interface/ranking/v2");
             then.status(302).header(
@@ -429,13 +537,15 @@ mod tests {
             );
         });
         assert!(ranking_videos(&client(&redirect_server)).await.is_err());
+        nav.assert_calls(1);
         redirect.assert_calls(1);
         downstream.assert_calls(0);
 
         let timeout_server = MockServer::start();
+        let nav = mock_nav(&timeout_server, 0);
         let slow = timeout_server.mock(|when, then| {
             when.method(GET).path("/x/web-interface/ranking/v2");
-            then.delay(Duration::from_millis(100))
+            then.delay(Duration::from_millis(500))
                 .status(200)
                 .json_body(json!({
                     "code": 0, "data": {"list": []}
@@ -444,9 +554,102 @@ mod tests {
         let timeout_client = BiliClient::new(
             ClientConfig::default()
                 .with_endpoints(EndpointConfig::default().with_api_base(timeout_server.base_url()))
-                .with_request_timeout(Duration::from_millis(10)),
+                .with_request_timeout(Duration::from_millis(200)),
         );
         assert!(ranking_videos(&timeout_client).await.is_err());
+        nav.assert_calls(1);
         slow.assert_calls(1);
+    }
+
+    #[tokio::test]
+    async fn rejects_nav_errors_and_missing_wbi_keys_before_ranking() {
+        let server = MockServer::start();
+        let nav_error = server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/nav");
+            then.status(200).json_body(nav_response(-1));
+        });
+        let ranking = server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/ranking/v2");
+            then.status(200)
+                .json_body(json!({"code": 0, "data": {"list": []}}));
+        });
+        assert!(matches!(
+            ranking_videos(&client(&server)).await,
+            Err(Error::Api { code: -1, .. })
+        ));
+        nav_error.assert_calls(1);
+        ranking.assert_calls(0);
+
+        let server = MockServer::start();
+        let nav_missing_keys = server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/nav");
+            then.status(200).json_body(json!({
+                "code": -101,
+                "message": "not logged in",
+                "data": {"wbi_img": {}}
+            }));
+        });
+        let ranking = server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/ranking/v2");
+            then.status(200)
+                .json_body(json!({"code": 0, "data": {"list": []}}));
+        });
+        assert!(matches!(
+            ranking_videos(&client(&server)).await,
+            Err(Error::MissingField("data.wbi_img.img_url"))
+        ));
+        nav_missing_keys.assert_calls(1);
+        ranking.assert_calls(0);
+    }
+
+    #[tokio::test]
+    async fn bounds_nav_redirect_and_oversized_body_before_ranking() {
+        let redirect_server = MockServer::start();
+        let nav = redirect_server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/nav");
+            then.status(302)
+                .header("location", "/x/web-interface/nav-redirect-target")
+                .json_body(nav_response(0));
+        });
+        let redirected = redirect_server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/nav-redirect-target");
+            then.status(200).json_body(nav_response(0));
+        });
+        let ranking = redirect_server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/ranking/v2");
+            then.status(200)
+                .json_body(json!({"code": 0, "data": {"list": []}}));
+        });
+        assert!(matches!(
+            ranking_videos(&client(&redirect_server)).await,
+            Err(Error::InvalidInput(message)) if message.contains("redirected")
+        ));
+        nav.assert_calls(1);
+        redirected.assert_calls(0);
+        ranking.assert_calls(0);
+
+        let oversized_server = MockServer::start();
+        let oversized_body = format!(
+            "{{\"code\":0,\"data\":{{\"wbi_img\":{{\"img_url\":\"https://i0.hdslb.com/bfs/wbi/0123456789abcdef0123456789abcdef.png\",\"sub_url\":\"https://i0.hdslb.com/bfs/wbi/fedcba9876543210fedcba9876543210.png\"}},\"padding\":\"{}\"}}}}",
+            "x".repeat(1024 * 1024)
+        );
+        let oversized = oversized_server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/nav");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(oversized_body);
+        });
+        let ranking = oversized_server.mock(|when, then| {
+            when.method(GET).path("/x/web-interface/ranking/v2");
+            then.status(200)
+                .json_body(json!({"code": 0, "data": {"list": []}}));
+        });
+        assert!(matches!(
+            ranking_videos(&client(&oversized_server)).await,
+            Err(Error::InvalidInput(_))
+        ));
+        oversized.assert_calls(1);
+        ranking.assert_calls(0);
     }
 }
