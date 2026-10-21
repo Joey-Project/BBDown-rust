@@ -137,8 +137,8 @@
   it is not completed or accepted downstream integration and does not establish native decoding,
   sustained playback, full-fill, offline playback, or deployment. The downstream maintainer owns
   dependency upgrade, adaptation, acceptance, and merge; this compatibility evidence creates no
-  BBDown requirement to merge consumer PR #77. The historical `0.9.0` HTTP 412 cause remains
-  undetermined. See
+  BBDown requirement to merge [consumer PR #77](https://github.com/Joey-Project/tvOS-net-player/pull/77).
+  The historical `0.9.0` HTTP 412 cause remains undetermined. See
   `docs/project_journal/2026/10/2026-10-20-dynamic-playback-acceptance-01a0dd39.md` and
   `docs/project_journal/2026/10/2026-10-11-space-dynamic-request-and-bounded-metadata-followup.md`.
 - Opt-in restricted PGC live e2e remains dependent on upstream proxy/fixture health.
