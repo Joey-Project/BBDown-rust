@@ -1,9 +1,9 @@
 ---
 id: 20261011-dynamic-request-and-bounded-metadata
 title: Dynamic Request Diagnosis And Bounded Metadata
-status: active
+status: completed
 created: 2026-10-11
-updated: 2026-10-14
+updated: 2026-10-21
 branch: wip/dynamic-request-diagnostics
 pr:
 supersedes: []
@@ -23,15 +23,19 @@ superseded_by:
   from that merged master state.
 - Release preparation resumed in its separate worktree after PRs #99 and #100 merged. This repair
   left version changes and release-wide documentation to that workstream; it did not create
-  release candidates or publish packages. Consumer playback acceptance remains separate below.
+  release candidates or publish packages. The BBDown-owned bounded consumer compatibility smoke
+  is recorded in the [playback acceptance journal](2026-10-20-dynamic-playback-acceptance-01a0dd39.md);
+  broader consumer integration acceptance remains downstream-owned.
 
 ## A. Initial Dynamic Request
 
-**Status:** library initialization implemented; authenticated consumer acceptance remains pending.
+**Status:** library initialization and bounded metadata API complete; actual-core candidate and one bounded consumer V2/HLS compatibility smoke passed. The historical HTTP 412 cause remains undetermined.
 
 The automatic-production live metadata and continuation check passed after correcting the new
 Cookie pair separator to `; `. The original profile was loaded read-only; no external initializer
-or credential-store update was used. Full consumer playback acceptance is still separate.
+or credential-store update was used. At that stage, full consumer playback acceptance was still
+separate; the later bounded compatibility smoke is documented below and in the linked acceptance
+journal.
 
 - Joey explicitly authorized real-cookie requests for this diagnosis. The selected existing
   profile was loaded read-only; credential values were neither printed nor retained. Requests
@@ -65,7 +69,7 @@ or credential-store update was used. Full consumer playback acceptance is still 
   confirmed that the selected profile has `SESSDATA`, `bili_jct`, `DedeUserID`, and
   `DedeUserID__ckMd5`, but lacks `buvid3`, `buvid4`, `b_nut`, `b_lsid`, and `buvid_fp`.
   This establishes saved-cookie presence only, not the successful browser's cookie set or
-  a cause for 412. No media tests have run.
+  a cause for 412. No media tests had run at that stage.
 - A four-request cookie-only control ran within `2026-10-12 10:44:25` to `10:44:39 UTC`.
   Its baseline feed returned HTTP 412 / code -412. An anonymous official
   `/x/frontend/finger/spi` request returned valid `data.b_3` and `data.b_4`; appending only
@@ -107,19 +111,23 @@ or credential-store update was used. Full consumer playback acceptance is still 
   production initialization, accurate accounting, and continuation; it does not validate consumer
   V2 planning, downloads, HLS, or native playback.
 
-- Consumer fixture: `https://space.bilibili.com/441167301/dynamic`, against `0.9.0`
+- Historical consumer fixture: `https://space.bilibili.com/441167301/dynamic`, against `0.9.0`
   commit `e422a159cdf70c5bec72b4120e2a70e5bd749088`.
-- The consumer reported successful nav/key discovery followed by HTTP 412 at the initial
-  dynamic feed request. Actual V2 resolution failed before candidate production; focused smoke
-  has not passed. Long download, HLS, and native playback tests have not started.
+- At that time, the consumer reported successful nav/key discovery followed by HTTP 412 at the
+  initial dynamic feed request. Actual V2 resolution failed before candidate production. This is
+  historical `0.9.0` evidence; it does not describe or explain the later bounded smoke on `0.11.0`.
+  The reported cause remains undetermined.
 - Its earlier Python success was at a different time. Adding JSON Accept to a separate reqwest
   control did not resolve 412. Neither result isolates a cause or proves playable acceptance.
 - Source inspection confirms signing on initial and continuation space requests. Nav/key
   success alone does not prove login: the current key lookup does not inspect `isLogin`.
 - Another session reported anonymous public-video HTTP 412 on this machine. That environmental
   observation does not establish the same cause for authenticated dynamic requests.
-- Acceptance requires bounded actual Rust requests yielding playable candidates and the
-  consumer's actual V2 focused smoke. Mock success or an empty anonymous feed is insufficient.
+- One bounded consumer V2/HLS compatibility smoke has since passed on consumer source
+  `879d852cd2a9a45e5b2f806036c77191ec7bf233`, using released `bbdown-core 0.11.0`; its result and
+  limits are recorded in the [playback acceptance journal](2026-10-20-dynamic-playback-acceptance-01a0dd39.md).
+  This establishes bounded compatibility evidence for that case only, not a general fix, the cause
+  of the historical HTTP 412, or complete downstream integration acceptance.
 
 ## B. Explicit Bounded Metadata API
 
@@ -166,6 +174,8 @@ or credential-store update was used. Full consumer playback acceptance is still 
 - Passed: `cargo clippy --locked --offline -p bbdown-core --all-targets -- -D warnings`
   and `cargo fmt --all -- --check` on the API implementation.
 - Project journal validation and `git diff --check` passed.
-- No live dynamic acceptance is claimed by these mock results. PR checks and current-head
-  review evidence belong to the PR rather than changing A's pending acceptance state.
+- The mock results alone do not establish live dynamic acceptance; the later bounded live smoke is
+  recorded separately in the [playback acceptance journal](2026-10-20-dynamic-playback-acceptance-01a0dd39.md).
+  The validation above records this journal's implementation checks, not current-head PR review
+  evidence.
 - Delivery uses GitHub Codex PR review only; no local reviewer.
