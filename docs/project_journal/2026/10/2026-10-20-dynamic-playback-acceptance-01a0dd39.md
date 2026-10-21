@@ -79,8 +79,53 @@ BBDOWN_DYNAMIC_LIVE_CREDENTIAL_FILE=/path/to/credentials.json \
   consumer adaptation at source head `de48b1abad3ca4104041c5596bd21348f7e0101a` (historical PR
   [#77](https://github.com/Joey-Project/tvOS-net-player/pull/77)), pinned to released
   `bbdown-core 0.11.0` source commit
-  `0a3ccd624647017e10ec893ffd9f3d73bf507631`. One authenticated SpaceDynamic case passed in
-  48.135 seconds, covering the V2 task and playable HLS playlist/master/result flow. Teardown
+  `0a3ccd624647017e10ec893ffd9f3d73bf507631`. From the temporary consumer checkout, the recorded
+  invocation was:
+
+  ```sh
+  python3 "$BOUNDED_PTY_RUNNER" \
+    --log "$PRIVATE_LOG" \
+    --max-bytes 1048576 \
+    --timeout-seconds 300 \
+    -- env -u NO_PROXY -u RUST_LOG \
+    RUSTUP_TOOLCHAIN=1.95.0 \
+    BILIBILI_LIVE_E2E_BBDOWN_CREDENTIAL_PATH="$OPERATOR_SELECTED_CREDENTIAL_FILE" \
+    BILIBILI_LIVE_E2E_BBDOWN_CREDENTIAL_PROFILE="$OPERATOR_SELECTED_PROFILE" \
+    BILIBILI_LIVE_E2E_CASES=authenticated-space-dynamic \
+    scripts/test-bilibili-live.sh
+  ```
+
+  `$BOUNDED_PTY_RUNNER` and `$PRIVATE_LOG` stand for the operator's temporary outer runner and
+  private log path. This task-local wrapper is not shipped with the consumer repository; it
+  enforced a 300-second wall-time limit and a 1 MiB captured-output limit. The authenticated
+  fixture requires the credential file and profile variables shown in the command; they take
+  operator-selected private values, whose local path and profile name are intentionally not
+  recorded. The wrapper
+  invoked `scripts/test-bilibili-live.sh`, which ran from the consumer checkout:
+
+  ```sh
+  cargo test \
+    --manifest-path "$ROOT_DIR/Cargo.toml" \
+    --package tvos-net-player-cache-server \
+    --test bilibili_live_e2e \
+    --locked \
+    -- --ignored --nocapture
+  ```
+
+  The recorded command has no `BILIBILI_LIVE_E2E_FIXTURE` override. The script defaults to its
+  checkout's `.agents/skills/bilibili-live-e2e/references/live-cases.json`; the observed selected
+  fixture was `authenticated-space-dynamic`, with `minimum_candidates: 1`, first-candidate
+  selection, 360p/H.264 preferences, and `prefer_tv_api: false`. The recorded command sets no
+  `BILIBILI_LIVE_E2E_FULL_FILL`, `BILIBILI_LIVE_E2E_FORCE_MEDIA_REFRESH`,
+  `BILIBILI_LIVE_E2E_OFFLINE_SECONDS`, or `BILIBILI_LIVE_E2E_SUSTAINED_SECONDS` override; the
+  harness defaults full-fill off and offline/sustained durations to none. No full-fill, offline, or
+  sustained phase is claimed for this smoke. The test used a temporary cache root and loopback
+  gRPC/media services on ephemeral ports. The receipt/log record no absolute UTC wall-clock
+  timestamp for this consumer run.
+
+  One authenticated SpaceDynamic case passed in 48.135 seconds, covering the V2 task and playable
+  HLS playlist/master/result flow; the inner Rust test reported 47.40 seconds and 1 passed, 0 failed,
+  0 ignored, with 60 filtered out. Teardown
   completed and the designated source/credential-file integrity checks were unchanged. This is
   compatibility evidence only, not completed or accepted downstream integration. The downstream
   maintainer owns dependency upgrade, adaptation, acceptance, and merge; this run creates no BBDown
