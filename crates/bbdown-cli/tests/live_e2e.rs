@@ -1,8 +1,11 @@
 use anyhow::{Context, bail, ensure};
 use assert_cmd::Command;
 use bbdown_core::{
-    BiliClient, ClientConfig, CredentialStore, Credentials, Error, PgcWebPlayurlRoute, PlayurlMode,
-    RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy, Selection, StreamSource,
+    BiliClient, ClientConfig, CredentialKind, CredentialLifecycleMetadata,
+    CredentialLifecycleSource, CredentialProfileMetadata, CredentialProfileSecrets,
+    CredentialProfileSelection, CredentialProfiles, CredentialRefreshSecret, CredentialStore,
+    Credentials, Error, PgcWebPlayurlRoute, PlayurlMode, RestrictedArea, RestrictedAreaConfig,
+    RestrictedAreaProxy, Selection, StreamSource,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -12,6 +15,14 @@ use std::time::Duration;
 
 const LIVE_SAMPLES_FILE: &str = "live-e2e.samples.json";
 const PGC_LIVE_CREDENTIAL_FILE_ENV: &str = "BBDOWN_PGC_LIVE_CREDENTIAL_FILE";
+// Synthetic fixtures selected from joey-private-v3:
+// access-a..e are active access keys; refresh-a is an active refresh token.
+const FIXTURE_ACCESS_A: &str = "codex_synth_v1_access_a";
+const FIXTURE_ACCESS_B: &str = "codex_synth_v1_access_b";
+const FIXTURE_ACCESS_C: &str = "JoeyPrivateV3AccessSlotC8R2N6Y4";
+const FIXTURE_ACCESS_D: &str = "JoeyPrivateV3AccessSlotD9S3P7Z5";
+const FIXTURE_ACCESS_E: &str = "JoeyPrivateV3AccessSlotE4T8Q2W6";
+const FIXTURE_REFRESH_A: &str = "codex_synth_v1_refresh_a";
 const RESTRICTED_AREAS: &[&str] = &["cn", "th", "hk", "tw"];
 const CLI_OVERRIDE_ENV_VARS: &[&str] = &[
     "BBDOWN_API_BASE",
@@ -41,6 +52,8 @@ struct LiveManifest {
     #[serde(default, alias = "credentials_file")]
     credential_file: Option<PathBuf>,
     #[serde(default)]
+    credential_profile: Option<String>,
+    #[serde(default)]
     access_key_file: Option<PathBuf>,
     #[serde(default)]
     request_timeout_seconds: Option<u64>,
@@ -67,6 +80,8 @@ struct LiveCase {
     actions: Vec<LiveAction>,
     #[serde(default, alias = "credentials_file")]
     credential_file: Option<PathBuf>,
+    #[serde(default)]
+    credential_profile: Option<String>,
     #[serde(default)]
     access_key_file: Option<PathBuf>,
     #[serde(default)]
@@ -262,16 +277,18 @@ fn load_pgc_live_credentials(
     manifest_path: &Path,
     temp_dir: &Path,
 ) -> anyhow::Result<Credentials> {
+    let profile = case
+        .credential_profile
+        .as_deref()
+        .or(manifest.credential_profile.as_deref());
     let credentials = if let Some(path) = std::env::var_os(PGC_LIVE_CREDENTIAL_FILE_ENV) {
-        CredentialStore::new(PathBuf::from(path))
-            .load()
-            .map_err(|_| {
-                anyhow::anyhow!("restricted episode: credential override could not be loaded")
-            })?
+        load_credentials_file(&PathBuf::from(path), profile)?
     } else {
         let credential_file = temp_dir.join("credentials.json");
         write_case_credentials(manifest, case, manifest_path, &credential_file)?;
-        CredentialStore::new(credential_file).load()?
+        CredentialStore::new(credential_file).load().map_err(|_| {
+            anyhow::anyhow!("restricted episode: prepared credentials could not be loaded")
+        })?
     };
     ensure!(
         credentials
@@ -639,14 +656,16 @@ fn credentials_support_telegram_auth_state_and_access_key_file() -> anyhow::Resu
     fs::write(
         &auth_state,
         serde_json::json!({
-            "cookie": "SESSDATA=COOKIE_SECRET",
+            "cookie": "fixture-session-cookie",
+            "access_key": FIXTURE_ACCESS_D,
+            "tv_access_key": FIXTURE_ACCESS_C,
             "mid": 1,
             "uname": "tester",
             "stored_at_unix": 1
         })
         .to_string(),
     )?;
-    fs::write(&access_key_file, "ACCESS_SECRET\n")?;
+    fs::write(&access_key_file, format!("{FIXTURE_ACCESS_E}\n"))?;
     let manifest: LiveManifest = serde_json::from_str(
         r#"{
           "credential_file": "bilibili-auth.json",
@@ -665,10 +684,262 @@ fn credentials_support_telegram_auth_state_and_access_key_file() -> anyhow::Resu
 
     assert_eq!(
         credentials.cookie.as_deref(),
-        Some("SESSDATA=COOKIE_SECRET")
+        Some("fixture-session-cookie")
     );
-    assert_eq!(credentials.access_key.as_deref(), Some("ACCESS_SECRET"));
-    assert_eq!(credentials.tv_access_key, None);
+    assert_eq!(credentials.access_key.as_deref(), Some(FIXTURE_ACCESS_E));
+    assert_eq!(credentials.tv_access_key.as_deref(), Some(FIXTURE_ACCESS_C));
+    Ok(())
+}
+
+fn write_profile_store(path: &Path, case_store: bool) -> anyhow::Result<()> {
+    let mut profiles = CredentialProfiles::default();
+    if case_store {
+        profiles.set_profile(
+            "default",
+            Credentials::default()
+                .with_cookie("case-default-cookie")
+                .with_access_key(FIXTURE_ACCESS_E),
+        )?;
+        profiles.set_profile(
+            "work",
+            Credentials::default()
+                .with_cookie("case-work-cookie")
+                .with_access_key(FIXTURE_ACCESS_C),
+        )?;
+        profiles.set_profile(
+            "alternate",
+            Credentials::default()
+                .with_cookie("case-alternate-cookie")
+                .with_access_key(FIXTURE_ACCESS_D),
+        )?;
+        profiles.set_default_profile("alternate")?;
+    } else {
+        profiles.set_profile(
+            "default",
+            Credentials::default()
+                .with_cookie("default-cookie")
+                .with_access_key(FIXTURE_ACCESS_A),
+        )?;
+        profiles.set_profile(
+            "work",
+            Credentials::default()
+                .with_cookie("work-cookie")
+                .with_access_key(FIXTURE_ACCESS_B),
+        )?;
+        profiles.set_profile(
+            "alternate",
+            Credentials::default()
+                .with_cookie("alternate-cookie")
+                .with_access_key(FIXTURE_ACCESS_C),
+        )?;
+        profiles.set_default_profile("work")?;
+    }
+
+    let mut metadata = CredentialProfileMetadata::default();
+    metadata.set_credential(
+        CredentialKind::AccessKey,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_refresh_token_present(true),
+    );
+    profiles.set_profile_metadata("work", metadata)?;
+    let mut secrets = CredentialProfileSecrets::default();
+    secrets.set_cookie(CredentialRefreshSecret::default().with_refresh_token(FIXTURE_REFRESH_A));
+    profiles.set_profile_secrets("work", secrets)?;
+    CredentialStore::new(path.to_owned()).save_profiles(&profiles)?;
+    Ok(())
+}
+
+#[test]
+fn profile_and_file_overrides_are_independent_and_source_is_read_only() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let manifest_store = temp.path().join("manifest-profiles.json");
+    let case_store = temp.path().join("case-profiles.json");
+    write_profile_store(&manifest_store, false)?;
+    write_profile_store(&case_store, true)?;
+    let manifest_bytes = fs::read(&manifest_store)?;
+    let case_bytes = fs::read(&case_store)?;
+    let manifest: LiveManifest = serde_json::from_value(serde_json::json!({
+        "credential_file": manifest_store,
+        "credential_profile": "work",
+        "cases": [{
+            "name": "normal",
+            "kind": "normal",
+            "url": "av1",
+            "credential_file": case_store
+        }]
+    }))?;
+    let output = temp.path().join("case-output.json");
+    let manifest_path = temp.path().join("samples.json");
+
+    write_case_credentials(&manifest, &manifest.cases[0], &manifest_path, &output)?;
+    let selected = CredentialStore::new(output.clone()).load()?;
+    // The case file wins independently; absent a case profile, the manifest profile applies.
+    assert_eq!(selected.cookie.as_deref(), Some("case-work-cookie"));
+    assert_eq!(selected.access_key.as_deref(), Some(FIXTURE_ACCESS_C));
+
+    let mut case = manifest.cases[0].clone();
+    case.credential_profile = Some("alternate".to_owned());
+    write_case_credentials(&manifest, &case, &manifest_path, &output)?;
+    let selected = CredentialStore::new(output.clone()).load()?;
+    assert_eq!(selected.cookie.as_deref(), Some("case-alternate-cookie"));
+    assert_eq!(selected.access_key.as_deref(), Some(FIXTURE_ACCESS_D));
+
+    let output_json = fs::read_to_string(&output)?;
+    assert!(!output_json.contains("profiles"));
+    assert!(!output_json.contains(FIXTURE_REFRESH_A));
+    assert!(!output_json.contains("refresh_token"));
+    assert_eq!(fs::read(&manifest_store)?, manifest_bytes);
+    assert_eq!(fs::read(&case_store)?, case_bytes);
+
+    let default_manifest: LiveManifest = serde_json::from_value(serde_json::json!({
+        "credential_file": manifest_store,
+        "cases": [{"name": "normal", "kind": "normal", "url": "av1"}]
+    }))?;
+    write_case_credentials(
+        &default_manifest,
+        &default_manifest.cases[0],
+        &manifest_path,
+        &output,
+    )?;
+    let selected = CredentialStore::new(output).load()?;
+    assert_eq!(selected.cookie.as_deref(), Some("work-cookie"));
+    assert_eq!(selected.access_key.as_deref(), Some(FIXTURE_ACCESS_B));
+    Ok(())
+}
+
+#[test]
+fn credential_profiles_fail_closed_without_leaking_source_content() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let source = temp.path().join("profiles.json");
+    let output = temp.path().join("case-output.json");
+    write_profile_store(&source, false)?;
+    let manifest_path = temp.path().join("samples.json");
+
+    for profile in ["missing-profile", ""] {
+        let manifest: LiveManifest = serde_json::from_value(serde_json::json!({
+            "credential_file": source.clone(),
+            "credential_profile": profile,
+            "cases": [{"name": "normal", "kind": "normal", "url": "av1"}]
+        }))?;
+        let error = write_case_credentials(&manifest, &manifest.cases[0], &manifest_path, &output)
+            .err()
+            .context("invalid profile must fail closed")?;
+        let error = format!("{error:#}");
+        assert!(!error.contains(FIXTURE_ACCESS_A));
+        assert!(!error.contains(FIXTURE_REFRESH_A));
+    }
+
+    let no_file: LiveManifest = serde_json::from_value(serde_json::json!({
+        "credential_profile": "work",
+        "cases": [{"name": "normal", "kind": "normal", "url": "av1"}]
+    }))?;
+    let error = write_case_credentials(&no_file, &no_file.cases[0], &manifest_path, &output)
+        .err()
+        .context("named profile without a credential file must fail")?;
+    assert!(format!("{error:#}").contains("requires a credential file"));
+
+    fs::write(&source, "{\"cookie\":\"do-not-echo-this\",")?;
+    let malformed: LiveManifest = serde_json::from_value(serde_json::json!({
+            "credential_file": source.clone(),
+        "cases": [{"name": "normal", "kind": "normal", "url": "av1"}]
+    }))?;
+    let error = write_case_credentials(&malformed, &malformed.cases[0], &manifest_path, &output)
+        .err()
+        .context("malformed store must fail closed")?;
+    let error = format!("{error:#}");
+    assert!(error.contains("credential store could not be loaded"));
+    assert!(!error.contains("do-not-echo-this"));
+
+    let empty = temp.path().join("empty.json");
+    CredentialStore::new(empty.clone()).save_profiles(&CredentialProfiles::default())?;
+    let empty_manifest: LiveManifest = serde_json::from_value(serde_json::json!({
+        "credential_file": empty,
+        "cases": [{"name": "normal", "kind": "normal", "url": "av1"}]
+    }))?;
+    let error = write_case_credentials(
+        &empty_manifest,
+        &empty_manifest.cases[0],
+        &manifest_path,
+        &output,
+    )
+    .err()
+    .context("empty source store must fail closed")?;
+    assert!(format!("{error:#}").contains("selected credential profile is empty"));
+    Ok(())
+}
+
+#[test]
+fn manifest_without_credential_inputs_remains_anonymous() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let output = temp.path().join("case-output.json");
+    let manifest_path = temp.path().join("samples.json");
+    let manifest: LiveManifest = serde_json::from_value(serde_json::json!({
+        "cases": [{"name": "normal", "kind": "normal", "url": "av1"}]
+    }))?;
+
+    write_case_credentials(&manifest, &manifest.cases[0], &manifest_path, &output)?;
+    assert!(CredentialStore::new(output).load()?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn versioned_credential_profile_is_selected_for_case_store() -> anyhow::Result<()> {
+    // Synthetic fixture source: pool_version=joey-private-v3;
+    // access-a (active access key), access-b (active access key),
+    // refresh-a (active refresh token).
+    let temp = tempfile::tempdir()?;
+    let source = temp.path().join("profiles.json");
+    let output = temp.path().join("case-credentials.json");
+    let source_store = CredentialStore::new(source.clone());
+    let mut profiles = CredentialProfiles::default();
+    profiles.set_profile(
+        "default",
+        Credentials::default()
+            .with_cookie("default-cookie")
+            .with_access_key("codex_synth_v1_access_a"),
+    )?;
+    profiles.set_profile(
+        "work",
+        Credentials::default()
+            .with_cookie("work-cookie")
+            .with_access_key("codex_synth_v1_access_b"),
+    )?;
+    let mut metadata = CredentialProfileMetadata::default();
+    metadata.set_credential(
+        CredentialKind::AccessKey,
+        CredentialLifecycleMetadata::default()
+            .with_source(CredentialLifecycleSource::ManualImport)
+            .with_refresh_token_present(true),
+    );
+    profiles.set_profile_metadata("work", metadata)?;
+    let mut secrets = CredentialProfileSecrets::default();
+    secrets.set_cookie(
+        CredentialRefreshSecret::default().with_refresh_token("codex_synth_v1_refresh_a"),
+    );
+    profiles.set_profile_secrets("work", secrets)?;
+    source_store.save_profiles(&profiles)?;
+    let before = fs::read(&source)?;
+    let manifest: LiveManifest = serde_json::from_value(serde_json::json!({
+        "credential_file": source,
+        "credential_profile": "work",
+        "cases": [{"name": "normal", "kind": "normal", "url": "av1"}]
+    }))?;
+
+    write_case_credentials(
+        &manifest,
+        &manifest.cases[0],
+        &temp.path().join("samples.json"),
+        &output,
+    )?;
+    let selected = CredentialStore::new(output).load()?;
+
+    assert_eq!(selected.cookie.as_deref(), Some("work-cookie"));
+    assert_eq!(
+        selected.access_key.as_deref(),
+        Some("codex_synth_v1_access_b")
+    );
+    assert_eq!(fs::read(&source)?, before);
     Ok(())
 }
 
@@ -741,6 +1012,7 @@ fn live_case_for_assertions() -> LiveCase {
         selection: None,
         actions: Vec::new(),
         credential_file: None,
+        credential_profile: None,
         access_key_file: None,
         request_timeout_seconds: None,
         restricted_area: None,
@@ -979,15 +1251,29 @@ fn write_case_credentials(
 ) -> anyhow::Result<()> {
     let manifest_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
     let mut credentials = Credentials::default();
-
-    if let Some(path) = case
+    let credential_file = case
         .credential_file
         .as_ref()
-        .or(manifest.credential_file.as_ref())
-    {
+        .or(manifest.credential_file.as_ref());
+    let credential_profile = case
+        .credential_profile
+        .as_deref()
+        .or(manifest.credential_profile.as_deref());
+
+    if let Some(profile) = credential_profile {
+        ensure!(
+            credential_file.is_some(),
+            "credential profile requires a credential file"
+        );
+        ensure!(
+            !profile.trim().is_empty(),
+            "credential profile must not be empty"
+        );
+    }
+
+    if let Some(path) = credential_file {
         let path = resolve_manifest_path(manifest_dir, path);
-        merge_credentials_file(&mut credentials, &path)
-            .with_context(|| format!("failed to load credential file {}", path.display()))?;
+        credentials = load_credentials_file(&path, credential_profile)?;
     }
     if let Some(path) = case
         .access_key_file
@@ -996,46 +1282,47 @@ fn write_case_credentials(
     {
         let path = resolve_manifest_path(manifest_dir, path);
         let access_key = fs::read_to_string(&path)
-            .with_context(|| format!("failed to read access key file {}", path.display()))?;
+            .map_err(|_| anyhow::anyhow!("access key file could not be read"))?;
         let access_key = access_key.trim();
         if !access_key.is_empty() {
             credentials.access_key = Some(access_key.to_owned());
         }
     }
 
-    CredentialStore::new(output_path.to_owned()).save(&credentials)?;
+    CredentialStore::new(output_path.to_owned())
+        .save(&credentials)
+        .map_err(|_| anyhow::anyhow!("temporary case credentials could not be written"))?;
     Ok(())
 }
 
-fn merge_credentials_file(credentials: &mut Credentials, path: &Path) -> anyhow::Result<()> {
-    let raw = fs::read_to_string(path)?;
-    let json: Value = serde_json::from_str(&raw)?;
-    let mut matched = false;
-
-    if let Some(cookie) = json["cookie"].as_str().filter(|value| !value.is_empty()) {
-        credentials.cookie = Some(cookie.to_owned());
-        matched = true;
-    }
-    if let Some(access_key) = json["access_key"]
-        .as_str()
-        .filter(|value| !value.is_empty())
-    {
-        credentials.access_key = Some(access_key.to_owned());
-        matched = true;
-    }
-    if let Some(tv_access_key) = json["tv_access_key"]
-        .as_str()
-        .filter(|value| !value.is_empty())
-    {
-        credentials.tv_access_key = Some(tv_access_key.to_owned());
-        matched = true;
-    }
-
-    ensure!(
-        matched,
-        "credential file must contain at least one of cookie, access_key, or tv_access_key"
-    );
-    Ok(())
+fn load_credentials_file(path: &Path, profile: Option<&str>) -> anyhow::Result<Credentials> {
+    let store = CredentialStore::new(path.to_owned());
+    let selected = if let Some(profile) = profile {
+        ensure!(
+            !profile.trim().is_empty(),
+            "credential profile must not be empty"
+        );
+        let selection = CredentialProfileSelection::named(profile)
+            .map_err(|_| anyhow::anyhow!("credential profile name is invalid"))?;
+        let profiles = store
+            .load_profiles()
+            .map_err(|_| anyhow::anyhow!("credential store could not be loaded"))?;
+        ensure!(
+            profiles
+                .profile_names()
+                .any(|name| Some(name) == selection.profile_name()),
+            "credential profile was not found"
+        );
+        store
+            .load_selected_profile(&selection)
+            .map_err(|_| anyhow::anyhow!("credential store could not be loaded"))?
+    } else {
+        store
+            .load_selected_profile(&CredentialProfileSelection::default_profile())
+            .map_err(|_| anyhow::anyhow!("credential store could not be loaded"))?
+    };
+    ensure!(!selected.is_empty(), "selected credential profile is empty");
+    Ok(selected)
 }
 
 fn push_proxy_args(

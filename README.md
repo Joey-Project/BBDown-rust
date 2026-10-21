@@ -482,10 +482,20 @@ crates.io dry run for the publishable `bbdown-core` library package. GitHub CI r
 gates and a strict clean-checkout crates.io dry run. The CLI crate is not a crates.io publish target; use the
 GitHub release archives for binary distribution. `just live-e2e` is intentionally excluded from
 default CI and fails fast unless the ignored local `live-e2e.samples.json` exists. Start from
-`live-e2e.samples.example.json`, then point `credential_file` and `access_key_file` at local secret
-files and list the public, PGC, intl, or restricted PGC samples to probe. The live harness writes an
-isolated temporary credential store per case and removes CLI override environment variables before
-running, so sample behavior is driven by the manifest rather than shell state.
+`live-e2e.samples.example.json` and list the public, PGC, intl, or restricted PGC samples to probe.
+`credential_file` accepts legacy flat BBDown or Telegram Video Downloader credentials and versioned
+BBDown credential stores. Select an optional `credential_profile` in the manifest; a case-level
+`credential_file` or `credential_profile` overrides its manifest value independently. Omitting the
+profile uses the selected store's default. Unknown or empty profiles, a missing file for an explicit
+profile, and empty or corrupt explicit stores fail. With no credential source or profile, anonymous
+cases remain allowed. The optional `access_key_file` reads a plain-text generic key. A case-level file
+overrides the manifest-level file, and its non-empty trimmed value overrides `access_key` from the
+selected profile.
+
+The source credential file is read-only. The live harness copies the selected profile's cookie,
+generic access key, and TV access key into an isolated temporary credential store; it does not copy
+other profiles or lifecycle metadata. It removes CLI override environment variables before running,
+so sample behavior is driven by the manifest rather than shell state.
 
 ## Documentation
 
