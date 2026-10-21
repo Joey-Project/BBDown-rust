@@ -1,6 +1,5 @@
 {
-  "credential_file": "~/.local/state/telegram-video-downloader/bilibili-auth.json",
-  "access_key_file": "access_key.txt",
+  "credential_file": "/path/to/credentials.json",
   "request_timeout_seconds": 30,
   "restricted_api_proxy_all_areas": ["https://proxy.example"],
   "cases": [

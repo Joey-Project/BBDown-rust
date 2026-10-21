@@ -416,10 +416,19 @@ just ci
 运行相同测试门禁，并在干净 checkout 上执行严格 crates.io dry run。CLI crate 不是 crates.io 发布目
 标；二进制分发使用 GitHub release 归档。`just live-e2e` 被有意排除在默认 CI 之外，且在
 被忽略的本地 `live-e2e.samples.json` 不存在时会快速失败。请从
-`live-e2e.samples.example.json` 开始，把 `credential_file` 和 `access_key_file` 指向本地
-密钥文件，并列出要探测的 public、PGC、intl 或 restricted PGC 样例。live 测试框架会为每
-个 case 写入隔离的临时凭据存储，并在运行前移除 CLI 覆盖环境变量，因此样例行为由 manifest
-驱动，而不是由 shell 状态驱动。
+`live-e2e.samples.example.json` 开始，并列出要探测的 public、PGC、intl 或 restricted PGC
+样例。`credential_file` 支持旧版 BBDown 或 Telegram Video Downloader 扁平凭据文件，以及
+新版 BBDown versioned credential store。可在 manifest 中选择 `credential_profile`；case 中的
+`credential_file` 或 `credential_profile` 会分别独立覆盖 manifest 的对应值。省略 profile 时
+使用所选 store 的默认 profile。未知或空 profile、指定 profile 但缺少凭据文件，以及空或损坏
+的显式 store 都会报错；没有凭据来源或 profile 时仍允许匿名样例。可选的
+`access_key_file` 从纯文本文件读取通用 key；case 级文件会覆盖 manifest 级文件，且其 trim
+后非空的值会覆盖所选 profile 的
+`access_key`。
+
+源凭据文件只读。live 测试框架会把所选 profile 的 cookie、通用 access key 和 TV access key
+写入每个 case 独立的临时凭据存储；不会复制其他 profile 或凭据生命周期 metadata。运行前会移除
+CLI 覆盖环境变量，因此样例行为由 manifest 驱动，而不是由 shell 状态驱动。
 
 ## 文档
 

@@ -1071,15 +1071,26 @@ CI because the results depend on network, account, token, and regional eligibili
 requires an ignored `live-e2e.samples.json` manifest in the repository root; use
 `live-e2e.samples.example.json` as the tracked shape.
 
-The manifest can point to an existing credential file with `credential_file`, read a plain text
-access key from `access_key_file`, set `request_timeout_seconds`, and configure restricted proxy
-candidates with the same area names used by the CLI. `restricted_api_proxy_all_areas` and
-`restricted_area_proxy_all_areas` expand each listed URL to `cn`, `th`, `hk`, and `tw` candidates.
-Each case declares a `kind`, `url`, optional `selection`, optional restricted-area hint, actions
-such as `info` or `plan`, and expected JSON shape. The harness copies only cookie/access-key fields
-into a temporary credential file for the case and strips CLI override environment variables before
-running the real `bbdown` binary. Unknown manifest fields are rejected so typoed expectation keys
-fail fast instead of silently weakening the live gate.
+For `just live-e2e` cases, `credential_file` may point to a legacy flat BBDown credential file, a
+flat Telegram Video Downloader credential file, or a versioned BBDown credential store. An optional
+`credential_profile` selects a profile in the chosen store; case-level `credential_file` and
+`credential_profile` each override the manifest-level value independently. If no profile is given,
+the selected store's default profile is used. Empty or unknown profiles, a missing file when a
+profile is explicit, and empty or corrupt stores fail rather than silently falling back to anonymous
+access. With no explicit credential source or profile, anonymous cases remain allowed. The optional
+`access_key_file` reads a plain-text generic key; a case-level file overrides the manifest-level file,
+and its non-empty trimmed value overrides `access_key` from the selected profile.
+
+The source credential file is read-only. For each case, the harness writes the selected profile's
+cookie, generic access key, and TV access key to an isolated temporary credential store; other
+profiles and credential lifecycle metadata are not copied. It strips CLI override environment
+variables before running the real `bbdown` binary. The manifest can also set
+`request_timeout_seconds` and configure restricted proxy candidates with the same area names used by
+the CLI. `restricted_api_proxy_all_areas`
+and `restricted_area_proxy_all_areas` expand each listed URL to `cn`, `th`, `hk`, and `tw`
+candidates. Each case declares a `kind`, `url`, optional `selection`, optional restricted-area hint,
+actions such as `info` or `plan`, and expected JSON shape. Unknown manifest fields are rejected so
+typoed expectation keys fail fast instead of silently weakening the live gate.
 Use `allowed_plan_sources` to reject unexpected sources, and `required_plan_sources` when a source
 must appear at least once. For restricted samples that depend on mutable account or regional
 eligibility, a case may set `allow_plan_error: true` with `plan_error_contains`: a successful `plan`
@@ -1089,8 +1100,9 @@ failure and must contain the listed diagnostics.
 To check the independent PGC Web playurl routes against the curated restricted episode
 `ep664928`, run the opt-in API test below. It reads the selected restricted PGC case from the
 ignored manifest and requires one HK API proxy, a Web cookie, and a generic access key. Set
-`BBDOWN_PGC_LIVE_CREDENTIAL_FILE` if the manifest's credential path is stale; the override reads
-the default profile from a BBDown credential store. `OfficialOnly` must either produce playable
+`BBDOWN_PGC_LIVE_CREDENTIAL_FILE` if the manifest's credential path is stale; this replaces the
+credential source, while profile selection still follows the case-level or manifest-level setting, or
+the store default when neither is set. `OfficialOnly` must either produce playable
 `PgcWeb` entries or report an explicit area restriction. `ProxyOnly` must produce playable
 `PgcProxy` entries without an official playurl attempt. The test plans playback only and does not
 download media. The cookie is sent to Bilibili's official endpoints; the generic access key may be

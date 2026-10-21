@@ -900,13 +900,21 @@ intl HTTP endpoint 覆盖。
 `live-e2e.samples.json` manifest；请使用已跟踪的 `live-e2e.samples.example.json` 作为结构
 参考。
 
-manifest 可以用 `credential_file` 指向已有凭据文件，用 `access_key_file` 读取纯文本
-access key，设置 `request_timeout_seconds`，并用与 CLI 相同的区域名配置受限代理候选。
+manifest 可以用 `credential_file` 指向已有 legacy 扁平 BBDown 凭据、Telegram Video Downloader
+扁平凭据或带版本的 BBDown CredentialStore。可选的 `credential_profile` 选择 CredentialStore
+profile；case 单独设置的 `credential_file` 和 `credential_profile` 分别覆盖 manifest 对应字段，
+省略 profile 时使用源存储的默认 profile。空/未知 profile、没有凭据文件却指定 profile，以及空或
+损坏的显式存储都会报错；没有凭据来源或 profile 时仍允许匿名样例。可选
+`access_key_file` 读取纯文本 access key；case 级文件会覆盖 manifest 级文件，且其 trim 后非空
+的值会覆盖所选 profile 的通用 access key。
+源凭据文件只读；测试 harness 会将选中的 cookie、通用 access key 和 TV access key 写入该
+case 的临时凭据文件，不会复制其他 profile 或生命周期元数据。设置
+`request_timeout_seconds`，并用与 CLI 相同的区域名配置受限代理候选。
 `restricted_api_proxy_all_areas` 和 `restricted_area_proxy_all_areas` 会把每个列出的 URL 展
 开为 `cn`、`th`、`hk` 和 `tw` 候选。每个 case 声明 `kind`、`url`、可选 `selection`、可选
-受限区域提示、`info` 或 `plan` 等 action，以及预期 JSON 形态。测试框架只会把
-cookie/access-key 字段复制到该 case 的临时凭据文件，并在运行真实 `bbdown` 二进制前移除
-CLI 覆盖环境变量。未知 manifest 字段会被拒绝，因此拼错的 expectation key 会快速失败，
+受限区域提示、`info` 或 `plan` 等 action，以及预期 JSON 形态。测试框架会在运行真实
+`bbdown` 二进制前移除 CLI 覆盖环境变量。未知 manifest 字段会被拒绝，因此拼错的 expectation
+key 会快速失败，
 而不是静默削弱 live 门禁。
 使用 `allowed_plan_sources` 可以拒绝意外来源；当某个来源必须至少出现一次时，使用
 `required_plan_sources`。对于依赖可变账号或区域资格的受限样例，case 可以设置
@@ -915,8 +923,9 @@ CLI 覆盖环境变量。未知 manifest 字段会被拒绝，因此拼错的 ex
 
 如需用精选受限剧集 `ep664928` 检查独立的 PGC Web playurl 路由，可运行下面的可选 API
 测试。它从被忽略的 manifest 选择该剧集，需要一个香港 API 反代、Web cookie 和通用 access
-key。如果 manifest 中的凭据路径已失效，可以设置 `BBDOWN_PGC_LIVE_CREDENTIAL_FILE`，改为
-读取 BBDown 凭据存储的默认 profile。`OfficialOnly` 必须生成可播放的 `PgcWeb` 条目，或明
+key。如果 manifest 中的凭据路径已失效，可以设置 `BBDOWN_PGC_LIVE_CREDENTIAL_FILE` 替换凭据
+来源；profile 仍按 case 级、manifest 级设置选择，两者均省略时才使用存储的默认 profile。
+`OfficialOnly` 必须生成可播放的 `PgcWeb` 条目，或明
 确返回区域限制；`ProxyOnly` 必须生成可播放的 `PgcProxy` 条目，且不尝试官方 playurl。
 测试只规划播放，不下载媒体。Web cookie 会发往 Bilibili 官方接口；通用 access key 可能
 发往选中的反代。
