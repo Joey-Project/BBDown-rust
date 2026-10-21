@@ -57,6 +57,7 @@ const SEARCH_PGC_EXPIRED_ACCESS_KEY: &str = "codex_synth_v1_access_expired";
 const SEARCH_PGC_RENEWED_ACCESS_KEY: &str = "codex_synth_v1_access_a";
 const SEARCH_PGC_OLD_REFRESH_TOKEN: &str = "codex_synth_v1_refresh_a";
 const SEARCH_PGC_NEW_REFRESH_TOKEN: &str = "codex_synth_v1_refresh_b";
+const PGC_SERVICE_COOKIE_FIXTURE: &str = "codex_synth_v1_bearer_a";
 
 #[test]
 fn cli_version_reports_package_version() -> anyhow::Result<()> {
@@ -72,6 +73,97 @@ fn cli_version_reports_package_version() -> anyhow::Result<()> {
         String::from_utf8(output)?,
         format!("bbdown {}\n", env!("CARGO_PKG_VERSION"))
     );
+    Ok(())
+}
+
+#[test]
+fn pgc_metadata_service_cli_routes_info_without_credentials_or_official_fallback()
+-> anyhow::Result<()> {
+    let service = MockServer::start();
+    let official = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let season = service.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/view/web/season")
+            .query_param("ep_id", "1000")
+            .header_missing("cookie")
+            .header_missing("authorization");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "result": {
+                "season_id": 123,
+                "title": "Service Season",
+                "episodes": [
+                    {"aid": 10, "bvid": "BV1aa", "cid": 100, "id": 1000, "title": "1"}
+                ]
+            }
+        }));
+    });
+    let official_season = official.mock(|when, then| {
+        when.method(GET).path("/pgc/view/web/season");
+        then.status(500);
+    });
+
+    let output = bbdown_command()?
+        .args([
+            "--pgc-base",
+            official.base_url().as_str(),
+            "--pgc-metadata-service-base",
+            service.base_url().as_str(),
+            "--pgc-metadata-service-capabilities",
+            "season",
+            "--credential-file",
+            credential_file
+                .to_str()
+                .context("credential path is UTF-8")?,
+            "info",
+            "ep1000",
+            "--json",
+        ])
+        .env("BBDOWN_COOKIE", PGC_SERVICE_COOKIE_FIXTURE)
+        .env("BBDOWN_ACCESS_KEY", SEARCH_PGC_RENEWED_ACCESS_KEY)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let output: Value = serde_json::from_slice(&output)?;
+    assert!(output.to_string().contains("Service Season"));
+    season.assert();
+    official_season.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+fn pgc_metadata_service_cli_requires_base_and_capabilities_together() -> anyhow::Result<()> {
+    let missing_capabilities = bbdown_command()?
+        .args([
+            "--pgc-metadata-service-base",
+            "http://127.0.0.1:1",
+            "info",
+            "ep1000",
+        ])
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+    assert!(String::from_utf8(missing_capabilities)?.contains("pgc-metadata-service-capabilities"));
+
+    let missing_base = bbdown_command()?
+        .args([
+            "--pgc-metadata-service-capabilities",
+            "season",
+            "info",
+            "ep1000",
+        ])
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+    assert!(String::from_utf8(missing_base)?.contains("pgc-metadata-service-base"));
     Ok(())
 }
 

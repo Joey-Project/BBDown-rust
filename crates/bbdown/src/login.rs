@@ -3346,24 +3346,33 @@ mod tests {
     async fn web_qr_poll_falls_back_to_url_when_header_cookie_is_not_refreshable()
     -> anyhow::Result<()> {
         let server = MockServer::start();
+        // Synthetic fixture from catalog ID refresh-a.
+        let refresh_token_fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/web_qr_poll.json"))?;
+        let refresh_token = refresh_token_fixture["refresh_token"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("invalid QR fixture"))?
+            .to_owned();
         server.mock(|when, then| {
             when.method(GET)
                 .path("/x/passport-login/web/qrcode/poll")
                 .query_param("qrcode_key", "DONE_URL")
                 .header_missing("cookie");
+            let mut response_body = serde_json::json!({
+                "code": 0,
+                "data": {
+                    "code": 0,
+            "url": "https://www.bilibili.com/?SESSDATA=url_sess&bili_jct=url_csrf"
+                }
+            });
+            response_body["data"]["refresh_token"] =
+                serde_json::Value::String(refresh_token.clone());
             then.status(200)
                 .header(
                     "Set-Cookie",
                     "SESSDATA=partial; Path=/; Domain=.bilibili.com",
                 )
-                .json_body_obj(&serde_json::json!({
-                    "code": 0,
-                    "data": {
-                        "code": 0,
-                        "refresh_token": "WEB_RT_URL",
-                        "url": "https://www.bilibili.com/?SESSDATA=url_sess&bili_jct=url_csrf"
-                    }
-                }));
+                .json_body_obj(&response_body);
         });
         let client = test_client(&server);
 
@@ -3375,7 +3384,7 @@ mod tests {
                     access_key: None,
                     tv_access_key: None,
                 })
-                .with_refresh_token("WEB_RT_URL")
+                .with_refresh_token(refresh_token.clone())
             }
         );
         Ok(())
@@ -3384,19 +3393,28 @@ mod tests {
     #[tokio::test]
     async fn web_qr_poll_rejects_success_url_without_csrf() -> anyhow::Result<()> {
         let server = MockServer::start();
+        // Synthetic fixture from catalog ID refresh-a.
+        let refresh_token_fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/web_qr_poll.json"))?;
+        let refresh_token = refresh_token_fixture["refresh_token"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("invalid QR fixture"))?
+            .to_owned();
         server.mock(|when, then| {
             when.method(GET)
                 .path("/x/passport-login/web/qrcode/poll")
                 .query_param("qrcode_key", "DONE_BAD_URL")
                 .header_missing("cookie");
-            then.status(200).json_body_obj(&serde_json::json!({
+            let mut response_body = serde_json::json!({
                 "code": 0,
                 "data": {
                     "code": 0,
-                    "refresh_token": "WEB_RT_BAD",
-                    "url": "https://www.bilibili.com/?SESSDATA=url_sess"
+            "url": "https://www.bilibili.com/?SESSDATA=url_sess"
                 }
-            }));
+            });
+            response_body["data"]["refresh_token"] =
+                serde_json::Value::String(refresh_token.clone());
+            then.status(200).json_body_obj(&response_body);
         });
         let client = test_client(&server);
 
@@ -3571,6 +3589,7 @@ mod tests {
             restricted_area: RestrictedAreaConfig::default(),
             playurl_mode: PlayurlMode::Web,
             pgc_web_playurl_route: crate::PgcWebPlayurlRoute::default(),
+            pgc_metadata_route: crate::PgcMetadataRoute::default(),
             user_agent: "test".to_owned(),
             request_timeout: std::time::Duration::from_secs(30),
         })

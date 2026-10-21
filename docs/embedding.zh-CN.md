@@ -220,11 +220,12 @@ plan 返回的 `epid` 构造 `Input::Episode(epid)`，以保持在同一分集�
 `/x/web-interface/nav` 和 `/x/web-interface/wbi/search/type`；所选服务必须同时支持这两个端点。
 PGC Web playurl 路由不代表支持搜索。搜索结果仍是普通视频 collection 条目，不会新增 PGC 分集字段。若选中 BVID 或 aid
 的官方 `view` 响应在 `data.redirect_url` 中返回 `bilibili.com` 或 `www.bilibili.com` 下匹配
-`/bangumi/play/ep<ID>` 的分集链接，解析器会通过 `pgc_base` 请求 `/pgc/view/web/season?ep_id=<ID>`。
+`/bangumi/play/ep<ID>` 的分集链接，解析器会通过配置的 PGC metadata 路由请求
+`/pgc/view/web/season?ep_id=<ID>`（默认路由使用 `pgc_base`；service-only 路由需要 `Season` capability）。
 只有返回的 season 包含该分集且 aid 与选中视频一致时才接受识别。规划、播放和下载会保留已确认的 epid 和 cid。
 无法确认的分集重定向会明确报错，不猜测 PGC 身份，也不会把普通错误解释为区域限制。确认的 PGC 分集沿用现有
 PGC Web playurl 路由；Web 和 APP 沿用现有受限区域代理回退。TV playurl 语义不变。搜索 `api_base`、
-PGC metadata `pgc_base` 和 `PgcWebPlayurlRoute` 是分开的设置。是否可用取决于所选服务和调用方访问权限。
+PGC metadata `pgc_base` 和 `PgcWebPlayurlRoute` 是分开的设置；`PgcMetadataRoute` 独立选择下文描述的国内分集/season 与 media-review metadata 路由。是否可用取决于所选服务和调用方访问权限。
 
 `Input::VideoSearch` 和 `VideoCollectionKind::Search` 新增了公开枚举分支；下游穷尽匹配需要处理这些分支。
 现有 input 类型的运行时行为保持不变。
@@ -411,6 +412,66 @@ conditions、自动翻页、解析 season 详情或下载媒体。`PgcIndexPage`
 credentials、Cookie；不会跟随重定向，使用配置的 timeout，JSON 响应上限为 1 MiB。`PgcWebPlayurlRoute` 只覆盖 PGC Web playurl，
 不会路由索引 metadata。列表只提供 metadata：`ss<ID>` 或 `md<ID>` 仍须通过现有 season 解析流程并显式选择分集；`latest` 保留其正片语义。
 已存在的精确分集 ID 可使用现有 `ep<ID>` 流程。不会增加通用 input、自动 hydration 或下载路径。
+
+### 按能力声明的 PGC metadata service
+
+`PgcMetadataRoute` 独立控制国内 PGC 分集/season hydration 与 media-review metadata。默认的
+`Configured` 会保留现有 `EndpointConfig::pgc_base` 行为。只有在调用方选定兼容的本地或私有服务，
+并确认其实际支持哪些 endpoint 时，才使用 `ServiceOnly(service)`：
+
+| Capability | Endpoint | 查询范围 |
+| --- | --- | --- |
+| `PgcMetadataCapability::Season` | `/pgc/view/web/season` | 国内 `ep<ID>`、`ss<ID>` 解析，以及 `md<ID>` 的 season 步骤 |
+| `PgcMetadataCapability::MediaReview` | `/pgc/review/user` | 国内 `md<ID>` 解析中的 media-review 步骤 |
+
+至少需要声明一个 capability。`ep<ID>` 和 `ss<ID>` 需要 `Season`。`md<ID>` 需要两个 capability；客户端会在首次 HTTP 请求前检查两者。
+若未声明所需 capability，调用会在发请求前返回对应 endpoint 的 capability 错误。Service-only 路由不会回退到
+`pgc_base`、官方服务、受限区域代理或其它 endpoint。`PgcWebPlayurlRoute` 仍只控制 Web playurl。
+只要服务 payload 兼容，这项配置只改变 metadata 请求的路由，现有解析、分集顺序、分组和 `Latest` 选择语义保持不变。
+
+此路由不覆盖 PGC 时间表或电影/电视剧索引、普通视频搜索、PUGV、Intl PGC、playurl 或媒体；这些仍沿用各自的
+endpoint 配置与行为。仅配置 base URL 并不能证明服务支持这些路由或响应结构，声明 capability 前应确认所选服务确实实现
+对应 endpoint。Base 必须是带主机名的绝对 HTTP(S) URL，且不能带 userinfo、query 或 fragment。crate 不提供或验证兼容的公共服务。
+
+服务以匿名方式请求：不转发配置的 Cookie、access key 或其它凭据，不跟随重定向，也不调用代理回退。
+endpoint 路径会追加到经过校验的 HTTP(S) base URL，并保留 base 中的路径前缀。每份解码后的响应正文默认独立限制为
+8 MiB；`md<ID>` 的 review 与 season 响应分别可使用完整上限。`with_max_response_bytes` 只接受正数限制。
+
+```rust,no_run
+use bbdown_core::{
+    BiliClient, ClientConfig, PgcMetadataCapability, PgcMetadataRoute, PgcMetadataService,
+    Selection,
+};
+
+async fn resolve_with_private_service() -> bbdown_core::Result<()> {
+    let service = PgcMetadataService::new(
+        "https://metadata-gateway.example",
+        [PgcMetadataCapability::Season, PgcMetadataCapability::MediaReview],
+    )?
+    .with_max_response_bytes(4 * 1024 * 1024)?;
+    let config = ClientConfig::default()
+        .with_pgc_metadata_route(PgcMetadataRoute::ServiceOnly(service));
+    let client = BiliClient::new(config);
+    let resolved = client
+        .resolve_input("md22718131", Some(Selection::Latest))
+        .await?;
+    println!("{resolved:?}");
+    Ok(())
+}
+```
+
+CLI 必须同时提供 `--pgc-metadata-service-base` 和
+`--pgc-metadata-service-capabilities`。Capability 使用逗号分隔值 `season` 与 `media-review`；可选的
+`--pgc-metadata-service-max-response-bytes` 必须为正数，且只有提供这组 service 参数时才能使用：
+
+```bash
+bbdown --pgc-metadata-service-base https://metadata-gateway.example \
+  --pgc-metadata-service-capabilities season,media-review \
+  --pgc-metadata-service-max-response-bytes 4194304 info md22718131 --json
+```
+
+原有的 `--pgc-base` / `BBDOWN_PGC_BASE` 仍用于 `Configured` metadata 路由；新的 CLI 参数对声明的 capability
+显式选择 service-only 路由。
 
 ### 有界动态元数据分页
 
@@ -654,10 +715,9 @@ fn print_episode_groups(season: &SeasonMetadata) {
 缺少 `episode_groups` 字段的旧版 JSON 会反序列化为空列表。使用 struct literal 构造
 `SeasonMetadata` 的 Rust 调用方需要提供新字段；建议消费 API 返回的 metadata，而不是自行构造输出模型。
 
-PGC season 和 review metadata 会使用配置的 PGC base 访问 `/pgc/view/web/season` 和
-`/pgc/review/user`。CLI 可通过 `--pgc-base` 或 `BBDOWN_PGC_BASE` 选择可信的本地或私有 gateway。
-兼容服务必须实现这些精确路由及响应 payload。`PgcWebPlayurlRoute` 只适用于 Web playurl 请求，
-不会路由 metadata。crate 不提供公共 gateway 或 metadata 自动回退。
+除非显式选择上面的按能力声明 service-only 路由，否则 PGC season 与 review metadata 会继续使用配置的 PGC base
+访问 `/pgc/view/web/season` 和 `/pgc/review/user`。`PgcWebPlayurlRoute` 只适用于 Web playurl，不会路由
+metadata。crate 不提供公共 gateway 或 metadata 自动回退。
 
 下载规划会把选中的集合条目映射回普通视频条目，因此下游下载执行、归档重复检查、stream
 selection、封面、字幕和弹幕旁路文件仍使用与普通视频下载相同的 API。因为 `DownloadPlan`
@@ -945,8 +1005,8 @@ plan，供下游下载器或播放器使用。
 嵌入式应用若要并发尝试官方与反代的 PGC **Web playurl**，可用同一份配置创建两个 client。
 `PgcWebPlayurlRoute::OfficialOnly` 只请求官方 playurl；`ProxyOnly(proxy)` 只请求指定反代
 服务器（API 风格反代可能依次尝试该服务器的 Web 与 Web v2 路径）。默认的
-`OfficialThenProxy` 保持现有的区域错误回退链。这些模式不改变 PGC metadata 获取，也不
-影响 TV/APP playurl。
+`OfficialThenProxy` 保持现有的区域错误回退链。这些模式不改变上文独立配置的 PGC metadata 路由，也不影响
+TV/APP playurl。
 
 ```rust,no_run
 use bbdown_core::{BiliClient, ClientConfig, PgcWebPlayurlRoute, RestrictedAreaConfig, RestrictedAreaProxy};

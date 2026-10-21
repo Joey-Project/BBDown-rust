@@ -219,6 +219,103 @@ pub enum PgcWebPlayurlRoute {
     ProxyOnly(RestrictedAreaProxy),
 }
 
+/// Metadata capabilities explicitly declared for an anonymous PGC metadata service.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PgcMetadataCapability {
+    /// PGC season metadata by episode ID or season ID.
+    Season,
+    /// PGC review metadata by media ID.
+    MediaReview,
+}
+
+/// Default decoded response limit for the anonymous PGC metadata service.
+pub const PGC_METADATA_SERVICE_DEFAULT_MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+
+/// Caller-supplied anonymous service for the supported PGC metadata endpoints.
+#[derive(Clone, Debug)]
+pub struct PgcMetadataService {
+    base_url: Url,
+    capabilities: Vec<PgcMetadataCapability>,
+    max_response_bytes: usize,
+    http: Arc<OnceLock<std::result::Result<reqwest::Client, ()>>>,
+}
+
+impl PartialEq for PgcMetadataService {
+    fn eq(&self, other: &Self) -> bool {
+        self.base_url == other.base_url
+            && self.capabilities == other.capabilities
+            && self.max_response_bytes == other.max_response_bytes
+    }
+}
+
+impl Eq for PgcMetadataService {}
+
+impl PgcMetadataService {
+    /// Creates a service after validating its base URL and caller-declared capabilities.
+    pub fn new(
+        base_url: impl AsRef<str>,
+        capabilities: impl IntoIterator<Item = PgcMetadataCapability>,
+    ) -> Result<Self> {
+        let base_url = Url::parse(base_url.as_ref())
+            .map_err(|_| Error::InvalidInput("invalid PGC metadata service base URL".into()))?;
+        if !matches!(base_url.scheme(), "http" | "https")
+            || base_url.host_str().is_none()
+            || !base_url.username().is_empty()
+            || base_url.password().is_some()
+            || base_url.query().is_some()
+            || base_url.fragment().is_some()
+        {
+            return Err(Error::InvalidInput(
+                "invalid PGC metadata service base URL".into(),
+            ));
+        }
+        let mut capabilities = capabilities.into_iter().collect::<Vec<_>>();
+        capabilities.sort_by_key(|capability| match capability {
+            PgcMetadataCapability::Season => 0,
+            PgcMetadataCapability::MediaReview => 1,
+        });
+        capabilities.dedup();
+        if capabilities.is_empty() {
+            return Err(Error::InvalidInput(
+                "PGC metadata service requires at least one declared capability".into(),
+            ));
+        }
+        Ok(Self {
+            base_url,
+            capabilities,
+            max_response_bytes: PGC_METADATA_SERVICE_DEFAULT_MAX_RESPONSE_BYTES,
+            http: Arc::default(),
+        })
+    }
+
+    /// Sets the positive decoded response-body limit for service requests.
+    pub fn with_max_response_bytes(mut self, max_response_bytes: usize) -> Result<Self> {
+        if max_response_bytes == 0 {
+            return Err(Error::InvalidInput(
+                "PGC metadata service response limit must be positive".into(),
+            ));
+        }
+        self.max_response_bytes = max_response_bytes;
+        Ok(self)
+    }
+
+    fn supports(&self, capability: PgcMetadataCapability) -> bool {
+        self.capabilities.contains(&capability)
+    }
+}
+
+/// Selects configured PGC endpoints or an explicitly declared anonymous service.
+#[non_exhaustive]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub enum PgcMetadataRoute {
+    /// Preserve the existing configured PGC base and credential behavior.
+    #[default]
+    Configured,
+    /// Route only supported PGC metadata calls to this service without credentials.
+    ServiceOnly(PgcMetadataService),
+}
+
 #[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct ClientConfig {
@@ -228,6 +325,7 @@ pub struct ClientConfig {
     pub restricted_area: RestrictedAreaConfig,
     pub playurl_mode: PlayurlMode,
     pub pgc_web_playurl_route: PgcWebPlayurlRoute,
+    pub pgc_metadata_route: PgcMetadataRoute,
     pub user_agent: String,
     pub request_timeout: Duration,
 }
@@ -241,6 +339,7 @@ impl Default for ClientConfig {
             restricted_area: RestrictedAreaConfig::default(),
             playurl_mode: PlayurlMode::default(),
             pgc_web_playurl_route: PgcWebPlayurlRoute::default(),
+            pgc_metadata_route: PgcMetadataRoute::default(),
             user_agent: "bbdown-rs/0.1".to_owned(),
             request_timeout: Duration::from_secs(30),
         }
@@ -290,6 +389,12 @@ impl ClientConfig {
     #[must_use]
     pub fn with_pgc_web_playurl_route(mut self, route: PgcWebPlayurlRoute) -> Self {
         self.pgc_web_playurl_route = route;
+        self
+    }
+
+    #[must_use]
+    pub fn with_pgc_metadata_route(mut self, route: PgcMetadataRoute) -> Self {
+        self.pgc_metadata_route = route;
         self
     }
 
@@ -1595,10 +1700,27 @@ impl BiliClient {
         epid: u64,
         selection: Option<Selection>,
     ) -> Result<SeasonResolution> {
-        let mut url = Self::endpoint_url(&self.config.endpoints.pgc_base, "/pgc/view/web/season")?;
-        url.query_pairs_mut()
-            .append_pair("ep_id", &epid.to_string());
-        let season = self.fetch_pgc_season(url).await?;
+        let season = match &self.config.pgc_metadata_route {
+            PgcMetadataRoute::Configured => {
+                let mut url =
+                    Self::endpoint_url(&self.config.endpoints.pgc_base, "/pgc/view/web/season")?;
+                url.query_pairs_mut()
+                    .append_pair("ep_id", &epid.to_string());
+                self.fetch_pgc_season(url).await?
+            }
+            PgcMetadataRoute::ServiceOnly(service) => {
+                Self::require_pgc_metadata_capability(service, PgcMetadataCapability::Season)?;
+                let response = self
+                    .fetch_pgc_service_api::<PgcSeasonResult>(
+                        service,
+                        PgcMetadataCapability::Season,
+                        "/pgc/view/web/season",
+                        &[("ep_id", epid.to_string())],
+                    )
+                    .await?;
+                season_from_pgc(response)
+            }
+        };
         let selection = selection.unwrap_or(Selection::Current);
         Self::resolve_season_selection(season, Some(&selection), Some(epid), "episode")
     }
@@ -1608,10 +1730,27 @@ impl BiliClient {
         season_id: u64,
         selection: Selection,
     ) -> Result<SeasonResolution> {
-        let mut url = Self::endpoint_url(&self.config.endpoints.pgc_base, "/pgc/view/web/season")?;
-        url.query_pairs_mut()
-            .append_pair("season_id", &season_id.to_string());
-        let season = self.fetch_pgc_season(url).await?;
+        let season = match &self.config.pgc_metadata_route {
+            PgcMetadataRoute::Configured => {
+                let mut url =
+                    Self::endpoint_url(&self.config.endpoints.pgc_base, "/pgc/view/web/season")?;
+                url.query_pairs_mut()
+                    .append_pair("season_id", &season_id.to_string());
+                self.fetch_pgc_season(url).await?
+            }
+            PgcMetadataRoute::ServiceOnly(service) => {
+                Self::require_pgc_metadata_capability(service, PgcMetadataCapability::Season)?;
+                let response = self
+                    .fetch_pgc_service_api::<PgcSeasonResult>(
+                        service,
+                        PgcMetadataCapability::Season,
+                        "/pgc/view/web/season",
+                        &[("season_id", season_id.to_string())],
+                    )
+                    .await?;
+                season_from_pgc(response)
+            }
+        };
         Self::resolve_season_selection(season, Some(&selection), None, "season")
     }
 
@@ -1620,14 +1759,29 @@ impl BiliClient {
         media_id: u64,
         selection: Selection,
     ) -> Result<SeasonResolution> {
-        let mut review_url =
-            Self::endpoint_url(&self.config.endpoints.pgc_base, "/pgc/review/user")?;
-        review_url
-            .query_pairs_mut()
-            .append_pair("media_id", &media_id.to_string());
-        let review: ApiResult<PgcReviewResult> = self.get_json(review_url).await?;
-        let epid = review
-            .into_result()?
+        let review_result = match &self.config.pgc_metadata_route {
+            PgcMetadataRoute::Configured => {
+                let mut review_url =
+                    Self::endpoint_url(&self.config.endpoints.pgc_base, "/pgc/review/user")?;
+                review_url
+                    .query_pairs_mut()
+                    .append_pair("media_id", &media_id.to_string());
+                let review: ApiResult<PgcReviewResult> = self.get_json(review_url).await?;
+                review.into_result()?
+            }
+            PgcMetadataRoute::ServiceOnly(service) => {
+                Self::require_pgc_metadata_capability(service, PgcMetadataCapability::MediaReview)?;
+                Self::require_pgc_metadata_capability(service, PgcMetadataCapability::Season)?;
+                self.fetch_pgc_service_api::<PgcReviewResult>(
+                    service,
+                    PgcMetadataCapability::MediaReview,
+                    "/pgc/review/user",
+                    &[("media_id", media_id.to_string())],
+                )
+                .await?
+            }
+        };
+        let epid = review_result
             .media
             .and_then(|media| media.new_ep)
             .map(|episode| episode.id)
@@ -3037,6 +3191,125 @@ impl BiliClient {
     async fn fetch_pgc_season(&self, url: Url) -> Result<SeasonMetadata> {
         let response: ApiResult<PgcSeasonResult> = self.get_json(url).await?;
         Ok(season_from_pgc(response.into_result()?))
+    }
+
+    fn require_pgc_metadata_capability(
+        service: &PgcMetadataService,
+        capability: PgcMetadataCapability,
+    ) -> Result<()> {
+        if service.supports(capability) {
+            return Ok(());
+        }
+        let name = match capability {
+            PgcMetadataCapability::Season => "season",
+            PgcMetadataCapability::MediaReview => "media-review",
+        };
+        Err(Error::Unsupported(format!(
+            "PGC metadata service does not declare the {name} capability"
+        )))
+    }
+
+    async fn fetch_pgc_service_api<T>(
+        &self,
+        service: &PgcMetadataService,
+        capability: PgcMetadataCapability,
+        path: &str,
+        query: &[(&str, String)],
+    ) -> Result<T>
+    where
+        T: for<'de> Deserialize<'de>,
+    {
+        Self::require_pgc_metadata_capability(service, capability)?;
+        let endpoint = match capability {
+            PgcMetadataCapability::Season => "season",
+            PgcMetadataCapability::MediaReview => "media-review",
+        };
+        let mut url = service.base_url.clone();
+        set_endpoint_path(&mut url, path);
+        url.set_query(None);
+        url.set_fragment(None);
+        {
+            let mut pairs = url.query_pairs_mut();
+            for (key, value) in query {
+                pairs.append_pair(key, value);
+            }
+        }
+        let http = service
+            .http
+            .get_or_init(|| {
+                reqwest::Client::builder()
+                    .redirect(reqwest::redirect::Policy::none())
+                    .build()
+                    .map_err(|_| ())
+            })
+            .as_ref()
+            .map_err(|()| {
+                Error::InvalidInput(format!(
+                    "PGC metadata service {endpoint} request client unavailable"
+                ))
+            })?;
+        let response = http
+            .get(url)
+            .headers(self.headers(false)?)
+            .timeout(self.config.request_timeout)
+            .send()
+            .await
+            .map_err(|error| {
+                let kind = if error.is_timeout() {
+                    "timed out"
+                } else if error.is_connect() {
+                    "connection failed"
+                } else {
+                    "transport failed"
+                };
+                Error::InvalidInput(format!("PGC metadata service {endpoint} request {kind}"))
+            })?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(Error::InvalidInput(format!(
+                "PGC metadata service {endpoint} returned HTTP {}",
+                status.as_u16()
+            )));
+        }
+        if response
+            .content_length()
+            .is_some_and(|length| length > service.max_response_bytes as u64)
+        {
+            return Err(Error::InvalidInput(format!(
+                "PGC metadata service {endpoint} response exceeded the {}-byte limit",
+                service.max_response_bytes
+            )));
+        }
+        let mut body = Vec::new();
+        let mut response = response;
+        while let Some(chunk) = response.chunk().await.map_err(|error| {
+            let kind = if error.is_timeout() {
+                "timed out"
+            } else {
+                "body read failed"
+            };
+            Error::InvalidInput(format!("PGC metadata service {endpoint} {kind}"))
+        })? {
+            if body.len().saturating_add(chunk.len()) > service.max_response_bytes {
+                return Err(Error::InvalidInput(format!(
+                    "PGC metadata service {endpoint} response exceeded the {}-byte limit",
+                    service.max_response_bytes
+                )));
+            }
+            body.extend_from_slice(&chunk);
+        }
+        let response: ApiResult<T> = serde_json::from_slice(&body).map_err(|_| {
+            Error::InvalidInput(format!(
+                "PGC metadata service {endpoint} returned malformed JSON"
+            ))
+        })?;
+        if response.code != 0 {
+            return Err(Error::Api {
+                code: response.code,
+                message: "PGC metadata service API failure".to_owned(),
+            });
+        }
+        response.result.ok_or(Error::MissingField("result"))
     }
 
     fn resolve_season_selection(
@@ -7325,11 +7598,12 @@ mod tests {
         ACCESS_KEY_IDENTITY_KEYPAIR_FALLBACK_ORDER, BILIBILI_ANDROID_APP_SECRET,
         BILIBILI_ANDROID_APPKEY, BILIBILI_ANDROID_B_APP_SECRET, BILIBILI_ANDROID_B_APPKEY,
         BiliClient, CREDENTIAL_IDENTITY_RESPONSE_MAX_BYTES, ClientConfig, EndpointConfig,
-        INTL_OGV_APP_SECRET, INTL_OGV_APPKEY, MediaListKind, PgcWebPlayurlRoute, PlayUrlRoot,
-        PlayurlMode, RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy,
-        TV_PLAYURL_APP_SECRET, TV_PLAYURL_APPKEY, access_key_identity_params,
-        append_pgc_playurl_params, append_tv_playurl_params, decode_app_grpc_stream_set,
-        intl_ogv_playurl_params, oauth2_info_params, season_from_pgc, sign_ordered_params,
+        INTL_OGV_APP_SECRET, INTL_OGV_APPKEY, MediaListKind, PgcMetadataCapability,
+        PgcMetadataRoute, PgcMetadataService, PgcWebPlayurlRoute, PlayUrlRoot, PlayurlMode,
+        RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy, TV_PLAYURL_APP_SECRET,
+        TV_PLAYURL_APPKEY, access_key_identity_params, append_pgc_playurl_params,
+        append_tv_playurl_params, decode_app_grpc_stream_set, intl_ogv_playurl_params,
+        oauth2_info_params, season_from_pgc, sign_ordered_params,
     };
     use crate::{
         AccessKeyIdentityKeypair, AccessKeyProvider, CodecFamily, CredentialHealthScope,
@@ -7345,6 +7619,8 @@ mod tests {
     use reqwest::header::{COOKIE, HeaderMap, HeaderValue};
     use std::collections::HashMap;
     use std::convert::Infallible;
+    use std::io::{Read as _, Write as _};
+    use std::net::TcpListener;
     use std::time::{Duration, Instant};
     use url::Url;
 
@@ -12992,6 +13268,7 @@ mod tests {
             restricted_area: RestrictedAreaConfig::default(),
             playurl_mode: PlayurlMode::Web,
             pgc_web_playurl_route: PgcWebPlayurlRoute::default(),
+            pgc_metadata_route: PgcMetadataRoute::default(),
             user_agent: "test".to_owned(),
             request_timeout: Duration::from_secs(30),
         });
@@ -13204,6 +13481,7 @@ mod tests {
             restricted_area: RestrictedAreaConfig::default(),
             playurl_mode: PlayurlMode::Web,
             pgc_web_playurl_route: PgcWebPlayurlRoute::default(),
+            pgc_metadata_route: PgcMetadataRoute::default(),
             user_agent: "test".to_owned(),
             request_timeout: Duration::from_secs(30),
         });
@@ -14164,6 +14442,7 @@ mod tests {
             },
             playurl_mode: PlayurlMode::Web,
             pgc_web_playurl_route: PgcWebPlayurlRoute::default(),
+            pgc_metadata_route: PgcMetadataRoute::default(),
             user_agent: "test".to_owned(),
             request_timeout: Duration::from_secs(30),
         });
@@ -14268,6 +14547,7 @@ mod tests {
             },
             playurl_mode: PlayurlMode::Web,
             pgc_web_playurl_route: PgcWebPlayurlRoute::default(),
+            pgc_metadata_route: PgcMetadataRoute::default(),
             user_agent: "test".to_owned(),
             request_timeout: Duration::from_secs(30),
         });
@@ -14362,6 +14642,7 @@ mod tests {
                 },
                 playurl_mode: PlayurlMode::Web,
                 pgc_web_playurl_route: PgcWebPlayurlRoute::default(),
+                pgc_metadata_route: PgcMetadataRoute::default(),
                 user_agent: "test".to_owned(),
                 request_timeout: Duration::from_secs(30),
             });
@@ -14443,6 +14724,7 @@ mod tests {
             },
             playurl_mode: PlayurlMode::Web,
             pgc_web_playurl_route: PgcWebPlayurlRoute::default(),
+            pgc_metadata_route: PgcMetadataRoute::default(),
             user_agent: "test".to_owned(),
             request_timeout: Duration::from_secs(30),
         });
@@ -14504,6 +14786,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn pgc_bilibili_api_proxy_falls_back_to_v2_path() -> anyhow::Result<()> {
         let server = MockServer::start();
         server.mock(|when, then| {
@@ -14595,6 +14878,7 @@ mod tests {
             },
             playurl_mode: PlayurlMode::Web,
             pgc_web_playurl_route: PgcWebPlayurlRoute::default(),
+            pgc_metadata_route: PgcMetadataRoute::default(),
             user_agent: "test".to_owned(),
             request_timeout: Duration::from_secs(30),
             ..ClientConfig::default()
@@ -14688,6 +14972,7 @@ mod tests {
             },
             playurl_mode: PlayurlMode::Web,
             pgc_web_playurl_route: PgcWebPlayurlRoute::default(),
+            pgc_metadata_route: PgcMetadataRoute::default(),
             ..ClientConfig::default()
         });
         let plan = client.plan_download("ep1000", None).await?;
@@ -14806,6 +15091,7 @@ mod tests {
             restricted_area: RestrictedAreaConfig::default(),
             playurl_mode: PlayurlMode::Web,
             pgc_web_playurl_route: PgcWebPlayurlRoute::default(),
+            pgc_metadata_route: PgcMetadataRoute::default(),
             user_agent: "test".to_owned(),
             request_timeout: Duration::from_millis(30),
         });
@@ -14877,6 +15163,319 @@ mod tests {
                 return Err(anyhow::anyhow!("expected season"));
             }
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pgc_metadata_service_routes_anonymous_season_requests_with_base_prefix()
+    -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let season = server.mock(|when, then| {
+            when.method(GET)
+                .path("/service-prefix/pgc/view/web/season")
+                .query_param("ep_id", "1000")
+                .header_missing("cookie")
+                .header_missing("authorization");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "result": {
+                    "season_id": 123,
+                    "title": "A Season",
+                    "episodes": [
+                        {"aid": 10, "bvid": "BV1aa", "cid": 100, "id": 1000, "title": "1"}
+                    ]
+                }
+            }));
+        });
+        let service = PgcMetadataService::new(
+            format!("{}/service-prefix", server.base_url()),
+            [PgcMetadataCapability::Season],
+        )?;
+        let client = BiliClient::new(
+            ClientConfig::default()
+                .with_endpoints(EndpointConfig::default().with_pgc_base("http://127.0.0.1:1"))
+                .with_credentials(Credentials {
+                    cookie: Some(IDENTITY_COOKIE_FIXTURE.to_owned()),
+                    access_key: Some(IDENTITY_ACCESS_KEY_FIXTURE.to_owned()),
+                    tv_access_key: None,
+                })
+                .with_pgc_metadata_route(PgcMetadataRoute::ServiceOnly(service)),
+        );
+
+        let resolved = client.resolve_input("ep1000", None).await?;
+        season.assert();
+        assert!(matches!(resolved, ResolvedContent::Season(_)));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pgc_metadata_media_requires_both_capabilities_before_http() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let review = server.mock(|when, then| {
+            when.method(GET).path("/pgc/review/user");
+            then.status(500);
+        });
+        let service = PgcMetadataService::new(server.base_url(), [PgcMetadataCapability::Season])?;
+        let client = BiliClient::new(
+            ClientConfig::default().with_pgc_metadata_route(PgcMetadataRoute::ServiceOnly(service)),
+        );
+
+        let error = client
+            .resolve_input("md456", Some(Selection::Latest))
+            .await
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("media route without review capability must fail"))?;
+        assert!(matches!(error, Error::Unsupported(_)));
+        review.assert_calls(0);
+
+        let service =
+            PgcMetadataService::new(server.base_url(), [PgcMetadataCapability::MediaReview])?;
+        let client = BiliClient::new(
+            ClientConfig::default().with_pgc_metadata_route(PgcMetadataRoute::ServiceOnly(service)),
+        );
+        let error = client
+            .resolve_input("md456", Some(Selection::Latest))
+            .await
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("media route without season capability must fail"))?;
+        assert!(matches!(error, Error::Unsupported(_)));
+        review.assert_calls(0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pgc_metadata_media_uses_review_then_season_service_and_preserves_latest_selection()
+    -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let review = server.mock(|when, then| {
+            when.method(GET)
+                .path("/pgc/review/user")
+                .query_param("media_id", "456")
+                .header_missing("cookie")
+                .header_missing("authorization");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "result": {"media": {"new_ep": {"id": 1001}}}
+            }));
+        });
+        let season = server.mock(|when, then| {
+            when.method(GET)
+                .path("/pgc/view/web/season")
+                .query_param("ep_id", "1001")
+                .header_missing("cookie")
+                .header_missing("authorization");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": 0,
+                "result": {
+                    "season_id": 123,
+                    "media_id": 456,
+                    "title": "A Season",
+                    "positive": {"id": 900},
+                    "episodes": [
+                        {"aid": 10, "bvid": "BV1aa", "cid": 100, "id": 1000, "title": "1"},
+                        {"aid": 11, "bvid": "BV1bb", "cid": 101, "id": 1001, "title": "2"},
+                        {"aid": 12, "bvid": "BV1cc", "cid": 102, "id": 1002, "title": "3"}
+                    ]
+                }
+            }));
+        });
+        let service = PgcMetadataService::new(
+            server.base_url(),
+            [
+                PgcMetadataCapability::MediaReview,
+                PgcMetadataCapability::Season,
+            ],
+        )?;
+        let client = BiliClient::new(
+            ClientConfig::default().with_pgc_metadata_route(PgcMetadataRoute::ServiceOnly(service)),
+        );
+
+        let resolved = client
+            .resolve_input("md456", Some(Selection::Latest))
+            .await?;
+        review.assert();
+        season.assert();
+        let ResolvedContent::Season(resolved) = resolved else {
+            return Err(anyhow::anyhow!("expected season"));
+        };
+        assert_eq!(resolved.season.media_id, Some(456));
+        assert_eq!(resolved.selected_episodes.len(), 1);
+        assert_eq!(resolved.selected_episodes[0].epid, 1002);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pgc_metadata_service_bounds_content_length_and_sanitizes_api_errors()
+    -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let oversize = server.mock(|when, then| {
+            when.method(GET).path("/pgc/view/web/season");
+            then.status(200).body("x".repeat(128));
+        });
+        let service = PgcMetadataService::new(server.base_url(), [PgcMetadataCapability::Season])?
+            .with_max_response_bytes(32)?;
+        let client = BiliClient::new(
+            ClientConfig::default().with_pgc_metadata_route(PgcMetadataRoute::ServiceOnly(service)),
+        );
+        let error = client
+            .resolve_input("ep1000", None)
+            .await
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("must enforce cap"))?;
+        assert!(error.to_string().contains("32-byte limit"));
+        oversize.assert();
+
+        let api_server = MockServer::start();
+        let api_error = api_server.mock(|when, then| {
+            when.method(GET).path("/pgc/view/web/season");
+            then.status(200).json_body_obj(&serde_json::json!({
+                "code": -404,
+                "message": "https://service.invalid/path?secret=SECRET_BODY",
+                "result": null
+            }));
+        });
+        let service =
+            PgcMetadataService::new(api_server.base_url(), [PgcMetadataCapability::Season])?;
+        let client = BiliClient::new(
+            ClientConfig::default().with_pgc_metadata_route(PgcMetadataRoute::ServiceOnly(service)),
+        );
+        let error = client
+            .resolve_input("ep1000", None)
+            .await
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("API failure expected"))?;
+        assert!(error.to_string().contains("-404"));
+        assert!(!error.to_string().contains("SECRET_BODY"));
+        assert!(!error.to_string().contains("service.invalid"));
+        api_error.assert();
+
+        let malformed_server = MockServer::start();
+        let malformed = malformed_server.mock(|when, then| {
+            when.method(GET).path("/pgc/view/web/season");
+            then.status(200).body("malformed SECRET_BODY");
+        });
+        let service =
+            PgcMetadataService::new(malformed_server.base_url(), [PgcMetadataCapability::Season])?;
+        let client = BiliClient::new(
+            ClientConfig::default().with_pgc_metadata_route(PgcMetadataRoute::ServiceOnly(service)),
+        );
+        let error = client
+            .resolve_input("ep1000", None)
+            .await
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("malformed JSON must fail"))?;
+        assert!(error.to_string().contains("malformed JSON"));
+        assert!(!error.to_string().contains("SECRET_BODY"));
+        malformed.assert();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pgc_metadata_service_timeout_diagnostic_omits_request_url() -> anyhow::Result<()> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let address = listener.local_addr()?;
+        let handle = std::thread::spawn(move || -> std::io::Result<()> {
+            let (mut stream, _) = listener.accept()?;
+            let mut request = [0_u8; 2048];
+            let _ = stream.read(&mut request)?;
+            std::thread::sleep(Duration::from_millis(150));
+            Ok(())
+        });
+        let service =
+            PgcMetadataService::new(format!("http://{address}"), [PgcMetadataCapability::Season])?;
+        let client = BiliClient::new(
+            ClientConfig::default()
+                .with_request_timeout(Duration::from_millis(20))
+                .with_pgc_metadata_route(PgcMetadataRoute::ServiceOnly(service)),
+        );
+        let error = client
+            .resolve_input("ep1000", None)
+            .await
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("service request should time out"))?;
+        handle
+            .join()
+            .map_err(|_| anyhow::anyhow!("timeout test server panicked"))??;
+        assert!(error.to_string().contains("timed out"));
+        assert!(!error.to_string().contains(&address.to_string()));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pgc_metadata_service_streaming_body_cap_handles_chunked_responses()
+    -> anyhow::Result<()> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let address = listener.local_addr()?;
+        let handle = std::thread::spawn(move || -> std::io::Result<()> {
+            let (mut stream, _) = listener.accept()?;
+            let mut request = [0_u8; 2048];
+            let _ = stream.read(&mut request)?;
+            let body = "x".repeat(128);
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{:x}\r\n{}\r\n0\r\n\r\n",
+                body.len(),
+                body
+            )?;
+            Ok(())
+        });
+        let service =
+            PgcMetadataService::new(format!("http://{address}"), [PgcMetadataCapability::Season])?
+                .with_max_response_bytes(32)?;
+        let client = BiliClient::new(
+            ClientConfig::default().with_pgc_metadata_route(PgcMetadataRoute::ServiceOnly(service)),
+        );
+        let error = client
+            .resolve_input("ep1000", None)
+            .await
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("streaming body cap must stop chunked response"))?;
+        handle
+            .join()
+            .map_err(|_| anyhow::anyhow!("chunked service test server panicked"))??;
+        assert!(error.to_string().contains("32-byte limit"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pgc_metadata_service_does_not_follow_redirects_or_fall_back() -> anyhow::Result<()> {
+        let service_server = MockServer::start();
+        let official_server = MockServer::start();
+        let redirect = service_server.mock(|when, then| {
+            when.method(GET).path("/pgc/view/web/season");
+            then.status(302).header(
+                "location",
+                format!("{}/redirect-target", service_server.base_url()),
+            );
+        });
+        let target = service_server.mock(|when, then| {
+            when.method(GET).path("/redirect-target");
+            then.status(200)
+                .json_body_obj(&serde_json::json!({ "code": 0, "result": {} }));
+        });
+        let official = official_server.mock(|when, then| {
+            when.method(GET).path("/pgc/view/web/season");
+            then.status(200)
+                .json_body_obj(&serde_json::json!({ "code": 0, "result": {} }));
+        });
+        let service =
+            PgcMetadataService::new(service_server.base_url(), [PgcMetadataCapability::Season])?;
+        let client = BiliClient::new(
+            ClientConfig::default()
+                .with_endpoints(EndpointConfig::default().with_pgc_base(official_server.base_url()))
+                .with_pgc_metadata_route(PgcMetadataRoute::ServiceOnly(service)),
+        );
+
+        let error = client
+            .resolve_input("ep1000", None)
+            .await
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("redirect must fail"))?;
+        assert!(error.to_string().contains("HTTP 302"));
+        assert!(!error.to_string().contains(&service_server.base_url()));
+        redirect.assert();
+        target.assert_calls(0);
+        official.assert_calls(0);
         Ok(())
     }
 
@@ -15215,6 +15814,7 @@ mod tests {
             restricted_area: RestrictedAreaConfig::default(),
             playurl_mode: PlayurlMode::Web,
             pgc_web_playurl_route: PgcWebPlayurlRoute::default(),
+            pgc_metadata_route: PgcMetadataRoute::default(),
             user_agent: "test".to_owned(),
             request_timeout: Duration::from_secs(30),
         })
