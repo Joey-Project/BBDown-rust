@@ -3,7 +3,7 @@ id: 20261011-page-family-roadmap
 title: Page Family and Season Grouping Roadmap
 status: active
 created: 2026-10-11
-updated: 2026-10-20
+updated: 2026-10-21
 branch:
 pr:
 supersedes: []
@@ -29,6 +29,7 @@ superseded_by:
 - Standard UGC collections, series, favorites, and medialist inputs already have collection resolution and planning paths. Ordinary BV input keeps its single-video behavior; membership expansion is explicit.
 - Existing `PgcWebPlayurlRoute` controls PGC Web playurl requests only. It does not route season metadata or page listings through the restricted-area resolver chain.
 - PGC metadata requests use the configurable `EndpointConfig.pgc_base`; changing an endpoint base alone does not establish that a resolver supports its metadata endpoints, response shape, or regional access.
+- A capability-declared `PgcMetadataRoute::ServiceOnly` can route domestic episode/season and media-review hydration through a caller-selected service that declares the matching endpoints. It does not route timetable, movie/TV index, search, PUGV, international PGC, playurl, or media. See `2026-10-21-pgc-metadata-service-routes-01a0dd39.md`; the broader endpoint-specific service requirement remains open.
 
 ## Ordered Backlog
 
@@ -47,6 +48,7 @@ superseded_by:
 - Aim to support caller-selected API services for existing season/collection/list pages and the new page families only where their endpoint capabilities permit it, so metadata enumeration as well as playback resolution can work when official regional access is unavailable.
 - Cover metadata and listing endpoints explicitly; do not assume the existing PGC playurl fallback also resolves season metadata, search, timetable, or category data. Ordinary video search uses `api_base` for `/x/web-interface/nav` and `/x/web-interface/wbi/search/type`; it does not inherit `PgcWebPlayurlRoute` behavior or forward configured credentials.
 - Prefer reusing endpoint configuration, the bundled resolver catalog, and existing route conventions where compatible. Define service capabilities and caller-selectable routing; a service that only supports playurl must not be presented as a metadata/list resolver.
+- The current `PgcMetadataRoute` slice only declares `Season` and `MediaReview`; do not infer support for timetable or index listings from those capabilities or from the configured `pgc_base`.
 - Preserve required request parameters, signing, pagination, group titles, and episode identities when a service supports the route. Make unsupported endpoints and regional access failures visible in diagnostics.
 - Keep credential requirements and forwarding scope explicit for each configured service. Resolver support depends on the service's endpoint coverage and access rights; it does not guarantee availability for every region or account.
 
@@ -67,3 +69,4 @@ superseded_by:
 - The bounded global ranking slice is recorded in `2026-10-20-ranking-videos-01a0dd39.md`; it does not change the next category/channel and topic priorities.
 - Current implementation references: `crates/bbdown/src/client.rs` (`PgcWebPlayurlRoute`, search API, and PGC season methods) and `crates/bbdown/src/models.rs` (`SeasonMetadata`).
 - The domestic PGC grouping implementation and its validation are recorded in `2026-10-18-pgc-season-grouping-01a0dd39.md`; ordinary search is recorded in `2026-10-18-video-search-01a0dd39.md`; timetable metadata is recorded in `2026-10-19-pgc-timetable-01a0dd39.md`; movie/TV category-index metadata is recorded in `2026-10-19-pgc-season-index-01a0dd39.md`. Broader endpoint-specific API service support remains capability-dependent.
+- The capability-declared domestic PGC metadata service slice is recorded in `2026-10-21-pgc-metadata-service-routes-01a0dd39.md`; its implementation and validation status are tracked there.

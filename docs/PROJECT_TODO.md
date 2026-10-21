@@ -182,9 +182,12 @@
   feed requests using server-issued values, a temporary request header, and clone-shared in-memory
   cache; preserve configured credentials and keep Following behavior unchanged. See
   `docs/project_journal/2026/10/2026-10-11-dynamic-request-and-bounded-metadata.md`.
-- [completed] Run the downstream consumer's focused authenticated SpaceDynamic V2/HLS smoke on
-  the `bbdown-core 0.11.0` source line. One bounded case passed; this does not establish native
-  decoding, sustained playback, full-fill, offline playback, or deployment. See
+- [completed] Record one focused authenticated SpaceDynamic V2/HLS compatibility smoke from an
+  isolated temporary consumer adaptation on the `bbdown-core 0.11.0` source line. One bounded case
+  passed; this is not completed or accepted downstream integration. The downstream maintainer owns
+  dependency upgrade, adaptation, acceptance, and merge; no BBDown work depends on merging consumer
+  PR #77. This does not establish native decoding, sustained playback, full-fill, offline playback,
+  or deployment. See
   `docs/project_journal/2026/10/2026-10-20-dynamic-playback-acceptance-01a0dd39.md` and
   `docs/project_journal/2026/10/2026-10-21-bounded-media-cdn-acceptance-01a0dd39.md`.
 - [pending] Add aria2 backend integration, MP4Box muxing, and subtitle-to-SRT conversion. BBDown

@@ -249,14 +249,16 @@ supported by the selected service; the
 PGC Web playurl route does not imply search support. Search results remain ordinary video collection
 items; they do not gain a PGC episode field. If a selected BVID or aid's official `view` response
 contains a `data.redirect_url` on `bilibili.com` or `www.bilibili.com` matching
-`/bangumi/play/ep<ID>`, the resolver requests `/pgc/view/web/season?ep_id=<ID>` through `pgc_base`.
+`/bangumi/play/ep<ID>`, the resolver requests `/pgc/view/web/season?ep_id=<ID>` through the configured
+PGC metadata route (the default uses `pgc_base`; service-only routing requires the `Season` capability).
 It accepts the match only if the returned season contains that episode and its aid matches the
 selected video. Planning, playback, and download preserve the confirmed episode ID and cid. If an
 episode redirect cannot be confirmed, resolution fails explicitly; it does not guess a PGC identity
 or interpret an ordinary error as a regional restriction. Confirmed PGC episodes use the existing
 configured PGC Web playurl route; Web and APP retain their existing restricted-area proxy fallback.
 TV playurl semantics do not change. Search `api_base`, PGC metadata `pgc_base`, and
-`PgcWebPlayurlRoute` are separate settings.
+`PgcWebPlayurlRoute` are separate settings. `PgcMetadataRoute` independently selects the supported
+domestic episode/season metadata service described below.
 Availability depends on the selected service and the caller's access.
 
 `Input::VideoSearch` and `VideoCollectionKind::Search` add public enum variants. Downstream
@@ -487,6 +489,76 @@ or cookies, do not follow redirects, use the configured timeout, and cap JSON re
 metadata only: an `ss<ID>` or `md<ID>` must still go through existing season resolution with an
 explicit selection; `latest` keeps its main-episode meaning. An available exact episode ID can use
 existing `ep<ID>` flows. No generic input, automatic hydration, or download path is added.
+
+### Capability-Declared PGC Metadata Service
+
+`PgcMetadataRoute` independently routes domestic PGC episode/season hydration and media-review
+metadata. Its default `Configured` variant preserves the existing `EndpointConfig::pgc_base` route.
+Use `ServiceOnly(service)` when the caller has selected a compatible local or private service and
+knows which exact endpoint capabilities it supports:
+
+| Capability | Endpoint | Lookup scope |
+| --- | --- | --- |
+| `PgcMetadataCapability::Season` | `/pgc/view/web/season` | Domestic `ep<ID>` and `ss<ID>` resolution, plus the season step for `md<ID>` |
+| `PgcMetadataCapability::MediaReview` | `/pgc/review/user` | The media-review step for domestic `md<ID>` resolution |
+
+Declare at least one capability. An `ep<ID>` or `ss<ID>` lookup requires `Season`. An `md<ID>` lookup requires both capabilities;
+the client checks both before sending its first request. If a required capability was not declared,
+the call fails with an endpoint-specific capability error before HTTP. Service-only routing never
+falls back to `pgc_base`, the official service, a restricted-area proxy, or another endpoint.
+`PgcWebPlayurlRoute` remains limited to Web playurl requests.
+For compatible service payloads, this changes only the metadata endpoint route; existing parsing,
+episode ordering, grouping, and `Latest` selection semantics are preserved.
+
+This route does not cover PGC timetable or movie/TV index requests, ordinary-video search, PUGV,
+international PGC, playurl, or media. Those continue using their existing endpoint configuration and
+behavior. A configured base URL alone does not establish that a service supports these routes or
+their response shapes; select a service that actually implements each declared capability. The crate
+requires an absolute HTTP(S) base URL with a host and no userinfo, query, or fragment. It does not
+provide or verify a compatible public service.
+
+The service sends anonymous requests: it does not forward configured cookies, access keys, or other
+credentials, does not follow redirects, and does not invoke proxy fallback. Endpoint paths are
+appended to the validated HTTP(S) base URL, preserving its path prefix. Each decoded response body
+is independently bounded to 8 MiB by default; the `md<ID>` review and season responses each receive
+that full per-response limit. `with_max_response_bytes` accepts only a positive byte limit.
+
+```rust,no_run
+use bbdown_core::{
+    BiliClient, ClientConfig, PgcMetadataCapability, PgcMetadataRoute, PgcMetadataService,
+    Selection,
+};
+
+async fn resolve_with_private_service() -> bbdown_core::Result<()> {
+    let service = PgcMetadataService::new(
+        "https://metadata-gateway.example",
+        [PgcMetadataCapability::Season, PgcMetadataCapability::MediaReview],
+    )?
+    .with_max_response_bytes(4 * 1024 * 1024)?;
+    let config = ClientConfig::default()
+        .with_pgc_metadata_route(PgcMetadataRoute::ServiceOnly(service));
+    let client = BiliClient::new(config);
+    let resolved = client
+        .resolve_input("md22718131", Some(Selection::Latest))
+        .await?;
+    println!("{resolved:?}");
+    Ok(())
+}
+```
+
+For the CLI, `--pgc-metadata-service-base` and
+`--pgc-metadata-service-capabilities` must be supplied together. Capability values are
+comma-separated `season` and `media-review`; `--pgc-metadata-service-max-response-bytes` is optional,
+must be positive, and requires the service pair:
+
+```bash
+bbdown --pgc-metadata-service-base https://metadata-gateway.example \
+  --pgc-metadata-service-capabilities season,media-review \
+  --pgc-metadata-service-max-response-bytes 4194304 info md22718131 --json
+```
+
+The older `--pgc-base` / `BBDOWN_PGC_BASE` setting remains available for configured metadata routing.
+The new CLI pair explicitly selects service-only routing for the supported capabilities.
 
 ### Bounded Dynamic Metadata Pages
 
@@ -759,10 +831,9 @@ construct `SeasonMetadata` with a struct literal must provide the new field; pre
 metadata returned by the API over constructing output models.
 
 PGC season and review metadata use the configured PGC base for `/pgc/view/web/season` and
-`/pgc/review/user`. The CLI can select a trusted local or private gateway with `--pgc-base` or
-`BBDOWN_PGC_BASE`. A compatible service must implement those exact routes and response payloads.
-`PgcWebPlayurlRoute` applies only to Web playurl requests and does not route metadata. The crate
-provides no public gateway or automatic metadata fallback.
+`/pgc/review/user` unless the caller explicitly selects the capability-declared service-only route
+above. `PgcWebPlayurlRoute` applies only to Web playurl requests and does not route metadata. The
+crate provides no public gateway or automatic metadata fallback.
 
 Download planning maps selected collection items back to normal video entries, so downstream
 download execution, archive duplicate checks, stream selection, cover, subtitles, and danmaku
@@ -1076,7 +1147,8 @@ Embedding apps that race official and proxy PGC **Web playurl** routes can creat
 from the same configuration. `PgcWebPlayurlRoute::OfficialOnly` never attempts a proxy;
 `ProxyOnly(proxy)` requests only the selected server (an API-style proxy may try both its Web and
 Web v2 paths). The default `OfficialThenProxy` retains the existing region-error fallback chain.
-These modes do not change PGC metadata lookup or TV/APP playurl routing.
+These modes do not change the independently configured PGC metadata route described above or
+TV/APP playurl routing.
 
 ```rust,no_run
 use bbdown_core::{BiliClient, ClientConfig, PgcWebPlayurlRoute, RestrictedAreaConfig, RestrictedAreaProxy};

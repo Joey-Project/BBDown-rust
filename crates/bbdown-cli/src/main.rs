@@ -19,12 +19,13 @@ use bbdown_core::{
     DownloadPathTemplates, DownloadPlan, DownloadPreflight, DownloadProgressEvent,
     DownloadProgressSink, DownloadReport, DuplicateDecision, EndpointConfig, Input,
     MediaHostOptions, MediaStream, MuxOptions, PgcIndexFilterSelection, PgcIndexKind,
-    PgcIndexOrder, PgcIndexQuery, PgcIndexSort, PgcTimetable, PgcTimetableKind, PlaybackPlan,
-    PlayurlMode, PopularVideoPage, PopularVideoQuery, QrLoginCredentials, QrLoginCredentialsState,
-    QrLoginKind, QrLoginTicket, QrLoginTicketOutput, RankingVideoOptions, RankingVideoPage,
-    ResolvedContent, RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy,
-    RestrictedAreaProxyKind, RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet,
-    StreamSource, SubtitleAiPolicy, TvAccessKeyLoginCredentials, TvAccessKeyRefreshRequest,
+    PgcIndexOrder, PgcIndexQuery, PgcIndexSort, PgcMetadataCapability, PgcMetadataRoute,
+    PgcMetadataService, PgcTimetable, PgcTimetableKind, PlaybackPlan, PlayurlMode,
+    PopularVideoPage, PopularVideoQuery, QrLoginCredentials, QrLoginCredentialsState, QrLoginKind,
+    QrLoginTicket, QrLoginTicketOutput, RankingVideoOptions, RankingVideoPage, ResolvedContent,
+    RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy, RestrictedAreaProxyKind,
+    RetryPolicy, Selection, StreamQuality, StreamSelection, StreamSet, StreamSource,
+    SubtitleAiPolicy, TvAccessKeyLoginCredentials, TvAccessKeyRefreshRequest,
     VIDEO_SEARCH_MAX_ITEMS, VideoSearchOrder, VideoSearchQuery, WebCookieRefreshCredentials,
     WebCookieRefreshRequest, archive_entry_allows_danmaku_update,
     credential_preflight_requirements_for_media_paths,
@@ -63,6 +64,32 @@ struct Cli {
         default_value = "https://api.bilibili.com"
     )]
     pgc_base: String,
+    #[arg(
+        long = "pgc-metadata-service-base",
+        global = true,
+        requires = "pgc_metadata_service_capabilities",
+        value_name = "URL",
+        help = "Route supported PGC season/review metadata through an anonymous service"
+    )]
+    pgc_metadata_service_base: Option<String>,
+    #[arg(
+        long = "pgc-metadata-service-capabilities",
+        global = true,
+        value_delimiter = ',',
+        value_name = "season,media-review",
+        requires = "pgc_metadata_service_base",
+        help = "Explicitly declare service support: season and/or media-review"
+    )]
+    pgc_metadata_service_capabilities: Option<Vec<String>>,
+    #[arg(
+        long = "pgc-metadata-service-max-response-bytes",
+        global = true,
+        value_name = "BYTES",
+        value_parser = parse_positive_usize,
+        requires_all = ["pgc_metadata_service_base", "pgc_metadata_service_capabilities"],
+        help = "Decoded response-body limit for the anonymous PGC metadata service (default: 8388608)"
+    )]
+    pgc_metadata_service_max_response_bytes: Option<usize>,
     #[arg(
         long,
         env = "BBDOWN_WEB_BASE",
@@ -1357,7 +1384,8 @@ async fn run() -> anyhow::Result<()> {
     let playurl_mode = cli.playurl_mode.into();
     let request_timeout = Duration::from_secs(cli.request_timeout_seconds);
     let client_runtime =
-        ClientRuntimeConfig::new(endpoints, restricted_area, playurl_mode, request_timeout);
+        ClientRuntimeConfig::new(endpoints, restricted_area, playurl_mode, request_timeout)
+            .with_pgc_metadata_route(pgc_metadata_route_from_cli(&cli)?);
     let credential_preflight = CredentialPreflightRuntimeConfig::new(
         cli.credential_preflight.into(),
         cli.credential_stale_after_seconds,
@@ -1914,6 +1942,7 @@ struct ClientRuntimeConfig {
     restricted_area: RestrictedAreaConfig,
     playurl_mode: PlayurlMode,
     request_timeout: Duration,
+    pgc_metadata_route: PgcMetadataRoute,
 }
 
 impl ClientRuntimeConfig {
@@ -1928,7 +1957,13 @@ impl ClientRuntimeConfig {
             restricted_area,
             playurl_mode,
             request_timeout,
+            pgc_metadata_route: PgcMetadataRoute::Configured,
         }
+    }
+
+    fn with_pgc_metadata_route(mut self, route: PgcMetadataRoute) -> Self {
+        self.pgc_metadata_route = route;
+        self
     }
 
     fn client_config(&self, credentials: Credentials) -> ClientConfig {
@@ -1946,6 +1981,7 @@ impl ClientRuntimeConfig {
             .with_playurl_mode(self.playurl_mode)
             .with_user_agent("bbdown-rs/0.1")
             .with_request_timeout(self.request_timeout)
+            .with_pgc_metadata_route(self.pgc_metadata_route.clone())
     }
 }
 
@@ -7523,6 +7559,30 @@ fn endpoints_from_cli(cli: &Cli) -> EndpointConfig {
         .with_app_pgc_grpc_base(cli.app_pgc_grpc_base.clone())
         .with_tv_passport_base(tv_passport_base)
         .with_tv_passport_poll_base(tv_passport_poll_base)
+}
+
+fn pgc_metadata_route_from_cli(cli: &Cli) -> anyhow::Result<PgcMetadataRoute> {
+    let (Some(base), Some(capabilities)) = (
+        cli.pgc_metadata_service_base.as_deref(),
+        cli.pgc_metadata_service_capabilities.as_deref(),
+    ) else {
+        return Ok(PgcMetadataRoute::Configured);
+    };
+    let capabilities = capabilities
+        .iter()
+        .map(|value| match value.as_str() {
+            "season" => Ok(PgcMetadataCapability::Season),
+            "media-review" => Ok(PgcMetadataCapability::MediaReview),
+            _ => bail!(
+                "invalid --pgc-metadata-service-capabilities value `{value}`; expected season or media-review"
+            ),
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let mut service = PgcMetadataService::new(base, capabilities)?;
+    if let Some(limit) = cli.pgc_metadata_service_max_response_bytes {
+        service = service.with_max_response_bytes(limit)?;
+    }
+    Ok(PgcMetadataRoute::ServiceOnly(service))
 }
 
 #[derive(Clone, Debug)]

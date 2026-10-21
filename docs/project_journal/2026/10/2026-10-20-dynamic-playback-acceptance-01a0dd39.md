@@ -75,14 +75,17 @@ BBDOWN_DYNAMIC_LIVE_CREDENTIAL_FILE=/path/to/credentials.json \
 - The run did not perform QR login, credential refresh or store writes, use access keys or a proxy,
   fetch media, or play it. BBDown's other local credential store received only static structure
   inspection and no authenticated request.
-- On 2026-10-21, the downstream consumer's V2/HLS smoke completed separately on source head
-  `de48b1abad3ca4104041c5596bd21348f7e0101a` (PR [#77](https://github.com/Joey-Project/tvOS-net-player/pull/77)),
-  pinned to released `bbdown-core 0.11.0` source commit
+- On 2026-10-21, one bounded V2/HLS compatibility smoke completed using an isolated temporary
+  consumer adaptation at source head `de48b1abad3ca4104041c5596bd21348f7e0101a` (historical PR
+  [#77](https://github.com/Joey-Project/tvOS-net-player/pull/77)), pinned to released
+  `bbdown-core 0.11.0` source commit
   `0a3ccd624647017e10ec893ffd9f3d73bf507631`. One authenticated SpaceDynamic case passed in
   48.135 seconds, covering the V2 task and playable HLS playlist/master/result flow. Teardown
   completed and the designated source/credential-file integrity checks were unchanged. This is
-  consumer HTTP/HLS acceptance, not native decoding, sustained playback, full-fill, or offline
-  playback. The smoke does not establish deployment. See the separate
+  compatibility evidence only, not completed or accepted downstream integration. The downstream
+  maintainer owns dependency upgrade, adaptation, acceptance, and merge; this run creates no BBDown
+  requirement to merge PR #77. The smoke is limited to consumer HTTP/HLS behavior and does not
+  establish native decoding, sustained playback, full-fill, offline playback, or deployment. See the separate
   [bounded media CDN acceptance](2026-10-21-bounded-media-cdn-acceptance-01a0dd39.md).
 - The `/x/player/v2` subtitle API remains unrelated to the consumer's V2 smoke terminology.
 
