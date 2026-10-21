@@ -1,5 +1,5 @@
 ---
-id: 20261021-01a0dd39
+id: 20261021-pgc-metadata-service-routes-01a0dd39
 title: Capability-Declared PGC Metadata Service Routes
 status: completed
 created: 2026-10-21
@@ -23,9 +23,10 @@ superseded_by:
 ## Current State
 - Bilingual README and embedding documentation describe the API, CLI configuration, endpoint capability contract, anonymous requests, redirect and fallback behavior, and per-response decoded-body limit.
 - The new service route only covers `/pgc/view/web/season` and `/pgc/review/user`. It does not establish support for timetable, index listings, search, PUGV, international PGC, playurl, or media. No compatible external service or live behavior is claimed as verified.
-- Full `just ci` attempt 2 passed on the stable toolchain (Rust 1.99.1 / Cargo 1.99.0) in 93.285 seconds. The Rust 1.95.0 MSRV check, formatting, workspace all-target Clippy with `-D warnings`, and publish dry run also passed; no publication occurred.
+- Full `just ci` passed on the final fixture-adjusted tree in 231.03 seconds, following the earlier implementation gate in 93.285 seconds. The stable toolchain was Rust 1.99.1 / Cargo 1.99.0; the explicit Rust 1.95.0 MSRV check, formatting, workspace all-target Clippy with `-D warnings`, and publish dry run also passed. No publication occurred.
 - Workspace test segments totaled 992 passed, zero failed, and four ignored (67 + 199 + 13 + 684 + 21 + 2 + 0 + 6, including six public API integration tests). The CLI E2E suite's 199 passed tests are already included in this total; its separate recipe rerun is not added again. Additional focused gates passed: seven core tests and two CLI subprocess tests.
 - Attempt 1 stopped at Clippy on an unused `self`, a test `expect_err` lint, and an existing test-length threshold. Those issues were corrected before the successful full CI rerun.
+- Two existing QR poll tests now load the catalog-approved `refresh-a` value from a native JSON fixture and insert it into their mock response data. Their successful URL fallback and missing-CSRF assertions are preserved; both exact tests passed again. This makes the fixture value available to exact secret admission without changing production login behavior or scanner policy. A sandboxed gate attempt stopped at Cargo build-cache permissions before tests; the bounded nonsandbox gate above passed.
 - No compatible metadata-service live test was run. Service compatibility beyond the mock-tested endpoint and capability contract remains unverified. No publish or deployment was performed.
 
 ## Next Steps
