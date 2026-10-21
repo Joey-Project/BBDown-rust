@@ -182,9 +182,10 @@
   feed requests using server-issued values, a temporary request header, and clone-shared in-memory
   cache; preserve configured credentials and keep Following behavior unchanged. See
   `docs/project_journal/2026/10/2026-10-11-dynamic-request-and-bounded-metadata.md`.
-- [pending] Diagnose the consumer-reported initial Space dynamic HTTP 412 and complete bounded real
-  Rust playback-candidate/V2 smoke validation. The consumer's V2 resolution failed before producing
-  a candidate; the focused smoke has not passed. See
+- [pending] Run the downstream consumer's focused V2 smoke for SpaceDynamic. One actual-core
+  `0.11.0` legacy planning call has produced a candidate; this does not clear the historical
+  consumer-reported `0.9.0` HTTP 412 cause or establish consumer acceptance. See
+  `docs/project_journal/2026/10/2026-10-20-dynamic-playback-acceptance-01a0dd39.md` and
   `docs/project_journal/2026/10/2026-10-11-space-dynamic-request-and-bounded-metadata-followup.md`.
 - [pending] Add aria2 backend integration, MP4Box muxing, and subtitle-to-SRT conversion. BBDown
   Rust's custom concurrent HTTP Range downloader is already implemented.

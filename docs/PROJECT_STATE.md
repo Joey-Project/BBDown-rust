@@ -129,10 +129,10 @@
 
 ## Global Blockers
 
-- No known blocker affects deterministic release validation. A consumer-specific real Rust
-  playback-candidate check remains blocked before candidate production: the initial Space dynamic
-  request returned HTTP 412, and V2 resolution also failed before producing a candidate. The
-  focused smoke has not passed; longer download/HLS/native tests have not started. The root cause is
-  undetermined, and this does not block the deterministic release gate. See
+- No known blocker affects deterministic release validation. One actual-core `0.11.0`
+  SpaceDynamic first-item playback plan passed; the downstream consumer's focused V2 smoke remains
+  pending. The historical `0.9.0` HTTP 412 cause remains undetermined, and successful planning does
+  not establish media playback. See
+  `docs/project_journal/2026/10/2026-10-20-dynamic-playback-acceptance-01a0dd39.md` and
   `docs/project_journal/2026/10/2026-10-11-space-dynamic-request-and-bounded-metadata-followup.md`.
 - Opt-in restricted PGC live e2e remains dependent on upstream proxy/fixture health.

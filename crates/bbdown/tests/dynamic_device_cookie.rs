@@ -36,20 +36,147 @@ fn feed_response() -> serde_json::Value {
         "code": 0,
         "data": {
             "has_more": false,
-            "items": [{
-                "type": "DYNAMIC_TYPE_AV",
-                "visible": true,
-                "modules": {
-                    "module_dynamic": {
-                        "major": {
-                            "type": "MAJOR_TYPE_ARCHIVE",
-                            "archive": {"aid": 170_001, "bvid": "BV1xx411c7mD"}
+            "items": [
+                {"type": "DYNAMIC_TYPE_WORD", "visible": true},
+                {
+                    "type": "DYNAMIC_TYPE_AV",
+                    "visible": true,
+                    "modules": {
+                        "module_dynamic": {
+                            "major": {
+                                "type": "MAJOR_TYPE_ARCHIVE",
+                                "archive": {"aid": 170_001, "bvid": "BV1xx411c7mD"}
+                            }
                         }
                     }
                 }
-            }]
+            ]
         }
     })
+}
+
+fn playurl_response(server_base_url: &str) -> serde_json::Value {
+    serde_json::json!({
+        "code": 0,
+        "data": {
+            "dash": {
+                "duration": 3,
+                "video": [{
+                    "id": 80,
+                    "baseUrl": format!("{server_base_url}/media/video.m4s"),
+                    "codecs": "avc1.640028",
+                    "width": 1920,
+                    "height": 1080
+                }],
+                "audio": []
+            }
+        }
+    })
+}
+
+#[tokio::test]
+async fn legacy_space_dynamic_playback_plan_uses_only_first_eligible_page() -> anyhow::Result<()> {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let server = MockServer::start();
+        let auth_cookie = format!("SESSDATA={AUTH_VALUE}");
+        let configured_cookie = format!("{auth_cookie}; buvid3=; buvid4=; extra=preserved");
+        let spi_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/frontend/finger/spi")
+                .is_true(|request| request.headers().get("cookie").is_none());
+            then.status(200).json_body_obj(&spi_response());
+        });
+        let nav_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/nav")
+                .header("cookie", configured_cookie.as_str());
+            then.status(200).json_body_obj(&nav_response());
+        });
+        let feed_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/polymer/web-dynamic/v1/feed/space")
+                .query_param("host_mid", "441167301")
+                .query_param_exists("wts")
+                .query_param_exists("w_rid")
+                .header(
+                    "cookie",
+                    format!(
+                        "{auth_cookie}; extra=preserved; buvid3={SERVER_BUVID3}; buvid4={SERVER_BUVID4}"
+                    ),
+                );
+            then.status(200).json_body_obj(&feed_response());
+        });
+        let view_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/web-interface/view")
+                .query_param("aid", "170001")
+                .header(
+                    "cookie",
+                    format!("{auth_cookie}; buvid3=; buvid4=; extra=preserved"),
+                );
+            then.status(200).json_body_obj(&view_response());
+        });
+        let playurl_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/x/player/playurl")
+                .query_param("avid", "170001")
+                .query_param("cid", "9001")
+                .query_param("qn", "0")
+                .query_param("fnval", "4048")
+                .query_param("fnver", "0")
+                .query_param("fourk", "1")
+                .query_param("try_look", "1")
+                .query_param("otype", "json")
+                .header(
+                    "cookie",
+                    format!("{auth_cookie}; buvid3=; buvid4=; extra=preserved"),
+                );
+            then.status(200)
+                .json_body_obj(&playurl_response(&server.base_url()));
+        });
+        let player_v2_mock = server.mock(|when, then| {
+            when.method(GET).path("/x/player/v2");
+            then.status(500);
+        });
+        let media_mock = server.mock(|when, then| {
+            when.method(GET).path("/media/video.m4s");
+            then.status(500);
+        });
+
+        let credentials = Credentials::default().with_cookie(configured_cookie.clone());
+        let config = ClientConfig::default()
+            .with_endpoints(EndpointConfig::default().with_api_base(server.base_url()))
+            .with_credentials(credentials.clone())
+            .with_request_timeout(Duration::from_secs(3));
+        let client = BiliClient::new(config.clone());
+        let plan = client
+            .plan_playback_input(
+                Input::SpaceDynamic(441_167_301),
+                Some(Selection::Page(1)),
+            )
+            .await?;
+
+        assert_eq!(plan.entries.len(), 1);
+        let entry = &plan.entries[0];
+        assert_eq!(entry.aid, 170_001);
+        assert_eq!(entry.cid, 9001);
+        assert_eq!(entry.variants.len(), 1);
+        assert_eq!(entry.source, bbdown_core::StreamSource::NormalWeb);
+        assert_eq!(credentials.cookie.as_deref(), Some(configured_cookie.as_str()));
+        assert_eq!(config.credentials.cookie.as_deref(), Some(configured_cookie.as_str()));
+
+        spi_mock.assert_calls(1);
+        nav_mock.assert_calls(1);
+        feed_mock.assert_calls(1);
+        view_mock.assert_calls(1);
+        playurl_mock.assert_calls(1);
+        player_v2_mock.assert_calls(0);
+        media_mock.assert_calls(0);
+        Ok::<(), anyhow::Error>(())
+    })
+    .await
+    .context("mocked legacy SpaceDynamic playback planning exceeded its test deadline")??;
+    Ok(())
 }
 
 fn view_response() -> serde_json::Value {
