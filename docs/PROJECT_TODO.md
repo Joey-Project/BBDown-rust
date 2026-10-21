@@ -184,7 +184,8 @@
   `docs/project_journal/2026/10/2026-10-11-dynamic-request-and-bounded-metadata.md`.
 - [completed] Record one focused authenticated SpaceDynamic V2/HLS compatibility smoke from an
   isolated temporary consumer adaptation on the `bbdown-core 0.11.0` source line. One bounded case
-  passed; this is not completed or accepted downstream integration. The downstream maintainer owns
+  passed again with a recorded UTC window and controlled proxy configuration; this is not completed
+  or accepted downstream integration. The downstream maintainer owns
   dependency upgrade, adaptation, acceptance, and merge; no BBDown work depends on merging
   [consumer PR #77](https://github.com/Joey-Project/tvOS-net-player/pull/77). This does not establish
   native decoding, sustained playback, full-fill, offline playback,

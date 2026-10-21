@@ -130,10 +130,12 @@
 ## Global Blockers
 
 - No known blocker affects deterministic release validation. One actual-core `0.11.0`
-  SpaceDynamic first-item playback plan passed, followed by one bounded authenticated compatibility
+  SpaceDynamic first-item playback plan passed, followed by a controlled authenticated compatibility
   smoke on an isolated temporary consumer adaptation at source head
-  `de48b1abad3ca4104041c5596bd21348f7e0101a`, pinned to released core source commit
-  `0a3ccd624647017e10ec893ffd9f3d73bf507631`. It covers the tested task/HLS playlist flow only;
+  `879d852cd2a9a45e5b2f806036c77191ec7bf233`, pinned to released core source commit
+  `0a3ccd624647017e10ec893ffd9f3d73bf507631`. The revalidation passed within
+  `2026-10-21T22:17:13.725Z`–`2026-10-21T22:18:04.901Z`, with proxy environment variables absent
+  and system proxy enable flags false. It covers the tested task/HLS playlist flow only;
   it is not completed or accepted downstream integration and does not establish native decoding,
   sustained playback, full-fill, offline playback, or deployment. The downstream maintainer owns
   dependency upgrade, adaptation, acceptance, and merge; this compatibility evidence creates no
