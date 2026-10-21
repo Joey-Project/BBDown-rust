@@ -20,6 +20,53 @@ superseded_by:
 - The run was anonymous and used no proxy, credential file, cookie, player, or injected media host. It did not change automatic or adaptive CDN policy.
 - Guardrails: a 64 MiB representation-size cap, a 512 MiB aggregate application-consumed decoded media-body cancellation threshold, a 1,024 observed-request-ID threshold, 600 seconds of harness runtime plus bounded startup/cleanup grace, a nominal sampled 768 MiB media-disk watchdog, and a 1 MiB bounded log. Crossing chunks and in-flight reads can overshoot the body threshold; these are not wire-traffic limits.
 
+## Reproduction
+
+The repo-local fixture label `normal-playlist-video` maps to the public URL in the plan command
+below. The one-shot
+runner first made an anonymous plan request, then invoked the ignored `cdn_benchmark_harness`
+test. `ABSENT_CREDENTIAL_FILE` stands for the runner's deliberately absent credential-file path;
+no credential file was read. `PRIVATE_TEMP_MEDIA_DIR` stands for the private temporary media
+directory created for this run and removed after the harness was reaped.
+
+```sh
+cargo run --locked -p bbdown-cli --quiet -- \
+  --credential-file "$ABSENT_CREDENTIAL_FILE" \
+  --credential-preflight off plan \
+  https://www.bilibili.com/video/BV1QtjA6BEB8/ --json
+```
+
+The plan process had a 90-second deadline and an 8 MiB captured-stdout cap; stderr was discarded
+to avoid retaining URL-bearing diagnostics. Before launch, the runner removed inherited variables
+whose names start with `BBDOWN_` or `BILIBILI_LIVE_E2E_`, plus `HTTP_PROXY`, `HTTPS_PROXY`,
+`ALL_PROXY`, `NO_PROXY` (and lowercase spellings), `RUST_LOG`, and `RUST_BACKTRACE`. The harness
+received these explicit settings:
+
+```sh
+BBDOWN_CDN_BENCHMARK_SAMPLE=normal-playlist-video \
+BBDOWN_CDN_BENCHMARK_ENTRY=1 \
+BBDOWN_CDN_BENCHMARK_REPETITIONS=2 \
+BBDOWN_CDN_BENCHMARK_ORDER_OFFSET=0 \
+BBDOWN_CDN_BENCHMARK_QUALITY=16 \
+BBDOWN_CDN_BENCHMARK_CODEC=avc1.640033 \
+BBDOWN_CDN_BENCHMARK_MAX_MEDIA_BYTES=67108864 \
+BBDOWN_CDN_BENCHMARK_BODY_BUDGET_BYTES=536870912 \
+BBDOWN_CDN_BENCHMARK_REQUEST_BUDGET=1024 \
+BBDOWN_CDN_BENCHMARK_RUN_TIMEOUT_SECS=600 \
+BBDOWN_CDN_BENCHMARK_HOSTS=upos-sz-mirrorcosov.bilivideo.com,upos-hz-mirrorakam.akamaized.net \
+BBDOWN_CDN_BENCHMARK_OUTPUT_DIR="$PRIVATE_TEMP_MEDIA_DIR" \
+cargo test -p bbdown-core --test cdn_benchmark --locked \
+  cdn_benchmark_harness -- --ignored --nocapture
+```
+
+`BBDOWN_CDN_BENCHMARK_FIXED_HOST` was unset, so the harness used the selected donor's Akamai
+authority (`upos-hz-mirrorakam.akamaized.net`) for the fixed-host control. The host list contains
+the two upstream HTTPS authorities discovered by the anonymous preflight. `BBDOWN_CDN_BENCHMARK_URL`
+and `BBDOWN_CDN_BENCHMARK_KEEP_OUTPUT` were also unset. The outer runner enforced a 690-second
+watchdog, 1 MiB log cap, and nominal 768 MiB sampled disk watchdog. The per-representation 64 MiB
+cap, aggregate consumed-body threshold, request-ID threshold, and harness timeout are shown above.
+These byte and request counters do not include API preflight JSON bodies or all wire traffic.
+
 ## Results
 
 All six records passed with `valid_three_way_sample=true`. Every output was 16,698,182 bytes with SHA-256 `5f2b3fcb64d2f74ea8160539aeb505fa8b3db40d686b3dd45fdcf6293ee52f55`.
