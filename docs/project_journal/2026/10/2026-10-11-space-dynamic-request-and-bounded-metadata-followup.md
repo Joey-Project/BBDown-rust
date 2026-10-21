@@ -1,9 +1,9 @@
 ---
 id: 20261011-space-dynamic-request-and-bounded-metadata-followup
 title: Space Dynamic Request And Bounded Metadata Follow-up
-status: active
+status: completed
 created: 2026-10-11
-updated: 2026-10-20
+updated: 2026-10-21
 branch:
 pr:
 supersedes: []
@@ -16,20 +16,23 @@ superseded_by:
 
 - Keep the completed [personal-space WBI signing workstream](2026-10-10-space-dynamic-wbi-signing.md)
   and PR #93 completed. The explicit bounded API and device-cookie initialization have now landed
-  in PRs #99 and #100. The downstream consumer's V2 smoke remains a separate pending follow-up.
+  in PRs #99 and #100. The BBDown-owned bounded consumer compatibility smoke is now recorded in
+  the [playback acceptance journal](2026-10-20-dynamic-playback-acceptance-01a0dd39.md); extended
+  consumer integration acceptance remains downstream-owned.
 - The downstream consumer reported this evidence against `bbdown-core 0.9.0`, pinned to
   `e422a159cdf70c5bec72b4120e2a70e5bd749088`, using the public fixture
   `https://space.bilibili.com/441167301/dynamic`. No credentials, raw responses, private data, or
   signed URLs were supplied for this record. The publication-preparation thread made no new live
   requests. The repair thread's subsequent implementation and live evidence are recorded below.
 - The historical consumer report below is evidence for its `0.9.0` source and time only. A later
-  actual-core candidate check passed once on `0.11.0` source; it does not establish consumer V2
-  acceptance or a general result for every dynamic input. Neither result affects the deterministic
-  workspace/release-validation gate.
+  actual-core candidate check passed once on `0.11.0` source, followed by one bounded consumer
+  SpaceDynamic V2/HLS compatibility smoke on the recorded consumer source with core `0.11.0`. These checks
+  do not establish a general result for every dynamic input or complete downstream integration
+  acceptance. These observations do not alter the deterministic workspace/release-validation gate.
 
 ## A. Initial Space Dynamic HTTP 412
 
-**Status:** device initialization implemented; actual-core candidate acceptance passed once; consumer V2 smoke pending.
+**Status:** device initialization and bounded metadata API complete; actual-core candidate check and one bounded consumer V2/HLS compatibility smoke passed. Historical HTTP 412 cause remains undetermined.
 
 ### Implemented Resolution
 
@@ -47,11 +50,12 @@ superseded_by:
 
 ### Consumer-Supplied Observations
 
-- A real Rust `plan_playback_input(SpaceDynamic(441167301), Page(1))` attempt received HTTP 412
+- At that time, against `bbdown-core 0.9.0`, a real Rust `plan_playback_input(SpaceDynamic(441167301), Page(1))` attempt received HTTP 412
   at the initial `space_feed` request. Navigation/WBI-key discovery succeeded; the result was
   `Error::Http`, not a connection, decoding, or timeout failure. No playable candidates were
-  produced. Real V2 resolution also failed before candidate production, and the focused smoke has
-  not passed; long-download, HLS, and native-playback tests have not started.
+  produced. Real V2 resolution also failed before candidate production. These are historical
+  observations only; they do not establish the cause of the HTTP 412 or describe the later
+  `0.11.0` compatibility smoke.
 - A Python signed baseline at a different time reportedly returned HTTP 200, API code 0, 13 items
   including 12 archive-shaped entries, and `has_more=true`. That observation does not prove Rust
   request equivalence, a root cause, or playback acceptance.
@@ -61,17 +65,22 @@ superseded_by:
 - An anonymous browser request returning HTTP 200 with an empty list does not replace the
   consumer's authenticated acceptance criteria.
 
-### Remaining Consumer Acceptance
+### BBDown Completion And Downstream Ownership
 
 - The `0.11.0` [playback acceptance follow-up](2026-10-20-dynamic-playback-acceptance-01a0dd39.md)
   adds a direct public-API mock regression and an explicitly configured ignored live entry point.
   One actual-core legacy planning call then produced a candidate on `0.11.0` source. The call did
   not report HTTP 412, but no API request observer recorded individual request counts or statuses;
   this does not identify the historical cause or prove a general fix. Login health was not checked.
-- Run the downstream consumer's focused V2 smoke using the candidate-producing source. The core
-  planning result does not establish that consumer acceptance, media download, or playback passed.
-  Continue to long download, disconnection/recovery, HLS, and native-playback validation only after
-  the consumer smoke passes.
+- The bounded consumer smoke is complete and recorded in the
+  [playback acceptance journal](2026-10-20-dynamic-playback-acceptance-01a0dd39.md): on consumer
+  source `879d852cd2a9a45e5b2f806036c77191ec7bf233`, the authenticated SpaceDynamic case passed
+  (`1 passed`, Rust test duration `50.58s`) and resolved HLS playlists. This is bounded HTTP
+  compatibility evidence; it does not prove native decoding or complete consumer integration.
+- Extended long-download, disconnection/recovery, sustained playback, native decoding, full-fill,
+  offline, deployment, and broader downstream acceptance remain the consumer maintainer's scope.
+  They are not BBDown release blockers. BBDown delivery does not require reopening or merging
+  consumer PR #77; its maintainer sets the consumer's acceptance and merge gates.
 - Do not substitute unbounded retries, risk-control bypasses, guessed headers, or weaker candidate
   standards for acceptance. Do not request a new QR login without explicit credential-rejection
   evidence.
