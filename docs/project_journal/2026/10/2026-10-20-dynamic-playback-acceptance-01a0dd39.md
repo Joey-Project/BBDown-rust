@@ -1,7 +1,7 @@
 ---
 id: 20261020-dynamic-playback-acceptance-01a0dd39
 title: Dynamic Playback Candidate Acceptance
-status: active
+status: completed
 created: 2026-10-20
 updated: 2026-10-21
 branch: wip/dynamic-playback-acceptance
@@ -17,8 +17,9 @@ superseded_by:
 - Recheck the consumer fixture `https://space.bilibili.com/441167301/dynamic` against the
   `0.11.0` source line, starting at `98eadf00bf0cd8a7774c1043a07d22061983bfe4`.
 - The earlier HTTP 412 report concerned `0.9.0`. PR #100 subsequently validated device-cookie
-  initialization and bounded metadata continuation; neither establishes current playback acceptance.
-  See the [existing follow-up](2026-10-11-space-dynamic-request-and-bounded-metadata-followup.md).
+  initialization and bounded metadata continuation; neither established playback acceptance by
+  itself. Current bounded compatibility evidence is recorded below. See the
+  [existing follow-up](2026-10-11-space-dynamic-request-and-bounded-metadata-followup.md).
 - This slice adds test coverage and a repeatable live entry point. It does not change production
   request behavior, credential lifecycle, resolver policy, or release versions.
 
@@ -60,7 +61,7 @@ BBDOWN_DYNAMIC_LIVE_CREDENTIAL_FILE=/path/to/credentials.json \
   counts/identifiers. Credentials, signed URLs, headers, raw responses, and complete plans are not
   printed. No separate account login-health assertion is made by this planning test.
 
-## Current Evidence And Remaining Work
+## Current Evidence And Scope Boundaries
 
 - Actual-core playback-candidate acceptance passed once on source revision
   `d3276044dd1f01d4a3d10b562d0cfa1e16a4364e` (`bbdown-core` `0.11.0`; the production source matched
