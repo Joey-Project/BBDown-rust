@@ -37,6 +37,9 @@ episode/season and media-review hydration, timetable metadata with the independe
 `PgcMetadataCapability::Timetable` capability, and movie/TV index metadata with the independent
 `PgcMetadataCapability::Index` capability. It does not cover search, PUGV, or international
 metadata; see the repository embedding guide for request and response boundaries.
+The current checkout also exposes `BiliClient::category_videos` for one anonymous, fixed-first-page
+category video batch. This is an unreleased source-checkout addition, not part of the `0.11.0`
+release. It does not provide pagination, category catalogs, selection, hydration, or downloads.
 
 The crate provides staged XML-history-preserving danmaku refresh, deduplicates comments by positive
 IDs with a complete-parameter-and-decoded-text fallback, and regenerates ASS from merged XML. It

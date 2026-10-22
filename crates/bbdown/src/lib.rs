@@ -21,10 +21,12 @@ mod selection;
 
 pub use cancellation::DownloadCancellationToken;
 pub use client::{
-    BiliClient, ClientConfig, DEFAULT_RANKING_VIDEO_MAX_RESPONSE_BYTES, EndpointConfig,
-    MetadataCollectionInfo, MetadataConsistency, MetadataCursor, MetadataPage, MetadataPageOptions,
-    MetadataStopReason, PGC_INDEX_MAX_FILTER_GROUPS, PGC_INDEX_MAX_FILTER_VALUES,
-    PGC_INDEX_MAX_ORDERS, PGC_INDEX_MAX_PAGE_SIZE, PGC_METADATA_SERVICE_DEFAULT_MAX_RESPONSE_BYTES,
+    BiliClient, CategoryVideoBatch, CategoryVideoItem, CategoryVideoQuery, CategoryVideoStats,
+    ClientConfig, DEFAULT_CATEGORY_VIDEO_BATCH_SIZE, DEFAULT_CATEGORY_VIDEO_MAX_RESPONSE_BYTES,
+    DEFAULT_RANKING_VIDEO_MAX_RESPONSE_BYTES, EndpointConfig, MetadataCollectionInfo,
+    MetadataConsistency, MetadataCursor, MetadataPage, MetadataPageOptions, MetadataStopReason,
+    PGC_INDEX_MAX_FILTER_GROUPS, PGC_INDEX_MAX_FILTER_VALUES, PGC_INDEX_MAX_ORDERS,
+    PGC_INDEX_MAX_PAGE_SIZE, PGC_METADATA_SERVICE_DEFAULT_MAX_RESPONSE_BYTES,
     PGC_TIMETABLE_MAX_DAYS, PGC_TIMETABLE_MAX_ROWS, POPULAR_VIDEO_MAX_PAGE_SIZE,
     PgcIndexConditions, PgcIndexFilter, PgcIndexFilterSelection, PgcIndexFilterValue, PgcIndexItem,
     PgcIndexKind, PgcIndexOrder, PgcIndexOrderOption, PgcIndexPage, PgcIndexQuery, PgcIndexSort,

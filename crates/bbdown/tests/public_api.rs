@@ -1,8 +1,10 @@
 use bbdown_core::{
-    BiliClient, ClientConfig, CredentialHealthSummaryStatus, CredentialKind,
-    CredentialLifecycleMetadata, CredentialLifecyclePolicy, CredentialLifecycleSource,
-    CredentialLifecycleStatus, CredentialPreflightMode, CredentialPreflightReport,
-    CredentialProfileMetadata, CredentialProfiles, DEFAULT_RANKING_VIDEO_MAX_RESPONSE_BYTES,
+    BiliClient, CategoryVideoQuery, CategoryVideoStats, ClientConfig,
+    CredentialHealthSummaryStatus, CredentialKind, CredentialLifecycleMetadata,
+    CredentialLifecyclePolicy, CredentialLifecycleSource, CredentialLifecycleStatus,
+    CredentialPreflightMode, CredentialPreflightReport, CredentialProfileMetadata,
+    CredentialProfiles, DEFAULT_CATEGORY_VIDEO_BATCH_SIZE,
+    DEFAULT_CATEGORY_VIDEO_MAX_RESPONSE_BYTES, DEFAULT_RANKING_VIDEO_MAX_RESPONSE_BYTES,
     DanmakuUpdateOptions, DanmakuUpdatePolicy, DownloadCancellationToken, DownloadOptions,
     DownloadProgressEvent, DownloadProgressSink, DownloadReportSummary, Input, MetadataPageOptions,
     NoopDownloadProgress, POPULAR_VIDEO_MAX_PAGE_SIZE, PgcIndexFilterSelection, PgcIndexKind,
@@ -215,4 +217,32 @@ fn ranking_video_types_and_options_are_reexported() {
         page.items[0].stats.as_ref().and_then(|stats| stats.view),
         Some(7)
     );
+}
+
+#[test]
+fn category_video_types_are_reexported() {
+    let client = BiliClient::new(ClientConfig::default());
+    let query = CategoryVideoQuery::new(17)
+        .with_batch_size(8)
+        .with_max_response_bytes(4096);
+    assert_eq!(query.rid, 17);
+    assert_eq!(query.batch_size, 8);
+    assert_eq!(query.max_response_bytes, 4096);
+    assert_eq!(DEFAULT_CATEGORY_VIDEO_BATCH_SIZE, 20);
+    assert_eq!(DEFAULT_CATEGORY_VIDEO_MAX_RESPONSE_BYTES, 1024 * 1024);
+    let _configured_call = client.category_videos(query);
+
+    let stats = CategoryVideoStats {
+        view: Some(12),
+        ..CategoryVideoStats::default()
+    };
+    assert_eq!(stats.view, Some(12));
+    assert_eq!(stats.like, None);
+    let batch = bbdown_core::CategoryVideoBatch {
+        requested_rid: 17,
+        requested_batch_size: 8,
+        items: vec![],
+    };
+    assert_eq!(batch.requested_rid, 17);
+    assert_eq!(batch.items, Vec::new());
 }

@@ -318,6 +318,30 @@ API 错误会沿用普通 `Result` 错误路径；端点兼容不保证请求成
 此 API 只返回 metadata：不会补充详情、解析 playurl、请求图片或媒体、增加通用 `Input` 分支，也不会对选中行做
 PGC 自动识别。如需在现有流程中指定条目，请显式构造 `Input::Bvid` 或 `Input::Aid`；后续遵循普通直接视频行为和访问规则。
 
+### 分区视频批次
+
+当前源码检出增加了 `BiliClient::category_videos`，作为只发起一次请求的 metadata API；该功能不属于 `0.11.0` 发布版本。`CategoryVideoQuery::new(rid)` 默认批量大小为 20、解码响应上限为 1 MiB，默认值分别由 `DEFAULT_CATEGORY_VIDEO_BATCH_SIZE` 和 `DEFAULT_CATEGORY_VIDEO_MAX_RESPONSE_BYTES` 提供。RID、批量大小和字节上限都必须为正数，可通过 `with_batch_size` 和 `with_max_response_bytes` 配置。endpoint 为 `/x/web-interface/newlist`，使用请求的 `rid`、固定 `pn=1` 和 `ps` 批量大小。`max_response_bytes` 限制解码后的响应体字节数；`batch_size` 仅作为请求的 `ps` 值，返回条目数可能不同。条目数量没有任意上限。
+
+```rust,no_run
+use bbdown_core::{BiliClient, CategoryVideoQuery, ClientConfig};
+
+#[tokio::main]
+async fn main() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let batch = client
+        .category_videos(
+            CategoryVideoQuery::new(1)
+                .with_batch_size(10)
+                .with_max_response_bytes(2 * 1024 * 1024),
+        )
+        .await?;
+    println!("{} rows for requested category {} (batch {})", batch.items.len(), batch.requested_rid, batch.requested_batch_size);
+    Ok(())
+}
+```
+
+该调用只使用已配置的 API base 和请求超时，不发送凭据、不跟随重定向，也不初始化 PGC metadata 或 resolver 路由。配置的 API base 必须支持精确 endpoint、查询参数和原生 `data.archives` 响应 envelope。有效批次中的所有条目会在解码字节上限内按源顺序保留；必需字段格式错误时整批失败，不会静默跳过。样例中 `archives` 非空时 `page.count` 仍为零，且样例 `pn=2` 未推进条目，因此 API 不提供总数或续页，也不保证稳定排序或最新条目。`CategoryVideoBatch` 暴露 `requested_rid`、`requested_batch_size` 和 `items`。`CategoryVideoItem` 的 `category_id`/`category_name` 对应 `tid`/`tname`，`category_v2_id`/`category_v2_name` 对应 `tidv2`/`tnamev2`；两组字段分别描述条目，不会从请求 `rid` 推导。它不增加 `Input`、选择、详情 hydration、playurl 或下载路径；分区目录、分页、频道和话题仍属于后续工作。
+
 ### PGC 时间表 metadata
 
 此 API 包含在 `v0.11.0` 源码版本中。请查看[crates.io](https://crates.io/crates/bbdown-core)了解 package 可用性。

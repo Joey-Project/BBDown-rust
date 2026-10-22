@@ -41,6 +41,9 @@ implement channels, topics, automatic CDN routing, persistent CDN health, or ada
 This source checkout also supports capability-declared metadata-service routing for domestic PGC
 episode/season, media-review, timetable, and movie/TV index metadata. Index routing has its own
 `index` capability; it does not imply support for search, PUGV, or international metadata.
+The current checkout also adds a separate anonymous category-video first-batch API and
+`category list` CLI. It is a current-source addition, not part of the `0.11.0` release; it does not
+add category catalogs, pagination, selection, hydration, or download behavior.
 See the [v0.11.0 release notes](docs/release-notes/v0.11.0.md) and
 [official releases](https://github.com/Joey-Project/BBDown-rust/releases) for archive availability.
 Input parsing covers normal videos, PGC and intl episodes, PUGV/cheese courses, B23 short links,
@@ -84,7 +87,15 @@ bbdown popular --json
 bbdown popular --page 2 --page-size 10 --json
 bbdown ranking --json
 bbdown ranking --max-response-bytes 2097152 --json
+bbdown category list --rid 1 --json
+bbdown category list --rid 13 --batch-size 15 --max-response-bytes 2097152 --json
 ```
+
+`category list` makes one anonymous request to `/x/web-interface/newlist` with the selected `rid`,
+fixed `pn=1`, and a positive `ps` batch-size parameter (default 20). A valid batch preserves every returned archive row in source order within a positive response-byte limit (default 1 MiB); malformed required fields fail the batch instead of silently dropping rows. The requested batch size is
+not a guarantee of the number of returned rows. This current-checkout addition does not claim
+pagination, totals, a category tree, stable ordering, or a latest-item guarantee; category fields
+describe each returned row and are not inferred from the requested `rid`.
 
 `timetable` prints the upstream PGC timetable metadata for anime or Chinese animation. It makes one
 anonymous request and does not resolve streams or download episodes. Available in the `v0.11.0`

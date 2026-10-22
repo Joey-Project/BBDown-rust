@@ -148,7 +148,10 @@
   Category/channel lists and topic pages remain future page-family work. See
   `docs/project_journal/2026/10/2026-10-20-ranking-videos-01a0dd39.md`.
 - [pending] Add category/channel lists, then topic pages at lower priority. See
-  `docs/project_journal/2026/10/2026-10-11-page-family-roadmap.md`.
+  `docs/project_journal/2026/10/2026-10-11-page-family-roadmap.md`. A separate fixed-first-batch
+  category-video metadata slice is in the current source checkout; it does not complete category
+  catalogs, channel lists, or topic pages. See
+  `docs/project_journal/2026/10/2026-10-22-category-video-batches-01a0dd39.md`.
 - [completed] Add the `0.8.0` preserving danmaku refresh API and CLI: deduplicate XML comments by
   positive IDs (falling back to complete `p` values and decoded text for invalid IDs), retain XML
   history, regenerate selected ASS from merged XML, and publish staged sidecars with the archive as

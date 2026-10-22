@@ -374,6 +374,48 @@ a generic `Input` variant, or add selected-row PGC detection. To target an item 
 flow, explicitly construct `Input::Bvid` or `Input::Aid`; ordinary direct-video behavior and access
 rules apply.
 
+### Category Video Batch
+
+The current source checkout adds `BiliClient::category_videos` as a metadata-only, one-request API;
+it is not part of the `0.11.0` release. `CategoryVideoQuery::new(rid)` defaults to a batch size
+of 20 and a decoded response cap of 1 MiB, exposed as `DEFAULT_CATEGORY_VIDEO_BATCH_SIZE` and
+`DEFAULT_CATEGORY_VIDEO_MAX_RESPONSE_BYTES`. The RID, batch size, and byte cap must all be positive.
+Use `with_batch_size` and `with_max_response_bytes` to configure them. The endpoint is
+`/x/web-interface/newlist` with the requested `rid`, fixed `pn=1`, and `ps` batch size.
+`max_response_bytes` limits the decoded body size. `batch_size` supplies the requested `ps` value;
+the number of returned rows may differ. There is no arbitrary row-count limit.
+
+```rust,no_run
+use bbdown_core::{BiliClient, CategoryVideoQuery, ClientConfig};
+
+#[tokio::main]
+async fn main() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let batch = client
+        .category_videos(
+            CategoryVideoQuery::new(1)
+                .with_batch_size(10)
+                .with_max_response_bytes(2 * 1024 * 1024),
+        )
+        .await?;
+    println!("{} rows for requested category {} (batch {})", batch.items.len(), batch.requested_rid, batch.requested_batch_size);
+    Ok(())
+}
+```
+
+The call uses only the configured API base and request timeout, sends no credentials, follows no
+redirects, and does not initialize PGC metadata or resolver routes. A configured API base must
+support the exact endpoint, query, and native `data.archives` response envelope. Every row in a
+valid batch is retained in source order within the decoded-byte cap; malformed required fields fail
+the batch instead of being silently skipped. The endpoint's sampled `page.count` was zero
+with nonempty archives, and sampled `pn=2` did not advance rows, so the API does not expose totals
+or continuation. It also does not promise stable order or latest rows. `CategoryVideoBatch` exposes
+`requested_rid`, `requested_batch_size`, and `items`. `CategoryVideoItem` maps `category_id`/`category_name`
+to `tid`/`tname` and `category_v2_id`/`category_v2_name` to `tidv2`/`tnamev2`; these pairs describe
+the returned row independently and are not derived from requested `rid`.
+It does not add an `Input`, selection, detail hydration, playurl, or download path; category catalogs,
+pagination, channels, and topics remain future work.
+
 ### PGC Timetable Metadata
 
 This API is available in the `v0.11.0` source release. Check
