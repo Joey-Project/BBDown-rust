@@ -130,9 +130,17 @@
 ## Global Blockers
 
 - No known blocker affects deterministic release validation. One actual-core `0.11.0`
-  SpaceDynamic first-item playback plan passed; the downstream consumer's focused V2 smoke remains
-  pending. The historical `0.9.0` HTTP 412 cause remains undetermined, and successful planning does
-  not establish media playback. See
+  SpaceDynamic first-item playback plan passed, followed by a controlled authenticated compatibility
+  smoke on an isolated temporary consumer adaptation at source head
+  `879d852cd2a9a45e5b2f806036c77191ec7bf233`, pinned to released core source commit
+  `0a3ccd624647017e10ec893ffd9f3d73bf507631`. The revalidation passed within
+  `2026-10-21T22:17:13.725Z`–`2026-10-21T22:18:04.901Z`, with proxy environment variables absent
+  and system proxy enable flags false. It covers the tested task/HLS playlist flow only;
+  it is not completed or accepted downstream integration and does not establish native decoding,
+  sustained playback, full-fill, offline playback, or deployment. The downstream maintainer owns
+  dependency upgrade, adaptation, acceptance, and merge; this compatibility evidence creates no
+  BBDown requirement to merge [consumer PR #77](https://github.com/Joey-Project/tvOS-net-player/pull/77).
+  The historical `0.9.0` HTTP 412 cause remains undetermined. See
   `docs/project_journal/2026/10/2026-10-20-dynamic-playback-acceptance-01a0dd39.md` and
   `docs/project_journal/2026/10/2026-10-11-space-dynamic-request-and-bounded-metadata-followup.md`.
 - Opt-in restricted PGC live e2e remains dependent on upstream proxy/fixture health.

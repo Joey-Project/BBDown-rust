@@ -171,6 +171,10 @@
   sequential was faster than either Range control in both observations. This is a small sample, not
   an automatic or adaptive routing implementation. See
   `docs/project_journal/2026/10/2026-10-11-cdn-expanded-live-measurement-01a12c87.md`.
+- [completed] Record six valid CDN downloads across two rotated repetitions for one public fixture,
+  with byte-identical outputs and observed two-host shard use. This bounded sample does not prove a
+  generalized speedup or adaptive routing policy. See
+  `docs/project_journal/2026/10/2026-10-21-bounded-media-cdn-acceptance-01a0dd39.md`.
 - [pending] Consider automatic CDN routing only after broader measurements; persistent host-health
   state and adaptive chunk/concurrency settings also remain future work. See
   `docs/project_journal/2026/10/2026-10-11-cdn-performance-baseline-53887b35.md`.
@@ -182,9 +186,14 @@
   feed requests using server-issued values, a temporary request header, and clone-shared in-memory
   cache; preserve configured credentials and keep Following behavior unchanged. See
   `docs/project_journal/2026/10/2026-10-11-dynamic-request-and-bounded-metadata.md`.
-- [pending] Run the downstream consumer's focused V2 smoke for SpaceDynamic. One actual-core
-  `0.11.0` legacy planning call has produced a candidate; this does not clear the historical
-  consumer-reported `0.9.0` HTTP 412 cause or establish consumer acceptance. See
+- [completed] Record one focused authenticated SpaceDynamic V2/HLS compatibility smoke from an
+  isolated temporary consumer adaptation on the `bbdown-core 0.11.0` source line. One bounded case
+  passed again with a recorded UTC window and controlled proxy configuration; this is not completed
+  or accepted downstream integration. The downstream maintainer owns
+  dependency upgrade, adaptation, acceptance, and merge; no BBDown work depends on merging
+  [consumer PR #77](https://github.com/Joey-Project/tvOS-net-player/pull/77). This does not establish
+  native decoding, sustained playback, full-fill, offline playback,
+  or deployment. See
   `docs/project_journal/2026/10/2026-10-20-dynamic-playback-acceptance-01a0dd39.md` and
   `docs/project_journal/2026/10/2026-10-11-space-dynamic-request-and-bounded-metadata-followup.md`.
 - [pending] Add aria2 backend integration, MP4Box muxing, and subtitle-to-SRT conversion. BBDown
