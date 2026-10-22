@@ -266,12 +266,20 @@ PGC 自动识别。如需指定某个条目，请显式把其 BVID 或 aid 传�
 bbdown timetable --json
 bbdown timetable --type anime --json
 bbdown timetable --type guochuang --json
+bbdown --pgc-metadata-service-base https://metadata-gateway.example \
+  --pgc-metadata-service-capabilities timetable timetable --type anime --json
+bbdown --pgc-metadata-service-base https://metadata-gateway.example \
+  --pgc-metadata-service-capabilities timetable timetable --type guochuang --json
 ```
 
-命令通过配置的 PGC metadata base（`--pgc-base` / `BBDOWN_PGC_BASE`）向
+默认情况下，命令通过配置的 PGC metadata base（`--pgc-base` / `BBDOWN_PGC_BASE`）向
 `/pgc/web/timeline/v2` 发起一次匿名请求；番剧只传 `season_type=1`，国创只传
-`season_type=4`。所选服务必须支持此 metadata 端点及其响应格式。此能力与只负责 PGC Web
-playurl 的 `PgcWebPlayurlRoute` 分开。请求不会发送已配置的 credentials 或 Cookie。
+`season_type=4`。如需使用调用方选择的服务，请像上方示例一样，在命令前提供全局 service base 和
+capabilities，并单独声明 `timetable` capability。服务必须支持此 endpoint 及其响应格式；仅声明
+`season` 或 `media-review` 不会启用时间表路由。Service-only 路由不会回退到 `--pgc-base`、官方 API
+或代理。请求不会发送已配置的 credentials 或 Cookie，也不会跟随重定向。解码后的响应上限取 service
+限制（默认 8 MiB，或所配置的 service 上限）与时间表 1 MiB 上限中的较小值。此能力与只负责 PGC Web
+playurl 的 `PgcWebPlayurlRoute` 分开。
 
 JSON 包含所选 `kind`、上游单独返回的 `latest` 区块，以及按上游顺序排列的 `days`。每一天会保留来源的
 `date`、`date_ts`、`day_of_week`、`is_today` 和分集列表，包括空日期。每个分集包含可选正数

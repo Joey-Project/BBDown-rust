@@ -29,7 +29,7 @@ superseded_by:
 - Standard UGC collections, series, favorites, and medialist inputs already have collection resolution and planning paths. Ordinary BV input keeps its single-video behavior; membership expansion is explicit.
 - Existing `PgcWebPlayurlRoute` controls PGC Web playurl requests only. It does not route season metadata or page listings through the restricted-area resolver chain.
 - PGC metadata requests use the configurable `EndpointConfig.pgc_base`; changing an endpoint base alone does not establish that a resolver supports its metadata endpoints, response shape, or regional access.
-- A capability-declared `PgcMetadataRoute::ServiceOnly` can route domestic episode/season and media-review hydration through a caller-selected service that declares the matching endpoints. It does not route timetable, movie/TV index, search, PUGV, international PGC, playurl, or media. See `2026-10-21-pgc-metadata-service-routes-01a0dd39.md`; the broader endpoint-specific service requirement remains open.
+- A capability-declared `PgcMetadataRoute::ServiceOnly` can route domestic episode/season, media-review hydration, and timetable metadata through a caller-selected service that declares the matching endpoint capability. Timetable support is independent from `Season` and `MediaReview`; the route still does not cover movie/TV index, search, PUGV, international PGC, playurl, or media. See `2026-10-21-pgc-metadata-service-routes-01a0dd39.md` and `2026-10-22-pgc-timetable-service-route-01a0dd39.md`; broader endpoint-specific service support remains open.
 
 ## Ordered Backlog
 
@@ -48,7 +48,7 @@ superseded_by:
 - Aim to support caller-selected API services for existing season/collection/list pages and the new page families only where their endpoint capabilities permit it, so metadata enumeration as well as playback resolution can work when official regional access is unavailable.
 - Cover metadata and listing endpoints explicitly; do not assume the existing PGC playurl fallback also resolves season metadata, search, timetable, or category data. Ordinary video search uses `api_base` for `/x/web-interface/nav` and `/x/web-interface/wbi/search/type`; it does not inherit `PgcWebPlayurlRoute` behavior or forward configured credentials.
 - Prefer reusing endpoint configuration, the bundled resolver catalog, and existing route conventions where compatible. Define service capabilities and caller-selectable routing; a service that only supports playurl must not be presented as a metadata/list resolver.
-- The current `PgcMetadataRoute` slice only declares `Season` and `MediaReview`; do not infer support for timetable or index listings from those capabilities or from the configured `pgc_base`.
+- The `PgcMetadataRoute` slice declares `Season`, `MediaReview`, and `Timetable` independently; do not infer support for one from another or infer index-listing support from these capabilities or from the configured `pgc_base`.
 - Preserve required request parameters, signing, pagination, group titles, and episode identities when a service supports the route. Make unsupported endpoints and regional access failures visible in diagnostics.
 - Keep credential requirements and forwarding scope explicit for each configured service. Resolver support depends on the service's endpoint coverage and access rights; it does not guarantee availability for every region or account.
 
@@ -60,7 +60,7 @@ superseded_by:
 - Popular videos: mock requested page and page-size query parameters, one-request anonymous routing, response bounds, `data.no_more` continuation behavior, item parsing, and CLI JSON/human output. Verify there is no automatic pagination or detail/playurl/media request; the upstream does not provide a page echo, total, or fixed-order snapshot.
 - Ranking: mock fixed `rid=0&type=all` routing, independently configurable per-response byte caps, zero-cap rejection before HTTP, optional note and item parsing, preservation of all valid rows and source-position ranks, and CLI JSON/human output. Verify no pagination, configurable category/type, credential or resolver initialization, detail hydration, playurl, or image/media request; ordering and totals are not guaranteed.
 - Search: mock filtering, ordering, bounded request behavior, and explicit result selection before selected video hydration. Search fetches one requested page per call, caps each response at 1 MiB and each page at 20 rows.
-- Reverse resolvers: mock supported and unsupported endpoints, official/proxy routing, response compatibility, and failures; use opt-in live fixtures for exact configured service routes when execution is authorized.
+- Reverse resolvers: mock supported and unsupported endpoints, official/proxy routing, response compatibility, and failures; use opt-in live fixtures for exact configured service routes when execution is authorized. Timetable's anonymous HTTP probe found compatible responses from `atri.ink` for both kinds; this is preliminary shape evidence, not current-source CLI validation.
 - Synchronize English and Simplified Chinese user and embedding documentation with each implementation slice.
 
 ## Evidence

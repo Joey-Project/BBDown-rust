@@ -38,7 +38,7 @@ SpaceDynamic 请求缺少设备 Cookie 值时的初始化逻辑。它还记录�
 `bbdown-core = "0.10"`；`0.9` 依赖不包含这些 API。如果 registry 中尚无 `0.10.0` package，请使用对应的源码检出
 或本地 path dependency。
 `0.11.0` 源码版本增加普通视频搜索及选中条目的 PGC 识别、国内 PGC 分集分组、番剧与国创时间表 metadata、电影/电视剧索引 metadata、热门视频 metadata 和全站排行榜 metadata。排行榜会返回所有有效条目，不再使用此前任意设置的 100 条上限；每个响应的默认大小上限为 1 MiB。这些功能不实现频道、话题、自动 CDN 路由、持久化 CDN 健康状态或自适应 CDN 策略。请参阅 [v0.11.0 发布说明](docs/release-notes/v0.11.0.zh-CN.md)，并查看[官方 Releases](https://github.com/Joey-Project/BBDown-rust/releases)了解归档可用性。
-当前源码检出也支持按 capability 声明 metadata service，用于国内 PGC 分集/season 与 media-review hydration；该路由不覆盖时间表、索引、搜索、PUGV 或 Intl metadata。
+当前源码检出也支持按 capability 声明 metadata service，用于国内 PGC 分集/season、media-review 与时间表 metadata；该路由不覆盖索引、搜索、PUGV 或 Intl metadata。
 
 ## 当前 CLI
 
@@ -64,6 +64,8 @@ bbdown info 'https://space.bilibili.com/123/lists/456?type=series' --json
 bbdown search "Rust async" --page 2 --order pubdate --json
 bbdown timetable --type anime --json
 bbdown timetable --type guochuang --json
+bbdown --pgc-metadata-service-base https://metadata-gateway.example \
+  --pgc-metadata-service-capabilities timetable timetable --type anime --json
 bbdown pgc-index list --type movie --page 1 --page-size 20 --order play --json
 bbdown pgc-index filters --type tv --json
 bbdown popular --json
@@ -98,9 +100,11 @@ PGC 自动识别只在通过搜索输入选择条目时运行；确认分集后�
 搜索列表仍是普通视频搜索。若选中 BVID 或 aid 的官方 view 响应包含官方 PGC 分集重定向，且身份校验通过，
 规划会保留分集身份并进入现有 PGC 路径。搜索 `api_base`、PGC metadata `pgc_base` 和 PGC Web playurl 路由分别配置；
 PGC Web 使用配置的 Web playurl 路由；Web 和 APP 沿用现有的受限区域代理回退，TV 语义保持不变。
-当前源码检出可为国内分集/season hydration 与 media-review metadata 显式选择 capability 声明的 PGC metadata service，使用
-`--pgc-metadata-service-base` 和 `--pgc-metadata-service-capabilities`；这两个参数必须同时提供。
-该 service-only 路由不会回退到 `--pgc-base` 或代理。支持的 endpoint、capability 和响应大小限制见[嵌入指南](docs/embedding.zh-CN.md)。
+当前源码检出可为国内分集/season hydration、media-review metadata 和 PGC 时间表 metadata 显式选择
+capability 声明的 PGC metadata service，使用 `--pgc-metadata-service-base` 和
+`--pgc-metadata-service-capabilities`；这两个参数必须同时提供。时间表路由需要单独声明
+`timetable` capability，其他 capability 不会隐含此能力。该 service-only 路由不会回退到 `--pgc-base` 或代理。
+支持的 endpoint、capability 和响应大小限制见[嵌入指南](docs/embedding.zh-CN.md)。
 
 国内 PGC season metadata 会在 `info --json` 输出的 `episode_groups` 字段中包含按上游顺序排列的
 `main` 和 `section` 分集组。组成员使用完整 season 分集列表中的零基位置，因此即使 `--select` 只

@@ -1718,6 +1718,17 @@ fn timetable_guochuang_uses_its_supported_category_and_help_is_bounded() -> anyh
     assert!(!help.contains("--before"));
     assert!(!help.contains("--after"));
 
+    let output = bbdown_command()?
+        .arg("--help")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let global_help = String::from_utf8(output)?;
+    assert!(global_help.contains("season,media-review,timetable"));
+    assert!(global_help.contains("and/or timetable"));
+
     let mut invalid = bbdown_command()?;
     let output = invalid
         .arg("--pgc-base")
@@ -1733,6 +1744,139 @@ fn timetable_guochuang_uses_its_supported_category_and_help_is_bounded() -> anyh
     let stderr = String::from_utf8(output)?;
     assert!(stderr.contains("invalid value 'film'"));
     timeline.assert_calls(1);
+    Ok(())
+}
+
+#[test]
+fn pgc_timetable_service_cli_routes_both_kinds_anonymously_with_prefix() -> anyhow::Result<()> {
+    let service = MockServer::start();
+    let official = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let sentinel = b"malformed credential data that must remain untouched";
+    fs::write(&credential_file, sentinel)?;
+    let anime = service.mock(|when, then| {
+        when.method(GET)
+            .path("/service-prefix/pgc/web/timeline/v2")
+            .query_param("season_type", "1")
+            .header_missing("cookie")
+            .header_missing("authorization")
+            .query_param_missing("access_key");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "result": { "latest": [], "timeline": [] }
+        }));
+    });
+    let guochuang = service.mock(|when, then| {
+        when.method(GET)
+            .path("/service-prefix/pgc/web/timeline/v2")
+            .query_param("season_type", "4")
+            .header_missing("cookie")
+            .header_missing("authorization")
+            .query_param_missing("access_key");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "result": { "latest": [], "timeline": [] }
+        }));
+    });
+    let official_timetable = official.mock(|when, then| {
+        when.method(GET).path("/pgc/web/timeline/v2");
+        then.status(500);
+    });
+
+    for kind in ["anime", "guochuang"] {
+        let mut command = bbdown_command()?;
+        command
+            .arg("--pgc-base")
+            .arg(official.base_url())
+            .arg("--pgc-metadata-service-base")
+            .arg(format!("{}/service-prefix", service.base_url()))
+            .args([
+                "--pgc-metadata-service-capabilities",
+                "timetable",
+                "--credential-file",
+            ])
+            .arg(&credential_file)
+            .arg("timetable")
+            .arg("--type")
+            .arg(kind)
+            .arg("--json")
+            .env("BBDOWN_COOKIE", PGC_SERVICE_COOKIE_FIXTURE)
+            .env("BBDOWN_ACCESS_KEY", SEARCH_PGC_RENEWED_ACCESS_KEY)
+            .assert()
+            .success();
+    }
+
+    assert_eq!(fs::read(&credential_file)?, sentinel);
+    anime.assert();
+    guochuang.assert();
+    official_timetable.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+fn pgc_timetable_service_cli_requires_declared_capability_and_hides_error_body()
+-> anyhow::Result<()> {
+    let service = MockServer::start();
+    let official = MockServer::start();
+    let mut undeclared = service.mock(|when, then| {
+        when.method(GET).path("/pgc/web/timeline/v2");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "result": { "latest": [], "timeline": [] }
+        }));
+    });
+    let official_timetable = official.mock(|when, then| {
+        when.method(GET).path("/pgc/web/timeline/v2");
+        then.status(500);
+    });
+    let missing_capability = bbdown_command()?
+        .args([
+            "--pgc-base",
+            official.base_url().as_str(),
+            "--pgc-metadata-service-base",
+            service.base_url().as_str(),
+            "--pgc-metadata-service-capabilities",
+            "season",
+            "timetable",
+        ])
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+    assert!(
+        String::from_utf8_lossy(&missing_capability)
+            .contains("does not declare the timetable capability")
+    );
+    undeclared.assert_calls(0);
+    undeclared.delete();
+    official_timetable.assert_calls(0);
+
+    let error_body = "private-service-error-body-marker";
+    let failed = service.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/web/timeline/v2")
+            .query_param("season_type", "1");
+        then.status(502).body(error_body);
+    });
+    let failure = bbdown_command()?
+        .args([
+            "--pgc-metadata-service-base",
+            service.base_url().as_str(),
+            "--pgc-metadata-service-capabilities",
+            "timetable",
+            "timetable",
+        ])
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+    let failure = String::from_utf8(failure)?;
+    assert!(failure.contains("PGC metadata service timetable returned HTTP 502"));
+    assert!(!failure.contains(error_body));
+    failed.assert();
     Ok(())
 }
 
