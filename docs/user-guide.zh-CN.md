@@ -305,6 +305,21 @@ bbdown pgc-index list --type tv --order follow --ascending --area '<keyword from
 bbdown pgc-index filters --type movie --json
 ```
 
+源码检出可通过调用方选择的 metadata service 路由两个索引 endpoint，并单独声明 `index` capability。
+全局 service 参数放在命令前：
+
+```bash
+bbdown --pgc-metadata-service-base https://metadata-gateway.example \
+  --pgc-metadata-service-capabilities index pgc-index filters --type movie --json
+bbdown --pgc-metadata-service-base https://metadata-gateway.example \
+  --pgc-metadata-service-capabilities index pgc-index list --type tv --page 1 --page-size 2 --order play --json
+```
+
+未提供这组参数时，现有配置的 `--pgc-base` 路由保持不变。Service-only 路由对电影和电视剧类别的
+`/pgc/season/index/result` 与 `/pgc/season/index/condition` 都要求 `index` capability；请求为匿名请求，不跟随重定向，
+也不会回退到配置的 PGC base 或代理。它保留现有查询参数及筛选/排序解析值。解码后的响应上限取索引现有 1 MiB
+上限与 service 上限中的较小值（service 默认为 8 MiB，也可配置）。
+
 list 命令只返回一页 metadata。默认类型为电影、页码为 1、每页 20 条，按播放量降序；每页大小为 1–20。
 电影支持 `play`、`updated`、`release-date` 和 `score` 排序；电视剧支持 `play`、`updated`、`danmaku`、
 `follow` 和 `score`。`score` 只支持降序。其它支持的排序可用 `--ascending` 选择升序。筛选参数使用对应

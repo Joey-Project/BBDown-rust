@@ -378,6 +378,23 @@ bbdown pgc-index list --type tv --order follow --ascending --area '<keyword from
 bbdown pgc-index filters --type movie --json
 ```
 
+The source checkout can route both index endpoints through a caller-selected metadata service by
+declaring the independent `index` capability. Put the global service flags before the command:
+
+```bash
+bbdown --pgc-metadata-service-base https://metadata-gateway.example \
+  --pgc-metadata-service-capabilities index pgc-index filters --type movie --json
+bbdown --pgc-metadata-service-base https://metadata-gateway.example \
+  --pgc-metadata-service-capabilities index pgc-index list --type tv --page 1 --page-size 2 --order play --json
+```
+
+Without this pair, the existing configured `--pgc-base` route is unchanged. Service-only routing
+requires `index` for both `/pgc/season/index/result` and `/pgc/season/index/condition` and for either
+category; it makes anonymous requests, does not follow redirects, and never falls back to the
+configured PGC base or proxy. It preserves the existing query parameters and parsed filter/order
+values. The decoded response limit is the smaller of the index's existing 1 MiB cap and the service
+limit (8 MiB by default, or its configured value).
+
 The list command returns one metadata page. Its defaults are movie, page 1, 20 rows, and descending
 play order. Page size can be 1–20. Movie supports `play`, `updated`, `release-date`, and `score`;
 TV supports `play`, `updated`, `danmaku`, `follow`, and `score`. Score supports descending order

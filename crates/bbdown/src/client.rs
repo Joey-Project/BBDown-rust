@@ -229,6 +229,8 @@ pub enum PgcMetadataCapability {
     MediaReview,
     /// PGC anime and guochuang timetable metadata.
     Timetable,
+    /// PGC movie and TV index metadata and filter conditions.
+    Index,
 }
 
 /// Default decoded response limit for the anonymous PGC metadata service.
@@ -277,6 +279,7 @@ impl PgcMetadataService {
             PgcMetadataCapability::Season => 0,
             PgcMetadataCapability::MediaReview => 1,
             PgcMetadataCapability::Timetable => 2,
+            PgcMetadataCapability::Index => 3,
         });
         capabilities.dedup();
         if capabilities.is_empty() {
@@ -3208,6 +3211,7 @@ impl BiliClient {
             PgcMetadataCapability::Season => "season",
             PgcMetadataCapability::MediaReview => "media-review",
             PgcMetadataCapability::Timetable => "timetable",
+            PgcMetadataCapability::Index => "index",
         };
         Err(Error::Unsupported(format!(
             "PGC metadata service does not declare the {name} capability"
@@ -3244,6 +3248,7 @@ impl BiliClient {
             PgcMetadataCapability::Season => "season",
             PgcMetadataCapability::MediaReview => "media-review",
             PgcMetadataCapability::Timetable => "timetable",
+            PgcMetadataCapability::Index => "index",
         };
         let max_response_bytes = response_limit.map_or(service.max_response_bytes, |limit| {
             service.max_response_bytes.min(limit)
@@ -3320,18 +3325,7 @@ impl BiliClient {
             }
             body.extend_from_slice(&chunk);
         }
-        let response: ApiResult<T> = serde_json::from_slice(&body).map_err(|_| {
-            Error::InvalidInput(format!(
-                "PGC metadata service {endpoint} returned malformed JSON"
-            ))
-        })?;
-        if response.code != 0 {
-            return Err(Error::Api {
-                code: response.code,
-                message: "PGC metadata service API failure".to_owned(),
-            });
-        }
-        response.result.ok_or(Error::MissingField("result"))
+        parse_pgc_service_response(&body, capability, endpoint)
     }
 
     fn resolve_season_selection(
@@ -4747,6 +4741,47 @@ impl<T> ApiResult<T> {
             });
         }
         self.result.ok_or(Error::MissingField("result"))
+    }
+}
+
+fn parse_pgc_service_response<T>(
+    body: &[u8],
+    capability: PgcMetadataCapability,
+    endpoint: &str,
+) -> Result<T>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let malformed_json = || {
+        Error::InvalidInput(format!(
+            "PGC metadata service {endpoint} returned malformed JSON"
+        ))
+    };
+    match capability {
+        PgcMetadataCapability::Index => {
+            let response: ApiData<T> =
+                serde_json::from_slice(body).map_err(|_| malformed_json())?;
+            if response.code != 0 {
+                return Err(Error::Api {
+                    code: response.code,
+                    message: "PGC metadata service API failure".to_owned(),
+                });
+            }
+            response.data.ok_or(Error::MissingField("data"))
+        }
+        PgcMetadataCapability::Season
+        | PgcMetadataCapability::MediaReview
+        | PgcMetadataCapability::Timetable => {
+            let response: ApiResult<T> =
+                serde_json::from_slice(body).map_err(|_| malformed_json())?;
+            if response.code != 0 {
+                return Err(Error::Api {
+                    code: response.code,
+                    message: "PGC metadata service API failure".to_owned(),
+                });
+            }
+            response.result.ok_or(Error::MissingField("result"))
+        }
     }
 }
 

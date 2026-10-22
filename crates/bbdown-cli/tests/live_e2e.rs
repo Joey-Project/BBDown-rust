@@ -119,6 +119,7 @@ enum PgcMetadataServiceCapability {
     Season,
     MediaReview,
     Timetable,
+    Index,
 }
 
 impl PgcMetadataServiceCapability {
@@ -127,6 +128,7 @@ impl PgcMetadataServiceCapability {
             Self::Season => "season",
             Self::MediaReview => "media-review",
             Self::Timetable => "timetable",
+            Self::Index => "index",
         }
     }
 }

@@ -1,4 +1,4 @@
-use super::BiliClient;
+use super::{BiliClient, PgcMetadataCapability, PgcMetadataRoute};
 use crate::{Error, Result};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -318,41 +318,12 @@ impl IndexItem {
 
 pub(super) async fn pgc_index(client: &BiliClient, query: PgcIndexQuery) -> Result<PgcIndexPage> {
     validate_query(&query)?;
-    let mut bounded_client = client.clone();
-    bounded_client.http = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(BiliClient::http_error_without_url)?;
-
-    let mut url = BiliClient::endpoint_url(
-        &client.config.endpoints.pgc_base,
-        "/pgc/season/index/result",
-    )?;
-    append_common_query(&mut url, query.kind);
-    {
-        let mut pairs = url.query_pairs_mut();
-        pairs
-            .append_pair("order", &query.order.value().to_string())
-            .append_pair("sort", &query.sort.value().to_string())
-            .append_pair("page", &query.page.to_string())
-            .append_pair("pagesize", &query.page_size.to_string());
-        if let Some(value) = query.filters.area.as_deref() {
-            pairs.append_pair("area", value);
+    let result = match &client.config.pgc_metadata_route {
+        PgcMetadataRoute::Configured => fetch_configured_index_result(client, &query).await?,
+        PgcMetadataRoute::ServiceOnly(service) => {
+            fetch_service_index_result(client, service, &query).await?
         }
-        if let Some(value) = query.filters.style_id.as_deref() {
-            pairs.append_pair("style_id", value);
-        }
-        if let Some(value) = query.filters.release_date.as_deref() {
-            pairs.append_pair("release_date", value);
-        }
-        if let Some(value) = query.filters.season_status.as_deref() {
-            pairs.append_pair("season_status", value);
-        }
-    }
-
-    let response = send_bounded(&bounded_client, client, url).await?;
-    let envelope: DataEnvelope<IndexResponse> = serde_json::from_slice(&response)?;
-    let result = envelope.into_result()?;
+    };
     if result.has_next > 1 {
         return Err(Error::InvalidInput(
             "PGC index returned an invalid has_next value".to_owned(),
@@ -399,10 +370,10 @@ pub(super) async fn pgc_index(client: &BiliClient, query: PgcIndexQuery) -> Resu
     })
 }
 
-pub(super) async fn pgc_index_conditions(
+async fn fetch_configured_index_result(
     client: &BiliClient,
-    kind: PgcIndexKind,
-) -> Result<PgcIndexConditions> {
+    query: &PgcIndexQuery,
+) -> Result<IndexResponse> {
     let mut bounded_client = client.clone();
     bounded_client.http = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -411,12 +382,89 @@ pub(super) async fn pgc_index_conditions(
 
     let mut url = BiliClient::endpoint_url(
         &client.config.endpoints.pgc_base,
-        "/pgc/season/index/condition",
+        "/pgc/season/index/result",
     )?;
-    append_common_query(&mut url, kind);
+    append_common_query(&mut url, query.kind);
+    {
+        let mut pairs = url.query_pairs_mut();
+        pairs
+            .append_pair("order", &query.order.value().to_string())
+            .append_pair("sort", &query.sort.value().to_string())
+            .append_pair("page", &query.page.to_string())
+            .append_pair("pagesize", &query.page_size.to_string());
+        for (field, value) in [
+            ("area", query.filters.area.as_deref()),
+            ("style_id", query.filters.style_id.as_deref()),
+            ("release_date", query.filters.release_date.as_deref()),
+            ("season_status", query.filters.season_status.as_deref()),
+        ] {
+            if let Some(value) = value {
+                pairs.append_pair(field, value);
+            }
+        }
+    }
     let response = send_bounded(&bounded_client, client, url).await?;
-    let envelope: DataEnvelope<ConditionsResponse> = serde_json::from_slice(&response)?;
-    let result = envelope.into_result()?;
+    let envelope: DataEnvelope<IndexResponse> = serde_json::from_slice(&response)?;
+    envelope.into_result()
+}
+
+async fn fetch_service_index_result(
+    client: &BiliClient,
+    service: &super::PgcMetadataService,
+    query: &PgcIndexQuery,
+) -> Result<IndexResponse> {
+    let mut query_pairs = common_query_pairs(query.kind);
+    query_pairs.extend([
+        ("order", query.order.value().to_string()),
+        ("sort", query.sort.value().to_string()),
+        ("page", query.page.to_string()),
+        ("pagesize", query.page_size.to_string()),
+    ]);
+    append_filter_query_pairs(&mut query_pairs, &query.filters);
+    client
+        .fetch_pgc_service_api_with_response_limit(
+            service,
+            PgcMetadataCapability::Index,
+            "/pgc/season/index/result",
+            &query_pairs,
+            Some(PGC_INDEX_RESPONSE_MAX_BYTES),
+        )
+        .await
+}
+
+pub(super) async fn pgc_index_conditions(
+    client: &BiliClient,
+    kind: PgcIndexKind,
+) -> Result<PgcIndexConditions> {
+    let result = match &client.config.pgc_metadata_route {
+        PgcMetadataRoute::Configured => {
+            let mut bounded_client = client.clone();
+            bounded_client.http = reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .map_err(BiliClient::http_error_without_url)?;
+
+            let mut url = BiliClient::endpoint_url(
+                &client.config.endpoints.pgc_base,
+                "/pgc/season/index/condition",
+            )?;
+            append_common_query(&mut url, kind);
+            let response = send_bounded(&bounded_client, client, url).await?;
+            let envelope: DataEnvelope<ConditionsResponse> = serde_json::from_slice(&response)?;
+            envelope.into_result()?
+        }
+        PgcMetadataRoute::ServiceOnly(service) => {
+            client
+                .fetch_pgc_service_api_with_response_limit(
+                    service,
+                    PgcMetadataCapability::Index,
+                    "/pgc/season/index/condition",
+                    &common_query_pairs(kind),
+                    Some(PGC_INDEX_RESPONSE_MAX_BYTES),
+                )
+                .await?
+        }
+    };
     if result.filter.len() > PGC_INDEX_MAX_FILTER_GROUPS {
         return Err(Error::InvalidInput(format!(
             "PGC index conditions exceeded the {PGC_INDEX_MAX_FILTER_GROUPS}-filter limit"
@@ -516,6 +564,41 @@ fn append_common_query(url: &mut Url, kind: PgcIndexKind) {
         .append_pair("type", "1");
 }
 
+fn common_query_pairs(kind: PgcIndexKind) -> Vec<(&'static str, String)> {
+    vec![
+        ("season_type", kind.season_type().to_string()),
+        ("type", "1".to_owned()),
+    ]
+}
+
+fn append_filter_query_pairs(
+    pairs: &mut Vec<(&'static str, String)>,
+    filters: &PgcIndexFilterSelection,
+) {
+    pairs.extend(
+        [
+            filters
+                .area
+                .as_deref()
+                .map(|value| ("area", value.to_owned())),
+            filters
+                .style_id
+                .as_deref()
+                .map(|value| ("style_id", value.to_owned())),
+            filters
+                .release_date
+                .as_deref()
+                .map(|value| ("release_date", value.to_owned())),
+            filters
+                .season_status
+                .as_deref()
+                .map(|value| ("season_status", value.to_owned())),
+        ]
+        .into_iter()
+        .flatten(),
+    );
+}
+
 fn validate_query(query: &PgcIndexQuery) -> Result<()> {
     if query.page == 0 {
         return Err(Error::InvalidInput(
@@ -579,7 +662,10 @@ mod tests {
         PGC_INDEX_RESPONSE_MAX_BYTES, PgcIndexFilterSelection, PgcIndexKind, PgcIndexOrder,
         PgcIndexQuery, PgcIndexSort, pgc_index, pgc_index_conditions,
     };
-    use crate::{BiliClient, ClientConfig, Credentials, EndpointConfig, Error};
+    use crate::{
+        BiliClient, ClientConfig, Credentials, EndpointConfig, Error, PgcMetadataCapability,
+        PgcMetadataRoute, PgcMetadataService,
+    };
     use httpmock::prelude::*;
     use serde_json::json;
 
@@ -600,6 +686,21 @@ mod tests {
                     ..Credentials::default()
                 }),
         )
+    }
+
+    fn service_client(
+        server: &MockServer,
+        max_response_bytes: Option<usize>,
+    ) -> anyhow::Result<BiliClient> {
+        let base_url = format!("{}/gateway/root/", server.base_url());
+        let service = PgcMetadataService::new(base_url, [PgcMetadataCapability::Index])?;
+        let service = match max_response_bytes {
+            Some(limit) => service.with_max_response_bytes(limit)?,
+            None => service,
+        };
+        let mut client = client_with_credentials(server);
+        client.config.pgc_metadata_route = PgcMetadataRoute::ServiceOnly(service);
+        Ok(client)
     }
 
     fn item(season_id: u64, season_type: u8) -> serde_json::Value {
@@ -940,5 +1041,292 @@ mod tests {
         ));
         redirect.assert_calls(1);
         downstream.assert_calls(0);
+    }
+
+    #[tokio::test]
+    async fn service_index_routes_both_kinds_through_prefixed_anonymous_endpoints()
+    -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let movie_index = server.mock(|when, then| {
+            when.method(GET)
+                .path("/gateway/root/pgc/season/index/result")
+                .query_param("season_type", "2")
+                .query_param("type", "1")
+                .query_param("order", "6")
+                .query_param("sort", "1")
+                .query_param("page", "3")
+                .query_param("pagesize", "2")
+                .query_param("area", "-1")
+                .query_param("style_id", "crime, slice of life")
+                .query_param("release_date", "2022年, 2023年")
+                .query_param("season_status", "2")
+                .query_param_missing("access_key")
+                .header_missing("cookie")
+                .header_missing("authorization");
+            then.status(200).json_body(json!({
+                "code": 0,
+                "data": {
+                    "has_next": 0,
+                    "list": [item(50, 2)],
+                    "num": 3,
+                    "size": 2,
+                    "total": 1
+                }
+            }));
+        });
+        let tv_index = server.mock(|when, then| {
+            when.method(GET)
+                .path("/gateway/root/pgc/season/index/result")
+                .query_param("season_type", "5")
+                .query_param("type", "1")
+                .query_param("order", "1")
+                .query_param_missing("access_key")
+                .header_missing("cookie");
+            then.status(200).json_body(json!({
+                "code": 0,
+                "data": {
+                    "has_next": 0,
+                    "list": [item(51, 5)],
+                    "num": 1,
+                    "size": 20,
+                    "total": 1
+                }
+            }));
+        });
+        let movie_conditions = server.mock(|when, then| {
+            when.method(GET)
+                .path("/gateway/root/pgc/season/index/condition")
+                .query_param("season_type", "2")
+                .query_param("type", "1")
+                .query_param_missing("access_key")
+                .header_missing("cookie");
+            then.status(200).json_body(json!({
+                "code": 0,
+                "data": {"filter": [], "order": [{"field": "6", "name": "上映时间", "sort": "0,1"}]}
+            }));
+        });
+        let tv_conditions = server.mock(|when, then| {
+            when.method(GET)
+                .path("/gateway/root/pgc/season/index/condition")
+                .query_param("season_type", "5")
+                .query_param("type", "1")
+                .query_param_missing("access_key")
+                .header_missing("cookie");
+            then.status(200).json_body(json!({
+                "code": 0,
+                "data": {"filter": [{"field": "area", "name": "地区", "values": [{"keyword": "-1", "name": "全部"}]}], "order": []}
+            }));
+        });
+        let client = service_client(&server, None)?;
+        assert_service_index_payloads(&client).await?;
+
+        movie_index.assert_calls(1);
+        tv_index.assert_calls(1);
+        movie_conditions.assert_calls(1);
+        tv_conditions.assert_calls(1);
+        Ok(())
+    }
+
+    async fn assert_service_index_payloads(client: &BiliClient) -> anyhow::Result<()> {
+        let page = pgc_index(
+            client,
+            PgcIndexQuery::new(PgcIndexKind::Movie)
+                .with_order(PgcIndexOrder::ReleaseDate)
+                .with_sort(PgcIndexSort::Ascending)
+                .with_page(3)
+                .with_page_size(2)
+                .with_filters(PgcIndexFilterSelection {
+                    area: Some("-1".to_owned()),
+                    style_id: Some("crime, slice of life".to_owned()),
+                    release_date: Some("2022年, 2023年".to_owned()),
+                    season_status: Some("2".to_owned()),
+                }),
+        )
+        .await?;
+        assert_eq!(page.page, 3);
+        assert_eq!(page.items[0].season_id, 50);
+        let tv_page = pgc_index(
+            client,
+            PgcIndexQuery::new(PgcIndexKind::Tv).with_order(PgcIndexOrder::Danmaku),
+        )
+        .await?;
+        assert_eq!(tv_page.items[0].season_id, 51);
+        let movie_conditions = pgc_index_conditions(client, PgcIndexKind::Movie).await?;
+        assert_eq!(movie_conditions.orders[0].field, "6");
+        let tv_conditions = pgc_index_conditions(client, PgcIndexKind::Tv).await?;
+        assert_eq!(tv_conditions.filters[0].values[0].keyword, "-1");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn service_index_requires_declared_capability_without_fallback() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let any_request = server.mock(|when, then| {
+            when.method(GET);
+            then.status(200).json_body(json!({}));
+        });
+        let service = PgcMetadataService::new(
+            format!("{}/gateway/root/", server.base_url()),
+            [PgcMetadataCapability::Timetable],
+        )?;
+        let client = BiliClient::new(
+            ClientConfig::default()
+                .with_endpoints(EndpointConfig::default().with_pgc_base(server.base_url()))
+                .with_pgc_metadata_route(PgcMetadataRoute::ServiceOnly(service)),
+        );
+
+        assert!(matches!(
+            pgc_index(&client, PgcIndexQuery::new(PgcIndexKind::Movie)).await,
+            Err(Error::Unsupported(message)) if message.contains("index capability")
+        ));
+        assert!(matches!(
+            pgc_index_conditions(&client, PgcIndexKind::Movie).await,
+            Err(Error::Unsupported(message)) if message.contains("index capability")
+        ));
+        any_request.assert_calls(0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn service_capability_envelopes_ignore_the_other_untyped_payload() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let season_mock = server.mock(|when, then| {
+            when.method(GET).path("/gateway/root/pgc/test/season");
+            then.status(200)
+                .body(r#"{"code":0,"result":"season value","data":{"incompatible":"object"}}"#);
+        });
+        let index_mock = server.mock(|when, then| {
+            when.method(GET).path("/gateway/root/pgc/test/index");
+            then.status(200)
+                .body(r#"{"code":0,"data":"index value","result":{"incompatible":"object"}}"#);
+        });
+        let client = client_with_credentials(&server);
+        let season_service = PgcMetadataService::new(
+            format!("{}/gateway/root/", server.base_url()),
+            [PgcMetadataCapability::Season],
+        )?;
+        let season: String = client
+            .fetch_pgc_service_api_with_response_limit(
+                &season_service,
+                PgcMetadataCapability::Season,
+                "/pgc/test/season",
+                &[],
+                Some(1024),
+            )
+            .await?;
+        assert_eq!(season, "season value");
+
+        let index_service = PgcMetadataService::new(
+            format!("{}/gateway/root/", server.base_url()),
+            [PgcMetadataCapability::Index],
+        )?;
+        let index: String = client
+            .fetch_pgc_service_api_with_response_limit(
+                &index_service,
+                PgcMetadataCapability::Index,
+                "/pgc/test/index",
+                &[],
+                Some(1024),
+            )
+            .await?;
+        assert_eq!(index, "index value");
+        season_mock.assert_calls(1);
+        index_mock.assert_calls(1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn service_index_errors_and_response_limits_are_enforced() -> anyhow::Result<()> {
+        let cases = [
+            ("HTTP status", 503, "{}", "HTTP 503"),
+            ("malformed JSON", 200, "{", "malformed JSON"),
+            (
+                "API error",
+                200,
+                r#"{"code":-400,"message":"private"}"#,
+                "API failure",
+            ),
+            (
+                "missing data",
+                200,
+                r#"{"code":0}"#,
+                "API response did not contain data",
+            ),
+        ];
+        for (name, status, body, expected) in cases {
+            let server = MockServer::start();
+            let mock = server.mock(|when, then| {
+                when.method(GET)
+                    .path("/gateway/root/pgc/season/index/condition");
+                then.status(status).body(body);
+            });
+            let client = service_client(&server, None)?;
+            let error = pgc_index_conditions(&client, PgcIndexKind::Movie)
+                .await
+                .err()
+                .ok_or_else(|| anyhow::anyhow!("expected failure for case: {name}"))?;
+            assert!(
+                format!("{error}").contains(expected),
+                "case: {name}; error: {error}"
+            );
+            mock.assert_calls(1);
+        }
+
+        for (name, custom_limit, body_size, expected_limit) in [
+            (
+                "index cap",
+                None,
+                PGC_INDEX_RESPONSE_MAX_BYTES + 1,
+                PGC_INDEX_RESPONSE_MAX_BYTES,
+            ),
+            ("smaller service cap", Some(32), 33, 32),
+        ] {
+            let server = MockServer::start();
+            let oversized = " ".repeat(body_size);
+            let mock = server.mock(|when, then| {
+                when.method(GET)
+                    .path("/gateway/root/pgc/season/index/condition");
+                then.status(200).body(oversized);
+            });
+            let client = service_client(&server, custom_limit)?;
+            assert!(
+                matches!(
+                    pgc_index_conditions(&client, PgcIndexKind::Movie).await,
+                    Err(Error::InvalidInput(message))
+                        if message.contains(&format!("{expected_limit}-byte limit"))
+                ),
+                "case should reject oversized body: {name}"
+            );
+            mock.assert_calls(1);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn service_index_redirects_are_not_followed() -> anyhow::Result<()> {
+        let destination = MockServer::start();
+        let downstream = destination.mock(|when, then| {
+            when.method(GET);
+            then.status(200)
+                .json_body(json!({"code": 0, "data": {"filter": [], "order": []}}));
+        });
+        let origin = MockServer::start();
+        let redirect = origin.mock(|when, then| {
+            when.method(GET)
+                .path("/gateway/root/pgc/season/index/condition");
+            then.status(302).header(
+                "location",
+                format!("{}/pgc/season/index/condition", destination.base_url()),
+            );
+        });
+
+        let client = service_client(&origin, None)?;
+        assert!(matches!(
+            pgc_index_conditions(&client, PgcIndexKind::Movie).await,
+            Err(Error::InvalidInput(message)) if message.contains("HTTP 302")
+        ));
+        redirect.assert_calls(1);
+        downstream.assert_calls(0);
+        Ok(())
     }
 }

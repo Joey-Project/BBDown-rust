@@ -39,8 +39,8 @@ popular-video metadata, and global ranking metadata. Ranking returns all valid r
 arbitrary 100-row cap and uses a positive 1 MiB default limit per response. These additions do not
 implement channels, topics, automatic CDN routing, persistent CDN health, or adaptive CDN policy.
 This source checkout also supports capability-declared metadata-service routing for domestic PGC
-episode/season, media-review, and timetable metadata; it does not route index, search, PUGV, or
-international metadata.
+episode/season, media-review, timetable, and movie/TV index metadata. Index routing has its own
+`index` capability; it does not imply support for search, PUGV, or international metadata.
 See the [v0.11.0 release notes](docs/release-notes/v0.11.0.md) and
 [official releases](https://github.com/Joey-Project/BBDown-rust/releases) for archive availability.
 Input parsing covers normal videos, PGC and intl episodes, PUGV/cheese courses, B23 short links,
@@ -134,11 +134,12 @@ contains an official PGC episode redirect that matches its identity, planning pr
 identity and uses the existing PGC path. Search `api_base`, PGC metadata `pgc_base`, and the PGC Web
 playurl route are separate settings. PGC Web uses its configured Web playurl route; Web and APP keep
 their existing restricted-area proxy fallback, and TV semantics remain unchanged.
-For domestic episode/season hydration, media-review metadata, and PGC timetable metadata, this source
-checkout can select a capability-declared PGC metadata service with
+For domestic episode/season hydration, media-review metadata, PGC timetable metadata, and movie/TV
+index metadata, this source checkout can select a capability-declared PGC metadata service with
 `--pgc-metadata-service-base` and `--pgc-metadata-service-capabilities`. Both flags are required
-together. Timetable routing requires the separate `timetable` capability; other capabilities do not
-imply it. This explicit service-only route does not fall back to `--pgc-base` or a proxy; see the
+together. Timetable and index routing require their separate `timetable` and `index` capabilities;
+capabilities do not imply one another. This explicit service-only route does not fall back to
+`--pgc-base` or a proxy; see the
 [embedding guide](docs/embedding.md) for supported endpoints, capability requirements, and response
 bounds.
 See the [user guide](docs/user-guide.md) and [embedding guide](docs/embedding.md) for limits and

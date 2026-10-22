@@ -22,7 +22,7 @@ cancellation token。原始输入解析覆盖普
 Cookie 值。元数据分页不改变完整 `resolve`/`info` 行为。使用这些 API 需要 `0.10` 依赖版本线；`0.9` 依赖不包含这些
 API。如果 registry 中尚无 `0.10.0` package，请使用对应的源码检出或本地 path dependency。
 `0.11.0` 源码版本增加搜索 API（`VideoSearchQuery` / `BiliClient::search_videos`）、PGC 时间表与索引 metadata、热门视频 metadata 和全站排行榜 metadata API，也增加国内 PGC 分集分组。请查看[crates.io](https://crates.io/crates/bbdown-core)了解当前 package 可用性；[官方 Releases](https://github.com/Joey-Project/BBDown-rust/releases)页面列出 CLI 归档。
-当前源码检出也支持嵌入应用为国内分集/season 与 media-review hydration 显式选择按 capability 声明的 PGC metadata service；若服务单独声明 `PgcMetadataCapability::Timetable`，也可用于时间表 metadata。该路由仅访问所声明 endpoint，不覆盖索引列表、搜索、PUGV 或 Intl metadata；请求与响应边界见仓库嵌入指南。
+当前源码检出也支持嵌入应用为国内分集/season 与 media-review hydration 显式选择按 capability 声明的 PGC metadata service；`PgcMetadataCapability::Timetable` 与 `PgcMetadataCapability::Index` 分别独立启用时间表和电影/电视剧索引 metadata。该路由不覆盖搜索、PUGV 或 Intl metadata；请求与响应边界见仓库嵌入指南。
 
 crate 提供 staged XML 历史保留弹幕刷新，按有效的正 `p[7]` ID 去重；ID 缺失、为零或无效时，使用完整
 `p` 属性和解码文本作为匹配依据。它从合并 XML 重新生成 ASS，同时包含 CDN 控制和独立 PGC Web 路由 API。PGC 区域与代理解析独立于媒体

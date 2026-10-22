@@ -491,15 +491,25 @@ Each API call makes one anonymous request through configured `pgc_base` to the c
 `/pgc/season/index/result` or `/pgc/season/index/condition` endpoint. The service must support that
 endpoint and response shape. Requests do not load credential profiles or send configured credentials
 or cookies, do not follow redirects, use the configured timeout, and cap JSON responses at 1 MiB.
-`PgcWebPlayurlRoute` covers PGC Web playurl only and does not route index metadata. The listing is
+`PgcWebPlayurlRoute` covers PGC Web playurl only; index metadata uses the configured PGC base unless
+the caller explicitly selects `PgcMetadataRoute::ServiceOnly` with `Index`. The listing is
 metadata only: an `ss<ID>` or `md<ID>` must still go through existing season resolution with an
 explicit selection; `latest` keeps its main-episode meaning. An available exact episode ID can use
 existing `ep<ID>` flows. No generic input, automatic hydration, or download path is added.
 
+When `PgcMetadataRoute::ServiceOnly` is selected, both index APIs use the caller-selected service
+only when it declares the independent `PgcMetadataCapability::Index` capability. This covers both
+`/pgc/season/index/result` and `/pgc/season/index/condition` for movie and TV categories. Result
+requests preserve type, season type, order, sort, page, page size, and optional filter parameters;
+condition requests preserve type and season type. The default `Configured` route remains unchanged.
+Service-only requests are anonymous, do not follow redirects, and never fall back to `pgc_base` or a
+proxy. Their decoded response cap is the smaller of the service limit (8 MiB by default, or
+`with_max_response_bytes`) and the index's existing 1 MiB limit.
+
 ### Capability-Declared PGC Metadata Service
 
-`PgcMetadataRoute` independently routes domestic PGC episode/season hydration, media-review
-metadata, and timetable metadata. Its default `Configured` variant preserves the existing
+`PgcMetadataRoute` independently routes domestic PGC episode/season hydration, media-review,
+timetable, and movie/TV index metadata. Its default `Configured` variant preserves the existing
 `EndpointConfig::pgc_base` route.
 Use `ServiceOnly(service)` when the caller has selected a compatible local or private service and
 knows which exact endpoint capabilities it supports:
@@ -509,20 +519,25 @@ knows which exact endpoint capabilities it supports:
 | `PgcMetadataCapability::Season` | `/pgc/view/web/season` | Domestic `ep<ID>` and `ss<ID>` resolution, plus the season step for `md<ID>` |
 | `PgcMetadataCapability::MediaReview` | `/pgc/review/user` | The media-review step for domestic `md<ID>` resolution |
 | `PgcMetadataCapability::Timetable` | `/pgc/web/timeline/v2` | Anime and Chinese-animation timetable metadata |
+| `PgcMetadataCapability::Index` | `/pgc/season/index/result`, `/pgc/season/index/condition` | Movie/TV pages and filter/order metadata |
+
+Index services must preserve the endpoints' native `data` response envelope. The Season,
+MediaReview, and Timetable routes use their existing `result` envelope; each route parses only its
+selected envelope and ignores unrelated payload fields.
 
 Declare at least one capability. An `ep<ID>` or `ss<ID>` lookup requires `Season`. An `md<ID>` lookup
 requires both `Season` and `MediaReview`; the client checks both before sending its first request.
-`BiliClient::pgc_timetable` requires
-`Timetable`. Capabilities are independent; declaring `Season` or `MediaReview` does not declare
-`Timetable`. If a required capability was not declared, the call fails with an endpoint-specific
+`BiliClient::pgc_timetable` requires `Timetable`; `pgc_index` and `pgc_index_conditions` require
+`Index`. Capabilities are independent: `Season` and `MediaReview` do not declare either listing
+capability, and `Timetable` and `Index` do not imply one another. If a required capability was not declared, the call fails with an endpoint-specific
 capability error before HTTP. Service-only routing never falls back to `pgc_base`, the official
 service, a restricted-area proxy, or another endpoint.
 `PgcWebPlayurlRoute` remains limited to Web playurl requests.
 For compatible service payloads, this changes only the metadata endpoint route; existing parsing,
 episode ordering, grouping, and `Latest` selection semantics are preserved.
 
-This route does not cover movie/TV index requests, ordinary-video search, PUGV, international PGC,
-playurl, or media. Those continue using their existing endpoint configuration and behavior. A
+This route does not cover ordinary-video search, PUGV, international PGC, playurl, or media. Those
+continue using their existing endpoint configuration and behavior. A
 configured base URL alone does not establish that a service supports these routes or their response
 shapes; select a service that actually implements each declared capability. The crate requires an
 absolute HTTP(S) base URL with a host and no userinfo, query, or fragment. It does not provide or
@@ -532,8 +547,8 @@ The service sends anonymous requests: it does not forward configured cookies, ac
 credentials, does not follow redirects, and does not invoke proxy fallback. Endpoint paths are
 appended to the validated HTTP(S) base URL, preserving its path prefix. Each decoded response body
 is independently bounded to 8 MiB by default; the `md<ID>` review and season responses each receive
-that full per-response limit. Timetable responses use the smaller of this service limit and their
-existing 1 MiB limit. `with_max_response_bytes` accepts only a positive byte limit.
+that full per-response limit. Timetable and index responses use the smaller of this service limit
+and their existing 1 MiB limits. `with_max_response_bytes` accepts only a positive byte limit.
 
 The CLI live harness includes anonymous `info` cases for episode, season, and media inputs in
 `live-e2e.pgc-metadata.samples.example.json`. This fixture demonstrates the required capabilities and
@@ -565,7 +580,7 @@ async fn resolve_with_private_service() -> bbdown_core::Result<()> {
 
 For the CLI, `--pgc-metadata-service-base` and
 `--pgc-metadata-service-capabilities` must be supplied together. Capability values are
-comma-separated `season`, `media-review`, and `timetable`; `--pgc-metadata-service-max-response-bytes` is optional,
+comma-separated `season`, `media-review`, `timetable`, and `index`; `--pgc-metadata-service-max-response-bytes` is optional,
 must be positive, and requires the service pair:
 
 ```bash
@@ -575,6 +590,9 @@ bbdown --pgc-metadata-service-base https://metadata-gateway.example \
 
 bbdown --pgc-metadata-service-base https://metadata-gateway.example \
   --pgc-metadata-service-capabilities timetable timetable --type anime --json
+
+bbdown --pgc-metadata-service-base https://metadata-gateway.example \
+  --pgc-metadata-service-capabilities index pgc-index list --type movie --page 1 --page-size 2 --order play --json
 ```
 
 The older `--pgc-base` / `BBDOWN_PGC_BASE` setting remains available for configured metadata routing.
