@@ -1368,6 +1368,396 @@ fn pgc_index_filters_exposes_service_choices_without_credentials() -> anyhow::Re
     Ok(())
 }
 
+fn configure_pgc_index_service_command(
+    command: &mut Command,
+    official_base: &str,
+    service_base: &str,
+    capability: &str,
+    credential_file: &Path,
+    args: &[&str],
+) {
+    command
+        .args([
+            "--pgc-base",
+            official_base,
+            "--pgc-metadata-service-base",
+            service_base,
+            "--pgc-metadata-service-capabilities",
+            capability,
+            "--credential-file",
+        ])
+        .arg(credential_file)
+        .arg("--credential-profile")
+        .arg("missing-profile")
+        .arg("--credential-preflight")
+        .arg("fail")
+        .args(args)
+        .env("BBDOWN_COOKIE", PGC_SERVICE_COOKIE_FIXTURE)
+        .env("BBDOWN_ACCESS_KEY", SEARCH_PGC_RENEWED_ACCESS_KEY);
+}
+
+fn pgc_index_service_json(
+    official_base: &str,
+    service_base: &str,
+    capability: &str,
+    credential_file: &Path,
+    args: &[&str],
+) -> anyhow::Result<Value> {
+    let mut command = bbdown_command()?;
+    configure_pgc_index_service_command(
+        &mut command,
+        official_base,
+        service_base,
+        capability,
+        credential_file,
+        args,
+    );
+    Ok(serde_json::from_slice(
+        &command.assert().success().get_output().stdout,
+    )?)
+}
+
+fn mock_pgc_index_service_list_movie(server: &MockServer) -> httpmock::Mock<'_> {
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/service-prefix/pgc/season/index/result")
+            .query_param("type", "1")
+            .query_param("season_type", "2")
+            .query_param("order", "2")
+            .query_param("sort", "1")
+            .query_param("page", "3")
+            .query_param("pagesize", "7")
+            .query_param("area", "-1")
+            .query_param("style_id", "动作,奇幻")
+            .query_param("release_date", "2019-01,2024-12")
+            .query_param("season_status", "13")
+            .header_missing("cookie")
+            .header_missing("authorization")
+            .query_param_missing("access_key");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "has_next": 1,
+                "list": [],
+                "num": 3,
+                "size": 7,
+                "total": 780
+            }
+        }));
+    })
+}
+
+fn mock_pgc_index_service_list_tv(server: &MockServer) -> httpmock::Mock<'_> {
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/service-prefix/pgc/season/index/result")
+            .query_param("type", "1")
+            .query_param("season_type", "5")
+            .query_param("order", "0")
+            .query_param("sort", "0")
+            .query_param("page", "2")
+            .query_param("pagesize", "4")
+            .query_param_missing("area")
+            .query_param_missing("style_id")
+            .query_param_missing("release_date")
+            .query_param_missing("season_status")
+            .header_missing("cookie")
+            .header_missing("authorization")
+            .query_param_missing("access_key");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "has_next": 0,
+                "list": [],
+                "num": 2,
+                "size": 4,
+                "total": 0
+            }
+        }));
+    })
+}
+
+fn mock_pgc_index_service_filters<'a>(
+    server: &'a MockServer,
+    season_type: &str,
+) -> httpmock::Mock<'a> {
+    server.mock(|when, then| {
+        when.method(GET)
+            .path("/service-prefix/pgc/season/index/condition")
+            .query_param("type", "1")
+            .query_param("season_type", season_type)
+            .header_missing("cookie")
+            .header_missing("authorization")
+            .query_param_missing("access_key");
+        let data = if season_type == "2" {
+            serde_json::json!({
+                "filter": [],
+                "order": [{"field": "2", "name": "播放数量", "sort": "0,1"}]
+            })
+        } else {
+            serde_json::json!({
+                "filter": [{
+                    "field": "area",
+                    "name": "地区",
+                    "values": [{"keyword": "jp", "name": "日本"}]
+                }],
+                "order": []
+            })
+        };
+        then.status(200)
+            .json_body_obj(&serde_json::json!({"code": 0, "data": data}));
+    })
+}
+
+#[test]
+fn pgc_index_service_cli_routes_list_for_movie_and_tv_with_prefix() -> anyhow::Result<()> {
+    let service = MockServer::start();
+    let official = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let sentinel = b"malformed credential data that must remain untouched";
+    fs::write(&credential_file, sentinel)?;
+    let service_base = format!("{}/service-prefix", service.base_url());
+    let movie_list = mock_pgc_index_service_list_movie(&service);
+    let tv_list = mock_pgc_index_service_list_tv(&service);
+    let official_list = official.mock(|when, then| {
+        when.method(GET).path("/pgc/season/index/result");
+        then.status(500);
+    });
+
+    let movie = pgc_index_service_json(
+        official.base_url().as_str(),
+        &service_base,
+        "index",
+        &credential_file,
+        &[
+            "pgc-index",
+            "list",
+            "--type",
+            "movie",
+            "--page",
+            "3",
+            "--page-size",
+            "7",
+            "--order",
+            "play",
+            "--ascending",
+            "--area=-1",
+            "--style",
+            "动作,奇幻",
+            "--release-date",
+            "2019-01,2024-12",
+            "--season-status",
+            "13",
+            "--json",
+        ],
+    )?;
+    assert_eq!(movie["kind"], "movie");
+    assert_eq!(movie["page"], 3);
+    assert_eq!(movie["page_size"], 7);
+    assert_eq!(movie["next_page"], 4);
+
+    let tv = pgc_index_service_json(
+        official.base_url().as_str(),
+        &service_base,
+        "index",
+        &credential_file,
+        &[
+            "pgc-index",
+            "list",
+            "--type",
+            "tv",
+            "--page",
+            "2",
+            "--page-size",
+            "4",
+            "--order",
+            "updated",
+            "--json",
+        ],
+    )?;
+    assert_eq!(tv["kind"], "tv");
+    assert_eq!(tv["page"], 2);
+    assert_eq!(tv["page_size"], 4);
+    assert_eq!(fs::read(&credential_file)?, sentinel);
+    movie_list.assert();
+    tv_list.assert();
+    official_list.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+fn pgc_index_service_cli_routes_filters_for_movie_and_tv() -> anyhow::Result<()> {
+    let service = MockServer::start();
+    let official = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let service_base = format!("{}/service-prefix", service.base_url());
+    let movie_filters = mock_pgc_index_service_filters(&service, "2");
+    let tv_filters = mock_pgc_index_service_filters(&service, "5");
+    let official_filters = official.mock(|when, then| {
+        when.method(GET).path("/pgc/season/index/condition");
+        then.status(500);
+    });
+    for (kind, expected_filter) in [("movie", "orders"), ("tv", "filters")] {
+        let json = pgc_index_service_json(
+            official.base_url().as_str(),
+            &service_base,
+            "index",
+            &credential_file,
+            &["pgc-index", "filters", "--type", kind, "--json"],
+        )?;
+        assert_eq!(json["kind"], kind);
+        assert!(json[expected_filter].is_array());
+    }
+    movie_filters.assert();
+    tv_filters.assert();
+    official_filters.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+fn pgc_index_service_cli_requires_capability_without_fallback() -> anyhow::Result<()> {
+    let service = MockServer::start();
+    let official = MockServer::start();
+    let service_base = format!("{}/service-prefix", service.base_url());
+    let mut undeclared_list = service.mock(|when, then| {
+        when.method(GET)
+            .path("/service-prefix/pgc/season/index/result");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": { "has_next": 0, "list": [], "num": 1, "size": 20, "total": 0 }
+        }));
+    });
+    let mut undeclared_filters = service.mock(|when, then| {
+        when.method(GET)
+            .path("/service-prefix/pgc/season/index/condition");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": { "filter": [], "order": [] }
+        }));
+    });
+    let official_list = official.mock(|when, then| {
+        when.method(GET).path("/pgc/season/index/result");
+        then.status(500);
+    });
+    let official_filters = official.mock(|when, then| {
+        when.method(GET).path("/pgc/season/index/condition");
+        then.status(500);
+    });
+    for args in [
+        vec!["list", "--type", "movie"],
+        vec!["filters", "--type", "tv"],
+    ] {
+        let stderr = bbdown_command()?
+            .args([
+                "--pgc-base",
+                official.base_url().as_str(),
+                "--pgc-metadata-service-base",
+                &service_base,
+                "--pgc-metadata-service-capabilities",
+                "timetable",
+                "pgc-index",
+            ])
+            .args(args)
+            .assert()
+            .failure()
+            .get_output()
+            .stderr
+            .clone();
+        assert!(String::from_utf8_lossy(&stderr).contains("does not declare the index capability"));
+    }
+    undeclared_list.assert_calls(0);
+    undeclared_filters.assert_calls(0);
+    undeclared_list.delete();
+    undeclared_filters.delete();
+    official_list.assert_calls(0);
+    official_filters.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+fn pgc_index_service_cli_redacts_status_body_without_fallback() -> anyhow::Result<()> {
+    let service = MockServer::start();
+    let official = MockServer::start();
+    let service_base = format!("{}/service-prefix", service.base_url());
+    let error_body = "private-index-service-error-marker";
+    let failed = service.mock(|when, then| {
+        when.method(GET)
+            .path("/service-prefix/pgc/season/index/result")
+            .query_param("type", "1")
+            .query_param("season_type", "2")
+            .header_missing("cookie")
+            .header_missing("authorization")
+            .query_param_missing("access_key");
+        then.status(502).body(error_body);
+    });
+    let official_list = official.mock(|when, then| {
+        when.method(GET).path("/pgc/season/index/result");
+        then.status(500);
+    });
+    let stderr = bbdown_command()?
+        .args([
+            "--pgc-base",
+            official.base_url().as_str(),
+            "--pgc-metadata-service-base",
+            &service_base,
+            "--pgc-metadata-service-capabilities",
+            "index",
+            "pgc-index",
+            "list",
+            "--json",
+        ])
+        .env("BBDOWN_COOKIE", PGC_SERVICE_COOKIE_FIXTURE)
+        .env("BBDOWN_ACCESS_KEY", SEARCH_PGC_RENEWED_ACCESS_KEY)
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8(stderr)?;
+    assert!(stderr.contains("PGC metadata service index returned HTTP 502"));
+    assert!(!stderr.contains(error_body));
+    failed.assert();
+    official_list.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+fn pgc_index_service_cli_help_and_invalid_capability_are_clear() -> anyhow::Result<()> {
+    let service = MockServer::start();
+    let help = bbdown_command()?
+        .arg("--help")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let help = String::from_utf8(help)?;
+    assert!(help.contains("season,media-review,timetable,index"));
+    assert!(help.contains("and/or index"));
+    let stderr = bbdown_command()?
+        .args([
+            "--pgc-metadata-service-base",
+            service.base_url().as_str(),
+            "--pgc-metadata-service-capabilities",
+            "unknown",
+            "pgc-index",
+            "filters",
+        ])
+        .env("BBDOWN_COOKIE", PGC_SERVICE_COOKIE_FIXTURE)
+        .env("BBDOWN_ACCESS_KEY", SEARCH_PGC_RENEWED_ACCESS_KEY)
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+    assert!(
+        String::from_utf8(stderr)?.contains("expected season, media-review, timetable, or index")
+    );
+    Ok(())
+}
+
 #[test]
 fn pgc_index_defaults_to_first_movie_page_without_unspecified_filters() -> anyhow::Result<()> {
     let server = MockServer::start();
@@ -1726,8 +2116,8 @@ fn timetable_guochuang_uses_its_supported_category_and_help_is_bounded() -> anyh
         .stdout
         .clone();
     let global_help = String::from_utf8(output)?;
-    assert!(global_help.contains("season,media-review,timetable"));
-    assert!(global_help.contains("and/or timetable"));
+    assert!(global_help.contains("season,media-review,timetable,index"));
+    assert!(global_help.contains("and/or index"));
 
     let mut invalid = bbdown_command()?;
     let output = invalid

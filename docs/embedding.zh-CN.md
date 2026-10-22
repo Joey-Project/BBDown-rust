@@ -414,13 +414,20 @@ conditions、自动翻页、解析 season 详情或下载媒体。`PgcIndexPage`
 
 每次 API 调用都会通过配置的 `pgc_base` 向对应的 `/pgc/season/index/result` 或
 `/pgc/season/index/condition` 端点发起一次匿名请求。所选服务必须支持对应端点及响应格式。请求不会加载凭据 profile 或发送已配置
-credentials、Cookie；不会跟随重定向，使用配置的 timeout，JSON 响应上限为 1 MiB。`PgcWebPlayurlRoute` 只覆盖 PGC Web playurl，
-不会路由索引 metadata。列表只提供 metadata：`ss<ID>` 或 `md<ID>` 仍须通过现有 season 解析流程并显式选择分集；`latest` 保留其正片语义。
+credentials、Cookie；不会跟随重定向，使用配置的 timeout，JSON 响应上限为 1 MiB。`PgcWebPlayurlRoute` 只控制 PGC Web playurl；
+索引 metadata 默认使用配置的 PGC base，只有调用方显式选择带 `Index` capability 的 `PgcMetadataRoute::ServiceOnly` 才会改用 metadata service。
+列表只提供 metadata：`ss<ID>` 或 `md<ID>` 仍须通过现有 season 解析流程并显式选择分集；`latest` 保留其正片语义。
 已存在的精确分集 ID 可使用现有 `ep<ID>` 流程。不会增加通用 input、自动 hydration 或下载路径。
+
+选择 `PgcMetadataRoute::ServiceOnly` 时，只有服务声明独立的 `PgcMetadataCapability::Index`，两个索引 API 才会使用该服务。
+它覆盖电影和电视剧类别的 `/pgc/season/index/result` 与 `/pgc/season/index/condition`。列表请求保留现有 type、season type、
+order、sort、page、page size 和可选筛选参数；筛选条件请求保留 type 与 season type。默认 `Configured` 路由不变。
+Service-only 请求为匿名请求，不跟随重定向，也不会回退到 `pgc_base` 或代理。解码响应上限取 service 限制
+（默认 8 MiB，或 `with_max_response_bytes` 设置值）与索引现有 1 MiB 上限中的较小值。
 
 ### 按能力声明的 PGC metadata service
 
-`PgcMetadataRoute` 独立控制国内 PGC 分集/season hydration、media-review metadata 与时间表 metadata。默认的
+`PgcMetadataRoute` 独立控制国内 PGC 分集/season hydration、media-review、时间表与电影/电视剧索引 metadata。默认的
 `Configured` 会保留现有 `EndpointConfig::pgc_base` 行为。只有在调用方选定兼容的本地或私有服务，
 并确认其实际支持哪些 endpoint 时，才使用 `ServiceOnly(service)`：
 
@@ -429,21 +436,25 @@ credentials、Cookie；不会跟随重定向，使用配置的 timeout，JSON �
 | `PgcMetadataCapability::Season` | `/pgc/view/web/season` | 国内 `ep<ID>`、`ss<ID>` 解析，以及 `md<ID>` 的 season 步骤 |
 | `PgcMetadataCapability::MediaReview` | `/pgc/review/user` | 国内 `md<ID>` 解析中的 media-review 步骤 |
 | `PgcMetadataCapability::Timetable` | `/pgc/web/timeline/v2` | 番剧与国创时间表 metadata |
+| `PgcMetadataCapability::Index` | `/pgc/season/index/result`、`/pgc/season/index/condition` | 电影/电视剧列表和筛选/排序 metadata |
+
+Index service 必须保留两个 endpoint 原生的 `data` 响应封套。Season、MediaReview 和 Timetable 路由沿用既有的
+`result` 封套；每条路由只解析其对应封套，并忽略无关 payload 字段。
 
 至少需要声明一个 capability。`ep<ID>` 和 `ss<ID>` 需要 `Season`。`md<ID>` 需要同时声明 `Season` 和
-`MediaReview`；客户端会在首次 HTTP 请求前检查两者。`BiliClient::pgc_timetable` 需要 `Timetable`。
-Capability 彼此独立；声明 `Season` 或 `MediaReview` 不会隐含
-`Timetable`。若未声明所需 capability，调用会在发请求前返回对应 endpoint 的 capability 错误。Service-only 路由不会回退到
+`MediaReview`；客户端会在首次 HTTP 请求前检查两者。`BiliClient::pgc_timetable` 需要 `Timetable`；`pgc_index` 和
+`pgc_index_conditions` 需要 `Index`。Capability 彼此独立：`Season` 与 `MediaReview` 不会隐含 listing capability，
+`Timetable` 与 `Index` 也不会互相隐含。若未声明所需 capability，调用会在发请求前返回对应 endpoint 的 capability 错误。Service-only 路由不会回退到
 `pgc_base`、官方服务、受限区域代理或其它 endpoint。`PgcWebPlayurlRoute` 仍只控制 Web playurl。
 只要服务 payload 兼容，这项配置只改变 metadata 请求的路由，现有解析、分集顺序、分组和 `Latest` 选择语义保持不变。
 
-此路由不覆盖电影/电视剧索引、普通视频搜索、PUGV、Intl PGC、playurl 或媒体；这些仍沿用各自的 endpoint
+此路由不覆盖普通视频搜索、PUGV、Intl PGC、playurl 或媒体；这些仍沿用各自的 endpoint
 配置与行为。仅配置 base URL 并不能证明服务支持这些路由或响应结构，声明 capability 前应确认所选服务确实实现
 对应 endpoint。Base 必须是带主机名的绝对 HTTP(S) URL，且不能带 userinfo、query 或 fragment。crate 不提供或验证兼容的公共服务。
 
 服务以匿名方式请求：不转发配置的 Cookie、access key 或其它凭据，不跟随重定向，也不调用代理回退。
 endpoint 路径会追加到经过校验的 HTTP(S) base URL，并保留 base 中的路径前缀。每份解码后的响应正文默认独立限制为
-8 MiB；`md<ID>` 的 review 与 season 响应分别可使用完整上限。时间表响应取 service 限制与现有 1 MiB 上限中的较小值。
+8 MiB；`md<ID>` 的 review 与 season 响应分别可使用完整上限。时间表和索引响应取 service 限制与各自现有 1 MiB 上限中的较小值。
 `with_max_response_bytes` 只接受正数限制。
 
 CLI live harness 在 `live-e2e.pgc-metadata.samples.example.json` 中包含匿名的分集、season 和 media
@@ -474,7 +485,7 @@ async fn resolve_with_private_service() -> bbdown_core::Result<()> {
 ```
 
 CLI 必须同时提供 `--pgc-metadata-service-base` 和
-`--pgc-metadata-service-capabilities`。Capability 使用逗号分隔值 `season`、`media-review` 与 `timetable`；可选的
+`--pgc-metadata-service-capabilities`。Capability 使用逗号分隔值 `season`、`media-review`、`timetable` 与 `index`；可选的
 `--pgc-metadata-service-max-response-bytes` 必须为正数，且只有提供这组 service 参数时才能使用：
 
 ```bash
@@ -484,6 +495,9 @@ bbdown --pgc-metadata-service-base https://metadata-gateway.example \
 
 bbdown --pgc-metadata-service-base https://metadata-gateway.example \
   --pgc-metadata-service-capabilities timetable timetable --type anime --json
+
+bbdown --pgc-metadata-service-base https://metadata-gateway.example \
+  --pgc-metadata-service-capabilities index pgc-index list --type movie --page 1 --page-size 2 --order play --json
 ```
 
 原有的 `--pgc-base` / `BBDOWN_PGC_BASE` 仍用于 `Configured` metadata 路由；新的 CLI 参数对声明的 capability

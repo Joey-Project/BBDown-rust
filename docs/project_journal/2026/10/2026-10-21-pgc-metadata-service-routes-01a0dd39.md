@@ -22,7 +22,7 @@ superseded_by:
 
 ## Current State
 - Bilingual README and embedding documentation describe the API, CLI configuration, endpoint capability contract, anonymous requests, redirect and fallback behavior, and per-response decoded-body limit.
-- The original service slice covers `/pgc/view/web/season` and `/pgc/review/user`. The later independent `Timetable` capability is recorded in [the timetable service follow-up](2026-10-22-pgc-timetable-service-route-01a0dd39.md). Neither slice establishes support for index listings, search, PUGV, international PGC, playurl, or media. The original implementation gate did not verify a compatible external service; subsequent anonymous season/review CLI acceptance is recorded in [the October 22 follow-up](2026-10-22-pgc-metadata-live-acceptance-01a0dd39.md).
+- The original service slice covers `/pgc/view/web/season` and `/pgc/review/user`. Independent `Timetable` and `Index` capabilities are recorded in [the timetable follow-up](2026-10-22-pgc-timetable-service-route-01a0dd39.md) and [the index follow-up](2026-10-22-pgc-index-service-route-01a0dd39.md). These slices do not establish support for search, PUGV, international PGC, playurl, or media. The original implementation gate did not verify a compatible external service; subsequent anonymous season/review CLI acceptance is recorded in [the October 22 follow-up](2026-10-22-pgc-metadata-live-acceptance-01a0dd39.md).
 - Full `just ci` passed on the final fixture-adjusted tree in 231.03 seconds, following the earlier implementation gate in 93.285 seconds. The stable toolchain was Rust 1.99.1 / Cargo 1.99.0; the explicit Rust 1.95.0 MSRV check, formatting, workspace all-target Clippy with `-D warnings`, and publish dry run also passed. No publication occurred.
 - Workspace test segments totaled 992 passed, zero failed, and four ignored (67 + 199 + 13 + 684 + 21 + 2 + 0 + 6, including six public API integration tests). The CLI E2E suite's 199 passed tests are already included in this total; its separate recipe rerun is not added again. Additional focused gates passed: seven core tests and two CLI subprocess tests.
 - Attempt 1 stopped at Clippy on an unused `self`, a test `expect_err` lint, and an existing test-length threshold. Those issues were corrected before the successful full CI rerun.
@@ -30,7 +30,7 @@ superseded_by:
 - No metadata-service live test was run during the original implementation gate. The October 22 follow-up records bounded `ep`/`ss`/`md` CLI acceptance against the official API and `atri.ink`, with the exact tested capabilities and limitations. No publish or deployment was performed.
 
 ## Next Steps
-- Broader service routing remains separate work: movie/TV index, ordinary search, PUGV, and international PGC continue using existing endpoint configuration. Timetable service routing requires its independent `Timetable` capability; do not infer it from `Season` or `MediaReview`.
+- Broader service routing remains separate work for ordinary search, PUGV, and international PGC. Timetable and movie/TV index routing each require their independent `Timetable` and `Index` capabilities; do not infer either from `Season` or `MediaReview` or from one another.
 - The page-family roadmap's next priorities remain category and channel lists, followed by topic pages. Add service capabilities only in separately scoped slices that declare and validate their exact endpoints and response shapes.
 
 ## Evidence
