@@ -322,6 +322,34 @@ media. It does not add a generic input or selected-row PGC detection. To target 
 pass its BVID or aid to an existing command; it follows ordinary direct-video behavior and existing
 access rules.
 
+## Category Video Batch
+
+The current source checkout adds a metadata-only command; it is not part of the `v0.11.0` release:
+
+```bash
+bbdown category list --rid 1 --json
+bbdown category list --rid 13 --batch-size 15 --max-response-bytes 2097152 --json
+```
+
+The command makes one anonymous request to `/x/web-interface/newlist?rid=<rid>&pn=1&ps=<batch-size>`
+through the configured API base. The default batch size is 20 and the default decoded response cap
+is 1 MiB; `--max-response-bytes` can raise or lower the byte cap. There is no arbitrary row-count
+limit. All three query values (`rid`, batch size, and byte cap) must be positive; no additional
+numeric upper bounds are imposed. It uses the request timeout and API base only, does not follow
+redirects, and does not initialize credential or PGC resolver state. A configured API base must
+support this path, query, and response envelope.
+
+The command preserves every row in a valid archive batch in source order within the response cap;
+malformed required fields fail the batch instead of silently dropping rows. The requested batch
+size is not a guarantee that the service returns that many rows. The endpoint's tested `page.count`
+may be zero while `archives` is nonempty, and tested `pn=2` did not advance the sample rows, so this
+API fixes `pn=1` and exposes no total or continuation fields. It makes no stable-order or latest-item
+guarantee. `category_id`/`category_name` map to each row’s `tid`/`tname`, and
+`category_v2_id`/`category_v2_name` map to `tidv2`/`tnamev2`; the pairs independently describe the
+row and are not inferred to match the requested RID or each other. The command
+does not add generic inputs, item selection, hydration, playurl resolution, or downloads. A full
+category catalog, pagination, channel lists, and topic pages remain future work.
+
 ## PGC Timetable
 
 The timetable command is available in the `v0.11.0` source release. Check [official releases](https://github.com/Joey-Project/BBDown-rust/releases) for CLI archive availability.

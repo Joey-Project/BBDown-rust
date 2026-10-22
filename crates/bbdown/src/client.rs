@@ -30,12 +30,17 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 use url::Url;
 
+mod category;
 mod metadata_page;
 mod pgc_index;
 mod popular;
 mod ranking;
 mod timetable;
 mod video_search;
+pub use category::{
+    CategoryVideoBatch, CategoryVideoItem, CategoryVideoQuery, CategoryVideoStats,
+    DEFAULT_CATEGORY_VIDEO_BATCH_SIZE, DEFAULT_CATEGORY_VIDEO_MAX_RESPONSE_BYTES,
+};
 pub use metadata_page::{
     MetadataCollectionInfo, MetadataConsistency, MetadataCursor, MetadataPage, MetadataPageOptions,
     MetadataStopReason,
@@ -666,6 +671,14 @@ impl BiliClient {
     /// details or request playurl, media, subtitle, or tag data.
     pub async fn popular_videos(&self, query: PopularVideoQuery) -> Result<PopularVideoPage> {
         popular::popular_videos(self, query).await
+    }
+
+    /// Returns one bounded batch of anonymous metadata for the caller-selected category.
+    ///
+    /// The operation always requests the first upstream batch and does not infer
+    /// pagination from the upstream page metadata.
+    pub async fn category_videos(&self, query: CategoryVideoQuery) -> Result<CategoryVideoBatch> {
+        category::category_videos(self, query).await
     }
 
     /// Returns one bounded page of anonymous all-site ranking metadata.

@@ -245,6 +245,204 @@ fn search_json_uses_configured_api_base_and_only_requests_metadata() -> anyhow::
 }
 
 #[test]
+fn category_json_requests_one_source_batch_and_skips_credential_setup() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    let category = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/newlist")
+            .query_param("rid", "84")
+            .query_param("pn", "1")
+            .query_param("ps", "2")
+            .query_param_missing("access_key")
+            .header_missing("cookie")
+            .header_missing("authorization");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "archives": [{
+                    "aid": 501,
+                    "title": "Category metadata",
+                    "tid": 17,
+                    "tname": "Source category",
+                    "tidv2": 1701,
+                    "tnamev2": "Source category v2",
+                    "owner": {"mid": 8, "name": "Author"},
+                    "stat": {"view": 99}
+                }, {
+                    "aid": 502,
+                    "title": "Optional fields absent"
+                }]
+            }
+        }));
+    });
+    let detail = server.mock(|when, then| {
+        when.method(GET).path("/x/web-interface/view");
+        then.status(500);
+    });
+    let media = server.mock(|when, then| {
+        when.method(GET).path("/x/player/playurl");
+        then.status(500);
+    });
+
+    let output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("missing-profile")
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("--resolver")
+        .arg("unknown-resolver")
+        .arg("--restricted-area-proxy")
+        .arg("not a valid proxy")
+        .arg("--api-base")
+        .arg(server.base_url())
+        .args([
+            "category",
+            "list",
+            "--rid",
+            "84",
+            "--batch-size",
+            "2",
+            "--max-response-bytes",
+            "4096",
+            "--json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    assert_eq!(json["requested_rid"], 84);
+    assert_eq!(json["requested_batch_size"], 2);
+    assert_eq!(json["items"].as_array().map(Vec::len), Some(2));
+    assert_eq!(json["items"][0]["category_id"], 17);
+    assert_eq!(json["items"][0]["category_name"], "Source category");
+    assert_eq!(json["items"][0]["category_v2_id"], 1701);
+    assert_eq!(json["items"][0]["category_v2_name"], "Source category v2");
+    assert_eq!(json["items"][0]["stats"]["view"], 99);
+    assert!(json["items"][1]["category_id"].is_null());
+    assert!(json["items"][1]["author"].is_null());
+    assert!(!credential_file.exists());
+    category.assert_calls(1);
+    detail.assert_calls(0);
+    media.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+fn category_human_output_shows_requested_batch_and_optional_row_metadata() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let category = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/newlist")
+            .query_param("rid", "84")
+            .query_param("pn", "1")
+            .query_param("ps", "20")
+            .header_missing("cookie")
+            .header_missing("authorization");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "archives": [{
+                    "aid": 501,
+                    "title": "Category metadata",
+                    "tname": "Independent row category",
+                    "tnamev2": "Optional second category"
+                }]
+            }
+        }));
+    });
+
+    let output = bbdown_command()?
+        .arg("--api-base")
+        .arg(server.base_url())
+        .args(["category", "list", "--rid", "84"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let output = String::from_utf8(output)?;
+    assert!(output.contains("requested rid: 84"));
+    assert!(output.contains("requested batch size: 20"));
+    assert!(output.contains("items: 1"));
+    assert!(output.contains("title=Category metadata"));
+    assert!(output.contains("category: Independent row category"));
+    assert!(output.contains("category v2: Optional second category"));
+    category.assert_calls(1);
+    Ok(())
+}
+
+#[test]
+fn category_rejects_invalid_options_and_does_not_accept_pagination() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let category = server.mock(|when, then| {
+        when.method(GET).path("/x/web-interface/newlist");
+        then.status(500);
+    });
+    for args in [
+        vec!["category", "list", "--rid", "0"],
+        vec!["category", "list", "--rid", "84", "--batch-size", "0"],
+        vec![
+            "category",
+            "list",
+            "--rid",
+            "84",
+            "--max-response-bytes",
+            "0",
+        ],
+        vec!["category", "list", "--rid", "84", "--page", "2"],
+    ] {
+        bbdown_command()?
+            .arg("--api-base")
+            .arg(server.base_url())
+            .args(args)
+            .assert()
+            .failure();
+    }
+    category.assert_calls(0);
+    Ok(())
+}
+
+#[test]
+fn category_response_byte_limit_is_enforced() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let category = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/web-interface/newlist")
+            .query_param("rid", "84")
+            .query_param("pn", "1")
+            .query_param("ps", "20");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "data": {
+                "archives": [{"aid": 501, "title": "x".repeat(256)}]
+            }
+        }));
+    });
+
+    bbdown_command()?
+        .arg("--api-base")
+        .arg(server.base_url())
+        .args([
+            "category",
+            "list",
+            "--rid",
+            "84",
+            "--max-response-bytes",
+            "64",
+        ])
+        .assert()
+        .failure();
+    category.assert_calls(1);
+    Ok(())
+}
+
+#[test]
 fn popular_json_keeps_source_order_and_only_hydrates_an_explicit_bvid_plan() -> anyhow::Result<()> {
     let server = MockServer::start();
     let popular = server.mock(|when, then| {

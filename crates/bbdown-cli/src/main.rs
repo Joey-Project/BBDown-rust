@@ -7,13 +7,14 @@ use bbdown_core::{
     AccessKeyLoginTicketOutput, AccessKeyProvider, AccessKeyProviderSecret,
     AccessKeyRefreshKeypair, AccessKeyRefreshProvider, AccessKeyRefreshRequest,
     AccessKeyRenewalAction, AccessKeyRenewalDecision, AccessKeyRenewalReason, BiliClient,
-    ClientConfig, CredentialHealthReport, CredentialHealthScope, CredentialHealthStatus,
-    CredentialHealthSummaryStatus, CredentialKind, CredentialLifecycleMetadata,
-    CredentialLifecyclePolicy, CredentialLifecycleSource, CredentialLifecycleStatus,
-    CredentialPreflightMode, CredentialPreflightReport, CredentialPreflightRequestPath,
-    CredentialPreflightRequirement, CredentialPreflightRequirementStatus,
-    CredentialProfileLifecycleStatus, CredentialProfileSelection, CredentialProfiles,
-    CredentialRefreshSecret, CredentialStore, Credentials,
+    CategoryVideoBatch, CategoryVideoQuery, ClientConfig, CredentialHealthReport,
+    CredentialHealthScope, CredentialHealthStatus, CredentialHealthSummaryStatus, CredentialKind,
+    CredentialLifecycleMetadata, CredentialLifecyclePolicy, CredentialLifecycleSource,
+    CredentialLifecycleStatus, CredentialPreflightMode, CredentialPreflightReport,
+    CredentialPreflightRequestPath, CredentialPreflightRequirement,
+    CredentialPreflightRequirementStatus, CredentialProfileLifecycleStatus,
+    CredentialProfileSelection, CredentialProfiles, CredentialRefreshSecret, CredentialStore,
+    Credentials, DEFAULT_CATEGORY_VIDEO_BATCH_SIZE, DEFAULT_CATEGORY_VIDEO_MAX_RESPONSE_BYTES,
     DEFAULT_RANKING_VIDEO_MAX_RESPONSE_BYTES, DanmakuFormat, DanmakuUpdateOptions,
     DanmakuUpdatePolicy, DownloadArchive, DownloadCancellationToken, DownloadMode, DownloadOptions,
     DownloadPathTemplates, DownloadPlan, DownloadPreflight, DownloadProgressEvent,
@@ -236,6 +237,10 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    Category {
+        #[command(subcommand)]
+        command: CategoryCommand,
+    },
     Timetable {
         #[arg(long = "type", value_enum, default_value = "anime")]
         kind: PgcTimetableKindArg,
@@ -268,6 +273,28 @@ enum Command {
     Auth {
         #[command(subcommand)]
         command: AuthCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum CategoryCommand {
+    List {
+        #[arg(long, value_parser = parse_positive_u32)]
+        rid: u32,
+        #[arg(
+            long = "batch-size",
+            value_parser = parse_positive_u32,
+            default_value_t = DEFAULT_CATEGORY_VIDEO_BATCH_SIZE
+        )]
+        batch_size: u32,
+        #[arg(
+            long = "max-response-bytes",
+            value_parser = parse_positive_usize,
+            default_value_t = DEFAULT_CATEGORY_VIDEO_MAX_RESPONSE_BYTES
+        )]
+        max_response_bytes: usize,
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -1325,6 +1352,16 @@ fn parse_positive_usize(value: &str) -> Result<usize, String> {
     Ok(parsed)
 }
 
+fn parse_positive_u32(value: &str) -> Result<u32, String> {
+    let parsed = value
+        .parse::<u32>()
+        .map_err(|_| "must be a positive integer".to_owned())?;
+    if parsed == 0 {
+        return Err("must be greater than 0".to_owned());
+    }
+    Ok(parsed)
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     if let Err(error) = run().await {
@@ -1371,6 +1408,25 @@ async fn run() -> anyhow::Result<()> {
             Duration::from_secs(cli.request_timeout_seconds),
         );
         return handle_ranking_videos(&runtime, *max_response_bytes, *json).await;
+    }
+    if let Command::Category {
+        command:
+            CategoryCommand::List {
+                rid,
+                batch_size,
+                max_response_bytes,
+                json,
+            },
+    } = &cli.command
+    {
+        let runtime = ClientRuntimeConfig::new(
+            EndpointConfig::default().with_api_base(cli.api_base.clone()),
+            RestrictedAreaConfig::default(),
+            PlayurlMode::default(),
+            Duration::from_secs(cli.request_timeout_seconds),
+        );
+        return handle_category_videos(&runtime, *rid, *batch_size, *max_response_bytes, *json)
+            .await;
     }
     let endpoints = endpoints_from_cli(&cli);
     let mut restricted_area = restricted_area_from_cli_with_args(&cli, raw_args)?;
@@ -1430,6 +1486,9 @@ async fn run() -> anyhow::Result<()> {
         }
         Command::Ranking { .. } => {
             unreachable!("ranking commands return before credential initialization");
+        }
+        Command::Category { .. } => {
+            unreachable!("category commands return before credential initialization");
         }
         Command::Timetable { kind, json } => {
             handle_pgc_timetable(&client_runtime, kind, json).await?;
@@ -2156,6 +2215,72 @@ async fn handle_ranking_videos(
         print_ranking_video_page(&result);
     }
     Ok(())
+}
+
+async fn handle_category_videos(
+    client_runtime: &ClientRuntimeConfig,
+    rid: u32,
+    batch_size: u32,
+    max_response_bytes: usize,
+    json: bool,
+) -> anyhow::Result<()> {
+    let client = BiliClient::new(client_runtime.client_config(Credentials::default()));
+    let result = client
+        .category_videos(
+            CategoryVideoQuery::new(rid)
+                .with_batch_size(batch_size)
+                .with_max_response_bytes(max_response_bytes),
+        )
+        .await?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    } else {
+        print_category_video_batch(&result);
+    }
+    Ok(())
+}
+
+fn print_category_video_batch(batch: &CategoryVideoBatch) {
+    println!("requested rid: {}", batch.requested_rid);
+    println!("requested batch size: {}", batch.requested_batch_size);
+    println!("items: {}", batch.items.len());
+    for (index, item) in batch.items.iter().enumerate() {
+        let author = item.author.as_deref().unwrap_or("unknown");
+        let target = item.bvid.as_deref().map_or_else(
+            || format!("av{}", item.aid),
+            |bvid| format!("{bvid} / av{}", item.aid),
+        );
+        println!(
+            "{}. target={} author={} title={}",
+            index + 1,
+            target,
+            author,
+            item.title
+        );
+        if let Some(category) = item.category_name.as_deref() {
+            println!("   category: {category}");
+        }
+        if let Some(category_v2) = item.category_v2_name.as_deref() {
+            println!("   category v2: {category_v2}");
+        }
+        if let Some(stats) = item.stats.as_ref() {
+            let values = [
+                ("view", stats.view),
+                ("danmaku", stats.danmaku),
+                ("reply", stats.reply),
+                ("favorite", stats.favorite),
+                ("coin", stats.coin),
+                ("share", stats.share),
+                ("like", stats.like),
+            ]
+            .into_iter()
+            .filter_map(|(name, value)| value.map(|value| format!("{name}={value}")))
+            .collect::<Vec<_>>();
+            if !values.is_empty() {
+                println!("   stats: {}", values.join(" "));
+            }
+        }
+    }
 }
 
 fn print_ranking_video_page(page: &RankingVideoPage) {

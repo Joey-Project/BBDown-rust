@@ -39,6 +39,7 @@ SpaceDynamic 请求缺少设备 Cookie 值时的初始化逻辑。它还记录�
 或本地 path dependency。
 `0.11.0` 源码版本增加普通视频搜索及选中条目的 PGC 识别、国内 PGC 分集分组、番剧与国创时间表 metadata、电影/电视剧索引 metadata、热门视频 metadata 和全站排行榜 metadata。排行榜会返回所有有效条目，不再使用此前任意设置的 100 条上限；每个响应的默认大小上限为 1 MiB。这些功能不实现频道、话题、自动 CDN 路由、持久化 CDN 健康状态或自适应 CDN 策略。请参阅 [v0.11.0 发布说明](docs/release-notes/v0.11.0.zh-CN.md)，并查看[官方 Releases](https://github.com/Joey-Project/BBDown-rust/releases)了解归档可用性。
 当前源码检出也支持按 capability 声明 metadata service，用于国内 PGC 分集/season、media-review、时间表与电影/电视剧索引 metadata。索引路由需要独立的 `index` capability；这不代表支持搜索、PUGV 或 Intl metadata。
+当前源码检出还单独增加了匿名分类视频首批 metadata API 和 `category list` CLI。这是当前源码新增内容，不属于 `0.11.0` 发布版本；它不增加分类目录、分页、选择、详情 hydration 或下载行为。
 
 ## 当前 CLI
 
@@ -72,7 +73,11 @@ bbdown popular --json
 bbdown popular --page 2 --page-size 10 --json
 bbdown ranking --json
 bbdown ranking --max-response-bytes 2097152 --json
+bbdown category list --rid 1 --json
+bbdown category list --rid 13 --batch-size 15 --max-response-bytes 2097152 --json
 ```
+
+`category list` 向 `/x/web-interface/newlist` 发起一次匿名请求，使用指定 `rid`、固定 `pn=1` 和正数 `ps` 批量大小参数（默认 20）。有效批次会在正数响应字节上限内按源顺序保留所有返回的 archive 条目（默认 1 MiB）；必需字段格式错误时整批失败，不会静默丢弃条目。请求的批量大小不保证返回条目数量。该当前源码功能不承诺分页、总数、分类树、稳定排序或最新条目；每个返回条目的分类字段独立描述该条目，不会根据请求的 `rid` 推断。
 
 `timetable` 输出番剧或国创的上游 PGC 时间表 metadata。它只发起一次匿名请求，不会解析流或下载分集。
 该命令包含在 `v0.11.0` 源码版本中。请查看[官方 Releases](https://github.com/Joey-Project/BBDown-rust/releases)了解 CLI 归档可用性。

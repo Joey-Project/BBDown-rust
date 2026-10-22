@@ -256,6 +256,19 @@ JSON 结果包含可选的 `note` 和 `items`。每个条目包含一基的 `ran
 此命令只返回 metadata，不会补充详情、解析 playurl 或请求图片、媒体。它不会增加通用 input，也不会对选中行做
 PGC 自动识别。如需指定某个条目，请显式把其 BVID 或 aid 传给现有命令；后续沿用普通直接视频行为和既有访问规则。
 
+## 分区视频批次
+
+当前源码检出增加了仅提供 metadata 的命令；该功能不属于 `v0.11.0` 发布版本：
+
+```bash
+bbdown category list --rid 1 --json
+bbdown category list --rid 13 --batch-size 15 --max-response-bytes 2097152 --json
+```
+
+该命令通过已配置的 API base 向 `/x/web-interface/newlist?rid=<rid>&pn=1&ps=<batch-size>` 发起一次匿名请求。默认批量大小为 20，默认解码响应上限为 1 MiB；可用 `--max-response-bytes` 调高或调低字节上限，且没有任意的条目数量上限。三个查询值（`rid`、批量大小和字节上限）都必须为正数；不额外限制其数值上限。命令只使用请求超时和 API base，不跟随重定向，也不初始化凭据或 PGC resolver。配置的 API base 必须支持此路径、查询参数和响应 envelope。
+
+有效 archive 批次中的所有条目会在响应上限内按源顺序保留；必需字段格式错误时整批失败，不会静默丢弃条目。请求批量大小不保证 service 返回相同数量的条目。已测试的 endpoint 可能在 `archives` 非空时仍返回 `page.count=0`；测试中的 `pn=2` 也未推进样例条目，因此此 API 固定使用 `pn=1`，不提供总数或续页字段。它不保证排序稳定或条目最新。`category_id`/`category_name` 对应条目的 `tid`/`tname`，`category_v2_id`/`category_v2_name` 对应 `tidv2`/`tnamev2`；两组字段分别描述返回条目，不推断它们与请求 RID 或彼此之间的关系。该命令不增加通用输入、条目选择、详情 hydration、playurl 解析或下载。完整分区目录、分页、频道列表和话题页仍属于后续工作。
+
 ## PGC 时间表
 
 时间表命令包含在 `v0.11.0` 源码版本中。请查看[官方 Releases](https://github.com/Joey-Project/BBDown-rust/releases)了解 CLI 归档可用性。
