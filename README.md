@@ -491,6 +491,9 @@ gates and a strict clean-checkout crates.io dry run. The CLI crate is not a crat
 GitHub release archives for binary distribution. `just live-e2e` is intentionally excluded from
 default CI and fails fast unless the ignored local `live-e2e.samples.json` exists. Start from
 `live-e2e.samples.example.json` and list the public, PGC, intl, or restricted PGC samples to probe.
+For anonymous PGC metadata-only checks, see `live-e2e.pgc-metadata.samples.example.json`; its
+`ep`, `ss`, and `md` info cases use a capability-declared metadata service and do not request
+playurl or media.
 `credential_file` accepts legacy flat BBDown or Telegram Video Downloader credentials and versioned
 BBDown credential stores. Select an optional `credential_profile` in the manifest; a case-level
 `credential_file` or `credential_profile` overrides its manifest value independently. Omitting the

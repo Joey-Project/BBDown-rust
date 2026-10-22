@@ -421,7 +421,9 @@ just ci
 标；二进制分发使用 GitHub release 归档。`just live-e2e` 被有意排除在默认 CI 之外，且在
 被忽略的本地 `live-e2e.samples.json` 不存在时会快速失败。请从
 `live-e2e.samples.example.json` 开始，并列出要探测的 public、PGC、intl 或 restricted PGC
-样例。`credential_file` 支持旧版 BBDown 或 Telegram Video Downloader 扁平凭据文件，以及
+样例。匿名 PGC metadata-only 检查请参考 `live-e2e.pgc-metadata.samples.example.json`；其中
+`ep`、`ss` 和 `md` info 样例使用按 capability 声明的 metadata service，不请求 playurl 或媒体。
+`credential_file` 支持旧版 BBDown 或 Telegram Video Downloader 扁平凭据文件，以及
 新版 BBDown versioned credential store。可在 manifest 中选择 `credential_profile`；case 中的
 `credential_file` 或 `credential_profile` 会分别独立覆盖 manifest 的对应值。省略 profile 时
 使用所选 store 的默认 profile。未知或空 profile、指定 profile 但缺少凭据文件，以及空或损坏

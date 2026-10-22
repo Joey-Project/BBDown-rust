@@ -921,6 +921,33 @@ key 会快速失败，
 `allow_plan_error: true` 和 `plan_error_contains`：成功的 `plan` 仍必须匹配流断言，而受限
 失败必须是 access-restricted failure，并包含列出的诊断片段。
 
+### 匿名 PGC metadata 样例
+
+`live-e2e.pgc-metadata.samples.example.json` 为 `ep664928`、`ss42513` 和 `md28338980` 提供仅执行
+`info` 的 metadata 样例。它展示了 `pgc_metadata_service`：分集和 season 输入声明 `season`
+capability，media 输入声明 `season` 与 `media-review`。样例要求返回同一个 58 集 season 及其正片分组。
+其中 `.invalid` service URL 只是占位符；运行前应选择确实支持已声明 endpoint 和响应格式的服务。
+完整 JSON 文档包含顶层 10 秒 timeout 和三个 case。每个 case 的 `expect.season` 会检查 `season_id`、
+`media_id`、`min_episodes`、`selected_episode_ids`、`group_count`，以及按顺序排列的 `groups`（包含 kind、
+title、source ID 和 episode ID）。case 可选设置 `pgc_metadata_service.max_response_bytes` 响应上限。
+
+如需隔离运行，请在私有工作目录中准备专用的 `live-e2e.samples.json`，其中只包含这些 cases，保留
+已有的 ignored manifest。构建测试 binary 后，从该私有目录运行 binary，并使用精确过滤器
+`live_manifest_cases --ignored --exact`。`--no-run` 会打印可执行文件路径：
+
+```bash
+cargo test -p bbdown-cli --test live_e2e --locked --no-run
+cd /path/to/private-run-directory
+env CARGO_BIN_EXE_bbdown=/absolute/path/to/repo/target/debug/bbdown \
+  /absolute/path/printed/by/cargo live_manifest_cases --ignored --exact
+```
+
+Cargo 通常会在运行 integration test 时提供 `CARGO_BIN_EXE_bbdown`；直接启动测试 binary 时，须像示例中那样
+将它设为已构建的 CLI 可执行文件路径。将完整示例 JSON 文档复制为私有 manifest，并在运行前替换占位 service base。
+
+这些样例只运行 `info`。metadata service 路由发送匿名请求，不跟随重定向，也不会回退到其它 metadata
+endpoint；默认将每份解码后的响应正文限制为 8 MiB。这不能验证 playurl、播放、媒体访问或服务今后的可用性。
+
 如需用精选受限剧集 `ep664928` 检查独立的 PGC Web playurl 路由，可运行下面的可选 API
 测试。它从被忽略的 manifest 选择该剧集，需要一个香港 API 反代、Web cookie 和通用 access
 key。如果 manifest 中的凭据路径已失效，可以设置 `BBDOWN_PGC_LIVE_CREDENTIAL_FILE` 替换凭据
