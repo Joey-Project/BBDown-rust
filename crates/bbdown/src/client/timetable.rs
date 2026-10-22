@@ -1,4 +1,4 @@
-use super::{ApiResult, BiliClient};
+use super::{ApiResult, BiliClient, PgcMetadataCapability, PgcMetadataRoute};
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 
@@ -89,53 +89,70 @@ pub(super) async fn pgc_timetable(
     client: &BiliClient,
     kind: PgcTimetableKind,
 ) -> Result<PgcTimetable> {
-    let mut bounded_client = client.clone();
-    bounded_client.http = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(BiliClient::http_error_without_url)?;
+    let result = match &client.config.pgc_metadata_route {
+        PgcMetadataRoute::Configured => {
+            let mut bounded_client = client.clone();
+            bounded_client.http = reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .map_err(BiliClient::http_error_without_url)?;
 
-    let mut url =
-        BiliClient::endpoint_url(&client.config.endpoints.pgc_base, "/pgc/web/timeline/v2")?;
-    url.query_pairs_mut()
-        .append_pair("season_type", &kind.season_type().to_string());
+            let mut url = BiliClient::endpoint_url(
+                &client.config.endpoints.pgc_base,
+                "/pgc/web/timeline/v2",
+            )?;
+            url.query_pairs_mut()
+                .append_pair("season_type", &kind.season_type().to_string());
 
-    let response = bounded_client
-        .http
-        .get(url)
-        .headers(bounded_client.headers(false)?)
-        .timeout(client.config.request_timeout)
-        .send()
-        .await
-        .map_err(BiliClient::http_error_without_url)?;
-    if response.status().is_redirection() {
-        return Err(Error::InvalidInput(
-            "PGC timetable API endpoint redirected; redirect was not followed".to_owned(),
-        ));
-    }
-    let mut response = response
-        .error_for_status()
-        .map_err(BiliClient::http_error_without_url)?;
-    if response
-        .content_length()
-        .is_some_and(|length| length > PGC_TIMETABLE_RESPONSE_MAX_BYTES as u64)
-    {
-        return Err(response_too_large());
-    }
-    let mut body = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(BiliClient::http_error_without_url)?
-    {
-        if body.len().saturating_add(chunk.len()) > PGC_TIMETABLE_RESPONSE_MAX_BYTES {
-            return Err(response_too_large());
+            let response = bounded_client
+                .http
+                .get(url)
+                .headers(bounded_client.headers(false)?)
+                .timeout(client.config.request_timeout)
+                .send()
+                .await
+                .map_err(BiliClient::http_error_without_url)?;
+            if response.status().is_redirection() {
+                return Err(Error::InvalidInput(
+                    "PGC timetable API endpoint redirected; redirect was not followed".to_owned(),
+                ));
+            }
+            let mut response = response
+                .error_for_status()
+                .map_err(BiliClient::http_error_without_url)?;
+            if response
+                .content_length()
+                .is_some_and(|length| length > PGC_TIMETABLE_RESPONSE_MAX_BYTES as u64)
+            {
+                return Err(response_too_large());
+            }
+            let mut body = Vec::new();
+            while let Some(chunk) = response
+                .chunk()
+                .await
+                .map_err(BiliClient::http_error_without_url)?
+            {
+                if body.len().saturating_add(chunk.len()) > PGC_TIMETABLE_RESPONSE_MAX_BYTES {
+                    return Err(response_too_large());
+                }
+                body.extend_from_slice(&chunk);
+            }
+
+            let envelope: ApiResult<TimetableResult> = serde_json::from_slice(&body)?;
+            envelope.into_result()?
         }
-        body.extend_from_slice(&chunk);
-    }
-
-    let envelope: ApiResult<TimetableResult> = serde_json::from_slice(&body)?;
-    let result = envelope.into_result()?;
+        PgcMetadataRoute::ServiceOnly(service) => {
+            client
+                .fetch_pgc_service_api_with_response_limit::<TimetableResult>(
+                    service,
+                    PgcMetadataCapability::Timetable,
+                    "/pgc/web/timeline/v2",
+                    &[("season_type", kind.season_type().to_string())],
+                    Some(PGC_TIMETABLE_RESPONSE_MAX_BYTES),
+                )
+                .await?
+        }
+    };
     if result.timeline.len() > PGC_TIMETABLE_MAX_DAYS {
         return Err(Error::InvalidInput(format!(
             "PGC timetable exceeded the {PGC_TIMETABLE_MAX_DAYS}-day limit"
@@ -224,21 +241,324 @@ fn response_too_large() -> Error {
 
 #[cfg(test)]
 mod tests {
-    use super::{PgcTimetableKind, pgc_timetable};
-    use crate::{BiliClient, ClientConfig, Credentials, EndpointConfig, Error};
+    use super::{PGC_TIMETABLE_RESPONSE_MAX_BYTES, PgcTimetableKind, pgc_timetable};
+    use crate::{
+        BiliClient, ClientConfig, Credentials, EndpointConfig, Error, PgcMetadataCapability,
+        PgcMetadataRoute, PgcMetadataService,
+    };
     use httpmock::prelude::*;
     use serde_json::json;
 
     fn client(server: &MockServer) -> BiliClient {
+        BiliClient::new(config_with_pgc_base(server.base_url()))
+    }
+
+    fn config_with_pgc_base(configured_base: String) -> ClientConfig {
+        ClientConfig::default()
+            .with_endpoints(EndpointConfig::default().with_pgc_base(configured_base))
+            .with_credentials(Credentials {
+                cookie: Some("codex_synth_v1_access_a".to_owned()),
+                access_key: Some("codex_synth_v1_access_b".to_owned()),
+                ..Credentials::default()
+            })
+    }
+
+    fn service_client(service: PgcMetadataService, configured_base: &str) -> BiliClient {
         BiliClient::new(
-            ClientConfig::default()
-                .with_endpoints(EndpointConfig::default().with_pgc_base(server.base_url()))
-                .with_credentials(Credentials {
-                    cookie: Some("codex_synth_v1_access_a".to_owned()),
-                    access_key: Some("codex_synth_v1_access_b".to_owned()),
-                    ..Credentials::default()
-                }),
+            config_with_pgc_base(configured_base.to_owned())
+                .with_pgc_metadata_route(PgcMetadataRoute::ServiceOnly(service)),
         )
+    }
+
+    #[tokio::test]
+    async fn service_route_requests_both_timetable_kinds_anonymously_with_base_prefix()
+    -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let anime = server.mock(|when, then| {
+            when.method(GET)
+                .path("/service-prefix/pgc/web/timeline/v2")
+                .query_param("season_type", "1")
+                .query_param_missing("ep_id")
+                .query_param_missing("season_id")
+                .query_param_missing("access_key")
+                .header_missing("cookie")
+                .header_missing("authorization");
+            then.status(200).json_body(json!({
+                "code": 0,
+                "result": {"latest": [], "timeline": []}
+            }));
+        });
+        let guochuang = server.mock(|when, then| {
+            when.method(GET)
+                .path("/service-prefix/pgc/web/timeline/v2")
+                .query_param("season_type", "4")
+                .query_param_missing("access_key")
+                .header_missing("cookie")
+                .header_missing("authorization");
+            then.status(200).json_body(json!({
+                "code": 0,
+                "result": {"latest": [], "timeline": []}
+            }));
+        });
+        let service = PgcMetadataService::new(
+            format!("{}/service-prefix", server.base_url()),
+            [PgcMetadataCapability::Timetable],
+        )?;
+        let client = service_client(service, "http://127.0.0.1:1/configured-prefix");
+
+        assert_eq!(
+            pgc_timetable(&client, PgcTimetableKind::Anime).await?.kind,
+            PgcTimetableKind::Anime
+        );
+        assert_eq!(
+            pgc_timetable(&client, PgcTimetableKind::Guochuang)
+                .await?
+                .kind,
+            PgcTimetableKind::Guochuang
+        );
+        anime.assert();
+        guochuang.assert();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn service_route_requires_timetable_capability_before_http() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let tripwire = server.mock(|when, then| {
+            when.method(GET).path("/pgc/web/timeline/v2");
+            then.status(500);
+        });
+        let service = PgcMetadataService::new(server.base_url(), [PgcMetadataCapability::Season])?;
+        let client = service_client(service, "http://127.0.0.1:1");
+
+        assert!(matches!(
+            pgc_timetable(&client, PgcTimetableKind::Anime).await,
+            Err(Error::Unsupported(message)) if message.contains("timetable")
+        ));
+        tripwire.assert_calls(0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn service_redirect_does_not_fall_back_to_configured_pgc_base() -> anyhow::Result<()> {
+        let service_server = MockServer::start();
+        let configured_server = MockServer::start();
+        let redirect = service_server.mock(|when, then| {
+            when.method(GET).path("/pgc/web/timeline/v2");
+            then.status(302).header("location", "/redirect-target");
+        });
+        let target = service_server.mock(|when, then| {
+            when.method(GET).path("/redirect-target");
+            then.status(200).json_body(json!({
+                "code": 0,
+                "result": {"latest": [], "timeline": []}
+            }));
+        });
+        let configured = configured_server.mock(|when, then| {
+            when.method(GET).path("/pgc/web/timeline/v2");
+            then.status(200).json_body(json!({
+                "code": 0,
+                "result": {"latest": [], "timeline": []}
+            }));
+        });
+        let service = PgcMetadataService::new(
+            service_server.base_url(),
+            [PgcMetadataCapability::Timetable],
+        )?;
+        let client = service_client(service, &configured_server.base_url());
+
+        let error = pgc_timetable(&client, PgcTimetableKind::Anime)
+            .await
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("service redirect must fail"))?;
+        assert!(error.to_string().contains("HTTP 302"));
+        assert!(!error.to_string().contains(&service_server.base_url()));
+        redirect.assert_calls(1);
+        target.assert_calls(0);
+        configured.assert_calls(0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn service_route_sanitizes_api_error_message() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let failure = server.mock(|when, then| {
+            when.method(GET).path("/pgc/web/timeline/v2");
+            then.status(200).json_body(json!({
+                "code": -404,
+                "message": "https://private.example/path?secret=PRIVATE_BODY",
+                "result": null
+            }));
+        });
+        let service =
+            PgcMetadataService::new(server.base_url(), [PgcMetadataCapability::Timetable])?;
+        let client = service_client(service, "http://127.0.0.1:1");
+
+        let error = pgc_timetable(&client, PgcTimetableKind::Anime)
+            .await
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("API failure must be returned"))?;
+        assert!(error.to_string().contains("-404"));
+        assert!(!error.to_string().contains("PRIVATE_BODY"));
+        assert!(!error.to_string().contains("private.example"));
+        failure.assert();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn service_route_keeps_timetable_limit_below_default_service_limit() -> anyhow::Result<()>
+    {
+        let server = MockServer::start();
+        let body = format!(
+            "{{\"code\":0,\"result\":{{\"latest\":[],\"timeline\":[]}},\"padding\":\"{}\"}}",
+            "x".repeat(PGC_TIMETABLE_RESPONSE_MAX_BYTES)
+        );
+        let oversized = server.mock(|when, then| {
+            when.method(GET).path("/pgc/web/timeline/v2");
+            then.status(200).body(body);
+        });
+        let service =
+            PgcMetadataService::new(server.base_url(), [PgcMetadataCapability::Timetable])?;
+        let client = service_client(service, "http://127.0.0.1:1");
+
+        let error = pgc_timetable(&client, PgcTimetableKind::Anime)
+            .await
+            .err()
+            .ok_or_else(|| {
+                anyhow::anyhow!("timetable cap must override the larger service default")
+            })?;
+        assert!(error.to_string().contains("1048576-byte limit"));
+        oversized.assert_calls(1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn service_route_honors_a_lower_configured_response_limit() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let response = server.mock(|when, then| {
+            when.method(GET).path("/pgc/web/timeline/v2");
+            then.status(200).json_body(json!({
+                "code": 0,
+                "result": {"latest": [], "timeline": []}
+            }));
+        });
+        let service =
+            PgcMetadataService::new(server.base_url(), [PgcMetadataCapability::Timetable])?
+                .with_max_response_bytes(8)?;
+        let client = service_client(service, "http://127.0.0.1:1");
+
+        let error = pgc_timetable(&client, PgcTimetableKind::Anime)
+            .await
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("lower configured service cap must still apply"))?;
+        assert!(error.to_string().contains("8-byte limit"));
+        response.assert_calls(1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn service_route_streaming_body_limit_applies_to_chunked_response() -> anyhow::Result<()>
+    {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let address = listener.local_addr()?;
+        let handle = std::thread::spawn(move || -> std::io::Result<()> {
+            use std::io::{Read, Write};
+
+            let (mut stream, _) = listener.accept()?;
+            let mut request = [0_u8; 2048];
+            let _ = stream.read(&mut request)?;
+            let body = "x".repeat(PGC_TIMETABLE_RESPONSE_MAX_BYTES + 1);
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{:x}\r\n{}\r\n0\r\n\r\n",
+                body.len(),
+                body
+            )?;
+            Ok(())
+        });
+        let service = PgcMetadataService::new(
+            format!("http://{address}"),
+            [PgcMetadataCapability::Timetable],
+        )?;
+        let client = service_client(service, "http://127.0.0.1:1");
+
+        let error = pgc_timetable(&client, PgcTimetableKind::Anime)
+            .await
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("streaming response must be capped"))?;
+        handle
+            .join()
+            .map_err(|_| anyhow::anyhow!("chunked timetable test server panicked"))??;
+        assert!(error.to_string().contains("1048576-byte limit"));
+        assert!(!error.to_string().contains(&address.to_string()));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn service_route_enforces_shared_day_and_row_limits() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let days = (0..33)
+            .map(|index| {
+                json!({
+                    "date": format!("10-{index:02}"),
+                    "date_ts": index,
+                    "day_of_week": index % 7,
+                    "is_today": 0,
+                    "episodes": []
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut too_many_days = server.mock(|when, then| {
+            when.method(GET).path("/pgc/web/timeline/v2");
+            then.status(200).json_body(json!({
+                "code": 0,
+                "result": {"latest": [], "timeline": days}
+            }));
+        });
+        let service =
+            PgcMetadataService::new(server.base_url(), [PgcMetadataCapability::Timetable])?;
+        let client = service_client(service.clone(), "http://127.0.0.1:1");
+        let error = pgc_timetable(&client, PgcTimetableKind::Anime)
+            .await
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("day bound must apply to service response"))?;
+        assert!(error.to_string().contains("32-day limit"));
+        too_many_days.assert_calls(1);
+        too_many_days.delete();
+
+        let row = json!({
+            "episode_id": 1,
+            "season_id": 2,
+            "title": "x",
+            "pub_index": "1",
+            "pub_time": "1",
+            "pub_ts": 1,
+            "published": 0,
+            "delay": 0
+        });
+        let too_many_rows = server.mock(|when, then| {
+            when.method(GET).path("/pgc/web/timeline/v2");
+            then.status(200).json_body(json!({
+                "code": 0,
+                "result": {
+                    "latest": vec![row.clone(); 2048],
+                    "timeline": [{
+                        "date": "10-20",
+                        "date_ts": 1,
+                        "day_of_week": 2,
+                        "is_today": 1,
+                        "episodes": vec![row; 2049]
+                    }]
+                }
+            }));
+        });
+        let error = pgc_timetable(&client, PgcTimetableKind::Anime)
+            .await
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("row bound must apply to service response"))?;
+        assert!(error.to_string().contains("4096-row limit"));
+        too_many_rows.assert_calls(1);
+        Ok(())
     }
 
     fn episode(episode_id: Option<u64>, season_id: u64, published: u8) -> serde_json::Value {

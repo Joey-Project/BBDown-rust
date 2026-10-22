@@ -345,7 +345,12 @@ async fn read_timetable() -> bbdown_core::Result<()> {
 方法通过配置的 `pgc_base` 向 `/pgc/web/timeline/v2` 发起一次匿名请求，只使用对应的
 `season_type` 值（番剧为 `1`，国创为 `4`）。响应上限为 1 MiB、32 个日期组和合计 4096 条原始记录；
 超限时会拒绝响应，不会静默截断。请求不会跟随重定向。所选兼容服务必须支持此端点和响应格式。
-`PgcWebPlayurlRoute` 只控制 PGC Web playurl 请求，不负责时间表 metadata 路由。请求不会发送已配置凭据或 Cookie。
+`PgcWebPlayurlRoute` 只控制 PGC Web playurl 请求。请求不会发送已配置凭据或 Cookie。
+
+选择 `PgcMetadataRoute::ServiceOnly` 时，只有声明 `PgcMetadataCapability::Timetable` 的服务才会接收
+时间表请求。客户端会在 HTTP 请求前检查此 capability；`Season` 和 `MediaReview` 不隐含时间表支持。
+服务收到相同 endpoint 和 query；请求匿名、不跟随重定向，也不回退到其它服务。解码后的响应上限取
+service 限制（默认 8 MiB，或配置的 `with_max_response_bytes` 值）与时间表 1 MiB 上限中的较小值。
 
 `PgcTimetable` 提供 `kind`、`latest` 和 `days`。日期组保留服务端顺序、空组，以及上游
 `date`、`date_ts`、`day_of_week` 和 `is_today` 字段。分集保留可选正数 `episode_id`、正数
@@ -415,7 +420,7 @@ credentials、Cookie；不会跟随重定向，使用配置的 timeout，JSON �
 
 ### 按能力声明的 PGC metadata service
 
-`PgcMetadataRoute` 独立控制国内 PGC 分集/season hydration 与 media-review metadata。默认的
+`PgcMetadataRoute` 独立控制国内 PGC 分集/season hydration、media-review metadata 与时间表 metadata。默认的
 `Configured` 会保留现有 `EndpointConfig::pgc_base` 行为。只有在调用方选定兼容的本地或私有服务，
 并确认其实际支持哪些 endpoint 时，才使用 `ServiceOnly(service)`：
 
@@ -423,19 +428,23 @@ credentials、Cookie；不会跟随重定向，使用配置的 timeout，JSON �
 | --- | --- | --- |
 | `PgcMetadataCapability::Season` | `/pgc/view/web/season` | 国内 `ep<ID>`、`ss<ID>` 解析，以及 `md<ID>` 的 season 步骤 |
 | `PgcMetadataCapability::MediaReview` | `/pgc/review/user` | 国内 `md<ID>` 解析中的 media-review 步骤 |
+| `PgcMetadataCapability::Timetable` | `/pgc/web/timeline/v2` | 番剧与国创时间表 metadata |
 
-至少需要声明一个 capability。`ep<ID>` 和 `ss<ID>` 需要 `Season`。`md<ID>` 需要两个 capability；客户端会在首次 HTTP 请求前检查两者。
-若未声明所需 capability，调用会在发请求前返回对应 endpoint 的 capability 错误。Service-only 路由不会回退到
+至少需要声明一个 capability。`ep<ID>` 和 `ss<ID>` 需要 `Season`。`md<ID>` 需要同时声明 `Season` 和
+`MediaReview`；客户端会在首次 HTTP 请求前检查两者。`BiliClient::pgc_timetable` 需要 `Timetable`。
+Capability 彼此独立；声明 `Season` 或 `MediaReview` 不会隐含
+`Timetable`。若未声明所需 capability，调用会在发请求前返回对应 endpoint 的 capability 错误。Service-only 路由不会回退到
 `pgc_base`、官方服务、受限区域代理或其它 endpoint。`PgcWebPlayurlRoute` 仍只控制 Web playurl。
 只要服务 payload 兼容，这项配置只改变 metadata 请求的路由，现有解析、分集顺序、分组和 `Latest` 选择语义保持不变。
 
-此路由不覆盖 PGC 时间表或电影/电视剧索引、普通视频搜索、PUGV、Intl PGC、playurl 或媒体；这些仍沿用各自的
-endpoint 配置与行为。仅配置 base URL 并不能证明服务支持这些路由或响应结构，声明 capability 前应确认所选服务确实实现
+此路由不覆盖电影/电视剧索引、普通视频搜索、PUGV、Intl PGC、playurl 或媒体；这些仍沿用各自的 endpoint
+配置与行为。仅配置 base URL 并不能证明服务支持这些路由或响应结构，声明 capability 前应确认所选服务确实实现
 对应 endpoint。Base 必须是带主机名的绝对 HTTP(S) URL，且不能带 userinfo、query 或 fragment。crate 不提供或验证兼容的公共服务。
 
 服务以匿名方式请求：不转发配置的 Cookie、access key 或其它凭据，不跟随重定向，也不调用代理回退。
 endpoint 路径会追加到经过校验的 HTTP(S) base URL，并保留 base 中的路径前缀。每份解码后的响应正文默认独立限制为
-8 MiB；`md<ID>` 的 review 与 season 响应分别可使用完整上限。`with_max_response_bytes` 只接受正数限制。
+8 MiB；`md<ID>` 的 review 与 season 响应分别可使用完整上限。时间表响应取 service 限制与现有 1 MiB 上限中的较小值。
+`with_max_response_bytes` 只接受正数限制。
 
 CLI live harness 在 `live-e2e.pgc-metadata.samples.example.json` 中包含匿名的分集、season 和 media
 `info` 样例。该 fixture 通过 CLI 和 core routing 展示所需 capability 与 season/group 断言；它不覆盖独立
@@ -465,13 +474,16 @@ async fn resolve_with_private_service() -> bbdown_core::Result<()> {
 ```
 
 CLI 必须同时提供 `--pgc-metadata-service-base` 和
-`--pgc-metadata-service-capabilities`。Capability 使用逗号分隔值 `season` 与 `media-review`；可选的
+`--pgc-metadata-service-capabilities`。Capability 使用逗号分隔值 `season`、`media-review` 与 `timetable`；可选的
 `--pgc-metadata-service-max-response-bytes` 必须为正数，且只有提供这组 service 参数时才能使用：
 
 ```bash
 bbdown --pgc-metadata-service-base https://metadata-gateway.example \
   --pgc-metadata-service-capabilities season,media-review \
   --pgc-metadata-service-max-response-bytes 4194304 info md22718131 --json
+
+bbdown --pgc-metadata-service-base https://metadata-gateway.example \
+  --pgc-metadata-service-capabilities timetable timetable --type anime --json
 ```
 
 原有的 `--pgc-base` / `BBDOWN_PGC_BASE` 仍用于 `Configured` metadata 路由；新的 CLI 参数对声明的 capability

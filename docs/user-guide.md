@@ -332,13 +332,22 @@ Fetch the upstream timetable for anime (the default) or Chinese animation:
 bbdown timetable --json
 bbdown timetable --type anime --json
 bbdown timetable --type guochuang --json
+bbdown --pgc-metadata-service-base https://metadata-gateway.example \
+  --pgc-metadata-service-capabilities timetable timetable --type anime --json
+bbdown --pgc-metadata-service-base https://metadata-gateway.example \
+  --pgc-metadata-service-capabilities timetable timetable --type guochuang --json
 ```
 
-The command makes one anonymous request through the configured PGC metadata base (`--pgc-base` /
-`BBDOWN_PGC_BASE`) to `/pgc/web/timeline/v2`, with only `season_type=1` for anime or `season_type=4`
-for Chinese animation. The selected service must support this metadata endpoint and its response
-shape. This capability is separate from `PgcWebPlayurlRoute`, which covers PGC Web playurl only.
-The request does not send configured credentials or cookies.
+By default, the command makes one anonymous request through the configured PGC metadata base
+(`--pgc-base` / `BBDOWN_PGC_BASE`) to `/pgc/web/timeline/v2`, with only `season_type=1` for anime or
+`season_type=4` for Chinese animation. To use a caller-selected service, supply the global service
+base and capabilities before the command, and declare the separate `timetable` capability as shown
+above. The service must support this endpoint and response shape; `season` or `media-review` alone
+does not enable timetable routing. Service-only routing does not fall back to `--pgc-base`, the
+official API, or a proxy. The request does not send configured credentials or cookies and does not
+follow redirects. The decoded response limit is the smaller of the service limit (8 MiB by default,
+or the configured service limit) and the timetable's 1 MiB limit. This capability is separate from
+`PgcWebPlayurlRoute`, which covers PGC Web playurl only.
 
 JSON returns the selected `kind`, the upstream `latest` block, and ordered `days`. Each day retains
 its source `date`, `date_ts`, `day_of_week`, `is_today`, and episode list, including empty days. Each

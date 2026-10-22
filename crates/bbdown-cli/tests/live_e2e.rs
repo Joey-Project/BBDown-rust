@@ -118,6 +118,7 @@ struct LivePgcMetadataService {
 enum PgcMetadataServiceCapability {
     Season,
     MediaReview,
+    Timetable,
 }
 
 impl PgcMetadataServiceCapability {
@@ -125,6 +126,7 @@ impl PgcMetadataServiceCapability {
         match self {
             Self::Season => "season",
             Self::MediaReview => "media-review",
+            Self::Timetable => "timetable",
         }
     }
 }

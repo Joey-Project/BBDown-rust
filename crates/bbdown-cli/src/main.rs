@@ -69,16 +69,16 @@ struct Cli {
         global = true,
         requires = "pgc_metadata_service_capabilities",
         value_name = "URL",
-        help = "Route supported PGC season/review metadata through an anonymous service"
+        help = "Route supported PGC season/review/timetable metadata through an anonymous service"
     )]
     pgc_metadata_service_base: Option<String>,
     #[arg(
         long = "pgc-metadata-service-capabilities",
         global = true,
         value_delimiter = ',',
-        value_name = "season,media-review",
+        value_name = "season,media-review,timetable",
         requires = "pgc_metadata_service_base",
-        help = "Explicitly declare service support: season and/or media-review"
+        help = "Explicitly declare service support: season, media-review, and/or timetable"
     )]
     pgc_metadata_service_capabilities: Option<Vec<String>>,
     #[arg(
@@ -7573,8 +7573,9 @@ fn pgc_metadata_route_from_cli(cli: &Cli) -> anyhow::Result<PgcMetadataRoute> {
         .map(|value| match value.as_str() {
             "season" => Ok(PgcMetadataCapability::Season),
             "media-review" => Ok(PgcMetadataCapability::MediaReview),
+            "timetable" => Ok(PgcMetadataCapability::Timetable),
             _ => bail!(
-                "invalid --pgc-metadata-service-capabilities value `{value}`; expected season or media-review"
+                "invalid --pgc-metadata-service-capabilities value `{value}`; expected season, media-review, or timetable"
             ),
         })
         .collect::<anyhow::Result<Vec<_>>>()?;

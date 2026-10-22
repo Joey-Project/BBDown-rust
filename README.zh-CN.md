@@ -64,6 +64,8 @@ bbdown info 'https://space.bilibili.com/123/lists/456?type=series' --json
 bbdown search "Rust async" --page 2 --order pubdate --json
 bbdown timetable --type anime --json
 bbdown timetable --type guochuang --json
+bbdown --pgc-metadata-service-base https://metadata-gateway.example \
+  --pgc-metadata-service-capabilities timetable timetable --type anime --json
 bbdown pgc-index list --type movie --page 1 --page-size 20 --order play --json
 bbdown pgc-index filters --type tv --json
 bbdown popular --json
@@ -98,9 +100,11 @@ PGC 自动识别只在通过搜索输入选择条目时运行；确认分集后�
 搜索列表仍是普通视频搜索。若选中 BVID 或 aid 的官方 view 响应包含官方 PGC 分集重定向，且身份校验通过，
 规划会保留分集身份并进入现有 PGC 路径。搜索 `api_base`、PGC metadata `pgc_base` 和 PGC Web playurl 路由分别配置；
 PGC Web 使用配置的 Web playurl 路由；Web 和 APP 沿用现有的受限区域代理回退，TV 语义保持不变。
-当前源码检出可为国内分集/season hydration 与 media-review metadata 显式选择 capability 声明的 PGC metadata service，使用
-`--pgc-metadata-service-base` 和 `--pgc-metadata-service-capabilities`；这两个参数必须同时提供。
-该 service-only 路由不会回退到 `--pgc-base` 或代理。支持的 endpoint、capability 和响应大小限制见[嵌入指南](docs/embedding.zh-CN.md)。
+当前源码检出可为国内分集/season hydration、media-review metadata 和 PGC 时间表 metadata 显式选择
+capability 声明的 PGC metadata service，使用 `--pgc-metadata-service-base` 和
+`--pgc-metadata-service-capabilities`；这两个参数必须同时提供。时间表路由需要单独声明
+`timetable` capability，其他 capability 不会隐含此能力。该 service-only 路由不会回退到 `--pgc-base` 或代理。
+支持的 endpoint、capability 和响应大小限制见[嵌入指南](docs/embedding.zh-CN.md)。
 
 国内 PGC season metadata 会在 `info --json` 输出的 `episode_groups` 字段中包含按上游顺序排列的
 `main` 和 `section` 分集组。组成员使用完整 season 分集列表中的零基位置，因此即使 `--select` 只

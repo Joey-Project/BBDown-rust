@@ -33,7 +33,8 @@ domestic PGC episode groups. Check [crates.io](https://crates.io/crates/bbdown-c
 package availability; the [official releases](https://github.com/Joey-Project/BBDown-rust/releases)
 page lists CLI archives.
 This source checkout also supports a capability-declared PGC metadata service for domestic
-episode/season and media-review hydration. That route is service-only and does not cover timetable,
+episode/season and media-review hydration, plus timetable metadata when the service declares the
+separate `PgcMetadataCapability::Timetable` capability. The route is service-only and does not cover
 index listings, search, PUGV, or international metadata; see the repository embedding guide for its
 request and response boundaries.
 

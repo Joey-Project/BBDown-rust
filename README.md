@@ -76,6 +76,8 @@ bbdown info 'https://space.bilibili.com/123/lists/456?type=series' --json
 bbdown search "Rust async" --page 2 --order pubdate --json
 bbdown timetable --type anime --json
 bbdown timetable --type guochuang --json
+bbdown --pgc-metadata-service-base https://metadata-gateway.example \
+  --pgc-metadata-service-capabilities timetable timetable --type anime --json
 bbdown pgc-index list --type movie --page 1 --page-size 20 --order play --json
 bbdown pgc-index filters --type tv --json
 bbdown popular --json
@@ -132,11 +134,13 @@ contains an official PGC episode redirect that matches its identity, planning pr
 identity and uses the existing PGC path. Search `api_base`, PGC metadata `pgc_base`, and the PGC Web
 playurl route are separate settings. PGC Web uses its configured Web playurl route; Web and APP keep
 their existing restricted-area proxy fallback, and TV semantics remain unchanged.
-For domestic episode/season hydration and media-review metadata, this source checkout can select a
-capability-declared PGC metadata service with `--pgc-metadata-service-base` and
-`--pgc-metadata-service-capabilities`. Both flags are required together. This explicit service-only
-route does not fall back to `--pgc-base` or a proxy; see the [embedding guide](docs/embedding.md) for
-supported endpoints, capability requirements, and response bounds.
+For domestic episode/season hydration, media-review metadata, and PGC timetable metadata, this source
+checkout can select a capability-declared PGC metadata service with
+`--pgc-metadata-service-base` and `--pgc-metadata-service-capabilities`. Both flags are required
+together. Timetable routing requires the separate `timetable` capability; other capabilities do not
+imply it. This explicit service-only route does not fall back to `--pgc-base` or a proxy; see the
+[embedding guide](docs/embedding.md) for supported endpoints, capability requirements, and response
+bounds.
 See the [user guide](docs/user-guide.md) and [embedding guide](docs/embedding.md) for limits and
 Rust examples.
 

@@ -227,6 +227,8 @@ pub enum PgcMetadataCapability {
     Season,
     /// PGC review metadata by media ID.
     MediaReview,
+    /// PGC anime and guochuang timetable metadata.
+    Timetable,
 }
 
 /// Default decoded response limit for the anonymous PGC metadata service.
@@ -274,6 +276,7 @@ impl PgcMetadataService {
         capabilities.sort_by_key(|capability| match capability {
             PgcMetadataCapability::Season => 0,
             PgcMetadataCapability::MediaReview => 1,
+            PgcMetadataCapability::Timetable => 2,
         });
         capabilities.dedup();
         if capabilities.is_empty() {
@@ -682,8 +685,9 @@ impl BiliClient {
 
     /// Returns the bounded anime or guochuang PGC timetable metadata.
     ///
-    /// This anonymous metadata request uses the configured PGC endpoint and does not
-    /// resolve episodes or request playurl, media, subtitle, or tag data.
+    /// This anonymous metadata request uses the configured PGC endpoint or a
+    /// `ServiceOnly` PGC metadata service that declares the timetable capability.
+    /// It does not resolve episodes or request playurl, media, subtitle, or tag data.
     pub async fn pgc_timetable(&self, kind: PgcTimetableKind) -> Result<PgcTimetable> {
         timetable::pgc_timetable(self, kind).await
     }
@@ -3203,6 +3207,7 @@ impl BiliClient {
         let name = match capability {
             PgcMetadataCapability::Season => "season",
             PgcMetadataCapability::MediaReview => "media-review",
+            PgcMetadataCapability::Timetable => "timetable",
         };
         Err(Error::Unsupported(format!(
             "PGC metadata service does not declare the {name} capability"
@@ -3219,11 +3224,30 @@ impl BiliClient {
     where
         T: for<'de> Deserialize<'de>,
     {
+        self.fetch_pgc_service_api_with_response_limit(service, capability, path, query, None)
+            .await
+    }
+
+    async fn fetch_pgc_service_api_with_response_limit<T>(
+        &self,
+        service: &PgcMetadataService,
+        capability: PgcMetadataCapability,
+        path: &str,
+        query: &[(&str, String)],
+        response_limit: Option<usize>,
+    ) -> Result<T>
+    where
+        T: for<'de> Deserialize<'de>,
+    {
         Self::require_pgc_metadata_capability(service, capability)?;
         let endpoint = match capability {
             PgcMetadataCapability::Season => "season",
             PgcMetadataCapability::MediaReview => "media-review",
+            PgcMetadataCapability::Timetable => "timetable",
         };
+        let max_response_bytes = response_limit.map_or(service.max_response_bytes, |limit| {
+            service.max_response_bytes.min(limit)
+        });
         let mut url = service.base_url.clone();
         set_endpoint_path(&mut url, path);
         url.set_query(None);
@@ -3273,11 +3297,10 @@ impl BiliClient {
         }
         if response
             .content_length()
-            .is_some_and(|length| length > service.max_response_bytes as u64)
+            .is_some_and(|length| length > max_response_bytes as u64)
         {
             return Err(Error::InvalidInput(format!(
-                "PGC metadata service {endpoint} response exceeded the {}-byte limit",
-                service.max_response_bytes
+                "PGC metadata service {endpoint} response exceeded the {max_response_bytes}-byte limit"
             )));
         }
         let mut body = Vec::new();
@@ -3290,10 +3313,9 @@ impl BiliClient {
             };
             Error::InvalidInput(format!("PGC metadata service {endpoint} {kind}"))
         })? {
-            if body.len().saturating_add(chunk.len()) > service.max_response_bytes {
+            if body.len().saturating_add(chunk.len()) > max_response_bytes {
                 return Err(Error::InvalidInput(format!(
-                    "PGC metadata service {endpoint} response exceeded the {}-byte limit",
-                    service.max_response_bytes
+                    "PGC metadata service {endpoint} response exceeded the {max_response_bytes}-byte limit"
                 )));
             }
             body.extend_from_slice(&chunk);
