@@ -39,7 +39,7 @@ popular-video metadata, and global ranking metadata. Ranking returns all valid r
 arbitrary 100-row cap and uses a positive 1 MiB default limit per response. These additions do not
 implement channels, topics, automatic CDN routing, persistent CDN health, or adaptive CDN policy.
 This source checkout also supports capability-declared metadata-service routing for domestic PGC
-episode/season and media-review hydration; it does not route timetable, index, search, PUGV, or
+episode/season, media-review, and timetable metadata; it does not route index, search, PUGV, or
 international metadata.
 See the [v0.11.0 release notes](docs/release-notes/v0.11.0.md) and
 [official releases](https://github.com/Joey-Project/BBDown-rust/releases) for archive availability.

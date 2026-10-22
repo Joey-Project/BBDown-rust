@@ -38,7 +38,7 @@ SpaceDynamic 请求缺少设备 Cookie 值时的初始化逻辑。它还记录�
 `bbdown-core = "0.10"`；`0.9` 依赖不包含这些 API。如果 registry 中尚无 `0.10.0` package，请使用对应的源码检出
 或本地 path dependency。
 `0.11.0` 源码版本增加普通视频搜索及选中条目的 PGC 识别、国内 PGC 分集分组、番剧与国创时间表 metadata、电影/电视剧索引 metadata、热门视频 metadata 和全站排行榜 metadata。排行榜会返回所有有效条目，不再使用此前任意设置的 100 条上限；每个响应的默认大小上限为 1 MiB。这些功能不实现频道、话题、自动 CDN 路由、持久化 CDN 健康状态或自适应 CDN 策略。请参阅 [v0.11.0 发布说明](docs/release-notes/v0.11.0.zh-CN.md)，并查看[官方 Releases](https://github.com/Joey-Project/BBDown-rust/releases)了解归档可用性。
-当前源码检出也支持按 capability 声明 metadata service，用于国内 PGC 分集/season 与 media-review hydration；该路由不覆盖时间表、索引、搜索、PUGV 或 Intl metadata。
+当前源码检出也支持按 capability 声明 metadata service，用于国内 PGC 分集/season、media-review 与时间表 metadata；该路由不覆盖索引、搜索、PUGV 或 Intl metadata。
 
 ## 当前 CLI
 
