@@ -437,6 +437,10 @@ endpoint 配置与行为。仅配置 base URL 并不能证明服务支持这些�
 endpoint 路径会追加到经过校验的 HTTP(S) base URL，并保留 base 中的路径前缀。每份解码后的响应正文默认独立限制为
 8 MiB；`md<ID>` 的 review 与 season 响应分别可使用完整上限。`with_max_response_bytes` 只接受正数限制。
 
+CLI live harness 在 `live-e2e.pgc-metadata.samples.example.json` 中包含匿名的分集、season 和 media
+`info` 样例。该 fixture 通过 CLI 和 core routing 展示所需 capability 与 season/group 断言；它不覆盖独立
+embedding 应用集成、playurl 或媒体访问。
+
 ```rust,no_run
 use bbdown_core::{
     BiliClient, ClientConfig, PgcMetadataCapability, PgcMetadataRoute, PgcMetadataService,

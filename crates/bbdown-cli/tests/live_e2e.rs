@@ -7,6 +7,8 @@ use bbdown_core::{
     Credentials, Error, PgcWebPlayurlRoute, PlayurlMode, RestrictedArea, RestrictedAreaConfig,
     RestrictedAreaProxy, Selection, StreamSource,
 };
+use httpmock::MockServer;
+use httpmock::prelude::*;
 use serde::Deserialize;
 use serde_json::Value;
 use std::fs;
@@ -97,7 +99,34 @@ struct LiveCase {
     #[serde(default)]
     restricted_api_proxy_all_areas: Vec<String>,
     #[serde(default)]
+    pgc_metadata_service: Option<LivePgcMetadataService>,
+    #[serde(default)]
     expect: LiveExpect,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LivePgcMetadataService {
+    base: String,
+    capabilities: Vec<PgcMetadataServiceCapability>,
+    #[serde(default)]
+    max_response_bytes: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum PgcMetadataServiceCapability {
+    Season,
+    MediaReview,
+}
+
+impl PgcMetadataServiceCapability {
+    fn as_cli_value(self) -> &'static str {
+        match self {
+            Self::Season => "season",
+            Self::MediaReview => "media-review",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize)]
@@ -120,6 +149,8 @@ enum LiveAction {
 #[serde(deny_unknown_fields)]
 struct LiveExpect {
     info: Option<String>,
+    #[serde(default)]
+    season: Option<LiveSeasonExpect>,
     #[serde(default, alias = "plan_sources")]
     allowed_plan_sources: Vec<String>,
     #[serde(default)]
@@ -130,6 +161,38 @@ struct LiveExpect {
     plan_error_contains: Vec<String>,
     min_entries: Option<usize>,
     require_streams: Option<bool>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LiveSeasonExpect {
+    season_id: Option<u64>,
+    media_id: Option<u64>,
+    min_episodes: Option<usize>,
+    group_count: Option<usize>,
+    #[serde(default)]
+    selected_episode_ids: Vec<u64>,
+    #[serde(default)]
+    groups: Vec<LiveSeasonGroupExpect>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum LiveSeasonGroupKind {
+    Main,
+    Section,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LiveSeasonGroupExpect {
+    kind: LiveSeasonGroupKind,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    source_id: Option<String>,
+    min_episodes: Option<usize>,
+    episode_ids: Option<Vec<u64>>,
 }
 
 #[test]
@@ -239,6 +302,256 @@ async fn live_pgc_web_playurl_routes_for_restricted_episode() -> anyhow::Result<
         bail!("{FIXTURE}: OfficialOnly {official_status}; ProxyOnly {proxy_status}");
     }
     Ok(())
+}
+
+#[test]
+fn pgc_metadata_service_cli_routes_ep_ss_md_and_preserves_groups() -> anyhow::Result<()> {
+    let service = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    CredentialStore::new(credential_file.clone()).save(&Credentials::default())?;
+    let mocks = mock_pgc_metadata_routes(&service);
+    for (input, selection, selected_episode_ids) in [
+        ("ep1000", "current", vec![1000]),
+        ("ss123", "latest", vec![1001]),
+        ("md456", "latest", vec![1001]),
+    ] {
+        assert_pgc_metadata_cli_case(
+            &service.base_url(),
+            &credential_file,
+            input,
+            selection,
+            selected_episode_ids,
+        )?;
+    }
+    mocks.assert();
+    Ok(())
+}
+
+struct PgcMetadataRouteMocks<'a> {
+    ep_season: httpmock::Mock<'a>,
+    ss_season: httpmock::Mock<'a>,
+    md_review: httpmock::Mock<'a>,
+    md_season: httpmock::Mock<'a>,
+}
+
+impl PgcMetadataRouteMocks<'_> {
+    fn assert(self) {
+        self.ep_season.assert();
+        self.ss_season.assert();
+        self.md_review.assert();
+        self.md_season.assert();
+    }
+}
+
+fn mock_pgc_metadata_routes(server: &MockServer) -> PgcMetadataRouteMocks<'_> {
+    let season_response = serde_json::json!({
+        "code": 0,
+        "result": {
+            "season_id": 123,
+            "media_id": 456,
+            "title": "Service Season",
+            "positive": {"id": 5, "title": "Main"},
+            "episodes": [
+                {"aid": 10, "cid": 100, "id": 1000, "title": "1"},
+                {"aid": 11, "cid": 101, "id": 1001, "title": "2"}
+            ],
+            "section": [{
+                "id": 9,
+                "title": "Extras",
+                "episodes": [{"aid": 12, "cid": 102, "id": 1002, "title": "3"}]
+            }]
+        }
+    });
+    let ep_season = server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/view/web/season")
+            .query_param("ep_id", "1000")
+            .header_missing("cookie")
+            .header_missing("authorization");
+        then.status(200).json_body_obj(&season_response);
+    });
+    let ss_season = server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/view/web/season")
+            .query_param("season_id", "123")
+            .header_missing("cookie")
+            .header_missing("authorization");
+        then.status(200).json_body_obj(&season_response);
+    });
+    let md_review = server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/review/user")
+            .query_param("media_id", "456")
+            .header_missing("cookie")
+            .header_missing("authorization");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": 0,
+            "result": {"media": {"new_ep": {"id": 1001}}}
+        }));
+    });
+    let md_season = server.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/view/web/season")
+            .query_param("ep_id", "1001")
+            .header_missing("cookie")
+            .header_missing("authorization");
+        then.status(200).json_body_obj(&season_response);
+    });
+    PgcMetadataRouteMocks {
+        ep_season,
+        ss_season,
+        md_review,
+        md_season,
+    }
+}
+
+fn assert_pgc_metadata_cli_case(
+    service_base: &str,
+    credential_file: &Path,
+    input: &str,
+    selection: &str,
+    selected_episode_ids: Vec<u64>,
+) -> anyhow::Result<()> {
+    let output = run_service_cli_info(service_base, credential_file, input, selection)?;
+    ensure!(
+        output.status.success(),
+        "bbdown info for {input} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)?;
+    assert_season_info(
+        &json,
+        &LiveSeasonExpect {
+            season_id: Some(123),
+            media_id: Some(456),
+            min_episodes: Some(3),
+            group_count: Some(2),
+            selected_episode_ids,
+            groups: vec![
+                LiveSeasonGroupExpect {
+                    kind: LiveSeasonGroupKind::Main,
+                    title: Some("Main".to_owned()),
+                    source_id: Some("5".to_owned()),
+                    min_episodes: Some(2),
+                    episode_ids: Some(vec![1000, 1001]),
+                },
+                LiveSeasonGroupExpect {
+                    kind: LiveSeasonGroupKind::Section,
+                    title: Some("Extras".to_owned()),
+                    source_id: Some("9".to_owned()),
+                    min_episodes: Some(1),
+                    episode_ids: Some(vec![1002]),
+                },
+            ],
+        },
+    )
+}
+
+#[test]
+fn pgc_metadata_service_cli_redacts_api_diagnostics_without_fallback() -> anyhow::Result<()> {
+    let service = MockServer::start();
+    let official = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("credentials.json");
+    CredentialStore::new(credential_file.clone()).save(&Credentials::default())?;
+    let failure = service.mock(|when, then| {
+        when.method(GET)
+            .path("/pgc/view/web/season")
+            .query_param("ep_id", "1000")
+            .header_missing("cookie")
+            .header_missing("authorization");
+        then.status(200).json_body_obj(&serde_json::json!({
+            "code": -404,
+            "message": "private diagnostic sentinel",
+            "result": null
+        }));
+    });
+    let official_season = official.mock(|when, then| {
+        when.method(GET).path("/pgc/view/web/season");
+        then.status(500);
+    });
+    let output = run_service_cli_info_with_official_base(
+        &service.base_url(),
+        &official.base_url(),
+        &credential_file,
+        "ep1000",
+        "current",
+    )?;
+    ensure!(
+        !output.status.success(),
+        "metadata API failure must fail the CLI"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    ensure!(
+        stderr.contains("-404"),
+        "expected API code in diagnostic: {stderr}"
+    );
+    ensure!(
+        !stderr.contains("private diagnostic sentinel") && !stderr.contains(&service.base_url()),
+        "service details leaked in diagnostic: {stderr}"
+    );
+    failure.assert();
+    official_season.assert_calls(0);
+    Ok(())
+}
+
+fn run_service_cli_info(
+    service_base: &str,
+    credential_file: &Path,
+    input: &str,
+    selection: &str,
+) -> anyhow::Result<std::process::Output> {
+    run_service_cli_info_with_optional_official_base(
+        service_base,
+        None,
+        credential_file,
+        input,
+        selection,
+    )
+}
+
+fn run_service_cli_info_with_official_base(
+    service_base: &str,
+    official_base: &str,
+    credential_file: &Path,
+    input: &str,
+    selection: &str,
+) -> anyhow::Result<std::process::Output> {
+    run_service_cli_info_with_optional_official_base(
+        service_base,
+        Some(official_base),
+        credential_file,
+        input,
+        selection,
+    )
+}
+
+fn run_service_cli_info_with_optional_official_base(
+    service_base: &str,
+    official_base: Option<&str>,
+    credential_file: &Path,
+    input: &str,
+    selection: &str,
+) -> anyhow::Result<std::process::Output> {
+    let mut command = Command::cargo_bin("bbdown")?;
+    for name in CLI_OVERRIDE_ENV_VARS {
+        command.env_remove(name);
+    }
+    command
+        .arg("--pgc-metadata-service-base")
+        .arg(service_base)
+        .args(["--pgc-metadata-service-capabilities", "season,media-review"]);
+    if let Some(official_base) = official_base {
+        command.arg("--pgc-base").arg(official_base);
+    }
+    command
+        .arg("--credential-file")
+        .arg(credential_file)
+        .args(["info", input, "--select", selection, "--json"]);
+    command
+        .output()
+        .context("failed to run bbdown metadata-service info")
 }
 
 fn select_ep664928_case(cases: &[LiveCase]) -> anyhow::Result<&LiveCase> {
@@ -1020,8 +1333,10 @@ fn live_case_for_assertions() -> LiveCase {
         restricted_api_proxy: Vec::new(),
         restricted_area_proxy_all_areas: Vec::new(),
         restricted_api_proxy_all_areas: Vec::new(),
+        pgc_metadata_service: None,
         expect: LiveExpect {
             info: None,
+            season: None,
             allowed_plan_sources: Vec::new(),
             required_plan_sources: Vec::new(),
             allow_plan_error: false,
@@ -1134,6 +1449,25 @@ fn live_command(
         command.env_remove(name);
     }
     command.arg("--credential-file").arg(credential_file);
+    if let Some(service) = &case.pgc_metadata_service {
+        command
+            .arg("--pgc-metadata-service-base")
+            .arg(&service.base)
+            .arg("--pgc-metadata-service-capabilities")
+            .arg(
+                service
+                    .capabilities
+                    .iter()
+                    .map(|capability| capability.as_cli_value())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
+        if let Some(max_response_bytes) = service.max_response_bytes {
+            command
+                .arg("--pgc-metadata-service-max-response-bytes")
+                .arg(max_response_bytes.to_string());
+        }
+    }
     if let Some(seconds) = case.request_timeout_seconds(manifest) {
         command
             .arg("--request-timeout-seconds")
@@ -1159,7 +1493,160 @@ fn assert_info(json: &Value, case: &LiveCase) -> anyhow::Result<()> {
         "season" => ensure!(json.get("season").is_some(), "expected season info object"),
         other => bail!("unsupported expected info kind `{other}`"),
     }
+    if let Some(expected) = &case.expect.season {
+        assert_season_info(json, expected)?;
+    }
     Ok(())
+}
+
+fn assert_season_info(json: &Value, expected: &LiveSeasonExpect) -> anyhow::Result<()> {
+    let resolution = &json["season"];
+    let season = &resolution["season"];
+    ensure!(
+        season.is_object(),
+        "season info must contain season metadata"
+    );
+    if let Some(season_id) = expected.season_id {
+        ensure!(
+            season["season_id"].as_u64() == Some(season_id),
+            "expected season ID {season_id}, got {}",
+            season["season_id"]
+        );
+    }
+    if let Some(media_id) = expected.media_id {
+        ensure!(
+            season["media_id"].as_u64() == Some(media_id),
+            "expected media ID {media_id}, got {}",
+            season["media_id"]
+        );
+    }
+    if let Some(min_episodes) = expected.min_episodes {
+        let episodes = season["episodes"]
+            .as_array()
+            .context("season episodes must be an array")?;
+        ensure!(
+            episodes.len() >= min_episodes,
+            "expected at least {min_episodes} season episodes, got {}",
+            episodes.len()
+        );
+    }
+    assert_selected_episode_ids(resolution, &expected.selected_episode_ids)?;
+    assert_season_groups(season, expected)
+}
+
+fn assert_selected_episode_ids(resolution: &Value, expected_ids: &[u64]) -> anyhow::Result<()> {
+    if expected_ids.is_empty() {
+        return Ok(());
+    }
+    let selected = resolution["selected_episodes"]
+        .as_array()
+        .context("selected episodes must be an array")?;
+    let selected_ids = selected
+        .iter()
+        .map(|episode| {
+            episode["epid"]
+                .as_u64()
+                .context("selected episode ID must be an integer")
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    ensure!(
+        selected_ids == expected_ids,
+        "expected selected episode IDs {expected_ids:?}, got {selected_ids:?}"
+    );
+    Ok(())
+}
+
+fn assert_season_groups(season: &Value, expected: &LiveSeasonExpect) -> anyhow::Result<()> {
+    if expected.group_count.is_some() || !expected.groups.is_empty() {
+        let groups = season["episode_groups"]
+            .as_array()
+            .context("season episode groups must be an array")?;
+        if let Some(group_count) = expected.group_count {
+            ensure!(
+                groups.len() == group_count,
+                "expected {group_count} episode groups, got {}",
+                groups.len()
+            );
+        }
+        let episodes = season["episodes"]
+            .as_array()
+            .context("season episodes must be an array")?;
+        ensure!(
+            groups.len() >= expected.groups.len(),
+            "expected at least {} episode groups, got {}",
+            expected.groups.len(),
+            groups.len()
+        );
+        for (index, (actual, expected)) in groups.iter().zip(&expected.groups).enumerate() {
+            assert_season_group(actual, expected, episodes, index)?;
+        }
+    }
+    Ok(())
+}
+
+fn assert_season_group(
+    actual: &Value,
+    expected: &LiveSeasonGroupExpect,
+    episodes: &[Value],
+    index: usize,
+) -> anyhow::Result<()> {
+    let expected_kind = match expected.kind {
+        LiveSeasonGroupKind::Main => "main",
+        LiveSeasonGroupKind::Section => "section",
+    };
+    ensure!(
+        actual["kind"].as_str() == Some(expected_kind),
+        "episode group {index} expected kind `{expected_kind}`, got {}",
+        actual["kind"]
+    );
+    if let Some(title) = &expected.title {
+        ensure!(
+            actual["title"].as_str() == Some(title),
+            "episode group {index} expected title `{title}`, got {}",
+            actual["title"]
+        );
+    }
+    if let Some(source_id) = &expected.source_id {
+        ensure!(
+            actual["source_id"].as_str() == Some(source_id),
+            "episode group {index} expected source ID `{source_id}`, got {}",
+            actual["source_id"]
+        );
+    }
+    let positions = actual["episode_positions"]
+        .as_array()
+        .context("episode group positions must be an array")?;
+    if let Some(min_episodes) = expected.min_episodes {
+        ensure!(
+            positions.len() >= min_episodes,
+            "episode group {index} expected at least {min_episodes} episodes, got {}",
+            positions.len()
+        );
+    }
+    if let Some(expected_ids) = &expected.episode_ids {
+        let actual_ids = group_episode_ids(positions, episodes)?;
+        ensure!(
+            &actual_ids == expected_ids,
+            "episode group {index} expected episode IDs {expected_ids:?}, got {actual_ids:?}"
+        );
+    }
+    Ok(())
+}
+
+fn group_episode_ids(positions: &[Value], episodes: &[Value]) -> anyhow::Result<Vec<u64>> {
+    positions
+        .iter()
+        .map(|position| {
+            let position = position
+                .as_u64()
+                .and_then(|position| usize::try_from(position).ok())
+                .context("episode group position must be a valid index")?;
+            episodes
+                .get(position)
+                .and_then(|episode| episode["epid"].as_u64())
+                .context("episode group position must refer to an episode")
+        })
+        .collect()
 }
 
 fn assert_plan(json: &Value, case: &LiveCase) -> anyhow::Result<()> {

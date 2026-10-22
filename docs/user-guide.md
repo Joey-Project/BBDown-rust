@@ -1097,6 +1097,38 @@ eligibility, a case may set `allow_plan_error: true` with `plan_error_contains`:
 must still match the stream assertions, while a restricted failure must be an access-restricted
 failure and must contain the listed diagnostics.
 
+### Anonymous PGC metadata cases
+
+`live-e2e.pgc-metadata.samples.example.json` is a metadata-only set of `info` cases for `ep664928`,
+`ss42513`, and `md28338980`. It demonstrates `pgc_metadata_service` with the `season` capability
+for episode and season inputs, and both `season` and `media-review` for a media input. The example
+expects the same 58-episode season and its main episode group. Its `.invalid` service URL is a
+placeholder; select a service that actually supports the declared endpoint and response shape.
+The complete JSON document has a top-level 10-second request timeout and three cases. Each case's
+`expect.season` checks `season_id`, `media_id`, `min_episodes`, `selected_episode_ids`, `group_count`,
+and ordered `groups` with kind, title, source ID, and episode IDs. A case may set the optional
+`pgc_metadata_service.max_response_bytes` cap.
+
+For an isolated run, place a dedicated `live-e2e.samples.json` containing only these cases in a
+private working directory, leaving any existing ignored manifest untouched. After building the test
+binary, run it from the private directory with the exact test filter
+`live_manifest_cases --ignored --exact`. Cargo prints the executable path for `--no-run`:
+
+```bash
+cargo test -p bbdown-cli --test live_e2e --locked --no-run
+cd /path/to/private-run-directory
+env CARGO_BIN_EXE_bbdown=/absolute/path/to/repo/target/debug/bbdown \
+  /absolute/path/printed/by/cargo live_manifest_cases --ignored --exact
+```
+
+Cargo normally supplies `CARGO_BIN_EXE_bbdown` to integration tests; when launching the test binary
+directly, set it to the built CLI executable as shown. Copy the complete example JSON document as the
+private manifest and replace the placeholder service base before running it.
+
+These cases run `info` only. The metadata service route sends anonymous requests, does not follow
+redirects or fall back to another metadata endpoint, and bounds each decoded response to 8 MiB by
+default. This does not validate playurl, playback, media access, or future service availability.
+
 To check the independent PGC Web playurl routes against the curated restricted episode
 `ep664928`, run the opt-in API test below. It reads the selected restricted PGC case from the
 ignored manifest and requires one HK API proxy, a Web cookie, and a generic access key. Set

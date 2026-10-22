@@ -523,6 +523,11 @@ appended to the validated HTTP(S) base URL, preserving its path prefix. Each dec
 is independently bounded to 8 MiB by default; the `md<ID>` review and season responses each receive
 that full per-response limit. `with_max_response_bytes` accepts only a positive byte limit.
 
+The CLI live harness includes anonymous `info` cases for episode, season, and media inputs in
+`live-e2e.pgc-metadata.samples.example.json`. This fixture demonstrates the required capabilities and
+season/group expectations through the CLI and core routing. It does not cover a separate embedding
+application integration, playurl, or media access.
+
 ```rust,no_run
 use bbdown_core::{
     BiliClient, ClientConfig, PgcMetadataCapability, PgcMetadataRoute, PgcMetadataService,
