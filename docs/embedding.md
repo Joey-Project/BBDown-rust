@@ -413,8 +413,29 @@ or continuation. It also does not promise stable order or latest rows. `Category
 `requested_rid`, `requested_batch_size`, and `items`. `CategoryVideoItem` maps `category_id`/`category_name`
 to `tid`/`tname` and `category_v2_id`/`category_v2_name` to `tidv2`/`tnamev2`; these pairs describe
 the returned row independently and are not derived from requested `rid`.
-It does not add an `Input`, selection, detail hydration, playurl, or download path; category catalogs,
-pagination, channels, and topics remain future work.
+It does not add an `Input`, selection, detail hydration, playurl, or download path. The bundled-menu
+snapshot is documented below; a complete or current-effective taxonomy, remote menu retrieval,
+pagination, dynamic channel feeds, and topics remain future work.
+
+### Offline Category Catalog Snapshot
+
+`bbdown_core::category_catalog() -> Result<CategoryCatalog>` reads bundled JSON and makes no network request. It is independent of `BiliClient`, endpoint configuration, credentials, resolvers, and request timeout. The CLI equivalent is `bbdown category catalog [--json]`.
+
+```rust,no_run
+use bbdown_core::{category_catalog, Result};
+
+fn read_catalog() -> Result<()> {
+    let catalog = category_catalog()?;
+    println!("{} top-level menu entries", catalog.entries.len());
+    Ok(())
+}
+```
+
+`CategoryCatalog` carries `scope`, `captured_at`, `source_url`, `source_asset_url`, `source_asset_sha256`, and `entries`. Each recursive `CategoryCatalogEntry` carries `name`, `url`, optional `channel_id`, optional `sub_channel_id`, optional `tid`, and `children`. Keep these identifiers separate: the navigation IDs do not translate to `tid`.
+
+The embedded data is the frontend's `channelList` fallback menu, with 28 roots and 114 nested entries in source order. It preserves 12 entries without `tid`, repeated `tid` values 17 and 138, `tid=246` on two distinct car subentries, and mixed UGC, PGC, and non-video routes; the separate `sideChannelList` is excluded. The fallback may be overridden by a remote key-value menu at runtime, which this API does not fetch. It is not a complete or current taxonomy, has no UGC/PGC discriminator, and does not prove that each `tid` works with the legacy video-list endpoint. `source_url` is `https://www.bilibili.com/c/douga/`; `source_asset_url` is `https://s1.hdslb.com/bfs/static/shanks/channel/assets/index-bedd2c00.js` with `source_asset_sha256=e9a6380a51acb054d8728db716a10a13818371a7834ba5f4f53a4b7872cfcbcb`. `captured_at` is the asset acquisition time (`2026-10-22T22:32:44.646206Z`), not an upstream revision. URLs normalize to HTTPS and drop tracking-only `visit_id` parameters while preserving menu paths and functional query parameters.
+
+The CLI JSON output includes all fields and provenance; human output groups children under parents and shows navigation IDs separately from `tid`. This API does not perform ID translation, generic URL parsing, content enumeration, or video listing. Explicitly pass a known RID to `category list` only when the caller has selected one. A complete or current-effective taxonomy, remote menu retrieval, pagination, dynamic channel feeds, and topics remain future work.
 
 ### PGC Timetable Metadata
 

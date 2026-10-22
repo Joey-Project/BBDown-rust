@@ -1,6 +1,6 @@
 use bbdown_core::{
-    BiliClient, CategoryVideoQuery, CategoryVideoStats, ClientConfig,
-    CredentialHealthSummaryStatus, CredentialKind, CredentialLifecycleMetadata,
+    BiliClient, CategoryCatalog, CategoryCatalogEntry, CategoryVideoQuery, CategoryVideoStats,
+    ClientConfig, CredentialHealthSummaryStatus, CredentialKind, CredentialLifecycleMetadata,
     CredentialLifecyclePolicy, CredentialLifecycleSource, CredentialLifecycleStatus,
     CredentialPreflightMode, CredentialPreflightReport, CredentialProfileMetadata,
     CredentialProfiles, DEFAULT_CATEGORY_VIDEO_BATCH_SIZE,
@@ -12,6 +12,7 @@ use bbdown_core::{
     PgcTimetableKind, PlayurlMode, PopularVideoQuery, PopularVideoStats, RankingVideoOptions,
     RestrictedAreaConfig, SeasonEpisodeGroup, SeasonEpisodeGroupKind, StreamSelection,
     SubtitleAiPolicy, UgcCollectionKind, UgcCollectionReference, VideoCollectionKind,
+    category_catalog,
 };
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
@@ -245,4 +246,35 @@ fn category_video_types_are_reexported() {
     };
     assert_eq!(batch.requested_rid, 17);
     assert_eq!(batch.items, Vec::new());
+}
+
+#[test]
+fn category_catalog_is_public_and_serde_round_trips() -> anyhow::Result<()> {
+    let catalog = category_catalog()?;
+    assert_eq!(catalog.entries.len(), 28);
+    assert_eq!(
+        catalog
+            .entries
+            .iter()
+            .map(|entry| entry.children.len())
+            .sum::<usize>(),
+        114
+    );
+    assert_eq!(catalog.scope, "bundled_channel_menu_fallback");
+
+    let serialized = serde_json::to_value(&catalog)?;
+    let restored: CategoryCatalog = serde_json::from_value(serialized)?;
+    assert_eq!(restored, catalog);
+
+    let entry = CategoryCatalogEntry {
+        name: "Example menu entry".to_owned(),
+        url: "https://www.bilibili.com/v/douga/".to_owned(),
+        channel_id: Some(8),
+        sub_channel_id: None,
+        tid: Some(1),
+        children: Vec::new(),
+    };
+    assert_eq!(entry.channel_id, Some(8));
+    assert_eq!(entry.sub_channel_id, None);
+    Ok(())
 }

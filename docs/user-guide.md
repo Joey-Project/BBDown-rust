@@ -347,8 +347,23 @@ API fixes `pn=1` and exposes no total or continuation fields. It makes no stable
 guarantee. `category_id`/`category_name` map to each row’s `tid`/`tname`, and
 `category_v2_id`/`category_v2_name` map to `tidv2`/`tnamev2`; the pairs independently describe the
 row and are not inferred to match the requested RID or each other. The command
-does not add generic inputs, item selection, hydration, playurl resolution, or downloads. A full
-category catalog, pagination, channel lists, and topic pages remain future work.
+does not add generic inputs, item selection, hydration, playurl resolution, or downloads. A complete or current-effective category taxonomy, remote menu retrieval, pagination, dynamic channel feeds, and topic pages remain future work.
+
+## Category Catalog Snapshot
+
+The current source checkout provides an offline catalog command; it is not part of the `v0.11.0` release:
+
+```bash
+bbdown category catalog --json
+```
+
+The command reads bundled JSON and does not use a client, network, credentials, resolver, or request timeout. The free Rust function `bbdown_core::category_catalog() -> bbdown_core::Result<CategoryCatalog>` provides the same data offline. Each catalog entry has `name`, `url`, optional `channel_id`, optional `sub_channel_id`, optional `tid`, and recursive `children` fields. Navigation IDs are independent: `channel_id` and `sub_channel_id` are not translations of `tid`.
+
+The data is the frontend's bundled `channelList` fallback snapshot, not a live or complete taxonomy. The frontend may replace it from a remote key-value menu at runtime; this command does not fetch that override or the separate `sideChannelList`. The snapshot includes 28 root and 114 nested entries in source order, including 12 entries without a `tid`, repeated `tid` values 17 and 138, `tid=246` on two distinct car subentries, and mixed UGC, PGC, and non-video destinations. It has no UGC/PGC discriminator, so the shape does not establish that every `tid` is usable with `category list` or that every route lists videos. A known selected `tid`, such as `1` for the animation entry in this snapshot, can be explicitly passed to `bbdown category list --rid 1`; no automatic ID conversion or listing is performed.
+
+The snapshot reports `scope=bundled_channel_menu_fallback`, `captured_at=2026-10-22T22:32:44.646206Z`, `source_url=https://www.bilibili.com/c/douga/`, `source_asset_url=https://s1.hdslb.com/bfs/static/shanks/channel/assets/index-bedd2c00.js`, and `source_asset_sha256=e9a6380a51acb054d8728db716a10a13818371a7834ba5f4f53a4b7872cfcbcb`. `captured_at` records when the asset was fetched, not an upstream revision. URLs are normalized to HTTPS and tracking-only `visit_id` parameters are removed; menu paths, functional query parameters, and functional URL fragments are preserved. The CLI's human output groups child entries under their parent and keeps navigation IDs separate from `tid`; JSON includes the provenance and all entry fields.
+
+This is a navigational snapshot, not ID translation, generic URL parsing, content enumeration, or a video listing. Use `category list` only with an explicitly chosen RID. Full current-menu retrieval, complete taxonomy, automatic route classification, dynamic channel feeds, and topic pages remain future work.
 
 ## PGC Timetable
 

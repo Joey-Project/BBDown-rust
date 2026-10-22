@@ -4,6 +4,7 @@
 mod app_playurl;
 mod bv;
 mod cancellation;
+mod category_catalog;
 mod client;
 mod credential_preflight;
 mod credentials;
@@ -20,6 +21,7 @@ mod range_transfer;
 mod selection;
 
 pub use cancellation::DownloadCancellationToken;
+pub use category_catalog::{CategoryCatalog, CategoryCatalogEntry, category_catalog};
 pub use client::{
     BiliClient, CategoryVideoBatch, CategoryVideoItem, CategoryVideoQuery, CategoryVideoStats,
     ClientConfig, DEFAULT_CATEGORY_VIDEO_BATCH_SIZE, DEFAULT_CATEGORY_VIDEO_MAX_RESPONSE_BYTES,

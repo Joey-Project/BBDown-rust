@@ -278,6 +278,13 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum CategoryCommand {
+    #[command(
+        about = "Show the dated bundled channel-menu snapshot; use a verified video-list RID with `category list --rid` to request its first metadata batch"
+    )]
+    Catalog {
+        #[arg(long)]
+        json: bool,
+    },
     List {
         #[arg(long, value_parser = parse_positive_u32)]
         rid: u32,
@@ -1378,6 +1385,12 @@ async fn main() -> anyhow::Result<()> {
 async fn run() -> anyhow::Result<()> {
     let raw_args = std::env::args_os().collect::<Vec<_>>();
     let cli = Cli::parse_from(raw_args.clone());
+    if let Command::Category {
+        command: CategoryCommand::Catalog { json },
+    } = &cli.command
+    {
+        return handle_category_catalog(*json);
+    }
     ensure!(
         cli.request_timeout_seconds > 0,
         "--request-timeout-seconds must be greater than 0"
@@ -2238,6 +2251,63 @@ async fn handle_category_videos(
         print_category_video_batch(&result);
     }
     Ok(())
+}
+
+fn handle_category_catalog(json: bool) -> anyhow::Result<()> {
+    let catalog = bbdown_core::category_catalog()?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&catalog)?);
+    } else {
+        print_category_catalog(&catalog);
+    }
+    Ok(())
+}
+
+fn print_category_catalog(catalog: &bbdown_core::CategoryCatalog) {
+    let nested_count = catalog
+        .entries
+        .iter()
+        .map(|entry| count_category_catalog_entries(&entry.children))
+        .sum::<usize>();
+    println!("Dated bundled menu snapshot (source fallback)");
+    println!("captured at: {}", catalog.captured_at);
+    println!("scope: {}", catalog.scope);
+    println!(
+        "entries: {} top-level, {nested_count} nested",
+        catalog.entries.len()
+    );
+    println!("source: {}", catalog.source_url);
+    println!("source asset: {}", catalog.source_asset_url);
+    println!("source asset SHA-256: {}", catalog.source_asset_sha256);
+    println!("menu TIDs are source identifiers; no mapping to video-list RIDs is applied");
+    print_category_catalog_entries(&catalog.entries, 0);
+}
+
+fn count_category_catalog_entries(entries: &[bbdown_core::CategoryCatalogEntry]) -> usize {
+    entries
+        .iter()
+        .map(|entry| 1 + count_category_catalog_entries(&entry.children))
+        .sum()
+}
+
+fn print_category_catalog_entries(entries: &[bbdown_core::CategoryCatalogEntry], depth: usize) {
+    let indent = "  ".repeat(depth);
+    for entry in entries {
+        let channel_id = entry
+            .channel_id
+            .map_or_else(|| "-".to_owned(), |value| value.to_string());
+        let sub_channel_id = entry
+            .sub_channel_id
+            .map_or_else(|| "-".to_owned(), |value| value.to_string());
+        let tid = entry
+            .tid
+            .map_or_else(|| "-".to_owned(), |value| value.to_string());
+        println!(
+            "{indent}- {} | channel_id={channel_id} sub_channel_id={sub_channel_id} tid={tid} | {}",
+            entry.name, entry.url
+        );
+        print_category_catalog_entries(&entry.children, depth + 1);
+    }
 }
 
 fn print_category_video_batch(batch: &CategoryVideoBatch) {
