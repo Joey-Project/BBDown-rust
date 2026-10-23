@@ -443,6 +443,203 @@ fn category_response_byte_limit_is_enforced() -> anyhow::Result<()> {
 }
 
 #[test]
+fn category_catalog_json_is_bundled_offline_and_preserves_source_rows() -> anyhow::Result<()> {
+    let server = MockServer::start();
+    let unexpected = mock_unexpected_request(&server);
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("absent-credentials.json");
+    let output = bbdown_command()?
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("--pgc-base")
+        .arg("not a valid endpoint")
+        .arg("--resolver")
+        .arg("unknown-resolver")
+        .arg("--restricted-area-proxy")
+        .arg("not a valid proxy")
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--credential-profile")
+        .arg("missing-profile")
+        .arg("--credential-preflight")
+        .arg("renew")
+        .arg("--request-timeout-seconds")
+        .arg("0")
+        .args(["category", "catalog", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let catalog: Value = serde_json::from_slice(&output)?;
+    assert_eq!(catalog["scope"], "bundled_channel_menu_fallback");
+    assert_ne!(catalog["captured_at"].as_str().unwrap_or_default(), "");
+    assert_ne!(catalog["source_url"].as_str().unwrap_or_default(), "");
+    assert_ne!(catalog["source_asset_url"].as_str().unwrap_or_default(), "");
+    let source_hash = catalog["source_asset_sha256"].as_str().unwrap_or_default();
+    assert_eq!(source_hash.len(), 64);
+    assert!(
+        source_hash
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+    );
+    let entries = catalog["entries"]
+        .as_array()
+        .context("category catalog entries should be an array")?;
+    assert_eq!(entries.len(), 28);
+    assert!(entries[0]["name"].as_str().is_some());
+    assert!(entries[0]["url"].as_str().is_some());
+    assert!(entries[0].get("channel_id").is_some());
+    assert!(entries[0].get("sub_channel_id").is_some());
+    assert!(entries[0].get("tid").is_some());
+    assert!(entries[0]["children"].as_array().is_some());
+    let first_child = &entries[0]["children"][0];
+    assert!(first_child["name"].as_str().is_some());
+    assert!(first_child["url"].as_str().is_some());
+    assert!(first_child.get("channel_id").is_some());
+    assert!(first_child.get("sub_channel_id").is_some());
+    assert!(first_child.get("tid").is_some());
+    assert!(first_child["children"].as_array().is_some());
+    assert_eq!(count_category_catalog_entries(&catalog["entries"]), 142);
+    assert_eq!(count_missing_category_tids(&catalog["entries"]), 12);
+    let mut tids = Vec::new();
+    collect_category_catalog_tids(entries, &mut tids);
+    for repeated_tid in [17, 138, 246] {
+        assert!(tids.iter().filter(|tid| **tid == repeated_tid).count() > 1);
+    }
+    assert!(!credential_file.exists());
+    unexpected.assert_calls(0);
+
+    bbdown_command()?
+        .args([
+            "--api-base",
+            "not a valid API base",
+            "--request-timeout-seconds",
+            "0",
+            "category",
+            "catalog",
+            "--json",
+        ])
+        .assert()
+        .success();
+    Ok(())
+}
+
+#[test]
+fn category_catalog_human_output_preserves_hierarchy_and_explains_identifiers() -> anyhow::Result<()>
+{
+    let catalog = bbdown_core::category_catalog()?;
+    let parent = catalog
+        .entries
+        .iter()
+        .find(|entry| !entry.children.is_empty())
+        .context("bundled category menu should contain a nested entry")?;
+    let child = &parent.children[0];
+    let output = bbdown_command()?
+        .args([
+            "--api-base",
+            "not a valid API base",
+            "--request-timeout-seconds",
+            "0",
+            "category",
+            "catalog",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let output = String::from_utf8(output)?;
+    assert!(output.contains("Dated bundled menu snapshot (source fallback)"));
+    assert!(output.contains(&format!("captured at: {}", catalog.captured_at)));
+    assert!(output.contains(&format!("scope: {}", catalog.scope)));
+    assert!(output.contains(&format!("source: {}", catalog.source_url)));
+    assert!(output.contains(&format!("source asset: {}", catalog.source_asset_url)));
+    assert!(output.contains(&format!(
+        "source asset SHA-256: {}",
+        catalog.source_asset_sha256
+    )));
+    assert!(output.contains(&category_catalog_entry_line(parent, 0)));
+    assert!(output.contains(&category_catalog_entry_line(child, 1)));
+    assert!(output.contains("menu TIDs are source identifiers"));
+    assert!(output.contains("no mapping to video-list RIDs is applied"));
+    Ok(())
+}
+
+#[test]
+fn category_catalog_help_describes_discovery_and_first_batch_command() -> anyhow::Result<()> {
+    let help = bbdown_command()?
+        .args(["category", "catalog", "--help"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let help = String::from_utf8(help)?
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(help.contains("verified video-list RID"));
+    assert!(help.contains("category list --rid"));
+    assert!(help.contains("--json"));
+    bbdown_command()?
+        .args(["category", "catalog", "--page", "2"])
+        .assert()
+        .failure();
+    Ok(())
+}
+
+fn count_category_catalog_entries(entries: &Value) -> usize {
+    entries.as_array().map_or(0, |items| {
+        items
+            .iter()
+            .map(|item| 1 + count_category_catalog_entries(&item["children"]))
+            .sum()
+    })
+}
+
+fn count_missing_category_tids(entries: &Value) -> usize {
+    entries.as_array().map_or(0, |items| {
+        items
+            .iter()
+            .map(|item| {
+                let current = usize::from(item["tid"].is_null());
+                current + count_missing_category_tids(&item["children"])
+            })
+            .sum()
+    })
+}
+
+fn collect_category_catalog_tids(entries: &[Value], tids: &mut Vec<u64>) {
+    for entry in entries {
+        if let Some(tid) = entry["tid"].as_u64() {
+            tids.push(tid);
+        }
+        if let Some(children) = entry["children"].as_array() {
+            collect_category_catalog_tids(children, tids);
+        }
+    }
+}
+
+fn category_catalog_entry_line(entry: &bbdown_core::CategoryCatalogEntry, depth: usize) -> String {
+    let channel_id = entry
+        .channel_id
+        .map_or_else(|| "-".to_owned(), |value| value.to_string());
+    let sub_channel_id = entry
+        .sub_channel_id
+        .map_or_else(|| "-".to_owned(), |value| value.to_string());
+    let tid = entry
+        .tid
+        .map_or_else(|| "-".to_owned(), |value| value.to_string());
+    format!(
+        "{}- {} | channel_id={channel_id} sub_channel_id={sub_channel_id} tid={tid} | {}",
+        "  ".repeat(depth),
+        entry.name,
+        entry.url
+    )
+}
+
+#[test]
 fn popular_json_keeps_source_order_and_only_hydrates_an_explicit_bvid_plan() -> anyhow::Result<()> {
     let server = MockServer::start();
     let popular = server.mock(|when, then| {

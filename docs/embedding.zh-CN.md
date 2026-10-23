@@ -340,7 +340,27 @@ async fn main() -> bbdown_core::Result<()> {
 }
 ```
 
-该调用只使用已配置的 API base 和请求超时，不发送凭据、不跟随重定向，也不初始化 PGC metadata 或 resolver 路由。配置的 API base 必须支持精确 endpoint、查询参数和原生 `data.archives` 响应 envelope。有效批次中的所有条目会在解码字节上限内按源顺序保留；必需字段格式错误时整批失败，不会静默跳过。样例中 `archives` 非空时 `page.count` 仍为零，且样例 `pn=2` 未推进条目，因此 API 不提供总数或续页，也不保证稳定排序或最新条目。`CategoryVideoBatch` 暴露 `requested_rid`、`requested_batch_size` 和 `items`。`CategoryVideoItem` 的 `category_id`/`category_name` 对应 `tid`/`tname`，`category_v2_id`/`category_v2_name` 对应 `tidv2`/`tnamev2`；两组字段分别描述条目，不会从请求 `rid` 推导。它不增加 `Input`、选择、详情 hydration、playurl 或下载路径；分区目录、分页、频道和话题仍属于后续工作。
+该调用只使用已配置的 API base 和请求超时，不发送凭据、不跟随重定向，也不初始化 PGC metadata 或 resolver 路由。配置的 API base 必须支持精确 endpoint、查询参数和原生 `data.archives` 响应 envelope。有效批次中的所有条目会在解码字节上限内按源顺序保留；必需字段格式错误时整批失败，不会静默跳过。样例中 `archives` 非空时 `page.count` 仍为零，且样例 `pn=2` 未推进条目，因此 API 不提供总数或续页，也不保证稳定排序或最新条目。`CategoryVideoBatch` 暴露 `requested_rid`、`requested_batch_size` 和 `items`。`CategoryVideoItem` 的 `category_id`/`category_name` 对应 `tid`/`tname`，`category_v2_id`/`category_v2_name` 对应 `tidv2`/`tnamev2`；两组字段分别描述条目，不会从请求 `rid` 推导。它不增加 `Input`、选择、详情 hydration、playurl 或下载路径；完整或当前生效的分类体系、远程菜单获取、动态频道 feed、分页和话题仍属于后续工作。
+
+### 离线分区菜单快照
+
+`bbdown_core::category_catalog() -> Result<CategoryCatalog>` 读取内置 JSON，不发起网络请求。它独立于 `BiliClient`、endpoint 配置、凭据、resolver 和请求超时。对应 CLI 为 `bbdown category catalog [--json]`。
+
+```rust,no_run
+use bbdown_core::{category_catalog, Result};
+
+fn read_catalog() -> Result<()> {
+    let catalog = category_catalog()?;
+    println!("{} top-level menu entries", catalog.entries.len());
+    Ok(())
+}
+```
+
+`CategoryCatalog` 包含 `scope`、`captured_at`、`source_url`、`source_asset_url`、`source_asset_sha256` 和 `entries`。每个递归的 `CategoryCatalogEntry` 包含 `name`、`url`、可选 `channel_id`、可选 `sub_channel_id`、可选 `tid` 和 `children`。这些标识应分开处理：导航 ID 不会转换为 `tid`。
+
+内置数据是前端 `channelList` 回退菜单，按源顺序包含 28 个根条目和 114 个嵌套条目。它保留 12 个缺少 `tid` 的条目、重复的 `tid` 17 和 138、出现在两个不同汽车子项中的 `tid=246`，以及混合的 UGC、PGC 和非视频路由；单独的 `sideChannelList` 不包含在内。前端运行时可能由远程 key-value 菜单覆盖此回退数据，本 API 不获取该菜单。它不是完整或当前的分类体系，没有 UGC/PGC 类型标记，也不能证明每个 `tid` 都适用于旧视频列表 endpoint。`source_url` 为 `https://www.bilibili.com/c/douga/`；`source_asset_url` 为 `https://s1.hdslb.com/bfs/static/shanks/channel/assets/index-bedd2c00.js`，其 `source_asset_sha256=e9a6380a51acb054d8728db716a10a13818371a7834ba5f4f53a4b7872cfcbcb`。`captured_at` 是 asset 获取时间（`2026-10-22T22:32:44.646206Z`），不是上游修订版本。URL 会规范为 HTTPS，并移除仅用于追踪的 `visit_id` 参数，同时保留菜单路径、功能性查询参数和功能性 URL fragment。
+
+CLI JSON 输出包含所有字段和来源信息；人类可读输出将子项归于父项，并把导航 ID 与 `tid` 分开显示。此 API 不做 ID 转换、通用 URL 解析、内容枚举或视频列表请求。只有调用方明确选择 RID 后，才向 `category list` 传入该值。完整或当前生效的分类体系、远程菜单获取、动态频道 feed、分页和话题页仍属于后续工作。
 
 ### PGC 时间表 metadata
 

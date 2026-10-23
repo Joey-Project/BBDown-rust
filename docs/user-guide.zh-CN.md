@@ -267,7 +267,23 @@ bbdown category list --rid 13 --batch-size 15 --max-response-bytes 2097152 --jso
 
 该命令通过已配置的 API base 向 `/x/web-interface/newlist?rid=<rid>&pn=1&ps=<batch-size>` 发起一次匿名请求。默认批量大小为 20，默认解码响应上限为 1 MiB；可用 `--max-response-bytes` 调高或调低字节上限，且没有任意的条目数量上限。三个查询值（`rid`、批量大小和字节上限）都必须为正数；不额外限制其数值上限。命令只使用请求超时和 API base，不跟随重定向，也不初始化凭据或 PGC resolver。配置的 API base 必须支持此路径、查询参数和响应 envelope。
 
-有效 archive 批次中的所有条目会在响应上限内按源顺序保留；必需字段格式错误时整批失败，不会静默丢弃条目。请求批量大小不保证 service 返回相同数量的条目。已测试的 endpoint 可能在 `archives` 非空时仍返回 `page.count=0`；测试中的 `pn=2` 也未推进样例条目，因此此 API 固定使用 `pn=1`，不提供总数或续页字段。它不保证排序稳定或条目最新。`category_id`/`category_name` 对应条目的 `tid`/`tname`，`category_v2_id`/`category_v2_name` 对应 `tidv2`/`tnamev2`；两组字段分别描述返回条目，不推断它们与请求 RID 或彼此之间的关系。该命令不增加通用输入、条目选择、详情 hydration、playurl 解析或下载。完整分区目录、分页、频道列表和话题页仍属于后续工作。
+有效 archive 批次中的所有条目会在响应上限内按源顺序保留；必需字段格式错误时整批失败，不会静默丢弃条目。请求批量大小不保证 service 返回相同数量的条目。已测试的 endpoint 可能在 `archives` 非空时仍返回 `page.count=0`；测试中的 `pn=2` 也未推进样例条目，因此此 API 固定使用 `pn=1`，不提供总数或续页字段。它不保证排序稳定或条目最新。`category_id`/`category_name` 对应条目的 `tid`/`tname`，`category_v2_id`/`category_v2_name` 对应 `tidv2`/`tnamev2`；两组字段分别描述返回条目，不推断它们与请求 RID 或彼此之间的关系。该命令不增加通用输入、条目选择、详情 hydration、playurl 解析或下载。完整或当前生效的分类体系、远程菜单获取、分页、动态频道 feed 和话题页仍属于后续工作。
+
+## 分区导航菜单快照
+
+当前源码检出提供离线目录命令；该功能不属于 `v0.11.0` 发布版本：
+
+```bash
+bbdown category catalog --json
+```
+
+该命令读取内置 JSON，不使用客户端、网络、凭据、resolver 或请求超时。Rust 独立函数 `bbdown_core::category_catalog() -> bbdown_core::Result<CategoryCatalog>` 提供相同的离线数据。每个目录条目包含 `name`、`url`、可选的 `channel_id`、`sub_channel_id`、`tid` 和递归 `children`。这些导航 ID 相互独立：`channel_id` 和 `sub_channel_id` 不会转换成 `tid`。
+
+数据是前端内置的 `channelList` 回退菜单快照，不是实时或完整的分区分类体系。前端可能在运行时从远程 key-value 菜单替换它；该命令不会获取远程覆盖项，也不包含单独的 `sideChannelList`。快照按源顺序包含 28 个根条目和 114 个嵌套条目，其中 12 个没有 `tid`，`tid` 17 和 138 在菜单中重复，`tid=246` 出现在两个不同的汽车子项中，并混合 UGC、PGC 和非视频目的地。它没有 UGC/PGC 类型标记，因此不能据此断定所有 `tid` 都可用于 `category list`，也不能断定所有路由都列出视频。可显式将已知选中的 `tid`（例如此快照中动画项的 `1`）传给 `bbdown category list --rid 1`；不会自动转换 ID 或列出内容。
+
+快照提供 `scope=bundled_channel_menu_fallback`、`captured_at=2026-10-22T22:32:44.646206Z`、`source_url=https://www.bilibili.com/c/douga/`、`source_asset_url=https://s1.hdslb.com/bfs/static/shanks/channel/assets/index-bedd2c00.js` 和 `source_asset_sha256=e9a6380a51acb054d8728db716a10a13818371a7834ba5f4f53a4b7872cfcbcb`。`captured_at` 表示抓取 asset 的时间，不是上游修订版本。URL 会规范为 HTTPS，并移除仅用于追踪的 `visit_id` 参数；菜单路径、功能性查询参数和功能性 URL fragment（例如 VLOG 的 `#/530003`）会保留。CLI 人类可读输出将子条目置于父项下，并把导航 ID 与 `tid` 分开；JSON 包含来源信息和全部条目字段。
+
+这是导航快照，不是 ID 转换、通用 URL 解析、内容枚举或视频列表。仅在明确选择 RID 后使用 `category list`。获取当前菜单、完整分类体系、自动路由分类、动态频道 feed 和话题页仍属于后续工作。
 
 ## PGC 时间表
 

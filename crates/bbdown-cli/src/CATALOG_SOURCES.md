@@ -29,3 +29,14 @@ SOFTWARE.
 ```
 
 `resolver_catalog.json` contains public resolver host and region facts transcribed from `10miaomiao/bilimiao2` file `doc/区域限制-代理服务器设置.md` at repository revision `8e8806d1a4c37de4c5deab1e9ef7356610aa6e33`. This is a historical, unverified list. Entries are opt-in and no resolver is selected by default. The source page warns that availability and compatibility are not guaranteed.
+
+`crates/bbdown/src/category_catalog.json` contains a dated factual snapshot of Bilibili's public
+frontend `channelList` fallback menu. It was transcribed from the page and statically inspected
+frontend asset listed below; it does not contain copied frontend JavaScript source code and is not
+claimed under the CDN catalog's MIT notice. The frontend can replace this fallback from a remote
+key-value menu at runtime, so the snapshot is not a claim about the current effective menu or a
+complete category taxonomy. The snapshot records `captured_at=2026-10-22T22:32:44.646206Z`,
+`source_url=https://www.bilibili.com/c/douga/`, and
+`source_asset_url=https://s1.hdslb.com/bfs/static/shanks/channel/assets/index-bedd2c00.js` with
+SHA-256 `e9a6380a51acb054d8728db716a10a13818371a7834ba5f4f53a4b7872cfcbcb`. The independent
+`sideChannelList` is not included.
