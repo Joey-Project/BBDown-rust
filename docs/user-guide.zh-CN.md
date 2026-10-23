@@ -267,7 +267,7 @@ bbdown category list --rid 13 --batch-size 15 --max-response-bytes 2097152 --jso
 
 该命令通过已配置的 API base 向 `/x/web-interface/newlist?rid=<rid>&pn=1&ps=<batch-size>` 发起一次匿名请求。默认批量大小为 20，默认解码响应上限为 1 MiB；可用 `--max-response-bytes` 调高或调低字节上限，且没有任意的条目数量上限。三个查询值（`rid`、批量大小和字节上限）都必须为正数；不额外限制其数值上限。命令只使用请求超时和 API base，不跟随重定向，也不初始化凭据或 PGC resolver。配置的 API base 必须支持此路径、查询参数和响应 envelope。
 
-有效 archive 批次中的所有条目会在响应上限内按源顺序保留；必需字段格式错误时整批失败，不会静默丢弃条目。请求批量大小不保证 service 返回相同数量的条目。已测试的 endpoint 可能在 `archives` 非空时仍返回 `page.count=0`；测试中的 `pn=2` 也未推进样例条目，因此此 API 固定使用 `pn=1`，不提供总数或续页字段。它不保证排序稳定或条目最新。`category_id`/`category_name` 对应条目的 `tid`/`tname`，`category_v2_id`/`category_v2_name` 对应 `tidv2`/`tnamev2`；两组字段分别描述返回条目，不推断它们与请求 RID 或彼此之间的关系。该命令不增加通用输入、条目选择、详情 hydration、playurl 解析或下载。完整或当前生效的分类体系、远程菜单获取、分页、动态频道 feed 和话题页仍属于后续工作。
+有效 archive 批次中的所有条目会在响应上限内按源顺序保留；必需字段格式错误时整批失败，不会静默丢弃条目。请求批量大小不保证 service 返回相同数量的条目。已测试的 endpoint 可能在 `archives` 非空时仍返回 `page.count=0`；测试中的 `pn=2` 也未推进样例条目，因此此 API 固定使用 `pn=1`，不提供总数或续页字段。它不保证排序稳定或条目最新。`category_id`/`category_name` 对应条目的 `tid`/`tname`，`category_v2_id`/`category_v2_name` 对应 `tidv2`/`tnamev2`；两组字段分别描述返回条目，不推断它们与请求 RID 或彼此之间的关系。该命令不增加通用输入、条目选择、详情 hydration、playurl 解析或下载。可选实时配置命令见下文；完整或当前生效的分类体系、分页、动态频道 feed 和话题页仍属于后续工作。
 
 ## 分区导航菜单快照
 
@@ -283,7 +283,15 @@ bbdown category catalog --json
 
 快照提供 `scope=bundled_channel_menu_fallback`、`captured_at=2026-10-22T22:32:44.646206Z`、`source_url=https://www.bilibili.com/c/douga/`、`source_asset_url=https://s1.hdslb.com/bfs/static/shanks/channel/assets/index-bedd2c00.js` 和 `source_asset_sha256=e9a6380a51acb054d8728db716a10a13818371a7834ba5f4f53a4b7872cfcbcb`。`captured_at` 表示抓取 asset 的时间，不是上游修订版本。URL 会规范为 HTTPS，并移除仅用于追踪的 `visit_id` 参数；菜单路径、功能性查询参数和功能性 URL fragment（例如 VLOG 的 `#/530003`）会保留。CLI 人类可读输出将子条目置于父项下，并把导航 ID 与 `tid` 分开；JSON 包含来源信息和全部条目字段。
 
-这是导航快照，不是 ID 转换、通用 URL 解析、内容枚举或视频列表。仅在明确选择 RID 后使用 `category list`。获取当前菜单、完整分类体系、自动路由分类、动态频道 feed 和话题页仍属于后续工作。
+这是导航快照，不是 ID 转换、通用 URL 解析、内容枚举或视频列表。仅在明确选择 RID 后使用 `category list`。下文的可选实时命令读取远程配置；完整的当前生效或可见菜单、完整分类体系、自动路由分类、动态频道 feed 和话题页仍属于后续工作。
+
+## 实时频道菜单配置
+
+`bbdown category catalog --live [--max-response-bytes N] [--json]` 是当前源码检出中的可选网络请求。不带 `--live` 时，`bbdown category catalog [--json]` 仍返回上文所述的内置离线回退快照，不发起请求。实时模式使用已配置的 API base 和正数请求超时，向 `/x/kv-frontend/namespace/data?appKey=333.1339&nscode=10` 发起一次匿名 GET，且不跟随重定向。默认解码响应上限为 1 MiB（`--max-response-bytes` 必须为正数）；不限制条目数量。它不加载凭据、PGC metadata、resolver 或受限区域代理配置。缺失或格式错误的必需来源字段（包括排序数组及其引用记录）会明确报错，不会静默回退到离线快照。
+
+结果包含 `scope=remote_channel_menu_config`、可选且不解释的 `version_id` 和 `app_version_id`，以及有序的 `entries`。每个递归条目包含可选根 `key`、`name`、`url`、`route`、可选 `channel_id`、`sub_channel_id`、`tid`、`season_type`、`enable_sub` 和 `children`。根 KV key 不等同于 route 或分类 ID；子项没有根 key。明确为零的 TID 和重复条目都会保留。空 URL 保持为空，协议相对 URL 会规范为 HTTPS。数值型 `enable_sub` 按原样保留；即使值为零，也会返回所有配置的子项。不推断 UGC/PGC 类型或 RID 映射。
+
+这是远程配置 metadata，不能证明网站实际生效或可见的菜单：运行时选择、未排序条目、侧边菜单组，以及未列入来源排序的条目不属于此 API。它不会枚举内容、创建 feed 或页面、hydration 条目、请求 playurl 或媒体，也不会把菜单 ID 自动转换成 `category list --rid`。空配置数组会成功返回零个条目的菜单。wire 字段和 API 用法见嵌入指南。
 
 ## PGC 时间表
 
