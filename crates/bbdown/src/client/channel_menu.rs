@@ -11,6 +11,8 @@ const CHANNEL_MENU_APP_KEY: &str = "333.1339";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ChannelMenuOptions {
+    /// Bounds decoded response bytes and cumulative selected record/key bytes.
+    /// This data-size bound is not an exact heap-memory limit.
     pub max_response_bytes: usize,
 }
 
@@ -149,6 +151,7 @@ pub(super) async fn channel_menu(
         .append_pair("nscode", "10");
     let mut response = http
         .get(url)
+        .headers(client.anonymous_headers()?)
         .header(ACCEPT, "application/json")
         .timeout(client.config.request_timeout)
         .send()
@@ -170,10 +173,13 @@ pub(super) async fn channel_menu(
     }
     let body = read_bounded_body(&mut response, options.max_response_bytes).await?;
     let api: ChannelMenuApiEnvelope = serde_json::from_slice(&body)?;
-    decode_channel_menu(api)
+    decode_channel_menu(api, options.max_response_bytes)
 }
 
-fn decode_channel_menu(api: ChannelMenuApiEnvelope) -> Result<ChannelMenu> {
+fn decode_channel_menu(
+    api: ChannelMenuApiEnvelope,
+    max_response_bytes: usize,
+) -> Result<ChannelMenu> {
     if api.code != 0 {
         return Err(Error::Api {
             code: api.code,
@@ -188,7 +194,8 @@ fn decode_channel_menu(api: ChannelMenuApiEnvelope) -> Result<ChannelMenu> {
         .and_then(Value::as_str)
         .ok_or(Error::MissingField("data.data.channel_list.sort"))?;
     let keys: Vec<String> = serde_json::from_str(sort_json)?;
-    let mut entries = Vec::with_capacity(keys.len());
+    let mut entries = Vec::new();
+    let mut selected_bytes = 0_usize;
     for key in keys {
         if key.trim().is_empty() {
             return Err(invalid_menu("channel_list.sort contains a blank key"));
@@ -198,6 +205,13 @@ fn decode_channel_menu(api: ChannelMenuApiEnvelope) -> Result<ChannelMenu> {
             .get(&field)
             .and_then(Value::as_str)
             .ok_or_else(|| invalid_menu("channel_list.sort references a missing record"))?;
+        selected_bytes = selected_bytes
+            .checked_add(key.len())
+            .and_then(|total| total.checked_add(raw.len()))
+            .ok_or_else(|| expanded_records_too_large(max_response_bytes))?;
+        if selected_bytes > max_response_bytes {
+            return Err(expanded_records_too_large(max_response_bytes));
+        }
         let entry: RawChannelMenuEntry = serde_json::from_str(raw)?;
         entries.push(entry.into_entry(Some(key))?);
     }
@@ -241,6 +255,12 @@ fn response_too_large(max_response_bytes: usize) -> Error {
     ))
 }
 
+fn expanded_records_too_large(max_response_bytes: usize) -> Error {
+    invalid_menu(format!(
+        "cumulative selected record and root key bytes exceeded the {max_response_bytes}-byte limit"
+    ))
+}
+
 fn invalid_menu(message: impl Into<String>) -> Error {
     Error::InvalidInput(format!("channel menu {}", message.into()))
 }
@@ -267,6 +287,7 @@ mod tests {
         BiliClient::new(
             ClientConfig::default()
                 .with_endpoints(EndpointConfig::default().with_api_base(server.base_url()))
+                .with_user_agent("channel-menu-test/1.0")
                 .with_credentials(Credentials {
                     cookie: Some(COOKIE_FIXTURE.to_owned()),
                     access_key: Some(ACCESS_KEY_FIXTURE.to_owned()),
@@ -284,6 +305,21 @@ mod tests {
 
     fn raw_record(record: &Value) -> String {
         record.to_string()
+    }
+
+    fn repeated_record_response(repetitions: usize) -> (Value, usize, usize) {
+        let key = "repeated";
+        let record = json!({"name": "n".repeat(64), "url": "", "route": "route"});
+        let encoded_record = raw_record(&record);
+        let sort = json!(vec![key; repetitions]).to_string();
+        let namespace = json!({
+            "channel_list.sort": sort,
+            "channel_list.repeated": encoded_record
+        });
+        let response_body = response(&namespace);
+        let selected_bytes = repetitions * (key.len() + encoded_record.len());
+        let response_bytes = response_body.to_string().len();
+        (response_body, selected_bytes, response_bytes)
     }
 
     #[tokio::test]
@@ -306,6 +342,8 @@ mod tests {
                 .query_param("nscode", "10")
                 .query_param_count(".*", ".*", 2)
                 .query_param_missing("versionId")
+                .header("user-agent", "channel-menu-test/1.0")
+                .header("referer", "https://www.bilibili.com/")
                 .header_missing("cookie")
                 .header_missing("authorization");
             then.status(200).json_body(response(&json!({
@@ -346,6 +384,50 @@ mod tests {
         assert_eq!(menu.entries[1].url, "");
         assert_eq!(menu.entries[1].tid, None);
         mock.assert_calls(1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn bounds_repeated_record_expansion_and_preserves_duplicates_at_exact_limit()
+    -> anyhow::Result<()> {
+        let (body, selected_bytes, response_bytes) = repeated_record_response(4);
+        assert!(response_bytes <= selected_bytes);
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET).path("/x/kv-frontend/namespace/data");
+            then.status(200).json_body_obj(&body);
+        });
+
+        let below = channel_menu(
+            &client(&server),
+            &ChannelMenuOptions::new().with_max_response_bytes(selected_bytes - 1),
+        )
+        .await;
+        assert!(matches!(
+            below,
+            Err(Error::InvalidInput(message)) if message.contains("cumulative selected")
+        ));
+
+        let exact = channel_menu(
+            &client(&server),
+            &ChannelMenuOptions::new().with_max_response_bytes(selected_bytes),
+        )
+        .await?;
+        assert_eq!(exact.entries.len(), 4);
+        assert!(
+            exact
+                .entries
+                .iter()
+                .all(|entry| entry.key.as_deref() == Some("repeated"))
+        );
+
+        let raised = channel_menu(
+            &client(&server),
+            &ChannelMenuOptions::new().with_max_response_bytes(selected_bytes + 1),
+        )
+        .await?;
+        assert_eq!(raised.entries.len(), 4);
+        mock.assert_calls(3);
         Ok(())
     }
 

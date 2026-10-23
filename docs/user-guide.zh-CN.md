@@ -287,7 +287,11 @@ bbdown category catalog --json
 
 ## 实时频道菜单配置
 
-`bbdown category catalog --live [--max-response-bytes N] [--json]` 是当前源码检出中的可选网络请求。不带 `--live` 时，`bbdown category catalog [--json]` 仍返回上文所述的内置离线回退快照，不发起请求。实时模式使用已配置的 API base 和正数请求超时，向 `/x/kv-frontend/namespace/data?appKey=333.1339&nscode=10` 发起一次匿名 GET，且不跟随重定向。默认解码响应上限为 1 MiB（`--max-response-bytes` 必须为正数）；不限制条目数量。它不加载凭据、PGC metadata、resolver 或受限区域代理配置。缺失或格式错误的必需来源字段（包括排序数组及其引用记录）会明确报错，不会静默回退到离线快照。
+`bbdown category catalog --live [--max-response-bytes N] [--json]` 是当前源码检出中的可选网络请求。不带 `--live` 时，`bbdown category catalog [--json]` 仍返回上文所述的内置离线回退快照，不发起请求。
+
+实时模式使用已配置的 API base 和正数请求超时，向 `/x/kv-frontend/namespace/data?appKey=333.1339&nscode=10` 发起一次匿名 GET，且不跟随重定向。请求发送已配置的匿名 `User-Agent`、`Accept: application/json` 和固定的 `Referer: https://www.bilibili.com/`，不会发送 Cookie 或 access key。实时模式不加载凭据、PGC metadata、resolver 或受限区域代理配置。
+
+`--max-response-bytes` 的默认正数上限为 1 MiB，同时限制解码后的 HTTP 响应字节数，以及所选记录编码字节与每个生成的根节点 key 的 UTF-8 字节数之累计值；重复 key 的每次引用都会在展开前重复计入字节总量。不设任意条目数量上限，也不承诺字面意义上的堆内存字节上限；较大的配置可调高同一个上限。缺失或格式错误的必需来源字段（包括排序数组及其引用记录）会明确报错，不会静默回退到离线快照。
 
 结果包含 `scope=remote_channel_menu_config`、可选且不解释的 `version_id` 和 `app_version_id`，以及有序的 `entries`。每个递归条目包含可选根 `key`、`name`、`url`、`route`、可选 `channel_id`、`sub_channel_id`、`tid`、`season_type`、`enable_sub` 和 `children`。根 KV key 不等同于 route 或分类 ID；子项没有根 key。明确为零的 TID 和重复条目都会保留。空 URL 保持为空，协议相对 URL 会规范为 HTTPS。数值型 `enable_sub` 按原样保留；即使值为零，也会返回所有配置的子项。不推断 UGC/PGC 类型或 RID 映射。
 

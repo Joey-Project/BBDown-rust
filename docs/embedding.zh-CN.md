@@ -364,7 +364,9 @@ CLI JSON 输出包含所有字段和来源信息；人类可读输出将子项�
 
 ### 实时频道菜单配置
 
-`BiliClient::channel_menu(&ChannelMenuOptions) -> Result<ChannelMenu>` 通过已配置的 `api_base`，向 `/x/kv-frontend/namespace/data?appKey=333.1339&nscode=10` 发起一次匿名 GET，使用已配置的请求超时以读取配置 metadata，且不跟随重定向；CLI 实时模式要求正数超时。它不加载凭据、PGC metadata、resolver 或受限区域代理配置。`ChannelMenuOptions` 默认采用 `DEFAULT_CHANNEL_MENU_MAX_RESPONSE_BYTES`（1 MiB）；`with_max_response_bytes(usize)` 设置上限，值为零时 `channel_menu` 会在 HTTP 请求前拒绝。字节上限不限制条目数量。来源错误会明确返回，不会回退到内置离线目录。
+`BiliClient::channel_menu(&ChannelMenuOptions) -> Result<ChannelMenu>` 通过已配置的 `api_base`，向 `/x/kv-frontend/namespace/data?appKey=333.1339&nscode=10` 发起一次匿名 GET，使用已配置的请求超时以读取配置 metadata，且不跟随重定向。请求发送已配置的匿名 `User-Agent`、`Accept: application/json` 和固定的 `Referer: https://www.bilibili.com/`，不会发送 Cookie 或 access key；CLI 实时模式要求正数超时。它不加载凭据、PGC metadata、resolver 或受限区域代理配置。
+
+`ChannelMenuOptions` 默认采用 `DEFAULT_CHANNEL_MENU_MAX_RESPONSE_BYTES`（1 MiB）；`with_max_response_bytes(usize)` 设置一个正数上限，值为零时 `channel_menu` 会在 HTTP 请求前拒绝。同一上限同时限制解码后的 HTTP 响应字节数，以及所选记录编码字节与每个生成的根节点 key 的 UTF-8 字节数之累计值；重复 key 的每次引用都会在展开前重复计入字节总量。不设任意条目数量上限，也不承诺字面意义上的堆内存字节上限；较大的配置可调高同一个上限。来源错误会明确返回，不会回退到内置离线目录。
 
 ```rust,no_run
 use bbdown_core::{BiliClient, ChannelMenuOptions, ClientConfig};
