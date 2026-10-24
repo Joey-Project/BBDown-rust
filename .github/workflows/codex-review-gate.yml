@@ -1,9 +1,9 @@
 name: Codex Review Gate Verifier
-run-name: codex-review-gate-verifier/${{ github.event.pull_request.number }}/${{ github.sha }}
+run-name: ${{ github.event.action == 'edited' && !github.event.changes.base.ref.from && format('codex-review-gate-ignored-edit/{0}/{1}', github.event.pull_request.number, github.run_id) || format('codex-review-gate-verifier/{0}/{1}', github.event.pull_request.number, github.sha) }}
 
 on:
   pull_request:
-    types: [opened, reopened, synchronize, ready_for_review]
+    types: [opened, reopened, synchronize, ready_for_review, stacked, edited]
 
 permissions:
   actions: read
@@ -12,13 +12,14 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: codex-review-gate-verifier-${{ github.repository }}-${{ github.event.pull_request.number }}
+  group: ${{ github.event.action == 'edited' && !github.event.changes.base.ref.from && format('codex-review-gate-verifier-ignored-{0}-{1}', github.repository, github.run_id) || format('codex-review-gate-verifier-{0}-{1}', github.repository, github.event.pull_request.number) }}
   cancel-in-progress: true
 
 jobs:
   codex-review-gate:
-    name: codex/github-review-gate
-    runs-on: ${{ vars.CODEX_REVIEW_GATE_USE_UBUNTU_LATEST == 'true' && 'ubuntu-latest' || 'ubuntu-slim' }}
+    name: ${{ github.event.action == 'edited' && !github.event.changes.base.ref.from && 'codex/ignored-review-gate-edit' || 'codex/github-review-gate' }}
+    if: ${{ github.event.action != 'edited' || github.event.changes.base.ref.from }}
+    runs-on: ${{ fromJSON(vars.CODEX_REVIEW_GATE_RUNNER_LABELS || (vars.CODEX_REVIEW_GATE_USE_UBUNTU_LATEST == 'true' && '["ubuntu-latest"]' || '["ubuntu-slim"]')) }}
     timeout-minutes: 14
     steps:
       - name: Verify Codex review evidence
