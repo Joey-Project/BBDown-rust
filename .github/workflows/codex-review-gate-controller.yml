@@ -41,7 +41,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: codex-review-gate-controller-${{ github.repository }}-${{ github.event.workflow_run.pull_requests[0].number || github.event.issue.number || inputs.pr_number || github.event.workflow_run.id || github.run_id }}
+  group: ${{ github.event_name == 'workflow_run' && !startsWith(github.event.workflow_run.display_title, 'codex-review-gate-verifier/') && format('codex-review-gate-controller-ignored-{0}', github.run_id) || format('codex-review-gate-controller-{0}-{1}', github.repository, github.event.workflow_run.pull_requests[0].number || github.event.issue.number || inputs.pr_number || github.event.workflow_run.id || github.run_id) }}
   cancel-in-progress: false
 
 jobs:
@@ -73,11 +73,12 @@ jobs:
               endsWith(github.event.workflow_run.path, '/merge')
             )
           ) &&
+          startsWith(github.event.workflow_run.display_title, 'codex-review-gate-verifier/') &&
           github.event.workflow_run.event == 'pull_request' &&
           !github.event.workflow_run.pull_requests[1]
         )
       }}
-    runs-on: ${{ vars.CODEX_REVIEW_GATE_USE_UBUNTU_LATEST == 'true' && 'ubuntu-latest' || 'ubuntu-slim' }}
+    runs-on: ${{ fromJSON(vars.CODEX_REVIEW_GATE_RUNNER_LABELS || (vars.CODEX_REVIEW_GATE_USE_UBUNTU_LATEST == 'true' && '["ubuntu-latest"]' || '["ubuntu-slim"]')) }}
     timeout-minutes: 14
     steps:
       - name: Refresh Codex review gate
