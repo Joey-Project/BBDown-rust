@@ -31,6 +31,7 @@ use tokio::sync::Mutex;
 use url::Url;
 
 mod category;
+mod channel_menu;
 mod metadata_page;
 mod pgc_index;
 mod popular;
@@ -40,6 +41,9 @@ mod video_search;
 pub use category::{
     CategoryVideoBatch, CategoryVideoItem, CategoryVideoQuery, CategoryVideoStats,
     DEFAULT_CATEGORY_VIDEO_BATCH_SIZE, DEFAULT_CATEGORY_VIDEO_MAX_RESPONSE_BYTES,
+};
+pub use channel_menu::{
+    ChannelMenu, ChannelMenuEntry, ChannelMenuOptions, DEFAULT_CHANNEL_MENU_MAX_RESPONSE_BYTES,
 };
 pub use metadata_page::{
     MetadataCollectionInfo, MetadataConsistency, MetadataCursor, MetadataPage, MetadataPageOptions,
@@ -679,6 +683,15 @@ impl BiliClient {
     /// pagination from the upstream page metadata.
     pub async fn category_videos(&self, query: CategoryVideoQuery) -> Result<CategoryVideoBatch> {
         category::category_videos(self, query).await
+    }
+
+    /// Returns the configured remote channel-menu metadata snapshot anonymously.
+    ///
+    /// The result preserves the KV namespace's configured order and child records.
+    /// It represents remote menu configuration, not the frontend's effective fallback
+    /// menu or a complete channel taxonomy.
+    pub async fn channel_menu(&self, options: &ChannelMenuOptions) -> Result<ChannelMenu> {
+        channel_menu::channel_menu(self, options).await
     }
 
     /// Returns one bounded page of anonymous all-site ranking metadata.

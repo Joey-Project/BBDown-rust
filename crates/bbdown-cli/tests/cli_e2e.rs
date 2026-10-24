@@ -589,6 +589,205 @@ fn category_catalog_help_describes_discovery_and_first_batch_command() -> anyhow
     Ok(())
 }
 
+#[test]
+fn category_catalog_live_uses_anonymous_api_and_preserves_configured_children() -> anyhow::Result<()>
+{
+    let server = MockServer::start();
+    let temp = tempfile::tempdir()?;
+    let credential_file = temp.path().join("absent-credentials.json");
+    let raw_menu_record = serde_json::json!({
+        "name": "Root channel",
+        "url": "https://www.bilibili.com/v/channel/root",
+        "route": "/v/channel/root",
+        "channelId": 0,
+        "subChannelId": 0,
+        "tid": 0,
+        "seasonType": 0,
+        "config": {"enableSub": 0},
+        "sub": [{
+            "name": "Configured child",
+            "url": "",
+            "route": "/v/channel/root/child",
+            "channelId": 0,
+            "subChannelId": 0,
+            "tid": 0,
+            "seasonType": 0,
+            "config": {"enableSub": 1},
+            "sub": []
+        }]
+    });
+    let root_record = serde_json::to_string(&raw_menu_record)?;
+    let data = serde_json::json!({
+        "channel_list.sort": "[\"root-key\"]",
+        "channel_list.root-key": root_record,
+        "side_channel_list.sort": "[]"
+    });
+    let response = serde_json::json!({
+        "code": 0,
+        "data": {
+            "versionId": "opaque-menu-version",
+            "appVersionId": "opaque-app-version",
+            "data": data
+        }
+    });
+    let menu = server.mock(|when, then| {
+        when.method(GET)
+            .path("/x/kv-frontend/namespace/data")
+            .query_param("appKey", "333.1339")
+            .query_param("nscode", "10")
+            .query_param_missing("access_key")
+            .header_missing("cookie")
+            .header_missing("authorization");
+        then.status(200).json_body_obj(&response);
+    });
+
+    let output = bbdown_command()?
+        .args([
+            "--api-base",
+            server.base_url().as_str(),
+            "--pgc-base",
+            "not a valid endpoint",
+            "--resolver",
+            "unknown-resolver",
+            "--restricted-area-proxy",
+            "not a valid proxy",
+            "--credential-file",
+            credential_file
+                .to_str()
+                .context("credential path is UTF-8")?,
+            "--credential-profile",
+            "missing-profile",
+            "--credential-preflight",
+            "renew",
+            "--request-timeout-seconds",
+            "5",
+            "category",
+            "catalog",
+            "--live",
+            "--max-response-bytes",
+            "4096",
+            "--json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output)?;
+    assert_eq!(json["scope"], "remote_channel_menu_config");
+    assert_eq!(json["version_id"], "opaque-menu-version");
+    assert_eq!(json["app_version_id"], "opaque-app-version");
+    assert_eq!(json["entries"][0]["key"], "root-key");
+    assert_eq!(json["entries"][0]["channel_id"], 0);
+    assert_eq!(json["entries"][0]["enable_sub"], 0);
+    assert_eq!(
+        json["entries"][0]["children"][0]["name"],
+        "Configured child"
+    );
+    assert_eq!(json["entries"][0]["children"][0]["url"], "");
+    assert_eq!(json["entries"][0]["children"][0]["tid"], 0);
+    assert!(!credential_file.exists());
+    menu.assert_calls(1);
+
+    assert_human_channel_menu_output(&server)?;
+    menu.assert_calls(2);
+    Ok(())
+}
+
+fn assert_human_channel_menu_output(server: &MockServer) -> anyhow::Result<()> {
+    let output = bbdown_command()?
+        .arg("--api-base")
+        .arg(server.base_url())
+        .args(["category", "catalog", "--live"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let output = String::from_utf8(output)?;
+    assert!(output.contains("Remote channel-menu configuration"));
+    assert!(output.contains("scope: remote_channel_menu_config"));
+    assert!(output.contains("version: opaque-menu-version"));
+    assert!(output.contains("app version: opaque-app-version"));
+    assert!(output.contains("entries: 1 top-level, 1 nested"));
+    assert!(output.contains("configured children are retained when enable_sub=0"));
+    assert!(output.contains("channel identifiers are not mapped to video-list RIDs"));
+    assert!(output.contains("Root channel | key=root-key channel_id=0"));
+    assert!(output.contains("Configured child | key=- channel_id=0"));
+    assert!(output.contains("url=-"));
+    Ok(())
+}
+
+#[test]
+fn category_catalog_live_requires_positive_limits_and_never_falls_back_offline()
+-> anyhow::Result<()> {
+    let server = MockServer::start();
+    let failed_menu = server.mock(|when, then| {
+        when.method(GET).path("/x/kv-frontend/namespace/data");
+        then.status(503).body("live menu unavailable");
+    });
+    for args in [
+        vec!["category", "catalog", "--max-response-bytes", "4096"],
+        vec!["category", "catalog", "--live", "--max-response-bytes", "0"],
+    ] {
+        bbdown_command()?
+            .arg("--api-base")
+            .arg(server.base_url())
+            .args(args)
+            .assert()
+            .failure();
+    }
+    bbdown_command()?
+        .arg("--api-base")
+        .arg(server.base_url())
+        .args([
+            "--request-timeout-seconds",
+            "0",
+            "category",
+            "catalog",
+            "--live",
+        ])
+        .assert()
+        .failure();
+    failed_menu.assert_calls(0);
+
+    let output = bbdown_command()?
+        .arg("--api-base")
+        .arg(server.base_url())
+        .args(["category", "catalog", "--live", "--json"])
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8(output)?;
+    assert!(stderr.contains("live menu unavailable") || stderr.contains("503"));
+    failed_menu.assert_calls(1);
+    Ok(())
+}
+
+#[test]
+fn category_catalog_live_does_not_follow_redirects() -> anyhow::Result<()> {
+    let source = MockServer::start();
+    let destination = MockServer::start();
+    let unexpected = mock_unexpected_request(&destination);
+    let redirect = source.mock(|when, then| {
+        when.method(GET).path("/x/kv-frontend/namespace/data");
+        then.status(302)
+            .header("Location", format!("{}/menu", destination.base_url()));
+    });
+
+    bbdown_command()?
+        .arg("--api-base")
+        .arg(source.base_url())
+        .args(["category", "catalog", "--live"])
+        .assert()
+        .failure();
+    redirect.assert_calls(1);
+    unexpected.assert_calls(0);
+    Ok(())
+}
+
 fn count_category_catalog_entries(entries: &Value) -> usize {
     entries.as_array().map_or(0, |items| {
         items

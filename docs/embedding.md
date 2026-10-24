@@ -414,8 +414,8 @@ or continuation. It also does not promise stable order or latest rows. `Category
 to `tid`/`tname` and `category_v2_id`/`category_v2_name` to `tidv2`/`tnamev2`; these pairs describe
 the returned row independently and are not derived from requested `rid`.
 It does not add an `Input`, selection, detail hydration, playurl, or download path. The bundled-menu
-snapshot is documented below; a complete or current-effective taxonomy, remote menu retrieval,
-pagination, dynamic channel feeds, and topics remain future work.
+snapshot and opt-in remote configuration are documented below; a complete or current-effective
+taxonomy, pagination, dynamic channel feeds, and topics remain future work.
 
 ### Offline Category Catalog Snapshot
 
@@ -433,9 +433,30 @@ fn read_catalog() -> Result<()> {
 
 `CategoryCatalog` carries `scope`, `captured_at`, `source_url`, `source_asset_url`, `source_asset_sha256`, and `entries`. Each recursive `CategoryCatalogEntry` carries `name`, `url`, optional `channel_id`, optional `sub_channel_id`, optional `tid`, and `children`. Keep these identifiers separate: the navigation IDs do not translate to `tid`.
 
-The embedded data is the frontend's `channelList` fallback menu, with 28 roots and 114 nested entries in source order. It preserves 12 entries without `tid`, repeated `tid` values 17 and 138, `tid=246` on two distinct car subentries, and mixed UGC, PGC, and non-video routes; the separate `sideChannelList` is excluded. The fallback may be overridden by a remote key-value menu at runtime, which this API does not fetch. It is not a complete or current taxonomy, has no UGC/PGC discriminator, and does not prove that each `tid` works with the legacy video-list endpoint. `source_url` is `https://www.bilibili.com/c/douga/`; `source_asset_url` is `https://s1.hdslb.com/bfs/static/shanks/channel/assets/index-bedd2c00.js` with `source_asset_sha256=e9a6380a51acb054d8728db716a10a13818371a7834ba5f4f53a4b7872cfcbcb`. `captured_at` is the asset acquisition time (`2026-10-22T22:32:44.646206Z`), not an upstream revision. URLs normalize to HTTPS and drop tracking-only `visit_id` parameters while preserving menu paths and functional query parameters.
+The embedded data is the frontend's `channelList` fallback menu, with 28 roots and 114 nested entries in source order. It preserves 12 entries without `tid`, repeated `tid` values 17 and 138, `tid=246` on two distinct car subentries, and mixed UGC, PGC, and non-video routes; the separate `sideChannelList` is excluded. The fallback may be overridden by a remote key-value menu at runtime, which this API does not fetch. It is not a complete or current taxonomy, has no UGC/PGC discriminator, and does not prove that each `tid` works with the legacy video-list endpoint. `source_url` is `https://www.bilibili.com/c/douga/`; `source_asset_url` is `https://s1.hdslb.com/bfs/static/shanks/channel/assets/index-bedd2c00.js` with `source_asset_sha256=e9a6380a51acb054d8728db716a10a13818371a7834ba5f4f53a4b7872cfcbcb`. `captured_at` is the asset acquisition time (`2026-10-22T22:32:44.646206Z`), not an upstream revision. URLs normalize to HTTPS and drop tracking-only `visit_id` parameters while preserving menu paths, functional query parameters, and functional URL fragments.
 
-The CLI JSON output includes all fields and provenance; human output groups children under parents and shows navigation IDs separately from `tid`. This API does not perform ID translation, generic URL parsing, content enumeration, or video listing. Explicitly pass a known RID to `category list` only when the caller has selected one. A complete or current-effective taxonomy, remote menu retrieval, pagination, dynamic channel feeds, and topics remain future work.
+The CLI JSON output includes all fields and provenance; human output groups children under parents and shows navigation IDs separately from `tid`. This API does not perform ID translation, generic URL parsing, content enumeration, or video listing. Explicitly pass a known RID to `category list` only when the caller has selected one. The live API below retrieves remote configuration only; a complete or current-effective taxonomy, pagination, dynamic channel feeds, and topics remain future work.
+
+### Live Channel Menu Configuration
+
+`BiliClient::channel_menu(&ChannelMenuOptions) -> Result<ChannelMenu>` retrieves configuration metadata from one anonymous GET to `/x/kv-frontend/namespace/data?appKey=333.1339&nscode=10` through the configured `api_base`, using the configured request timeout and never following redirects. It sends the configured anonymous `User-Agent`, `Accept: application/json`, and fixed `Referer: https://www.bilibili.com/`; it never sends a Cookie or access key. The CLI requires a positive timeout for live mode. It does not load credentials, PGC metadata, resolver, or restricted-area proxy settings. `ChannelMenuOptions` defaults to `DEFAULT_CHANNEL_MENU_MAX_RESPONSE_BYTES` (1 MiB); `with_max_response_bytes(usize)` sets one positive cap, and zero is rejected by `channel_menu` before HTTP. The same cap limits decoded HTTP response bytes and the cumulative encoded bytes of selected records plus the UTF-8 bytes of each materialized root key, charging duplicate key occurrences repeatedly before materialization. There is no arbitrary row-count cap or literal heap-byte guarantee; callers may raise the cap for larger configuration. Source failures are explicit and do not fall back to the bundled offline catalog.
+
+```rust,no_run
+use bbdown_core::{BiliClient, ChannelMenuOptions, ClientConfig};
+
+async fn read_live_menu() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let options = ChannelMenuOptions::default()
+        .with_max_response_bytes(2 * 1024 * 1024);
+    let menu = client.channel_menu(&options).await?;
+    println!("{} configured root entries", menu.entries.len());
+    Ok(())
+}
+```
+
+The response has `scope=remote_channel_menu_config`, optional opaque `version_id` and `app_version_id`, and source-ordered `entries`. The endpoint's `data.data` object contains flattened `channel_list.*` keys whose values are JSON strings; the parsed `sort` array defines the exposed order. A missing or malformed required sort value or referenced record is an explicit error. A recursive `ChannelMenuEntry` contains optional root KV `key`, `name`, `url`, `route`, optional `channel_id`, `sub_channel_id`, `tid`, `season_type`, raw numeric `enable_sub`, and `children`. Root keys are independent of routes and numeric IDs; children have no root key. Explicit zero TIDs, duplicate entries, and configured child entries with `enable_sub=0` are retained. Empty URLs are valid data; protocol-relative URLs normalize to HTTPS while query strings and functional URL fragments are retained. Empty configured arrays return a successful zero-entry menu.
+
+The endpoint returns remote configuration, not the website's effective or visible menu. The website may apply runtime selection, side-menu groups, or unsorted configuration that this API does not resolve. It does not imply a TID/RID mapping, infer UGC or PGC types, enumerate content, create feeds or pages, hydrate entries, or access playurl/media. The existing offline `category_catalog()` command/API is unchanged and remains separate.
 
 ### PGC Timetable Metadata
 

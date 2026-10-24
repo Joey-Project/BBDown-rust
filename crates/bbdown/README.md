@@ -41,7 +41,9 @@ The current checkout also exposes `BiliClient::category_videos` for one anonymou
 category video batch. This is a current-source addition, not part of the `0.11.0` release. The
 offline `category_catalog()` API and `bbdown category catalog` CLI expose a dated snapshot of the
 frontend’s bundled channel-menu fallback. They do not fetch the current menu, provide a complete
-taxonomy, or enable selection, hydration, or downloads.
+taxonomy, or enable selection, hydration, or downloads. The opt-in `BiliClient::channel_menu` API
+reads remote channel-menu configuration through the configured API base; it is metadata, not proof
+of the current visible menu.
 
 The crate provides staged XML-history-preserving danmaku refresh, deduplicates comments by positive
 IDs with a complete-parameter-and-decoded-text fallback, and regenerates ASS from merged XML. It
