@@ -1,10 +1,11 @@
 use bbdown_core::{
     BiliClient, CategoryCatalog, CategoryCatalogEntry, CategoryVideoQuery, CategoryVideoStats,
-    ClientConfig, CredentialHealthSummaryStatus, CredentialKind, CredentialLifecycleMetadata,
-    CredentialLifecyclePolicy, CredentialLifecycleSource, CredentialLifecycleStatus,
-    CredentialPreflightMode, CredentialPreflightReport, CredentialProfileMetadata,
-    CredentialProfiles, DEFAULT_CATEGORY_VIDEO_BATCH_SIZE,
-    DEFAULT_CATEGORY_VIDEO_MAX_RESPONSE_BYTES, DEFAULT_RANKING_VIDEO_MAX_RESPONSE_BYTES,
+    ChannelMenu, ChannelMenuEntry, ChannelMenuOptions, ClientConfig, CredentialHealthSummaryStatus,
+    CredentialKind, CredentialLifecycleMetadata, CredentialLifecyclePolicy,
+    CredentialLifecycleSource, CredentialLifecycleStatus, CredentialPreflightMode,
+    CredentialPreflightReport, CredentialProfileMetadata, CredentialProfiles,
+    DEFAULT_CATEGORY_VIDEO_BATCH_SIZE, DEFAULT_CATEGORY_VIDEO_MAX_RESPONSE_BYTES,
+    DEFAULT_CHANNEL_MENU_MAX_RESPONSE_BYTES, DEFAULT_RANKING_VIDEO_MAX_RESPONSE_BYTES,
     DanmakuUpdateOptions, DanmakuUpdatePolicy, DownloadCancellationToken, DownloadOptions,
     DownloadProgressEvent, DownloadProgressSink, DownloadReportSummary, Input, MetadataPageOptions,
     NoopDownloadProgress, POPULAR_VIDEO_MAX_PAGE_SIZE, PgcIndexFilterSelection, PgcIndexKind,
@@ -246,6 +247,53 @@ fn category_video_types_are_reexported() {
     };
     assert_eq!(batch.requested_rid, 17);
     assert_eq!(batch.items, Vec::new());
+}
+
+#[test]
+fn channel_menu_types_are_public_and_serde_round_trip() -> anyhow::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let options = ChannelMenuOptions::new().with_max_response_bytes(4096);
+    assert_eq!(options.max_response_bytes, 4096);
+    assert_eq!(DEFAULT_CHANNEL_MENU_MAX_RESPONSE_BYTES, 1024 * 1024);
+    let _configured_call = client.channel_menu(&options);
+
+    let menu = ChannelMenu {
+        scope: "remote_channel_menu_config".to_owned(),
+        version_id: Some("opaque-version".to_owned()),
+        app_version_id: None,
+        entries: vec![ChannelMenuEntry {
+            key: Some("root-key".to_owned()),
+            name: "Example root".to_owned(),
+            url: String::new(),
+            route: "route-key".to_owned(),
+            channel_id: Some(8),
+            sub_channel_id: None,
+            tid: Some(0),
+            season_type: None,
+            enable_sub: Some(0),
+            children: vec![ChannelMenuEntry {
+                key: None,
+                name: "Example child".to_owned(),
+                url: "https://www.bilibili.com/c/example/".to_owned(),
+                route: "child-route".to_owned(),
+                channel_id: None,
+                sub_channel_id: Some(17),
+                tid: Some(17),
+                season_type: None,
+                enable_sub: None,
+                children: Vec::new(),
+            }],
+        }],
+    };
+    let serialized = serde_json::to_value(&menu)?;
+    assert_eq!(serialized["scope"], "remote_channel_menu_config");
+    assert_eq!(serialized["entries"][0]["tid"], 0);
+    assert_eq!(
+        serialized["entries"][0]["children"][0]["key"],
+        serde_json::Value::Null
+    );
+    assert_eq!(serde_json::from_value::<ChannelMenu>(serialized)?, menu);
+    Ok(())
 }
 
 #[test]

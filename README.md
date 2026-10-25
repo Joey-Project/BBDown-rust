@@ -43,10 +43,11 @@ episode/season, media-review, timetable, and movie/TV index metadata. Index rout
 `index` capability; it does not imply support for search, PUGV, or international metadata.
 The current checkout also adds a separate anonymous category-video first-batch API and the
 `category list` CLI. These are current-source additions outside the `0.11.0` release. `category list`
-does not fetch a remote catalog, paginate, select items, hydrate details, or download media. The
-separate `category catalog` command returns an offline snapshot of the frontend’s bundled channel-menu
-fallback. It is also current-source only, not the current effective menu or a complete category
-taxonomy. See the user and embedding guides for its provenance and field meanings.
+does not fetch a remote catalog, paginate, select items, hydrate details, or download media. Without
+`--live`, `category catalog` continues to return the offline snapshot of the frontend’s bundled
+channel-menu fallback. The opt-in `--live` mode reads remote channel-menu configuration metadata; it
+does not establish the site’s current effective or visible menu. See the user and embedding guides for
+its limits and provenance.
 See the [v0.11.0 release notes](docs/release-notes/v0.11.0.md) and
 [official releases](https://github.com/Joey-Project/BBDown-rust/releases) for archive availability.
 Input parsing covers normal videos, PGC and intl episodes, PUGV/cheese courses, B23 short links,
@@ -93,6 +94,7 @@ bbdown ranking --max-response-bytes 2097152 --json
 bbdown category list --rid 1 --json
 bbdown category list --rid 13 --batch-size 15 --max-response-bytes 2097152 --json
 bbdown category catalog --json
+bbdown category catalog --live --json
 ```
 
 `category list` makes one anonymous request to `/x/web-interface/newlist` with the selected `rid`,
