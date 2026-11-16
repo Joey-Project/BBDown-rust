@@ -3972,6 +3972,16 @@ async fn read_danmaku_source_bounded(path: &Path) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+/// Decodes and validates a Bilibili danmaku XML response.
+///
+/// Accepts plaintext UTF-8 XML and gzip, zlib, or raw DEFLATE encoded XML. Both the input and
+/// decompressed XML are limited to 16 MiB. The XML must pass the same strict validation used by
+/// the downloader, including the expected `<i>` root. This function performs no network or file
+/// I/O.
+pub fn decode_danmaku_xml(bytes: &[u8]) -> Result<String> {
+    decode_and_validate_danmaku_xml(bytes)
+}
+
 fn decode_and_validate_danmaku_xml(bytes: &[u8]) -> Result<String> {
     if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > DANMAKU_MAX_BODY_BYTES {
         return Err(Error::InvalidInput(format!(
