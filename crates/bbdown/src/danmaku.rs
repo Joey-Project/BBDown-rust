@@ -235,6 +235,17 @@ pub(crate) fn xml_to_ass(xml: &str) -> String {
     render_ass(&comments)
 }
 
+/// Renders a complete Bilibili danmaku XML document as ASS without downloading media.
+///
+/// The input must be well-formed XML with an `<i>` root. DTDs, malformed XML, and other
+/// root elements are rejected. To bound parser and renderer memory, inputs are limited to
+/// 16 MiB and 50,000 direct danmaku comments. The XML parser has no separate node-count limit;
+/// its tree is bounded by the input-byte limit. A conservative 48 MiB output estimate is
+/// checked before rendering.
+pub fn render_danmaku_ass(xml: &str) -> crate::Result<String> {
+    preserving::render_danmaku_ass(xml)
+}
+
 fn parse_comments(xml: &str) -> Vec<DanmakuComment> {
     let mut comments = Vec::new();
     let mut offset = 0;
