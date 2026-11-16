@@ -7,14 +7,15 @@ use bbdown_core::{
     AccessKeyLoginTicketOutput, AccessKeyProvider, AccessKeyProviderSecret,
     AccessKeyRefreshKeypair, AccessKeyRefreshProvider, AccessKeyRefreshRequest,
     AccessKeyRenewalAction, AccessKeyRenewalDecision, AccessKeyRenewalReason, BiliClient,
-    CategoryVideoBatch, CategoryVideoQuery, ClientConfig, CredentialHealthReport,
-    CredentialHealthScope, CredentialHealthStatus, CredentialHealthSummaryStatus, CredentialKind,
-    CredentialLifecycleMetadata, CredentialLifecyclePolicy, CredentialLifecycleSource,
-    CredentialLifecycleStatus, CredentialPreflightMode, CredentialPreflightReport,
-    CredentialPreflightRequestPath, CredentialPreflightRequirement,
-    CredentialPreflightRequirementStatus, CredentialProfileLifecycleStatus,
-    CredentialProfileSelection, CredentialProfiles, CredentialRefreshSecret, CredentialStore,
-    Credentials, DEFAULT_CATEGORY_VIDEO_BATCH_SIZE, DEFAULT_CATEGORY_VIDEO_MAX_RESPONSE_BYTES,
+    CategoryVideoBatch, CategoryVideoQuery, ChannelMenu, ChannelMenuEntry, ChannelMenuOptions,
+    ClientConfig, CredentialHealthReport, CredentialHealthScope, CredentialHealthStatus,
+    CredentialHealthSummaryStatus, CredentialKind, CredentialLifecycleMetadata,
+    CredentialLifecyclePolicy, CredentialLifecycleSource, CredentialLifecycleStatus,
+    CredentialPreflightMode, CredentialPreflightReport, CredentialPreflightRequestPath,
+    CredentialPreflightRequirement, CredentialPreflightRequirementStatus,
+    CredentialProfileLifecycleStatus, CredentialProfileSelection, CredentialProfiles,
+    CredentialRefreshSecret, CredentialStore, Credentials, DEFAULT_CATEGORY_VIDEO_BATCH_SIZE,
+    DEFAULT_CATEGORY_VIDEO_MAX_RESPONSE_BYTES, DEFAULT_CHANNEL_MENU_MAX_RESPONSE_BYTES,
     DEFAULT_RANKING_VIDEO_MAX_RESPONSE_BYTES, DanmakuFormat, DanmakuUpdateOptions,
     DanmakuUpdatePolicy, DownloadArchive, DownloadCancellationToken, DownloadMode, DownloadOptions,
     DownloadPathTemplates, DownloadPlan, DownloadPreflight, DownloadProgressEvent,
@@ -279,9 +280,18 @@ enum Command {
 #[derive(Debug, Subcommand)]
 enum CategoryCommand {
     #[command(
-        about = "Show the dated bundled channel-menu snapshot; use a verified video-list RID with `category list --rid` to request its first metadata batch"
+        about = "Show the dated bundled channel-menu snapshot by default or the remote configuration with `--live`; use a verified video-list RID with `category list --rid` to request its first metadata batch"
     )]
     Catalog {
+        #[arg(long, help = "Fetch the anonymous remote channel-menu configuration")]
+        live: bool,
+        #[arg(
+            long = "max-response-bytes",
+            requires = "live",
+            value_parser = parse_positive_usize,
+            help = "Maximum decoded response size for `--live` (default: 1048576)"
+        )]
+        max_response_bytes: Option<usize>,
         #[arg(long)]
         json: bool,
     },
@@ -1386,10 +1396,28 @@ async fn run() -> anyhow::Result<()> {
     let raw_args = std::env::args_os().collect::<Vec<_>>();
     let cli = Cli::parse_from(raw_args.clone());
     if let Command::Category {
-        command: CategoryCommand::Catalog { json },
+        command:
+            CategoryCommand::Catalog {
+                live,
+                max_response_bytes,
+                json,
+            },
     } = &cli.command
     {
-        return handle_category_catalog(*json);
+        if !live {
+            return handle_category_catalog(*json);
+        }
+        ensure!(
+            cli.request_timeout_seconds > 0,
+            "--request-timeout-seconds must be greater than 0"
+        );
+        let runtime = ClientRuntimeConfig::new(
+            EndpointConfig::default().with_api_base(cli.api_base.clone()),
+            RestrictedAreaConfig::default(),
+            PlayurlMode::default(),
+            Duration::from_secs(cli.request_timeout_seconds),
+        );
+        return handle_live_category_catalog(&runtime, *max_response_bytes, *json).await;
     }
     ensure!(
         cli.request_timeout_seconds > 0,
@@ -2261,6 +2289,79 @@ fn handle_category_catalog(json: bool) -> anyhow::Result<()> {
         print_category_catalog(&catalog);
     }
     Ok(())
+}
+
+async fn handle_live_category_catalog(
+    client_runtime: &ClientRuntimeConfig,
+    max_response_bytes: Option<usize>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let client = BiliClient::new(client_runtime.client_config(Credentials::default()));
+    let max_response_bytes = max_response_bytes.unwrap_or(DEFAULT_CHANNEL_MENU_MAX_RESPONSE_BYTES);
+    let options = ChannelMenuOptions::new().with_max_response_bytes(max_response_bytes);
+    let menu = client.channel_menu(&options).await?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&menu)?);
+    } else {
+        print_live_category_catalog(&menu);
+    }
+    Ok(())
+}
+
+fn print_live_category_catalog(menu: &ChannelMenu) {
+    let nested_count = menu
+        .entries
+        .iter()
+        .map(|entry| count_channel_menu_entries(&entry.children))
+        .sum::<usize>();
+    println!("Remote channel-menu configuration");
+    println!("scope: {}", menu.scope);
+    println!("version: {}", menu.version_id.as_deref().unwrap_or("-"));
+    println!(
+        "app version: {}",
+        menu.app_version_id.as_deref().unwrap_or("-")
+    );
+    println!(
+        "entries: {} top-level, {nested_count} nested",
+        menu.entries.len()
+    );
+    println!("configured children are retained when enable_sub=0");
+    println!("channel identifiers are not mapped to video-list RIDs");
+    print_channel_menu_entries(&menu.entries, 0);
+}
+
+fn count_channel_menu_entries(entries: &[ChannelMenuEntry]) -> usize {
+    entries
+        .iter()
+        .map(|entry| 1 + count_channel_menu_entries(&entry.children))
+        .sum()
+}
+
+fn print_channel_menu_entries(entries: &[ChannelMenuEntry], depth: usize) {
+    for entry in entries {
+        let indent = "  ".repeat(depth);
+        let key = entry.key.as_deref().unwrap_or("-");
+        let url = if entry.url.is_empty() {
+            "-"
+        } else {
+            entry.url.as_str()
+        };
+        println!(
+            "{indent}- {} | key={key} channel_id={} sub_channel_id={} tid={} season_type={} enable_sub={} route={} url={url}",
+            entry.name,
+            display_optional_id(entry.channel_id),
+            display_optional_id(entry.sub_channel_id),
+            display_optional_id(entry.tid),
+            display_optional_id(entry.season_type),
+            display_optional_id(entry.enable_sub),
+            entry.route
+        );
+        print_channel_menu_entries(&entry.children, depth + 1);
+    }
+}
+
+fn display_optional_id(value: Option<u32>) -> String {
+    value.map_or_else(|| "-".to_owned(), |value| value.to_string())
 }
 
 fn print_category_catalog(catalog: &bbdown_core::CategoryCatalog) {

@@ -340,7 +340,7 @@ async fn main() -> bbdown_core::Result<()> {
 }
 ```
 
-该调用只使用已配置的 API base 和请求超时，不发送凭据、不跟随重定向，也不初始化 PGC metadata 或 resolver 路由。配置的 API base 必须支持精确 endpoint、查询参数和原生 `data.archives` 响应 envelope。有效批次中的所有条目会在解码字节上限内按源顺序保留；必需字段格式错误时整批失败，不会静默跳过。样例中 `archives` 非空时 `page.count` 仍为零，且样例 `pn=2` 未推进条目，因此 API 不提供总数或续页，也不保证稳定排序或最新条目。`CategoryVideoBatch` 暴露 `requested_rid`、`requested_batch_size` 和 `items`。`CategoryVideoItem` 的 `category_id`/`category_name` 对应 `tid`/`tname`，`category_v2_id`/`category_v2_name` 对应 `tidv2`/`tnamev2`；两组字段分别描述条目，不会从请求 `rid` 推导。它不增加 `Input`、选择、详情 hydration、playurl 或下载路径；完整或当前生效的分类体系、远程菜单获取、动态频道 feed、分页和话题仍属于后续工作。
+该调用只使用已配置的 API base 和请求超时，不发送凭据、不跟随重定向，也不初始化 PGC metadata 或 resolver 路由。配置的 API base 必须支持精确 endpoint、查询参数和原生 `data.archives` 响应 envelope。有效批次中的所有条目会在解码字节上限内按源顺序保留；必需字段格式错误时整批失败，不会静默跳过。样例中 `archives` 非空时 `page.count` 仍为零，且样例 `pn=2` 未推进条目，因此 API 不提供总数或续页，也不保证稳定排序或最新条目。`CategoryVideoBatch` 暴露 `requested_rid`、`requested_batch_size` 和 `items`。`CategoryVideoItem` 的 `category_id`/`category_name` 对应 `tid`/`tname`，`category_v2_id`/`category_v2_name` 对应 `tidv2`/`tnamev2`；两组字段分别描述条目，不会从请求 `rid` 推导。它不增加 `Input`、选择、详情 hydration、playurl 或下载路径；完整或当前生效的分类体系、动态频道 feed、分页和话题仍属于后续工作，远程配置见下文。
 
 ### 离线分区菜单快照
 
@@ -360,7 +360,30 @@ fn read_catalog() -> Result<()> {
 
 内置数据是前端 `channelList` 回退菜单，按源顺序包含 28 个根条目和 114 个嵌套条目。它保留 12 个缺少 `tid` 的条目、重复的 `tid` 17 和 138、出现在两个不同汽车子项中的 `tid=246`，以及混合的 UGC、PGC 和非视频路由；单独的 `sideChannelList` 不包含在内。前端运行时可能由远程 key-value 菜单覆盖此回退数据，本 API 不获取该菜单。它不是完整或当前的分类体系，没有 UGC/PGC 类型标记，也不能证明每个 `tid` 都适用于旧视频列表 endpoint。`source_url` 为 `https://www.bilibili.com/c/douga/`；`source_asset_url` 为 `https://s1.hdslb.com/bfs/static/shanks/channel/assets/index-bedd2c00.js`，其 `source_asset_sha256=e9a6380a51acb054d8728db716a10a13818371a7834ba5f4f53a4b7872cfcbcb`。`captured_at` 是 asset 获取时间（`2026-10-22T22:32:44.646206Z`），不是上游修订版本。URL 会规范为 HTTPS，并移除仅用于追踪的 `visit_id` 参数，同时保留菜单路径、功能性查询参数和功能性 URL fragment。
 
-CLI JSON 输出包含所有字段和来源信息；人类可读输出将子项归于父项，并把导航 ID 与 `tid` 分开显示。此 API 不做 ID 转换、通用 URL 解析、内容枚举或视频列表请求。只有调用方明确选择 RID 后，才向 `category list` 传入该值。完整或当前生效的分类体系、远程菜单获取、动态频道 feed、分页和话题页仍属于后续工作。
+CLI JSON 输出包含所有字段和来源信息；人类可读输出将子项归于父项，并把导航 ID 与 `tid` 分开显示。此 API 不做 ID 转换、通用 URL 解析、内容枚举或视频列表请求。只有调用方明确选择 RID 后，才向 `category list` 传入该值。下文的实时 API 只获取远程配置；完整或当前生效的分类体系、动态频道 feed、分页和话题页仍属于后续工作。
+
+### 实时频道菜单配置
+
+`BiliClient::channel_menu(&ChannelMenuOptions) -> Result<ChannelMenu>` 通过已配置的 `api_base`，向 `/x/kv-frontend/namespace/data?appKey=333.1339&nscode=10` 发起一次匿名 GET，使用已配置的请求超时以读取配置 metadata，且不跟随重定向。请求发送已配置的匿名 `User-Agent`、`Accept: application/json` 和固定的 `Referer: https://www.bilibili.com/`，不会发送 Cookie 或 access key；CLI 实时模式要求正数超时。它不加载凭据、PGC metadata、resolver 或受限区域代理配置。
+
+`ChannelMenuOptions` 默认采用 `DEFAULT_CHANNEL_MENU_MAX_RESPONSE_BYTES`（1 MiB）；`with_max_response_bytes(usize)` 设置一个正数上限，值为零时 `channel_menu` 会在 HTTP 请求前拒绝。同一上限同时限制解码后的 HTTP 响应字节数，以及所选记录编码字节与每个生成的根节点 key 的 UTF-8 字节数之累计值；重复 key 的每次引用都会在展开前重复计入字节总量。不设任意条目数量上限，也不承诺字面意义上的堆内存字节上限；较大的配置可调高同一个上限。来源错误会明确返回，不会回退到内置离线目录。
+
+```rust,no_run
+use bbdown_core::{BiliClient, ChannelMenuOptions, ClientConfig};
+
+async fn read_live_menu() -> bbdown_core::Result<()> {
+    let client = BiliClient::new(ClientConfig::default());
+    let options = ChannelMenuOptions::default()
+        .with_max_response_bytes(2 * 1024 * 1024);
+    let menu = client.channel_menu(&options).await?;
+    println!("{} configured root entries", menu.entries.len());
+    Ok(())
+}
+```
+
+响应包含 `scope=remote_channel_menu_config`、可选且不解释的 `version_id` 和 `app_version_id`，以及按来源顺序排列的 `entries`。endpoint 的 `data.data` 对象包含扁平化的 `channel_list.*` 键，其值为 JSON 字符串；解析后的 `sort` 数组决定输出顺序。缺失或格式错误的必需排序值或引用记录会明确报错。递归的 `ChannelMenuEntry` 包含可选根 KV `key`、`name`、`url`、`route`、可选 `channel_id`、`sub_channel_id`、`tid`、`season_type`、原始数值 `enable_sub` 和 `children`。根 key 与 route 和数字 ID 独立；子项没有根 key。明确为零的 TID、重复条目和 `enable_sub=0` 的配置子项都会保留。空 URL 是有效数据；协议相对 URL 会规范为 HTTPS，同时保留查询参数和功能性 URL fragment。空配置数组会成功返回零条目的菜单。
+
+endpoint 返回远程配置，不是网站实际生效或可见的菜单。网站可能执行运行时选择、使用侧边菜单组或未排序配置，这些不由此 API 解析。它不意味着 TID/RID 映射，不推断 UGC 或 PGC 类型，不枚举内容、不创建 feed 或页面、不 hydration 条目，也不访问 playurl/媒体。现有离线 `category_catalog()` 命令和 API 保持不变，二者路径相互独立。
 
 ### PGC 时间表 metadata
 

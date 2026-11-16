@@ -347,7 +347,7 @@ API fixes `pn=1` and exposes no total or continuation fields. It makes no stable
 guarantee. `category_id`/`category_name` map to each row’s `tid`/`tname`, and
 `category_v2_id`/`category_v2_name` map to `tidv2`/`tnamev2`; the pairs independently describe the
 row and are not inferred to match the requested RID or each other. The command
-does not add generic inputs, item selection, hydration, playurl resolution, or downloads. A complete or current-effective category taxonomy, remote menu retrieval, pagination, dynamic channel feeds, and topic pages remain future work.
+does not add generic inputs, item selection, hydration, playurl resolution, or downloads. The opt-in live configuration command is documented below; a complete or current-effective category taxonomy, pagination, dynamic channel feeds, and topic pages remain future work.
 
 ## Category Catalog Snapshot
 
@@ -363,7 +363,19 @@ The data is the frontend's bundled `channelList` fallback snapshot, not a live o
 
 The snapshot reports `scope=bundled_channel_menu_fallback`, `captured_at=2026-10-22T22:32:44.646206Z`, `source_url=https://www.bilibili.com/c/douga/`, `source_asset_url=https://s1.hdslb.com/bfs/static/shanks/channel/assets/index-bedd2c00.js`, and `source_asset_sha256=e9a6380a51acb054d8728db716a10a13818371a7834ba5f4f53a4b7872cfcbcb`. `captured_at` records when the asset was fetched, not an upstream revision. URLs are normalized to HTTPS and tracking-only `visit_id` parameters are removed; menu paths, functional query parameters, and functional URL fragments are preserved. The CLI's human output groups child entries under their parent and keeps navigation IDs separate from `tid`; JSON includes the provenance and all entry fields.
 
-This is a navigational snapshot, not ID translation, generic URL parsing, content enumeration, or a video listing. Use `category list` only with an explicitly chosen RID. Full current-menu retrieval, complete taxonomy, automatic route classification, dynamic channel feeds, and topic pages remain future work.
+This is a navigational snapshot, not ID translation, generic URL parsing, content enumeration, or a video listing. Use `category list` only with an explicitly chosen RID. The opt-in live command below reads remote configuration, but a full current-effective or visible menu, complete taxonomy, automatic route classification, dynamic channel feeds, and topic pages remain future work.
+
+## Live Channel Menu Configuration
+
+`bbdown category catalog --live [--max-response-bytes N] [--json]` is an opt-in request in the current source checkout. Without `--live`, `bbdown category catalog [--json]` remains the offline bundled fallback described above and makes no request.
+
+Live mode uses the configured API base and positive request timeout to make one anonymous GET to `/x/kv-frontend/namespace/data?appKey=333.1339&nscode=10` without following redirects. It sends the configured anonymous `User-Agent`, `Accept: application/json`, and fixed `Referer: https://www.bilibili.com/`, never a Cookie or access key. It does not load credentials, PGC metadata, resolver, or restricted-area proxy settings.
+
+The default positive `--max-response-bytes` limit is 1 MiB and applies both to decoded HTTP response bytes and to the cumulative encoded bytes of selected records plus the UTF-8 bytes of each materialized root key; duplicate key occurrences are charged repeatedly before materialization. There is no arbitrary row-count cap or literal heap-byte guarantee. Users may raise this same cap for larger configuration. Missing or malformed required source fields, including sort or referenced records, are explicit errors; the command does not silently fall back to the offline snapshot.
+
+The result is `scope=remote_channel_menu_config`, optional opaque `version_id` and `app_version_id`, and ordered `entries`. Each recursive entry has optional root `key`, `name`, `url`, `route`, optional `channel_id`, `sub_channel_id`, `tid`, `season_type`, `enable_sub`, and `children`. Root KV keys are not route or category IDs; child entries have no root key. Explicit zero TIDs and duplicate entries are preserved. An empty URL remains empty, and a protocol-relative URL is normalized to HTTPS. Numeric `enable_sub` is retained as supplied; all configured children are included even when the value is zero. No UGC/PGC type or RID mapping is inferred.
+
+This is remote configuration metadata, not a claim about the website's effective or visible menu: runtime selection, unsorted entries, side-menu groups, and the entries omitted from the source ordering are outside this API. It does not enumerate content, create feeds or pages, hydrate items, request playurl or media, or provide an automatic conversion from menu IDs to `category list --rid`. Empty configured arrays are a successful menu with zero entries. For wire fields and API usage, see the embedding guide.
 
 ## PGC Timetable
 

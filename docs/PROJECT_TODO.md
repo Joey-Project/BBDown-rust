@@ -150,11 +150,13 @@
 - [completed] Add the fixed-first-batch category-video metadata API/CLI. It does not add a category
   taxonomy, pagination, or channel lists. See
   `docs/project_journal/2026/10/2026-10-22-category-video-batches-01a0dd39.md`.
-- [completed] Add and validate the offline snapshot of the frontend bundled channel-menu fallback.
-  It is not the current effective menu or a full taxonomy. Full taxonomy, dynamic channel feeds,
-  pagination, and topic pages remain future work. See
+- [completed] Add and validate the offline snapshot of the frontend bundled channel-menu fallback
+  and the opt-in remote channel-menu configuration API/CLI. Neither claims the site's current
+  effective menu or a full taxonomy. Dynamic channel feeds, pagination, and topic pages remain
+  future work. See
   `docs/project_journal/2026/10/2026-10-11-page-family-roadmap.md` and
-  `docs/project_journal/2026/10/2026-10-22-category-catalog-01a0dd39.md`.
+  `docs/project_journal/2026/10/2026-10-22-category-catalog-01a0dd39.md` and
+  `docs/project_journal/2026/10/2026-10-23-remote-channel-menu-01a0dd39.md`.
 - [completed] Add the `0.8.0` preserving danmaku refresh API and CLI: deduplicate XML comments by
   positive IDs (falling back to complete `p` values and decoded text for invalid IDs), retain XML
   history, regenerate selected ASS from merged XML, and publish staged sidecars with the archive as
