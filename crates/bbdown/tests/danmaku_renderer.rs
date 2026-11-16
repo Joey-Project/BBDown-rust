@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 use bbdown_core::{merge_xml_preserving, render_danmaku_ass};
 
 #[test]
@@ -78,4 +80,19 @@ fn public_renderer_enforces_input_and_comment_limits() {
     }
     many_comments.push_str("</i>");
     assert!(render_danmaku_ass(&many_comments).is_err());
+}
+
+#[test]
+fn public_renderer_does_not_clone_large_inherited_namespaces_per_comment()
+-> Result<(), Box<dyn std::error::Error>> {
+    let namespace = "n".repeat(1024 * 1024);
+    let mut xml = format!("<i xmlns:large='{namespace}'>");
+    for index in 0..10_000 {
+        write!(xml, "<d p='0,1,25,16777215,0,0,0,{index}'>x</d>")?;
+    }
+    xml.push_str("</i>");
+
+    let ass = render_danmaku_ass(&xml)?;
+    assert_eq!(ass.matches("Dialogue:").count(), 10_000);
+    Ok(())
 }

@@ -9,6 +9,8 @@ const MAX_PUBLIC_DANMAKU_ASS_XML_BYTES: usize = 16 * 1024 * 1024;
 const MAX_PUBLIC_DANMAKU_ASS_COMMENTS: usize = 50_000;
 const MAX_PUBLIC_DANMAKU_ASS_OUTPUT_ESTIMATE_BYTES: usize = 48 * 1024 * 1024;
 const ASS_FIXED_BYTES_PER_COMMENT_ESTIMATE: usize = 256;
+const MAX_COMMENT_NAMESPACE_EXPANSION_BYTES: usize = 8 * 1024 * 1024;
+const MAX_COMMENT_NAMESPACE_BINDINGS: usize = 65_536;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 enum XmlKey {
@@ -19,8 +21,6 @@ enum XmlKey {
 #[derive(Clone, Debug)]
 struct RawComment {
     key: XmlKey,
-    parameters: String,
-    text: String,
     raw: String,
     range: Range<usize>,
     namespace: Option<String>,
@@ -112,6 +112,7 @@ fn root_qualified_name(source: &str) -> crate::Result<&str> {
 
 fn xml_comments(document: &Document<'_>, xml: &str) -> crate::Result<Vec<RawComment>> {
     let root_namespace = normalized_namespace(document.root_element().tag_name().namespace());
+    validate_comment_namespace_expansion(document, root_namespace)?;
     document
         .root_element()
         .children()
@@ -130,8 +131,6 @@ fn xml_comments(document: &Document<'_>, xml: &str) -> crate::Result<Vec<RawComm
                 |(start_tag_name_end, local_namespace_prefixes)| {
                     RawComment {
                         key: xml_key(parameter, &text),
-                        parameters: parameter.to_owned(),
-                        text,
                         raw,
                         range,
                         namespace: namespace.map(str::to_owned),
@@ -149,6 +148,48 @@ fn xml_comments(document: &Document<'_>, xml: &str) -> crate::Result<Vec<RawComm
             ))
         })
         .collect()
+}
+
+// Preservation stores the inherited namespace context on each raw comment so a spliced node
+// stays valid in its new document. Bound that repeated allocation before cloning any bindings.
+fn validate_comment_namespace_expansion(
+    document: &Document<'_>,
+    root_namespace: Option<&str>,
+) -> crate::Result<()> {
+    let mut expanded_bytes = 0_usize;
+    let mut binding_count = 0_usize;
+    for node in document.root_element().children() {
+        if !is_danmaku_comment_node(node, root_namespace) || node.attribute("p").is_none() {
+            continue;
+        }
+        if let Some(namespace) = normalized_namespace(node.tag_name().namespace()) {
+            expanded_bytes = expanded_bytes.saturating_add(namespace.len());
+            if expanded_bytes > MAX_COMMENT_NAMESPACE_EXPANSION_BYTES {
+                return Err(invalid(format!(
+                    "danmaku comment namespace expansion exceeds the {} MiB preservation budget",
+                    MAX_COMMENT_NAMESPACE_EXPANSION_BYTES / (1024 * 1024)
+                )));
+            }
+        }
+        for binding in node.namespaces() {
+            binding_count = binding_count.saturating_add(1);
+            if binding_count > MAX_COMMENT_NAMESPACE_BINDINGS {
+                return Err(invalid(format!(
+                    "danmaku comments exceed the {MAX_COMMENT_NAMESPACE_BINDINGS}-binding preservation budget"
+                )));
+            }
+            expanded_bytes = expanded_bytes
+                .saturating_add(binding.uri().len())
+                .saturating_add(binding.name().map_or(0, str::len));
+            if expanded_bytes > MAX_COMMENT_NAMESPACE_EXPANSION_BYTES {
+                return Err(invalid(format!(
+                    "danmaku comment namespace expansion exceeds the {} MiB preservation budget",
+                    MAX_COMMENT_NAMESPACE_EXPANSION_BYTES / (1024 * 1024)
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn normalized_namespace(namespace: Option<&str>) -> Option<&str> {
@@ -319,6 +360,10 @@ fn comment_with_namespace_bindings(
 }
 
 /// Append fetched `<d>` elements while preserving every byte of the existing document.
+///
+/// Returns an input error if the namespace bindings copied for preserved comments exceed the
+/// aggregate 8 MiB or 65,536-binding preservation budget. The budget is checked before those
+/// per-comment copies are allocated; neither input document is modified.
 pub fn merge_xml_preserving(
     existing_xml: &str,
     fetched_xml: &str,
@@ -460,7 +505,7 @@ pub(crate) fn validate_fetched_xml(xml: &str) -> crate::Result<()> {
 
 pub(crate) fn xml_to_ass_validated(xml: &str) -> crate::Result<String> {
     let document = parse_xml(xml, "fetched")?;
-    render_ass_from_document(&document, xml)
+    render_ass_from_document(&document)
 }
 
 pub(crate) fn render_danmaku_ass(xml: &str) -> crate::Result<String> {
@@ -501,15 +546,31 @@ pub(crate) fn render_danmaku_ass(xml: &str) -> crate::Result<String> {
         )));
     }
 
-    render_ass_from_document(&document, xml)
+    render_ass_from_document(&document)
 }
 
-fn render_ass_from_document(document: &Document<'_>, xml: &str) -> crate::Result<String> {
+fn render_ass_from_document(document: &Document<'_>) -> crate::Result<String> {
     root_element(document, "fetched")?;
-    let comments = xml_comments(document, xml)?
-        .iter()
-        .filter_map(|item| super::parse_comment_decoded(&item.parameters, &item.text))
-        .collect::<Vec<_>>();
+    let root_namespace = normalized_namespace(document.root_element().tag_name().namespace());
+    let mut comments = Vec::new();
+    for node in document.root_element().children() {
+        if !is_danmaku_comment_node(node, root_namespace) {
+            continue;
+        }
+        let Some(parameters) = node.attribute("p") else {
+            continue;
+        };
+        // Only the renderer's parameter and decoded text are needed. Avoid the preservation
+        // representation, which intentionally clones each comment's raw XML and namespace map.
+        let text = node
+            .children()
+            .filter(Node::is_text)
+            .filter_map(|child| child.text())
+            .collect::<String>();
+        if let Some(comment) = super::parse_comment_decoded(parameters, &text) {
+            comments.push(comment);
+        }
+    }
     Ok(super::render_ass(&comments))
 }
 
@@ -537,6 +598,8 @@ fn dedupe_fetched_xml(fetched_xml: &str, comments: &[RawComment]) -> (String, us
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write as _;
+
     use super::{merge_xml_preserving, xml_to_ass_validated};
 
     #[test]
@@ -553,6 +616,32 @@ mod tests {
         assert_eq!(
             xml_to_ass_validated(ordinary)?,
             super::super::xml_to_ass(ordinary)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn preservation_rejects_repeated_inherited_namespace_expansion_before_cloning()
+    -> std::fmt::Result {
+        let old = "<i><d p='0,1,25,16777215,0,0,0,1'>old comment</d></i>";
+        let original_old = old.to_owned();
+        let namespace = "n".repeat(1024 * 1024);
+        let mut fetched = format!("<i xmlns:large='{namespace}'>");
+        for index in 0..10_000 {
+            write!(
+                fetched,
+                "<d p='0,1,25,16777215,0,0,0,{index}'>new comment</d>"
+            )?;
+        }
+        fetched.push_str("</i>");
+
+        assert!(matches!(
+            merge_xml_preserving(old, &fetched),
+            Err(crate::Error::InvalidInput(message)) if message.contains("namespace expansion")
+        ));
+        assert_eq!(
+            old, original_old,
+            "a rejected merge must leave old comments intact"
         );
         Ok(())
     }
