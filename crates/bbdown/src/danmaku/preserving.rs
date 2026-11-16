@@ -5,6 +5,11 @@ use roxmltree::{Document, Node};
 
 use super::DanmakuXmlMerge;
 
+const MAX_PUBLIC_DANMAKU_ASS_XML_BYTES: usize = 16 * 1024 * 1024;
+const MAX_PUBLIC_DANMAKU_ASS_COMMENTS: usize = 50_000;
+const MAX_PUBLIC_DANMAKU_ASS_OUTPUT_ESTIMATE_BYTES: usize = 48 * 1024 * 1024;
+const ASS_FIXED_BYTES_PER_COMMENT_ESTIMATE: usize = 256;
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 enum XmlKey {
     CommentId(String),
@@ -110,13 +115,7 @@ fn xml_comments(document: &Document<'_>, xml: &str) -> crate::Result<Vec<RawComm
     document
         .root_element()
         .children()
-        .filter(|node| {
-            if !node.is_element() || node.tag_name().name() != "d" {
-                return false;
-            }
-            let namespace = normalized_namespace(node.tag_name().namespace());
-            namespace.is_none() || namespace == root_namespace
-        })
+        .filter(|node| is_danmaku_comment_node(*node, root_namespace))
         .filter_map(|node| {
             let parameter = node.attribute("p")?;
             let text = node
@@ -154,6 +153,14 @@ fn xml_comments(document: &Document<'_>, xml: &str) -> crate::Result<Vec<RawComm
 
 fn normalized_namespace(namespace: Option<&str>) -> Option<&str> {
     namespace.filter(|uri| !uri.is_empty())
+}
+
+fn is_danmaku_comment_node(node: Node<'_, '_>, root_namespace: Option<&str>) -> bool {
+    if !node.is_element() || node.tag_name().name() != "d" {
+        return false;
+    }
+    let namespace = normalized_namespace(node.tag_name().namespace());
+    namespace.is_none() || namespace == root_namespace
 }
 
 fn local_namespace_prefixes(raw: &str) -> crate::Result<(usize, HashSet<Option<String>>)> {
@@ -453,8 +460,53 @@ pub(crate) fn validate_fetched_xml(xml: &str) -> crate::Result<()> {
 
 pub(crate) fn xml_to_ass_validated(xml: &str) -> crate::Result<String> {
     let document = parse_xml(xml, "fetched")?;
-    root_element(&document, "fetched")?;
-    let comments = xml_comments(&document, xml)?
+    render_ass_from_document(&document, xml)
+}
+
+pub(crate) fn render_danmaku_ass(xml: &str) -> crate::Result<String> {
+    if xml.len() > MAX_PUBLIC_DANMAKU_ASS_XML_BYTES {
+        return Err(invalid(format!(
+            "danmaku XML exceeds the {} MiB public renderer input limit",
+            MAX_PUBLIC_DANMAKU_ASS_XML_BYTES / (1024 * 1024)
+        )));
+    }
+
+    // Use the same strict parser and rendering path as downloads. The byte limit bounds the
+    // parser tree; count eligible direct comments before xml_comments clones their raw nodes.
+    let document = parse_xml(xml, "fetched")?;
+    let root = root_element(&document, "fetched")?;
+    let root_namespace = normalized_namespace(root.tag_name().namespace());
+    let comment_count = root
+        .children()
+        .filter(|node| is_danmaku_comment_node(*node, root_namespace))
+        .filter(|node| node.attribute("p").is_some())
+        .count();
+    if comment_count > MAX_PUBLIC_DANMAKU_ASS_COMMENTS {
+        return Err(invalid(format!(
+            "danmaku XML exceeds the {MAX_PUBLIC_DANMAKU_ASS_COMMENTS}-comment public renderer limit"
+        )));
+    }
+
+    // ASS escapes a small set of source characters by at most doubling their bytes. Leave a
+    // fixed allowance per dialogue for timestamps and override tags before rendering allocates.
+    let output_estimate = xml
+        .len()
+        .saturating_mul(2)
+        .saturating_add(comment_count.saturating_mul(ASS_FIXED_BYTES_PER_COMMENT_ESTIMATE))
+        .saturating_add(1024);
+    if output_estimate > MAX_PUBLIC_DANMAKU_ASS_OUTPUT_ESTIMATE_BYTES {
+        return Err(invalid(format!(
+            "danmaku ASS output estimate exceeds the {} MiB public renderer limit",
+            MAX_PUBLIC_DANMAKU_ASS_OUTPUT_ESTIMATE_BYTES / (1024 * 1024)
+        )));
+    }
+
+    render_ass_from_document(&document, xml)
+}
+
+fn render_ass_from_document(document: &Document<'_>, xml: &str) -> crate::Result<String> {
+    root_element(document, "fetched")?;
+    let comments = xml_comments(document, xml)?
         .iter()
         .filter_map(|item| super::parse_comment_decoded(&item.parameters, &item.text))
         .collect::<Vec<_>>();
