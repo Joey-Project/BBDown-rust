@@ -5,7 +5,7 @@ status: completed
 created: 2026-11-16
 updated: 2026-11-16
 branch: codex/public-danmaku-renderer
-pr:
+pr: "https://github.com/Joey-Project/BBDown-rust/pull/125"
 supersedes: []
 superseded_by:
 ---
