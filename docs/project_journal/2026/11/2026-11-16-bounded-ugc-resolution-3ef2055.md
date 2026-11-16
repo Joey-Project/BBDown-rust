@@ -5,7 +5,7 @@ status: completed
 created: 2026-11-16
 updated: 2026-11-16
 branch: codex/ugc-resolution-limits
-pr: ""
+pr: "https://github.com/Joey-Project/BBDown-rust/pull/126"
 supersedes: []
 superseded_by:
 ---
@@ -29,7 +29,7 @@ superseded_by:
 ## Evidence
 - Branch `codex/ugc-resolution-limits`, based on `3ef20552d7e81aa8e3816a4dd6f006391319ef9c`.
 - Focused mock tests are in `crates/bbdown/src/client/ugc_collection.rs`; public exports are covered by `crates/bbdown/tests/public_api.rs`.
-- Independent-cache full test log: `../ugc-isolated-tests-corecache-1794832090660587000.log`.
-- Final focused Content-Length log: `../ugc-isolated-content-length-final-1794832700622927000.log`.
-- Final strict Clippy log: `../ugc-core-strict-clippy-final-1794832727208889000.log`.
-- Final workspace format log: `../ugc-core-fmt-final-1794832861550979000.log`.
+- Independent-cache full test log: `ugc-isolated-tests-corecache-1794832090660587000.log`.
+- Final focused Content-Length log: `ugc-isolated-content-length-final-1794832700622927000.log`.
+- Final strict Clippy log: `ugc-core-strict-clippy-final-1794832727208889000.log`.
+- Final workspace format log: `ugc-core-fmt-final-1794832861550979000.log`.
