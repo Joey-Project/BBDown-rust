@@ -36,6 +36,7 @@ mod pgc_index;
 mod popular;
 mod ranking;
 mod timetable;
+mod ugc_collection;
 mod video_search;
 pub use category::{
     CategoryVideoBatch, CategoryVideoItem, CategoryVideoQuery, CategoryVideoStats,
@@ -62,6 +63,15 @@ pub use ranking::{
 pub use timetable::{
     PGC_TIMETABLE_MAX_DAYS, PGC_TIMETABLE_MAX_ROWS, PgcTimetable, PgcTimetableDay,
     PgcTimetableEpisode, PgcTimetableKind,
+};
+pub use ugc_collection::{
+    DEFAULT_UGC_COLLECTION_RESOLVE_MAX_EXPANDED_PAGES,
+    DEFAULT_UGC_COLLECTION_RESOLVE_MAX_RAW_ARCHIVES, DEFAULT_UGC_COLLECTION_RESOLVE_MAX_REQUESTS,
+    DEFAULT_UGC_COLLECTION_RESOLVE_MAX_RESPONSE_BYTES,
+    DEFAULT_UGC_COLLECTION_RESOLVE_MAX_RESULT_BYTES, MAX_UGC_COLLECTION_RESOLVE_EXPANDED_PAGES,
+    MAX_UGC_COLLECTION_RESOLVE_RAW_ARCHIVES, MAX_UGC_COLLECTION_RESOLVE_REQUESTS,
+    MAX_UGC_COLLECTION_RESOLVE_RESPONSE_BYTES, MAX_UGC_COLLECTION_RESOLVE_RESULT_BYTES,
+    UgcCollectionResolveOptions,
 };
 pub use video_search::{
     VIDEO_SEARCH_MAX_ITEMS, VideoSearchItem, VideoSearchOrder, VideoSearchPage, VideoSearchQuery,

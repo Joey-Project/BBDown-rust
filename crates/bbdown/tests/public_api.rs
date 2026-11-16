@@ -5,13 +5,20 @@ use bbdown_core::{
     CredentialPreflightMode, CredentialPreflightReport, CredentialProfileMetadata,
     CredentialProfiles, DEFAULT_CATEGORY_VIDEO_BATCH_SIZE,
     DEFAULT_CATEGORY_VIDEO_MAX_RESPONSE_BYTES, DEFAULT_RANKING_VIDEO_MAX_RESPONSE_BYTES,
-    DanmakuUpdateOptions, DanmakuUpdatePolicy, DownloadCancellationToken, DownloadOptions,
-    DownloadProgressEvent, DownloadProgressSink, DownloadReportSummary, Input, MetadataPageOptions,
-    NoopDownloadProgress, POPULAR_VIDEO_MAX_PAGE_SIZE, PgcIndexFilterSelection, PgcIndexKind,
-    PgcIndexOrder, PgcIndexQuery, PgcIndexSort, PgcTimetable, PgcTimetableDay, PgcTimetableEpisode,
-    PgcTimetableKind, PlayurlMode, PopularVideoQuery, PopularVideoStats, RankingVideoOptions,
-    RestrictedAreaConfig, SeasonEpisodeGroup, SeasonEpisodeGroupKind, StreamSelection,
-    SubtitleAiPolicy, UgcCollectionKind, UgcCollectionReference, VideoCollectionKind,
+    DEFAULT_UGC_COLLECTION_RESOLVE_MAX_EXPANDED_PAGES,
+    DEFAULT_UGC_COLLECTION_RESOLVE_MAX_RAW_ARCHIVES, DEFAULT_UGC_COLLECTION_RESOLVE_MAX_REQUESTS,
+    DEFAULT_UGC_COLLECTION_RESOLVE_MAX_RESPONSE_BYTES,
+    DEFAULT_UGC_COLLECTION_RESOLVE_MAX_RESULT_BYTES, DanmakuUpdateOptions, DanmakuUpdatePolicy,
+    DownloadCancellationToken, DownloadOptions, DownloadProgressEvent, DownloadProgressSink,
+    DownloadReportSummary, Input, MAX_UGC_COLLECTION_RESOLVE_EXPANDED_PAGES,
+    MAX_UGC_COLLECTION_RESOLVE_RAW_ARCHIVES, MAX_UGC_COLLECTION_RESOLVE_REQUESTS,
+    MAX_UGC_COLLECTION_RESOLVE_RESPONSE_BYTES, MAX_UGC_COLLECTION_RESOLVE_RESULT_BYTES,
+    MetadataPageOptions, NoopDownloadProgress, POPULAR_VIDEO_MAX_PAGE_SIZE,
+    PgcIndexFilterSelection, PgcIndexKind, PgcIndexOrder, PgcIndexQuery, PgcIndexSort,
+    PgcTimetable, PgcTimetableDay, PgcTimetableEpisode, PgcTimetableKind, PlayurlMode,
+    PopularVideoQuery, PopularVideoStats, RankingVideoOptions, RestrictedAreaConfig,
+    SeasonEpisodeGroup, SeasonEpisodeGroupKind, StreamSelection, SubtitleAiPolicy,
+    UgcCollectionKind, UgcCollectionReference, UgcCollectionResolveOptions, VideoCollectionKind,
     category_catalog,
 };
 use std::num::NonZeroUsize;
@@ -104,6 +111,36 @@ fn embedding_surface_is_reexported() -> anyhow::Result<()> {
     let health_status = CredentialHealthSummaryStatus::Unknown;
     assert_eq!(format!("{health_status:?}"), "Unknown");
     Ok(())
+}
+
+#[test]
+fn ugc_collection_limits_are_reexported() {
+    let options = UgcCollectionResolveOptions::default();
+    assert_eq!(
+        options.max_response_bytes,
+        DEFAULT_UGC_COLLECTION_RESOLVE_MAX_RESPONSE_BYTES
+    );
+    assert_eq!(
+        options.max_requests,
+        DEFAULT_UGC_COLLECTION_RESOLVE_MAX_REQUESTS
+    );
+    assert_eq!(
+        options.max_raw_archives,
+        DEFAULT_UGC_COLLECTION_RESOLVE_MAX_RAW_ARCHIVES
+    );
+    assert_eq!(
+        options.max_expanded_pages,
+        DEFAULT_UGC_COLLECTION_RESOLVE_MAX_EXPANDED_PAGES
+    );
+    assert_eq!(
+        options.max_result_bytes,
+        DEFAULT_UGC_COLLECTION_RESOLVE_MAX_RESULT_BYTES
+    );
+    assert!(options.max_response_bytes <= MAX_UGC_COLLECTION_RESOLVE_RESPONSE_BYTES);
+    assert!(options.max_requests <= MAX_UGC_COLLECTION_RESOLVE_REQUESTS);
+    assert!(options.max_raw_archives <= MAX_UGC_COLLECTION_RESOLVE_RAW_ARCHIVES);
+    assert!(options.max_expanded_pages <= MAX_UGC_COLLECTION_RESOLVE_EXPANDED_PAGES);
+    assert!(options.max_result_bytes <= MAX_UGC_COLLECTION_RESOLVE_RESULT_BYTES);
 }
 
 #[test]

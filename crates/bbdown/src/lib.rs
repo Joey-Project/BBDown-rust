@@ -25,8 +25,14 @@ pub use category_catalog::{CategoryCatalog, CategoryCatalogEntry, category_catal
 pub use client::{
     BiliClient, CategoryVideoBatch, CategoryVideoItem, CategoryVideoQuery, CategoryVideoStats,
     ClientConfig, DEFAULT_CATEGORY_VIDEO_BATCH_SIZE, DEFAULT_CATEGORY_VIDEO_MAX_RESPONSE_BYTES,
-    DEFAULT_RANKING_VIDEO_MAX_RESPONSE_BYTES, EndpointConfig, MetadataCollectionInfo,
-    MetadataConsistency, MetadataCursor, MetadataPage, MetadataPageOptions, MetadataStopReason,
+    DEFAULT_RANKING_VIDEO_MAX_RESPONSE_BYTES, DEFAULT_UGC_COLLECTION_RESOLVE_MAX_EXPANDED_PAGES,
+    DEFAULT_UGC_COLLECTION_RESOLVE_MAX_RAW_ARCHIVES, DEFAULT_UGC_COLLECTION_RESOLVE_MAX_REQUESTS,
+    DEFAULT_UGC_COLLECTION_RESOLVE_MAX_RESPONSE_BYTES,
+    DEFAULT_UGC_COLLECTION_RESOLVE_MAX_RESULT_BYTES, EndpointConfig,
+    MAX_UGC_COLLECTION_RESOLVE_EXPANDED_PAGES, MAX_UGC_COLLECTION_RESOLVE_RAW_ARCHIVES,
+    MAX_UGC_COLLECTION_RESOLVE_REQUESTS, MAX_UGC_COLLECTION_RESOLVE_RESPONSE_BYTES,
+    MAX_UGC_COLLECTION_RESOLVE_RESULT_BYTES, MetadataCollectionInfo, MetadataConsistency,
+    MetadataCursor, MetadataPage, MetadataPageOptions, MetadataStopReason,
     PGC_INDEX_MAX_FILTER_GROUPS, PGC_INDEX_MAX_FILTER_VALUES, PGC_INDEX_MAX_ORDERS,
     PGC_INDEX_MAX_PAGE_SIZE, PGC_METADATA_SERVICE_DEFAULT_MAX_RESPONSE_BYTES,
     PGC_TIMETABLE_MAX_DAYS, PGC_TIMETABLE_MAX_ROWS, POPULAR_VIDEO_MAX_PAGE_SIZE,
@@ -36,8 +42,8 @@ pub use client::{
     PgcTimetableEpisode, PgcTimetableKind, PgcWebPlayurlRoute, PlayurlMode, PopularVideoItem,
     PopularVideoPage, PopularVideoQuery, PopularVideoStats, RankingVideoItem, RankingVideoOptions,
     RankingVideoPage, RankingVideoStats, RestrictedArea, RestrictedAreaConfig, RestrictedAreaProxy,
-    RestrictedAreaProxyKind, VIDEO_SEARCH_MAX_ITEMS, VideoSearchItem, VideoSearchOrder,
-    VideoSearchPage, VideoSearchQuery,
+    RestrictedAreaProxyKind, UgcCollectionResolveOptions, VIDEO_SEARCH_MAX_ITEMS, VideoSearchItem,
+    VideoSearchOrder, VideoSearchPage, VideoSearchQuery,
 };
 pub use credential_preflight::{
     CredentialPreflightIssue, CredentialPreflightMode, CredentialPreflightReport,
