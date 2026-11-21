@@ -26,8 +26,24 @@ Configure these environments:
   configuration available to this environment.
 - `production-release`: allow deployment from tags matching `v*-rc.*` only. Store the same release
   GitHub App variable and secret here.
-- `crates-io`: allow deployment from tags matching `v*-rc.*` only. Store
-  `CARGO_REGISTRY_TOKEN` here.
+- `crates-io`: allow deployment from tags matching `v*-rc.*` only. Keep the existing
+  `CARGO_REGISTRY_TOKEN` environment secret during migration; older RC tags still run the workflow
+  stored at that tag and need the secret for recovery.
+
+Configure crates.io trusted publishing for this exact GitHub Actions publisher:
+
+| Crate | Owner | Repository | Workflow filename | GitHub environment |
+| --- | --- | --- | --- | --- |
+| `bbdown-core` | `Joey-Project` | `BBDown-rust` | `promote-release-candidate.yml` | `crates-io` |
+
+See the [crates.io trusted publishing documentation](https://crates.io/docs/trusted-publishing).
+The workflow exchanges its GitHub OIDC identity for a temporary crates.io token immediately before
+publishing. The authentication action's post step revokes that token when the job finishes. Only the
+publish step receives it through `CARGO_REGISTRY_TOKEN`, so no long-lived crates.io secret is needed
+after migration. Keep the old secret until
+the first trusted-publishing release succeeds and recovery of RC tags created before this migration
+is no longer needed. A promotion run selected from an RC tag uses the workflow stored at that tag;
+create the first RC from source that already includes this trusted-publishing change.
 
 Configure the release GitHub App with repository metadata read and contents write permissions. The
 App should be the only non-human actor allowed by the release tag rulesets.
@@ -92,7 +108,9 @@ immediately before writing, and creates the annotated RC tag at the workflow ref
    selected RC tag and is used to serialize promotion for the final release version.
 4. Start the workflow.
 5. Approve the `production-release` environment deployment.
-6. Approve the `crates-io` environment deployment.
+6. Approve the `crates-io` environment deployment. For the first trusted-publishing release, select
+   an RC created from source that includes this migration; an older RC tag continues to use its
+   stored workflow and the legacy token secret.
 
 The workflow validates that the selected ref is the latest RC tag for the requested version,
 serializes all RC creation and promotion runs for the same release version, confirms the
@@ -100,7 +118,9 @@ serializes all RC creation and promotion runs for the same release version, conf
 verification workflow, rebuilds final release archives, rechecks that the selected RC is still latest
 immediately before publication, verifies any existing crates.io `bbdown-core` version is non-yanked
 and has the same local package checksum before creating the final tag or GitHub Release, creates the
-final annotated tag, publishes the GitHub Release, and then publishes `bbdown-core`. Generated
+final annotated tag, publishes the GitHub Release, and then publishes `bbdown-core` using the
+temporary trusted-publishing token. If the version already exists with a matching checksum, it
+recovers successfully without requesting an OIDC token. Generated
 GitHub Release notes start from the
 previous non-RC release tag when one exists, so the final release notes do not use the just-created
 RC tag as their comparison base. If crates.io already contains the exact `bbdown-core` version, the

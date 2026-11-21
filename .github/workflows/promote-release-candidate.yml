@@ -326,6 +326,9 @@ jobs:
       - publish-github-release
     runs-on: ubuntu-latest
     environment: crates-io
+    permissions:
+      contents: read
+      id-token: write
     steps:
       # actions/checkout@v4
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -335,17 +338,39 @@ jobs:
       - name: Install Rust stable
         run: rustup toolchain install stable --profile minimal
 
-      - name: Publish crate
+      - name: Check crates.io package state
+        id: crate-state
         shell: bash
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
           set -euo pipefail
           source scripts/release/common.sh
           crate_state=$(release_crate_version_state "${VERSION}")
-          if [[ "${crate_state}" == "matching" ]]; then
-            echo "bbdown-core ${VERSION} already exists on crates.io with matching package checksum; treating publish as recovered"
-            exit 0
-          fi
-          cargo publish -p bbdown-core --locked --token "${CARGO_REGISTRY_TOKEN}"
+          case "${crate_state}" in
+            matching)
+              echo "bbdown-core ${VERSION} already exists on crates.io with matching package checksum; treating publish as recovered"
+              ;;
+            absent)
+              echo "bbdown-core ${VERSION} is not present on crates.io yet"
+              ;;
+            *)
+              echo "::error::unexpected crates.io package state for bbdown-core ${VERSION}: ${crate_state}"
+              exit 2
+              ;;
+          esac
+          printf 'state=%s\n' "${crate_state}" >> "${GITHUB_OUTPUT}"
+
+      # rust-lang/crates-io-auth-action@v1.0.6
+      - uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+        id: auth
+        if: ${{ steps.crate-state.outputs.state == 'absent' }}
+
+      - name: Publish crate
+        shell: bash
+        if: ${{ steps.crate-state.outputs.state == 'absent' }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          set -euo pipefail
+          cargo publish -p bbdown-core --locked
