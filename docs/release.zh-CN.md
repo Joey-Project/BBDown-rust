@@ -27,7 +27,23 @@ lint、declared MSRV、测试和 crates.io dry-run validation。
   可用。
 - `production-release`：只允许从匹配 `v*-rc.*` 的 tag 部署。这里也放同一组 release
   GitHub App variable 和 secret。
-- `crates-io`：只允许从匹配 `v*-rc.*` 的 tag 部署。这里放 `CARGO_REGISTRY_TOKEN`。
+- `crates-io`：只允许从匹配 `v*-rc.*` 的 tag 部署。迁移期间保留现有的
+  `CARGO_REGISTRY_TOKEN` environment secret；较早的 RC tag 仍会运行该 tag 上保存的 workflow，
+  恢复发布时仍需要这个 secret。
+
+在 crates.io 中为以下 GitHub Actions publisher 配置 trusted publishing：
+
+| Crate | Owner | Repository | Workflow filename | GitHub environment |
+| --- | --- | --- | --- | --- |
+| `bbdown-core` | `Joey-Project` | `BBDown-rust` | `promote-release-candidate.yml` | `crates-io` |
+
+参阅 [crates.io trusted publishing 文档](https://crates.io/docs/trusted-publishing)。workflow 会在
+发布前立即使用 GitHub OIDC 身份换取临时 crates.io token；认证 action 的 post step 会在 job 结束时
+自动撤销该 token。token 仅通过 `CARGO_REGISTRY_TOKEN` 注入发布 step，因此迁移完成后不需要长期
+crates.io secret。首次 trusted
+publishing 发布成功且不再需要恢复迁移前创建的 RC tag 之前，请保留旧 secret。从 RC tag 选择
+promotion run 时会使用该 tag 上保存的 workflow；首个 trusted-publishing RC 必须从已经包含此
+迁移的 source 创建。
 
 release GitHub App 需要 repository metadata read 和 contents write 权限。release tag
 rulesets 应只允许这个 App 作为非人工 actor 写 tag。
@@ -83,14 +99,16 @@ Release 状态。
    用于按最终 release version 串行化 promotion。
 4. 启动 workflow。
 5. 批准 `production-release` environment deployment。
-6. 批准 `crates-io` environment deployment。
+6. 批准 `crates-io` environment deployment。首次 trusted-publishing 发布时，请选择从已包含此
+   迁移的 source 创建的 RC；较早的 RC tag 继续使用其保存的 workflow 和旧 token secret。
 
 该 workflow 会验证选中的 ref 是请求版本的最新 RC tag，按最终 release version 串行化
 promotion，确认 `bbdown-core` 和 `bbdown-cli` Cargo version 与正式 tag 匹配，调用共享
 release verification workflow，重新构建正式 release archives，并在发布前再次确认选中的
 RC 仍然是最新 RC，在创建正式 tag 或 GitHub Release 前验证 crates.io 上任何已存在的
 `bbdown-core` version 都没有被 yank 且与本地 package checksum 匹配，然后创建正式
-annotated tag，发布 GitHub Release，并发布 `bbdown-core`。如果存在上一条非 RC 正式
+annotated tag，发布 GitHub Release，并使用临时 trusted-publishing token 发布 `bbdown-core`。
+如果版本已经存在且 checksum 匹配，则无需请求 OIDC token 即可恢复成功。如果存在上一条非 RC 正式
 release tag，自动生成的
 GitHub Release notes 会从那条 tag 开始，避免把刚创建的 RC tag 当作比较起点。如果
 crates.io 已经存在 exact `bbdown-core` version，crate publish step 会重新打包选中的 RC
