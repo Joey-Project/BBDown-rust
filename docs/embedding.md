@@ -376,8 +376,8 @@ rules apply.
 
 ### Category Video Batch
 
-The current source checkout adds `BiliClient::category_videos` as a metadata-only, one-request API;
-it is not part of the `0.11.0` release. `CategoryVideoQuery::new(rid)` defaults to a batch size
+The `0.11.1` source release adds `BiliClient::category_videos` as a metadata-only, one-request API.
+`CategoryVideoQuery::new(rid)` defaults to a batch size
 of 20 and a decoded response cap of 1 MiB, exposed as `DEFAULT_CATEGORY_VIDEO_BATCH_SIZE` and
 `DEFAULT_CATEGORY_VIDEO_MAX_RESPONSE_BYTES`. The RID, batch size, and byte cap must all be positive.
 Use `with_batch_size` and `with_max_response_bytes` to configure them. The endpoint is

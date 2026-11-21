@@ -32,16 +32,18 @@ timetable and index metadata, popular-video metadata, and global ranking metadat
 domestic PGC episode groups. Check [crates.io](https://crates.io/crates/bbdown-core) for current
 package availability; the [official releases](https://github.com/Joey-Project/BBDown-rust/releases)
 page lists CLI archives.
-This source checkout also supports a capability-declared PGC metadata service for domestic
+The `0.11.1` source release also supports a capability-declared PGC metadata service for domestic
 episode/season and media-review hydration, timetable metadata with the independent
 `PgcMetadataCapability::Timetable` capability, and movie/TV index metadata with the independent
 `PgcMetadataCapability::Index` capability. It does not cover search, PUGV, or international
 metadata; see the repository embedding guide for request and response boundaries.
-The current checkout also exposes `BiliClient::category_videos` for one anonymous, fixed-first-page
-category video batch. This is a current-source addition, not part of the `0.11.0` release. The
-offline `category_catalog()` API and `bbdown category catalog` CLI expose a dated snapshot of the
+The `0.11.1` source release also exposes `BiliClient::category_videos` for one anonymous,
+fixed-first-page category video batch. The offline `category_catalog()` API and
+`bbdown category catalog` CLI expose a dated snapshot of the
 frontend’s bundled channel-menu fallback. They do not fetch the current menu, provide a complete
 taxonomy, or enable selection, hydration, or downloads.
+This release also adds bounded UGC collection and series resolution options, public bounded danmaku
+XML decoding and ASS rendering APIs, and crates.io OIDC trusted publishing in the release workflow.
 
 The crate provides staged XML-history-preserving danmaku refresh, deduplicates comments by positive
 IDs with a complete-parameter-and-decoded-text fallback, and regenerates ASS from merged XML. It

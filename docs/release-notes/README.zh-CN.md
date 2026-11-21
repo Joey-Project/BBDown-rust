@@ -7,6 +7,8 @@
 
 ## 版本
 
+- [v0.11.1](v0.11.1.zh-CN.md)：capability 声明的 PGC metadata 路由、有界 UGC 合集解析、
+  分区 metadata 与离线目录快照、公开弹幕 XML 解码和 ASS 渲染，以及 crates.io OIDC trusted publishing 工作流。
 - [v0.11.0（2026-10-20 已发布；源码准备说明）](v0.11.0.zh-CN.md)：国内 PGC episode 分组、普通视频搜索、
   番剧/国创时间表、电影/电视剧分类索引、热门视频和全站排行榜 metadata。[GitHub Release](https://github.com/Joey-Project/BBDown-rust/releases/tag/v0.11.0)、
   [crates.io](https://crates.io/crates/bbdown-core/0.11.0)。
