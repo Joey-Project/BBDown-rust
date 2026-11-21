@@ -192,6 +192,7 @@ dependencies = [
  "anyhow",
  "base64",
  "bytes",
+ "danmaku-renderer",
  "flate2",
  "futures-util",
  "http",
@@ -385,6 +386,16 @@ checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
 dependencies = [
  "generic-array",
  "typenum",
+]
+
+[[package]]
+name = "danmaku-renderer"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a8219af388318884361ac36ef252030686cf8d9dc8caee4995de47d11941ff16"
+dependencies = [
+ "anyhow",
+ "roxmltree",
 ]
 
 [[package]]

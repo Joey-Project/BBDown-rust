@@ -505,7 +505,7 @@ pub(crate) fn validate_fetched_xml(xml: &str) -> crate::Result<()> {
 
 pub(crate) fn xml_to_ass_validated(xml: &str) -> crate::Result<String> {
     let document = parse_xml(xml, "fetched")?;
-    render_ass_from_document(&document)
+    render_ass_from_document(xml, document)
 }
 
 pub(crate) fn render_danmaku_ass(xml: &str) -> crate::Result<String> {
@@ -516,8 +516,7 @@ pub(crate) fn render_danmaku_ass(xml: &str) -> crate::Result<String> {
         )));
     }
 
-    // Use the same strict parser and rendering path as downloads. The byte limit bounds the
-    // parser tree; count eligible direct comments before xml_comments clones their raw nodes.
+    // Bound the parser tree and count eligible direct comments before calling the renderer.
     let document = parse_xml(xml, "fetched")?;
     let root = root_element(&document, "fetched")?;
     let root_namespace = normalized_namespace(root.tag_name().namespace());
@@ -532,11 +531,12 @@ pub(crate) fn render_danmaku_ass(xml: &str) -> crate::Result<String> {
         )));
     }
 
-    // ASS escapes a small set of source characters by at most doubling their bytes. Leave a
-    // fixed allowance per dialogue for timestamps and override tags before rendering allocates.
+    // Allow double the source size for escaping, plus one byte per raw backslash for literal
+    // ASS sequences. Leave a fixed allowance for timestamps and override tags per event.
     let output_estimate = xml
         .len()
         .saturating_mul(2)
+        .saturating_add(xml.bytes().filter(|&byte| byte == b'\\').count())
         .saturating_add(comment_count.saturating_mul(ASS_FIXED_BYTES_PER_COMMENT_ESTIMATE))
         .saturating_add(1024);
     if output_estimate > MAX_PUBLIC_DANMAKU_ASS_OUTPUT_ESTIMATE_BYTES {
@@ -546,32 +546,33 @@ pub(crate) fn render_danmaku_ass(xml: &str) -> crate::Result<String> {
         )));
     }
 
-    render_ass_from_document(&document)
+    render_ass_from_document(xml, document)
 }
 
-fn render_ass_from_document(document: &Document<'_>) -> crate::Result<String> {
-    root_element(document, "fetched")?;
-    let root_namespace = normalized_namespace(document.root_element().tag_name().namespace());
-    let mut comments = Vec::new();
-    for node in document.root_element().children() {
-        if !is_danmaku_comment_node(node, root_namespace) {
-            continue;
-        }
-        let Some(parameters) = node.attribute("p") else {
-            continue;
-        };
-        // Only the renderer's parameter and decoded text are needed. Avoid the preservation
-        // representation, which intentionally clones each comment's raw XML and namespace map.
-        let text = node
-            .children()
-            .filter(Node::is_text)
-            .filter_map(|child| child.text())
-            .collect::<String>();
-        if let Some(comment) = super::parse_comment_decoded(parameters, &text) {
-            comments.push(comment);
-        }
+fn render_ass_from_document(xml: &str, document: Document<'_>) -> crate::Result<String> {
+    let root = root_element(&document, "fetched")?;
+    let root_namespace = normalized_namespace(root.tag_name().namespace());
+    let mut filtered = String::new();
+    let mut offset = 0;
+    // Keep BBDown's namespace policy when passing the XML to the shared renderer.
+    for node in root
+        .children()
+        .filter(|node| node.has_tag_name("d") && !is_danmaku_comment_node(*node, root_namespace))
+    {
+        let range = node.range();
+        filtered.push_str(&xml[offset..range.start]);
+        offset = range.end;
     }
-    Ok(super::render_ass(&comments))
+    let source = if offset == 0 {
+        xml
+    } else {
+        filtered.push_str(&xml[offset..]);
+        &filtered
+    };
+    drop(document);
+    let options = danmaku_renderer::RenderOptions::for_mode(danmaku_renderer::RenderMode::Naive);
+    danmaku_renderer::render_bilibili_xml(source, &options)
+        .map_err(|error| invalid(error.to_string()))
 }
 
 fn dedupe_fetched_xml(fetched_xml: &str, comments: &[RawComment]) -> (String, usize) {
