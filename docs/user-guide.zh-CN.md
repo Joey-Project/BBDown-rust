@@ -258,7 +258,7 @@ PGC 自动识别。如需指定某个条目，请显式把其 BVID 或 aid 传�
 
 ## 分区视频批次
 
-当前源码检出增加了仅提供 metadata 的命令；该功能不属于 `v0.11.0` 发布版本：
+`v0.11.1` 源码版本增加了仅提供 metadata 的命令：
 
 ```bash
 bbdown category list --rid 1 --json
@@ -271,7 +271,7 @@ bbdown category list --rid 13 --batch-size 15 --max-response-bytes 2097152 --jso
 
 ## 分区导航菜单快照
 
-当前源码检出提供离线目录命令；该功能不属于 `v0.11.0` 发布版本：
+`v0.11.1` 源码版本提供离线目录命令：
 
 ```bash
 bbdown category catalog --json

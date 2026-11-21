@@ -38,8 +38,7 @@ SpaceDynamic 请求缺少设备 Cookie 值时的初始化逻辑。它还记录�
 `bbdown-core = "0.10"`；`0.9` 依赖不包含这些 API。如果 registry 中尚无 `0.10.0` package，请使用对应的源码检出
 或本地 path dependency。
 `0.11.0` 源码版本增加普通视频搜索及选中条目的 PGC 识别、国内 PGC 分集分组、番剧与国创时间表 metadata、电影/电视剧索引 metadata、热门视频 metadata 和全站排行榜 metadata。排行榜会返回所有有效条目，不再使用此前任意设置的 100 条上限；每个响应的默认大小上限为 1 MiB。这些功能不实现频道、话题、自动 CDN 路由、持久化 CDN 健康状态或自适应 CDN 策略。请参阅 [v0.11.0 发布说明](docs/release-notes/v0.11.0.zh-CN.md)，并查看[官方 Releases](https://github.com/Joey-Project/BBDown-rust/releases)了解归档可用性。
-当前源码检出也支持按 capability 声明 metadata service，用于国内 PGC 分集/season、media-review、时间表与电影/电视剧索引 metadata。索引路由需要独立的 `index` capability；这不代表支持搜索、PUGV 或 Intl metadata。
-当前源码检出还增加了匿名分区视频首批 metadata API 和 `category list` CLI；这些功能不属于 `0.11.0` 发布版本。`category list` 不会获取远程目录、分页、选择条目、补充详情或下载媒体。独立的 `category catalog` 命令同样仅属于当前源码检出，离线返回前端内置频道菜单回退快照；它不是当前生效菜单，也不是完整分区分类体系。来源和字段说明见用户指南与嵌入指南。
+`0.11.1` 源码版本增加按 capability 声明的 metadata service 路由，用于国内 PGC 分集/season、media-review、时间表与电影/电视剧索引 metadata；新增 UGC 合集和系列解析的显式限额选项；增加匿名分区视频首批 metadata API 与 `category list` CLI；并公开有界弹幕 XML 解码和 XML-to-ASS 渲染 API，使用 `danmaku-renderer` crate。索引路由需要独立的 `index` capability；这不代表支持搜索、PUGV 或 Intl metadata。`category list` 不会获取远程目录、分页、选择条目、补充详情或下载媒体。独立的 `category catalog` 命令返回前端内置频道菜单回退快照，而非当前生效菜单或完整分区分类体系。发布工作流也改用 crates.io OIDC trusted publishing。来源和字段说明见用户指南与嵌入指南及 [v0.11.1 发布说明](docs/release-notes/v0.11.1.zh-CN.md)。
 
 ## 当前 CLI
 
@@ -106,7 +105,7 @@ PGC 自动识别只在通过搜索输入选择条目时运行；确认分集后�
 搜索列表仍是普通视频搜索。若选中 BVID 或 aid 的官方 view 响应包含官方 PGC 分集重定向，且身份校验通过，
 规划会保留分集身份并进入现有 PGC 路径。搜索 `api_base`、PGC metadata `pgc_base` 和 PGC Web playurl 路由分别配置；
 PGC Web 使用配置的 Web playurl 路由；Web 和 APP 沿用现有的受限区域代理回退，TV 语义保持不变。
-当前源码检出可为国内分集/season hydration、media-review metadata、PGC 时间表和电影/电视剧索引 metadata 显式选择
+`0.11.1` 源码版本可为国内分集/season hydration、media-review metadata、PGC 时间表和电影/电视剧索引 metadata 显式选择
 capability 声明的 PGC metadata service，使用 `--pgc-metadata-service-base` 和
 `--pgc-metadata-service-capabilities`；这两个参数必须同时提供。时间表和索引路由分别需要单独声明
 `timetable` 和 `index` capability，capability 之间互不隐含。该 service-only 路由不会回退到 `--pgc-base` 或代理。

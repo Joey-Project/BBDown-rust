@@ -38,16 +38,17 @@ PGC episode groups, anime and Chinese-animation timetable metadata, movie/TV ind
 popular-video metadata, and global ranking metadata. Ranking returns all valid rows without the former
 arbitrary 100-row cap and uses a positive 1 MiB default limit per response. These additions do not
 implement channels, topics, automatic CDN routing, persistent CDN health, or adaptive CDN policy.
-This source checkout also supports capability-declared metadata-service routing for domestic PGC
-episode/season, media-review, timetable, and movie/TV index metadata. Index routing has its own
-`index` capability; it does not imply support for search, PUGV, or international metadata.
-The current checkout also adds a separate anonymous category-video first-batch API and the
-`category list` CLI. These are current-source additions outside the `0.11.0` release. `category list`
-does not fetch a remote catalog, paginate, select items, hydrate details, or download media. The
-separate `category catalog` command returns an offline snapshot of the frontend’s bundled channel-menu
-fallback. It is also current-source only, not the current effective menu or a complete category
-taxonomy. See the user and embedding guides for its provenance and field meanings.
-See the [v0.11.0 release notes](docs/release-notes/v0.11.0.md) and
+The `0.11.1` source release adds capability-declared metadata-service routing for domestic PGC
+episode/season, media-review, timetable, and movie/TV index metadata; bounded UGC collection and
+series resolution options; anonymous category-video first-batch metadata and the `category list`
+CLI; and a public bounded danmaku XML decoder and XML-to-ASS renderer backed by `danmaku-renderer`.
+Index routing has its own `index` capability; it does not imply support for search, PUGV, or
+international metadata. `category list` does not fetch a remote catalog, paginate, select items,
+hydrate details, or download media. The separate `category catalog` command returns an offline
+snapshot of the frontend’s bundled channel-menu fallback, not the current effective menu or a complete
+category taxonomy. See the user and embedding guides for its provenance and field meanings. The
+release workflow also uses crates.io OIDC trusted publishing. See the [v0.11.1 release notes](docs/release-notes/v0.11.1.md)
+for API limits and compatibility notes, and
 [official releases](https://github.com/Joey-Project/BBDown-rust/releases) for archive availability.
 Input parsing covers normal videos, PGC and intl episodes, PUGV/cheese courses, B23 short links,
 favorite lists, space videos, collections, series, homepage recommendations, per-video related
@@ -97,7 +98,7 @@ bbdown category catalog --json
 
 `category list` makes one anonymous request to `/x/web-interface/newlist` with the selected `rid`,
 fixed `pn=1`, and a positive `ps` batch-size parameter (default 20). A valid batch preserves every returned archive row in source order within a positive response-byte limit (default 1 MiB); malformed required fields fail the batch instead of silently dropping rows. The requested batch size is
-not a guarantee of the number of returned rows. This current-checkout addition does not claim
+not a guarantee of the number of returned rows. This `0.11.1` feature does not claim
 pagination, totals, a category tree, stable ordering, or a latest-item guarantee; category fields
 describe each returned row and are not inferred from the requested `rid`.
 

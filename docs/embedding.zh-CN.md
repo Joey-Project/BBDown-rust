@@ -320,7 +320,7 @@ PGC 自动识别。如需在现有流程中指定条目，请显式构造 `Input
 
 ### 分区视频批次
 
-当前源码检出增加了 `BiliClient::category_videos`，作为只发起一次请求的 metadata API；该功能不属于 `0.11.0` 发布版本。`CategoryVideoQuery::new(rid)` 默认批量大小为 20、解码响应上限为 1 MiB，默认值分别由 `DEFAULT_CATEGORY_VIDEO_BATCH_SIZE` 和 `DEFAULT_CATEGORY_VIDEO_MAX_RESPONSE_BYTES` 提供。RID、批量大小和字节上限都必须为正数，可通过 `with_batch_size` 和 `with_max_response_bytes` 配置。endpoint 为 `/x/web-interface/newlist`，使用请求的 `rid`、固定 `pn=1` 和 `ps` 批量大小。`max_response_bytes` 限制解码后的响应体字节数；`batch_size` 仅作为请求的 `ps` 值，返回条目数可能不同。条目数量没有任意上限。
+`0.11.1` 源码版本增加 `BiliClient::category_videos`，作为只发起一次请求的 metadata API。`CategoryVideoQuery::new(rid)` 默认批量大小为 20、解码响应上限为 1 MiB，默认值分别由 `DEFAULT_CATEGORY_VIDEO_BATCH_SIZE` 和 `DEFAULT_CATEGORY_VIDEO_MAX_RESPONSE_BYTES` 提供。RID、批量大小和字节上限都必须为正数，可通过 `with_batch_size` 和 `with_max_response_bytes` 配置。endpoint 为 `/x/web-interface/newlist`，使用请求的 `rid`、固定 `pn=1` 和 `ps` 批量大小。`max_response_bytes` 限制解码后的响应体字节数；`batch_size` 仅作为请求的 `ps` 值，返回条目数可能不同。条目数量没有任意上限。
 
 ```rust,no_run
 use bbdown_core::{BiliClient, CategoryVideoQuery, ClientConfig};

@@ -324,7 +324,7 @@ access rules.
 
 ## Category Video Batch
 
-The current source checkout adds a metadata-only command; it is not part of the `v0.11.0` release:
+The `v0.11.1` source release adds a metadata-only command:
 
 ```bash
 bbdown category list --rid 1 --json
@@ -351,7 +351,7 @@ does not add generic inputs, item selection, hydration, playurl resolution, or d
 
 ## Category Catalog Snapshot
 
-The current source checkout provides an offline catalog command; it is not part of the `v0.11.0` release:
+The `v0.11.1` source release provides an offline catalog command:
 
 ```bash
 bbdown category catalog --json
