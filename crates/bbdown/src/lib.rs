@@ -73,9 +73,9 @@ pub use download::{
     DownloadFileKind, DownloadMode, DownloadOptions, DownloadOutputConflict, DownloadPathTemplates,
     DownloadPreflight, DownloadReport, DownloadReportSummary, DownloadedFile, DuplicateDecision,
     EntryDanmakuUpdateReport, EntryDownloadReport, EntryDownloadSummary, MediaHostOptions,
-    MuxOptions, MuxReport, RetryPolicy, SidecarOptions, StagedDanmakuFile, StagedDanmakuUpdate,
-    StreamSelection, SubtitleAiPolicy, archive_entry_allows_danmaku_update, decode_danmaku_xml,
-    probe_media_cdns, probe_media_cdns_with_progress,
+    MuxFormat, MuxOptions, MuxReport, RetryPolicy, SidecarOptions, StagedDanmakuFile,
+    StagedDanmakuUpdate, StreamSelection, SubtitleAiPolicy, archive_entry_allows_danmaku_update,
+    decode_danmaku_xml, probe_media_cdns, probe_media_cdns_with_progress,
 };
 pub use error::{Error, Result};
 pub use input::Input;

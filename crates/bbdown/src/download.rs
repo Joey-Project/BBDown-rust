@@ -106,6 +106,7 @@ pub struct DownloadOptions {
     pub cdn_probe: bool,
     pub cdn_parallelism: usize,
     pub mux: MuxOptions,
+    pub mux_format: MuxFormat,
     pub download_idle_timeout: Option<Duration>,
 }
 
@@ -127,6 +128,7 @@ impl Default for DownloadOptions {
             cdn_probe: false,
             cdn_parallelism: 1,
             mux: MuxOptions::Disabled,
+            mux_format: MuxFormat::default(),
             download_idle_timeout: Some(Duration::from_secs(30)),
         }
     }
@@ -251,6 +253,12 @@ impl DownloadOptions {
     #[must_use]
     pub fn with_mux(mut self, mux: MuxOptions) -> Self {
         self.mux = mux;
+        self
+    }
+
+    #[must_use]
+    pub fn with_mux_format(mut self, mux_format: MuxFormat) -> Self {
+        self.mux_format = mux_format;
         self
     }
 
@@ -747,6 +755,30 @@ impl MuxOptions {
     pub fn ffmpeg(binary: impl Into<PathBuf>) -> Self {
         Self::Ffmpeg {
             binary: binary.into(),
+        }
+    }
+}
+
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum MuxFormat {
+    #[default]
+    Mp4,
+    Mkv,
+}
+
+impl MuxFormat {
+    const fn extension(self) -> &'static str {
+        match self {
+            Self::Mp4 => "mp4",
+            Self::Mkv => "mkv",
+        }
+    }
+
+    const fn ffmpeg_format(self) -> &'static str {
+        match self {
+            Self::Mp4 => "mp4",
+            Self::Mkv => "matroska",
         }
     }
 }
@@ -3223,8 +3255,9 @@ impl BiliClient {
             return Ok(None);
         }
         let output_path = entry_dir.join(format!(
-            "{}.mp4",
-            mux_file_stem(plan_title, entry, options)?
+            "{}.{}",
+            mux_file_stem(plan_title, entry, options)?,
+            options.mux_format.extension()
         ));
         let mux_output_path = temporary_mux_path(&output_path);
         remove_file_if_exists(&mux_output_path).await?;
@@ -3263,11 +3296,8 @@ impl BiliClient {
         } else {
             0
         };
-        args.extend([
-            OsString::from("-c"),
-            OsString::from("copy"),
-            mux_output_path.as_os_str().to_os_string(),
-        ]);
+        args.extend(["-c", "copy", "-f", options.mux_format.ffmpeg_format()].map(OsString::from));
+        args.push(mux_output_path.as_os_str().to_os_string());
         let command = command_report(binary, &args);
         progress.on_download_progress(&DownloadProgressEvent::MuxStarted {
             entry_index: entry.index,
@@ -5733,11 +5763,15 @@ fn archive_key_prefix_with_stream_token(
     stream_token: Option<String>,
 ) -> Option<String> {
     let mut tokens = Vec::new();
+    let is_mkv_mux = matches!(options.mode, DownloadMode::All)
+        && matches!(options.mux, MuxOptions::Ffmpeg { .. })
+        && matches!(options.mux_format, MuxFormat::Mkv);
     if !matches!(options.mode, DownloadMode::All)
         || (should_download_danmaku(options) && !options.danmaku_formats.is_default())
         || (should_download_subtitles(options)
             && options.subtitle_ai_policy.archive_key_token().is_some())
         || options.stream_selection.has_selection()
+        || is_mkv_mux
     {
         tokens.push(format!("mode={}", options.mode.archive_key_token()));
     }
@@ -5756,6 +5790,9 @@ fn archive_key_prefix_with_stream_token(
         stream_token.or_else(|| archive_stream_selection_token(&options.stream_selection))
     {
         tokens.push(stream_token);
+    }
+    if is_mkv_mux {
+        tokens.push("mux=mkv".to_owned());
     }
     (!tokens.is_empty()).then(|| tokens.join(";"))
 }
@@ -6602,21 +6639,22 @@ mod tests {
     #[cfg(unix)]
     use super::path_is_occupied;
     use super::{
-        CDN_PUBLIC_PROBE_MAX_BYTES, CDN_SHARD_CHUNK_SIZE, DEFAULT_UPOS_REPLACEMENT_HOST,
-        DanmakuUpdateOptions, DanmakuUpdatePolicy, DownloadArchive, DownloadArchiveEntryRecord,
-        DownloadArchiveRecord, DownloadFileRequest, DownloadMode, DownloadOptions,
-        DownloadPathTemplates, DownloadPreflight, DownloadReport, DownloadReportSummary,
-        DownloadedFile, DuplicateDecision, EntryDownloadReport, EntryDownloadSummary,
-        MAX_FILE_COMPONENT_BYTES, MAX_FILE_NAME_BYTES, MAX_SUBTITLE_EXTENSION_BYTES,
-        MediaHostOptions, MuxOptions, MuxReport, RetryPolicy, SidecarOptions, StreamSelection,
-        SubtitleAiPolicy, TemplateContext, archive_sidecar_path, candidate_urls,
-        comparable_output_path, cover_file_name, default_plan_output_dir,
-        download_entry_content_key, download_entry_content_key_for_options,
-        download_plan_content_key, download_plan_content_key_for_options, entry_dir_name,
-        media_file_name, mux_file_stem, probe_media_cdns, remove_mux_output_if_cancelled,
-        render_template_component, safe_file_name, safe_file_name_with_budget, select_audio_stream,
-        select_media_stream, selected_subtitles, subtitle_dedup_key, subtitle_extension,
-        subtitle_file_name, temporary_download_path, temporary_generated_path, temporary_mux_path,
+        ArchivePlanMatch, CDN_PUBLIC_PROBE_MAX_BYTES, CDN_SHARD_CHUNK_SIZE,
+        DEFAULT_UPOS_REPLACEMENT_HOST, DanmakuUpdateOptions, DanmakuUpdatePolicy, DownloadArchive,
+        DownloadArchiveEntryRecord, DownloadArchiveRecord, DownloadFileRequest, DownloadMode,
+        DownloadOptions, DownloadPathTemplates, DownloadPreflight, DownloadReport,
+        DownloadReportSummary, DownloadedFile, DuplicateDecision, EntryDownloadReport,
+        EntryDownloadSummary, MAX_FILE_COMPONENT_BYTES, MAX_FILE_NAME_BYTES,
+        MAX_SUBTITLE_EXTENSION_BYTES, MediaHostOptions, MuxFormat, MuxOptions, MuxReport,
+        RetryPolicy, SidecarOptions, StreamSelection, SubtitleAiPolicy, TemplateContext,
+        archive_sidecar_path, candidate_urls, comparable_output_path, cover_file_name,
+        default_plan_output_dir, download_entry_content_key,
+        download_entry_content_key_for_options, download_plan_content_key,
+        download_plan_content_key_for_options, entry_dir_name, media_file_name, mux_file_stem,
+        probe_media_cdns, remove_mux_output_if_cancelled, render_template_component,
+        safe_file_name, safe_file_name_with_budget, select_audio_stream, select_media_stream,
+        selected_subtitles, subtitle_dedup_key, subtitle_extension, subtitle_file_name,
+        temporary_download_path, temporary_generated_path, temporary_mux_path,
         temporary_replace_path, write_generated_text_file,
     };
     use crate::models::{
@@ -7670,6 +7708,49 @@ mod tests {
     }
 
     #[test]
+    fn archive_keys_distinguish_mkv_mux_from_mp4_and_preserve_legacy_mp4() -> anyhow::Result<()> {
+        let server = MockServer::start();
+        let plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
+        let mp4_options = DownloadOptions {
+            mux: MuxOptions::ffmpeg("ffmpeg"),
+            ..DownloadOptions::default()
+        };
+        let mkv_options = mp4_options.clone().with_mux_format(MuxFormat::Mkv);
+        let legacy_key = download_plan_content_key(&plan);
+        let mp4_key = download_plan_content_key_for_options(&plan, &mp4_options);
+        let mkv_key = download_plan_content_key_for_options(&plan, &mkv_options);
+        assert_eq!(mp4_key, legacy_key);
+        assert_eq!(mkv_key, format!("mode=all;mux=mkv;{legacy_key}"));
+
+        let legacy_record = DownloadArchiveRecord {
+            content_key: legacy_key,
+            title: plan.title.clone(),
+            output_dir: PathBuf::from("legacy"),
+            completed_at_unix: 1,
+            entries: Vec::new(),
+        };
+        let mkv_record = DownloadArchiveRecord {
+            content_key: mkv_key,
+            title: plan.title.clone(),
+            output_dir: PathBuf::from("mkv"),
+            completed_at_unix: 2,
+            entries: Vec::new(),
+        };
+        assert!(ArchivePlanMatch::from_options(&plan, &mp4_options).matches_record(&legacy_record));
+        assert!(!ArchivePlanMatch::from_options(&plan, &mp4_options).matches_record(&mkv_record));
+        assert!(
+            !ArchivePlanMatch::from_options(&plan, &mkv_options).matches_record(&legacy_record)
+        );
+        let legacy_archive = DownloadArchive::new(vec![legacy_record]);
+        let preflight = DownloadPreflight::inspect(&plan, &mkv_options, Some(&legacy_archive))?;
+        assert!(
+            preflight.archived_records.is_empty(),
+            "a legacy MP4 record must not satisfy an MKV download"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn download_content_key_distinguishes_subtitle_ai_policy() {
         let server = MockServer::start();
         let plan = test_plan(&server);
@@ -7758,6 +7839,21 @@ mod tests {
             super::refresh_danmaku_archive_content_key(&ass_stream_key, &DanmakuFormats::default())
                 .ok_or_else(|| anyhow::anyhow!("stream key did not refresh to default"))?;
         assert_eq!(refreshed_default, stream_key);
+
+        let mkv_key = "mode=all;mux=mkv;plan|aid=170001;cid=2";
+        let refreshed_mkv = super::refresh_danmaku_archive_content_key(
+            mkv_key,
+            &DanmakuFormats::new([DanmakuFormat::Xml, DanmakuFormat::Ass]),
+        )
+        .ok_or_else(|| anyhow::anyhow!("MKV key did not refresh"))?;
+        assert_eq!(
+            refreshed_mkv,
+            "mode=all;danmaku=xml+ass;mux=mkv;plan|aid=170001;cid=2"
+        );
+        let refreshed_mkv_default =
+            super::refresh_danmaku_archive_content_key(&refreshed_mkv, &DanmakuFormats::default())
+                .ok_or_else(|| anyhow::anyhow!("MKV key did not refresh to default"))?;
+        assert_eq!(refreshed_mkv_default, mkv_key);
         Ok(())
     }
 
@@ -13481,8 +13577,157 @@ mod tests {
         assert_eq!(mux.command[1], "-y");
         assert!(mux.command.iter().any(|arg| arg == "-nostdin"));
         assert!(mux.command.iter().any(|arg| arg == "-c"));
+        let output_index = mux
+            .command
+            .iter()
+            .position(|arg| arg.ends_with(".mp4.bbdown-mux"))
+            .ok_or_else(|| anyhow::anyhow!("missing temporary mux output argument"))?;
+        assert!(
+            output_index >= 4,
+            "expected inputs before the output format"
+        );
+        assert_eq!(
+            &mux.command[output_index - 4..output_index],
+            ["-c", "copy", "-f", "mp4"]
+        );
+        let last_input_index = mux.command[..output_index]
+            .iter()
+            .rposition(|arg| arg == "-i")
+            .ok_or_else(|| anyhow::anyhow!("missing FFmpeg input argument"))?;
+        assert!(
+            last_input_index < output_index - 4,
+            "output format must follow inputs"
+        );
         assert!(mux.output_path.ends_with("Main.mp4"));
         assert_eq!(tokio::fs::read_to_string(&mux.output_path).await?, "muxed");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn ffmpeg_mux_real_output_uses_mp4_container_when_available() -> anyhow::Result<()> {
+        let Some(generated) =
+            ffmpeg_test_media("mpeg4", "mp4", &["-movflags", "+frag_keyframe+empty_moov"])?
+        else {
+            eprintln!("skipping real FFmpeg mux regression: ffmpeg is unavailable");
+            return Ok(());
+        };
+
+        let server = MockServer::start();
+        for path in ["/video.m4s", "/audio.m4s"] {
+            let generated = generated.clone();
+            server.mock(move |when, then| {
+                when.method(GET).path(path);
+                then.status(200).body(generated);
+            });
+        }
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let plan = single_video_plan(format!("{}/video.m4s", server.base_url()));
+        let report = client
+            .download_plan(
+                &plan,
+                DownloadOptions {
+                    output_dir: temp.path().join("downloads"),
+                    retry: RetryPolicy::single_attempt(),
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
+                    mux: MuxOptions::ffmpeg("ffmpeg"),
+                    ..DownloadOptions::default()
+                },
+            )
+            .await?;
+        let mux = report.entries[0]
+            .mux
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("missing mux report"))?;
+        let muxed = tokio::fs::read(&mux.output_path).await?;
+        anyhow::ensure!(
+            muxed.get(4..8) == Some(b"ftyp"),
+            "expected an MP4 ftyp signature in mux output"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn ffmpeg_mux_real_flv_concat_uses_matroska_when_available() -> anyhow::Result<()> {
+        let Some(generated) = ffmpeg_test_media("flv", "flv", &[])? else {
+            eprintln!("skipping real FFmpeg concat regression: ffmpeg is unavailable");
+            return Ok(());
+        };
+
+        let server = MockServer::start();
+        for path in ["/segment-1.flv", "/segment-2.flv"] {
+            let generated = generated.clone();
+            server.mock(move |when, then| {
+                when.method(GET).path(path);
+                then.status(200).body(generated);
+            });
+        }
+        let temp = tempfile::tempdir()?;
+        let client = BiliClient::new(ClientConfig::default());
+        let mut plan = test_plan(&server);
+        plan.entries[0].streams.videos.clear();
+        plan.entries[0].streams.audios.clear();
+        plan.entries[0].streams.flv_segments = (1..=2)
+            .map(|order| FlvSegment {
+                order,
+                url: format!("{}/segment-{order}.flv", server.base_url()),
+                backup_urls: Vec::new(),
+                size: None,
+                length_ms: Some(200),
+            })
+            .collect();
+        plan.entries[0].subtitles.clear();
+        let output_dir = temp.path().join("downloads");
+        let report = client
+            .download_plan(
+                &plan,
+                DownloadOptions {
+                    output_dir,
+                    retry: RetryPolicy::single_attempt(),
+                    sidecars: SidecarOptions {
+                        danmaku: false,
+                        ..SidecarOptions::default()
+                    },
+                    mux: MuxOptions::ffmpeg("ffmpeg"),
+                    mux_format: MuxFormat::Mkv,
+                    ..DownloadOptions::default()
+                },
+            )
+            .await?;
+        let mux = report.entries[0]
+            .mux
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("missing MKV mux report"))?;
+        anyhow::ensure!(mux.output_path.extension().is_some_and(|ext| ext == "mkv"));
+        let muxed = tokio::fs::read(&mux.output_path).await?;
+        anyhow::ensure!(
+            muxed.starts_with(&[0x1a, 0x45, 0xdf, 0xa3]),
+            "expected a Matroska EBML signature in mux output"
+        );
+        let output_index = mux
+            .command
+            .iter()
+            .position(|arg| arg.ends_with(".mkv.bbdown-mux"))
+            .ok_or_else(|| anyhow::anyhow!("missing temporary MKV mux output argument"))?;
+        anyhow::ensure!(
+            mux.command.windows(3).any(|args| {
+                args[0] == "-f" && args[1] == "matroska" && args[2].ends_with(".mkv.bbdown-mux")
+            }),
+            "expected the Matroska output format immediately before the temporary file"
+        );
+        anyhow::ensure!(
+            mux.command[..output_index]
+                .iter()
+                .any(|arg| arg == "concat"),
+            "expected concat input demuxing before Matroska output"
+        );
+        anyhow::ensure!(
+            !temporary_mux_path(&mux.output_path).exists(),
+            "temporary mux file remained after successful replacement"
+        );
         Ok(())
     }
 
@@ -16382,6 +16627,45 @@ mod tests {
                 &DownloadOptions::default(),
             )?),
         )
+    }
+
+    fn ffmpeg_test_media(
+        video_encoder: &str,
+        container: &str,
+        output_options: &[&str],
+    ) -> anyhow::Result<Option<Vec<u8>>> {
+        let mut command = std::process::Command::new("ffmpeg");
+        command.args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=64x64:d=0.2",
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=r=44100:cl=stereo",
+            "-t",
+            "0.2",
+            "-c:v",
+            video_encoder,
+            "-c:a",
+            "aac",
+        ]);
+        command
+            .args(output_options)
+            .args(["-f", container, "pipe:1"]);
+        match command.output() {
+            Ok(output) if output.status.success() => Ok(Some(output.stdout)),
+            Ok(output) => Err(anyhow::anyhow!(
+                "ffmpeg {container} fixture generation failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error.into()),
+        }
     }
 
     #[cfg(unix)]

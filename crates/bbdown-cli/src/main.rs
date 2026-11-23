@@ -19,7 +19,7 @@ use bbdown_core::{
     DanmakuUpdatePolicy, DownloadArchive, DownloadCancellationToken, DownloadMode, DownloadOptions,
     DownloadPathTemplates, DownloadPlan, DownloadPreflight, DownloadProgressEvent,
     DownloadProgressSink, DownloadReport, DuplicateDecision, EndpointConfig, Input,
-    MediaHostOptions, MediaStream, MuxOptions, PgcIndexFilterSelection, PgcIndexKind,
+    MediaHostOptions, MediaStream, MuxFormat, MuxOptions, PgcIndexFilterSelection, PgcIndexKind,
     PgcIndexOrder, PgcIndexQuery, PgcIndexSort, PgcMetadataCapability, PgcMetadataRoute,
     PgcMetadataService, PgcTimetable, PgcTimetableKind, PlaybackPlan, PlayurlMode,
     PopularVideoPage, PopularVideoQuery, QrLoginCredentials, QrLoginCredentialsState, QrLoginKind,
@@ -507,6 +507,14 @@ struct DownloadCliArgs {
     danmaku_formats: Vec<DanmakuFormatArg>,
     #[arg(long)]
     no_mux: bool,
+    #[arg(
+        long,
+        value_enum,
+        value_name = "FORMAT",
+        conflicts_with_all = ["no_mux", "only"],
+        help = "Choose the container for FFmpeg output (default: mp4)"
+    )]
+    mux_format: Option<MuxFormatArg>,
     #[arg(long, value_name = "ID")]
     video_quality: Option<u32>,
     #[arg(long, value_name = "ID")]
@@ -539,6 +547,21 @@ struct DownloadCliArgs {
     force_replace_host: bool,
     #[arg(long)]
     allow_pcdn: bool,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum MuxFormatArg {
+    Mp4,
+    Mkv,
+}
+
+impl From<MuxFormatArg> for MuxFormat {
+    fn from(value: MuxFormatArg) -> Self {
+        match value {
+            MuxFormatArg::Mp4 => Self::Mp4,
+            MuxFormatArg::Mkv => Self::Mkv,
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -1053,6 +1076,7 @@ struct DownloadOptionCliArgs {
     download_idle_timeout_seconds: u64,
     only: Option<DownloadOnlyArg>,
     execution: DownloadExecutionCliFlags,
+    mux_format: Option<MuxFormatArg>,
     sidecars: DownloadSidecarCliFlags,
     media_hosts: DownloadMediaHostCliFlags,
     cdn_probe: bool,
@@ -1125,7 +1149,7 @@ fn download_options_from_cli(args: DownloadOptionCliArgs) -> anyhow::Result<Down
     };
     let media_hosts = media_host_options_from_cli(args.media_hosts)?;
     let path_templates = path_templates_from_cli(args.templates);
-    Ok(DownloadOptions::new(args.output_dir)
+    let options = DownloadOptions::new(args.output_dir)
         .with_retry_policy(RetryPolicy::new(
             args.retry_attempts,
             Duration::from_millis(args.retry_backoff_ms),
@@ -1146,7 +1170,8 @@ fn download_options_from_cli(args: DownloadOptionCliArgs) -> anyhow::Result<Down
         .with_media_hosts(media_hosts)
         .with_cdn_probe(args.cdn_probe)
         .with_cdn_parallelism(args.cdn_parallel.unwrap_or(1))
-        .with_mux(mux))
+        .with_mux(mux);
+    Ok(options.with_mux_format(args.mux_format.map(Into::into).unwrap_or_default()))
 }
 
 fn danmaku_update_options_from_cli(
@@ -1583,6 +1608,7 @@ async fn handle_download_cli(
             no_resume: args.no_resume,
             no_mux: args.no_mux,
         },
+        mux_format: args.mux_format,
         sidecars: DownloadSidecarCliFlags {
             no_cover: args.no_cover,
             no_subtitles: args.no_subtitles,

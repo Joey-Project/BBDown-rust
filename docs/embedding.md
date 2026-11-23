@@ -1280,7 +1280,8 @@ cancels its in-flight requests; the core does not spawn background resolver race
 ## Download Execution
 
 Downloads are explicit. The library default keeps muxing disabled so embedding applications do not
-spawn `ffmpeg` unless they opt in.
+spawn `ffmpeg` unless they opt in. `DownloadOptions::with_mux` enables the FFmpeg backend, which
+defaults to MP4. Set `.with_mux_format(MuxFormat::Mkv)` to use Matroska.
 Plan entries may include `ChapterTrack` values when the selected upstream player metadata exposes
 usable chapter boundaries. When muxing through `MuxOptions::ffmpeg(...)`, those chapters are handed
 to ffmpeg as temporary ffmetadata and the returned `MuxReport::chapter_count` records how many

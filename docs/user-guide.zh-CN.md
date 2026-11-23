@@ -743,11 +743,11 @@ bbdown danmaku update av170001 --archive-file downloads/archive.json \
 `--request-timeout-seconds` 作用于 API 请求。媒体正文读取使用
 `--download-idle-timeout-seconds`；传入 `0` 可禁用该 idle timeout。
 
-默认通过 `ffmpeg` 启用 mux。使用 `--ffmpeg <path>` 选择二进制，或使用 `--no-mux` 仅保留
-下载的媒体旁路文件。可复用 crate 通过 `DownloadOptions::mux` 让外部进程执行保持显式。
-重新 mux 会先写入并校验临时输出，然后替换最终文件，因此失败的 mux 会保留已有 mux 文件。
-当 plan 条目包含章节且启用 ffmpeg mux 时，BBDown 会通过临时 ffmetadata 输入把这些章节写
-入 mux 后 MP4。JSON 下载报告会用 `mux.chapter_count` 报告交给 ffmpeg 的章节数量。
+`download` 默认用 `ffmpeg` 将媒体封装为 MP4。使用 `--mux-format mkv` 可输出 Matroska，
+`--ffmpeg <path>` 可选择二进制，`--no-mux` 可直接保留下载的媒体文件。`--mux-format` 适用于启用封装的完整下载。
+FFmpeg 直接复制媒体轨道到所选容器。重新封装时，BBDown 先写入并校验暂存文件，再替换成品。
+当播放计划包含章节且启用 FFmpeg 封装时，BBDown 通过临时 ffmetadata 输入将章节写入成品文件。
+JSON 下载报告的 `mux.chapter_count` 记录交给 FFmpeg 的章节数量。
 
 ## 凭据
 
