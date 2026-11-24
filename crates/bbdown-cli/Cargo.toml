@@ -14,12 +14,16 @@ name = "bbdown"
 path = "src/main.rs"
 
 [dependencies]
+anstream.workspace = true
 anyhow.workspace = true
 bbdown_core = { package = "bbdown-core", version = "0.11.2", path = "../bbdown" }
 clap.workspace = true
 dirs.workspace = true
+qrcode.workspace = true
 serde_json.workspace = true
 serde.workspace = true
+tempfile.workspace = true
+terminal_size.workspace = true
 tokio.workspace = true
 url.workspace = true
 
@@ -30,7 +34,6 @@ predicates.workspace = true
 prost.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tempfile.workspace = true
 
 [lints]
 workspace = true

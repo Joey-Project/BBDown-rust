@@ -873,12 +873,13 @@ key fresh，CLI 也会刷新 ready 的通用 access key 并重试一次 planning
 `--credential-stale-after-seconds` 和 `--credential-expiring-within-seconds`，或等价的
 `BBDOWN_CREDENTIAL_PREFLIGHT`、`BBDOWN_CREDENTIAL_STALE_AFTER_SECONDS` 和
 `BBDOWN_CREDENTIAL_EXPIRING_WITHIN_SECONDS` 环境变量调整本地 lifecycle policy。
-`auth login-web` 打印二维码登录 URL，轮询到扫码确认，并保存得到的
-cookie。`auth login-tv` 使用 TV 二维码流程，保存 TV 专用 access key 供未来 TV/app 流程使
+`auth login-web` 和 `auth login-tv` 会打印登录链接，并在空间足够的终端里显示二维码。设置 `NO_COLOR` 后也会显示。
+终端空间不足时，可以放大窗口或用 `--qr-output login.svg` 保存到新的 SVG 文件。重定向输出或使用 `--json` 时也可以保存 SVG。
+`auth login-web` 在扫码确认后保存 cookie。`auth login-tv` 保存 TV 专用 access key 供未来 TV/app 流程使
 用，不会覆盖由通用 access-key 命令导入或获取的 intl/Bstar access key。使用 `--json` 时，
 登录命令会打印换行分隔 JSON 事件：`ticket` 在轮询或 handoff 前包含登录 URL 和
 `qr_payload`，`saved` 只包含脱敏后的凭据布尔值。当前 WEB 和 TV 登录流程中，`qr_payload`
-与扫码 URL 相同，嵌入项目可以直接把它渲染成二维码。请把登录 URL 和 QR payload 当成临
+与扫码 URL 相同，嵌入项目可以直接把它渲染成二维码。请把登录 URL、QR payload 和导出的二维码文件当成临
 时登录密钥，因为它们包含登录 handoff 状态。状态输出或 `saved` JSON 事件不会打印 token
 值。
 WEB 和 TV 二维码登录会记录 lifecycle source 和获取时间；只有上游响应提供可靠过期字段时
