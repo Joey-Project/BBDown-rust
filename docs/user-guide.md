@@ -1059,15 +1059,18 @@ fresh. Tune the local lifecycle policy with global `--credential-stale-after-sec
 `--credential-expiring-within-seconds`, or the equivalent `BBDOWN_CREDENTIAL_PREFLIGHT`,
 `BBDOWN_CREDENTIAL_STALE_AFTER_SECONDS`, and `BBDOWN_CREDENTIAL_EXPIRING_WITHIN_SECONDS`
 environment variables.
-`auth login-web` prints a QR login URL, polls until scan confirmation, and saves the resulting
-cookie. `auth login-tv` uses the TV QR flow and saves a TV-specific access key for future TV/app
-flows without overwriting the generic intl/Bstar access key imported or acquired through the generic
-access-key commands. With `--json`, login commands print newline-delimited JSON events: `ticket`
+`auth login-web` and `auth login-tv` print the login URL and display a QR code in terminals with
+enough space, including when `NO_COLOR` is set. If the terminal is too small, enlarge it or use
+`--qr-output login.svg`. This option saves a new SVG for scanning and works when output is redirected
+or `--json` is enabled. `auth login-web` saves a cookie after scan confirmation. `auth login-tv`
+saves a TV-specific access key for future TV/app flows without overwriting the generic intl/Bstar
+access key imported or acquired through the generic access-key commands. With `--json`, login
+commands print newline-delimited JSON events: `ticket`
 includes the login URL plus `qr_payload` before polling or handoff, and `saved` includes only
 redacted credential booleans. For current WEB and TV login flows, `qr_payload` is the same URL and
-can be rendered directly as a QR code by embedding projects. Treat login URLs and QR payloads as
-temporary login secrets because they contain login handoff state. Token values are not printed by
-status or the `saved` JSON event.
+can be rendered directly as a QR code by embedding projects. Treat login URLs, QR payloads, and
+exported QR files as temporary login secrets because they contain login handoff state. Token values
+are not printed by status or the `saved` JSON event.
 WEB and TV QR login record lifecycle source and acquisition time, but only record an expiry when the
 upstream response provides a reliable expiry field. When QR polling returns refresh metadata, the CLI
 saves the raw refresh token as a profile secret for later `auth renew-web`, `auth renew-tv`, or

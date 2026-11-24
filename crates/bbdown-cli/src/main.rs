@@ -44,6 +44,8 @@ use std::sync::{
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::task::JoinHandle;
 
+mod terminal_qr;
+
 const DEFAULT_ACCESS_KEY_AUTH_BASE: &str = "https://www.biliplus.com";
 const DEFAULT_ACCESS_KEY_CALLBACK_ORIGIN: &str = "https://www.bilibili.com";
 const BALH_LOGIN_CREDENTIALS_PREFIX: &str = "balh-login-credentials:";
@@ -1268,6 +1270,12 @@ struct SecretImportArgs {
 struct QrLoginArgs {
     #[arg(long)]
     json: bool,
+    #[arg(
+        long,
+        value_name = "FILE",
+        help = "Write a standalone QR code SVG without overwriting an existing file"
+    )]
+    qr_output: Option<PathBuf>,
     #[arg(long, default_value_t = 180)]
     timeout_seconds: u64,
     #[arg(long, default_value_t = 1)]
@@ -5984,10 +5992,32 @@ async fn handle_qr_login(
         QrLoginKind::Tv => client.create_tv_qr_login().await?,
     };
     let output = ticket.output();
+    let should_render_terminal_qr = !args.json && io::stdout().is_terminal();
+    let qr_code = if args.qr_output.is_some() || should_render_terminal_qr {
+        qrcode::QrCode::new(output.qr_payload.as_bytes()).ok()
+    } else {
+        None
+    };
+    if let Some(path) = args.qr_output.as_deref() {
+        let code = qr_code
+            .as_ref()
+            .context("failed to encode QR login payload")?;
+        terminal_qr::write_svg_noclobber(code, path)?;
+    }
     if args.json {
         print_qr_ticket_json(&output)?;
     } else {
         print_human_line(format_args!("scan: {}", output.url))?;
+        if let Some(path) = args.qr_output.as_deref() {
+            print_human_line(format_args!("qr_saved: {}", path.display()))?;
+        }
+        if let Some(code) = qr_code.as_ref()
+            && terminal_qr::print_if_supported(code)? == terminal_qr::TerminalQrOutcome::TooSmall
+        {
+            print_human_line(
+                "terminal is too small for a QR code; enlarge it or use --qr-output FILE",
+            )?;
+        }
     }
     let credentials = wait_for_qr_login(&client, &ticket, &args).await?;
     let acquired_at_unix_millis = current_unix_millis();
