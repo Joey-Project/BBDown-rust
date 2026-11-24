@@ -21,7 +21,7 @@ BBDown 默认使用 FFmpeg 封装 MP4。[下载 FFmpeg](https://ffmpeg.org/downl
 bbdown auth login-web
 ```
 
-已发布的 v0.11.2 会打印 `scan:` 链接，可用本地工具将链接转成二维码。支持自动渲染二维码的构建在终端空间足够时会直接显示。输出被重定向或终端空间不足时，可运行 `bbdown auth login-web --qr-output login.svg` 保存为 SVG。用 B 站 App 扫码确认后，BBDown 会保存登录状态。
+从 v0.11.3 起，终端空间足够时 BBDown 会直接显示二维码，设置 `NO_COLOR` 后也会显示。输出被重定向或终端空间不足时，可运行 `bbdown auth login-web --qr-output login.svg` 保存 SVG。用 B 站 App 扫码即可保存登录状态。v0.11.2 会打印 `scan:` 链接，可用本地工具将链接转成二维码。
 
 ## 3. 下载视频或分集
 
