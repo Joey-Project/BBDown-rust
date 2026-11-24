@@ -4,42 +4,7 @@
 
 ## Quick Start
 
-### 1. Download and extract
-
-Download and extract the archive for your OS and CPU architecture. The examples use `bbdown` on `PATH`. From the extracted folder, use `.\bbdown.exe` in Windows PowerShell or `./bbdown` on macOS and Linux. [Download BBDown](https://github.com/Joey-Project/BBDown-rust/releases/latest)
-
-<details>
-<summary>FFmpeg setup</summary>
-
-BBDown uses FFmpeg to create an MP4 by default. Use `--no-mux` to keep the downloaded media files as they are. [Download FFmpeg](https://ffmpeg.org/download.html)
-
-- On Windows, put `ffmpeg.exe` next to `bbdown.exe` and run BBDown from that folder.
-- Use FFmpeg on `PATH` or pass its path with `--ffmpeg`, such as `--ffmpeg ./tools/ffmpeg` or `--ffmpeg "C:\ffmpeg\bin\ffmpeg.exe"`.
-
-</details>
-
-### 2. Optional web login
-
-For membership access or higher quality, run `bbdown auth login-web`. Turn the URL printed after `scan:` into a QR code locally and scan it with the Bilibili app. BBDown saves the login.
-
-### 3. Download a video or episode
-
-Replace the example ID with your Bilibili link or ID. Add `--output-dir downloads` to save files under `downloads`.
-
-| What to download | Command |
-| --- | --- |
-| Regular video (UGC) | `bbdown download BV1qt4y1X7TW` or `bbdown download av170001` |
-| Anime, film, or documentary episode (PGC) | `bbdown download ep318903` |
-| Full PGC season | `bbdown download ss26801 --select all` |
-| Selected episodes | `bbdown download ss26801 --select 1,3-5` |
-
-For a media page (`md...`), `--select` picks episodes within the resolved season. `--select all` may include extras such as trailers. Use `bbdown info ss26801 --select all` to see the episode list.
-
-### 4. Video quality, subtitles, and danmaku
-
-- **Quality**. Run `bbdown plan av170001` to see the quality IDs under `videos`. Add `--video-quality <ID>` to the download command.
-- **Subtitles**. BBDown saves available subtitles as separate files, including AI tracks. Use `--only subtitle` to download just subtitles or `--no-subtitles` to skip them. The plan marks recognized AI tracks with `ai=true`. Use `--subtitle-ai exclude-ai` to skip AI tracks or `--subtitle-ai prefer-non-ai` to prefer human subtitles in the same language.
-- **Danmaku**. BBDown saves XML by default. Use `--danmaku-format xml,ass` for both formats, `--only danmaku` to download just danmaku, or `--no-danmaku` to skip it.
+Start with the [CLI Quick Start](docs/quick-start.md).
 
 ## Overview
 
