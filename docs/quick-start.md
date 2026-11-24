@@ -21,7 +21,7 @@ For membership access or higher quality, run this command.
 bbdown auth login-web
 ```
 
-The published v0.11.2 release prints a `scan:` URL. Convert it to a QR code with a local tool. Builds with automatic QR rendering show the code directly when the terminal has enough room. To save an SVG when output is redirected or the terminal is too small, run `bbdown auth login-web --qr-output login.svg`. Scan the code with the Bilibili app. BBDown saves the login after confirmation.
+From v0.11.3, BBDown displays the QR code when the terminal has enough room, including when `NO_COLOR` is set. Use `bbdown auth login-web --qr-output login.svg` to save an SVG when output is redirected or the terminal is too small. Scan it with the Bilibili app to save the login. In v0.11.2, the command prints a `scan:` URL that you can convert with a local tool.
 
 ## 3. Download a video or episode
 

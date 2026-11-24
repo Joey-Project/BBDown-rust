@@ -1,6 +1,6 @@
 [package]
 name = "bbdown-cli"
-version = "0.11.2"
+version = "0.11.3"
 description = "Command-line frontend for the BBDown Rust library."
 edition.workspace = true
 license.workspace = true
@@ -16,7 +16,7 @@ path = "src/main.rs"
 [dependencies]
 anstream.workspace = true
 anyhow.workspace = true
-bbdown_core = { package = "bbdown-core", version = "0.11.2", path = "../bbdown" }
+bbdown_core = { package = "bbdown-core", version = "0.11.3", path = "../bbdown" }
 clap.workspace = true
 dirs.workspace = true
 qrcode.workspace = true
