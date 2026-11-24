@@ -2,6 +2,12 @@
 
 # BBDown Rust
 
+## 快速开始
+
+请看 [CLI 快速开始](docs/quick-start.zh-CN.md)。
+
+## 项目概览
+
 `BBDown Rust` 是 BBDown 的 Rust 原生重写，目标有两个：
 
 - 提供可被其他 Rust 项目复用的 `bbdown-core` package / `bbdown_core` crate；

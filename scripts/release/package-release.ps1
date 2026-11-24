@@ -40,6 +40,8 @@ try {
     Copy-Item -LiteralPath (Join-Path $repoRoot "docs/embedding.zh-CN.md") -Destination (Join-Path $stagingDir "docs/embedding.zh-CN.md")
     Copy-Item -LiteralPath (Join-Path $repoRoot "docs/user-guide.md") -Destination (Join-Path $stagingDir "docs/user-guide.md")
     Copy-Item -LiteralPath (Join-Path $repoRoot "docs/user-guide.zh-CN.md") -Destination (Join-Path $stagingDir "docs/user-guide.zh-CN.md")
+    Copy-Item -LiteralPath (Join-Path $repoRoot "docs/quick-start.md") -Destination (Join-Path $stagingDir "docs/quick-start.md")
+    Copy-Item -LiteralPath (Join-Path $repoRoot "docs/quick-start.zh-CN.md") -Destination (Join-Path $stagingDir "docs/quick-start.zh-CN.md")
     Copy-Item -LiteralPath (Join-Path $repoRoot "docs/release.md") -Destination (Join-Path $stagingDir "docs/release.md")
     Copy-Item -LiteralPath (Join-Path $repoRoot "docs/release.zh-CN.md") -Destination (Join-Path $stagingDir "docs/release.zh-CN.md")
     Copy-Item -Path (Join-Path $repoRoot "docs/release-notes/*.md") -Destination (Join-Path $stagingDir "docs/release-notes/")

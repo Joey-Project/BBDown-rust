@@ -2,6 +2,12 @@
 
 # BBDown Rust
 
+## Quick Start
+
+Start with the [CLI Quick Start](docs/quick-start.md).
+
+## Overview
+
 `BBDown Rust` is a Rust-native rewrite of BBDown with two goals:
 
 - expose a reusable `bbdown-core` package / `bbdown_core` crate for other Rust projects;
