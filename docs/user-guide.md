@@ -909,12 +909,13 @@ bbdown danmaku update av170001 --archive-file downloads/archive.json \
 `--request-timeout-seconds` applies to API requests. Media body reads use
 `--download-idle-timeout-seconds`; pass `0` to disable that idle timeout.
 
-Muxing is enabled by default through `ffmpeg`. Use `--ffmpeg <path>` to choose a binary or
-`--no-mux` to keep downloaded media files as sidecars only. The reusable crate keeps external
-process execution explicit through `DownloadOptions::mux`. A mux rerun writes and validates a
-temporary output before replacing the final file, so a failed mux keeps any existing muxed file.
+By default, `download` uses `ffmpeg` to mux media into MP4. Use `--mux-format mkv` for Matroska,
+`--ffmpeg <path>` to choose a binary, or `--no-mux` to keep the downloaded media files. The
+`--mux-format` option applies to a full download with muxing enabled. FFmpeg stream-copies the
+tracks into the chosen container. A mux rerun stages and validates the output before replacing
+the final file.
 When a plan entry contains chapters and ffmpeg muxing is enabled, BBDown writes those chapters into
-the muxed MP4 through a temporary ffmetadata input. The JSON download report includes
+the muxed file through a temporary ffmetadata input. The JSON download report includes
 `mux.chapter_count` for the number of chapters handed to ffmpeg.
 
 ## Credentials

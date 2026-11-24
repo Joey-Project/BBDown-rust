@@ -13290,7 +13290,7 @@ fn download_archive_rejects_archive_file_inside_keep_both_output_root() -> anyho
 #[cfg(unix)]
 #[test]
 #[allow(clippy::too_many_lines)]
-fn download_json_default_mux_keeps_stdout_valid() -> anyhow::Result<()> {
+fn download_json_mux_format_selection_keeps_stdout_valid() -> anyhow::Result<()> {
     let server = MockServer::start();
     let temp = tempfile::tempdir()?;
     let credential_file = temp.path().join("credentials.json");
@@ -13371,6 +13371,8 @@ fn download_json_default_mux_keeps_stdout_valid() -> anyhow::Result<()> {
         .arg(&output_dir)
         .arg("--ffmpeg")
         .arg(&ffmpeg)
+        .arg("--mux-format")
+        .arg("mkv")
         .arg("--no-danmaku")
         .arg("--json");
     let output = command.assert().success().get_output().stdout.clone();
@@ -13382,8 +13384,65 @@ fn download_json_default_mux_keeps_stdout_valid() -> anyhow::Result<()> {
     assert!(
         json["entries"][0]["mux"]["output_path"]
             .as_str()
+            .is_some_and(|path| path.ends_with("Main.mkv"))
+    );
+
+    let default_output_dir = temp.path().join("default-downloads");
+    let default_output = bbdown_command()?
+        .arg("--credential-file")
+        .arg(&credential_file)
+        .arg("--api-base")
+        .arg(server.base_url())
+        .arg("download")
+        .arg("av170001")
+        .arg("--output-dir")
+        .arg(default_output_dir)
+        .arg("--ffmpeg")
+        .arg(&ffmpeg)
+        .arg("--no-danmaku")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let default_json: Value = serde_json::from_slice(&default_output)?;
+    assert!(
+        default_json["entries"][0]["mux"]["output_path"]
+            .as_str()
             .is_some_and(|path| path.ends_with("Main.mp4"))
     );
+    Ok(())
+}
+
+#[test]
+fn download_mux_format_rejects_no_mux_conflict() -> anyhow::Result<()> {
+    bbdown_command()?
+        .arg("download")
+        .arg("av170001")
+        .arg("--mux-format")
+        .arg("mkv")
+        .arg("--no-mux")
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("cannot be used with"));
+    Ok(())
+}
+
+#[test]
+fn download_mux_format_rejects_only_conflict() -> anyhow::Result<()> {
+    bbdown_command()?
+        .args([
+            "download",
+            "av170001",
+            "--mux-format",
+            "mkv",
+            "--only",
+            "audio",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("cannot be used with"));
     Ok(())
 }
 

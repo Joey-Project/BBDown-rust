@@ -8,6 +8,7 @@ embedding-facing shape of each source line and shipped release.
 
 ## Versions
 
+- [v0.11.2](v0.11.2.md) fixes FFmpeg format selection for staged mux output and adds selectable MKV output.
 - [v0.11.1](v0.11.1.md): capability-declared PGC metadata routes, bounded UGC
   collection resolution, category metadata and offline catalog snapshots, public danmaku XML decode
   and ASS rendering, and crates.io OIDC trusted-publishing workflow.

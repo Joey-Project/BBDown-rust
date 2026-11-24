@@ -1109,7 +1109,8 @@ future 即可取消进行中的请求；core 不会在后台继续启动解析�
 
 ## 下载执行
 
-下载是显式动作。library 默认禁用 mux，因此嵌入应用不会在未选择的情况下启动 `ffmpeg`。
+下载是显式动作。库默认禁用封装。通过 `DownloadOptions::with_mux` 启用 FFmpeg 后，默认输出 MP4。
+使用 `.with_mux_format(MuxFormat::Mkv)` 可输出 Matroska。
 当选中的上游播放器 metadata 暴露可用章节边界时，plan 条目可能包含 `ChapterTrack`。通过
 `MuxOptions::ffmpeg(...)` 启用 mux 时，这些章节会以临时 ffmetadata 交给 ffmpeg，返回的
 `MuxReport::chapter_count` 会记录写入的章节数量。禁用 mux 时，章节只保留为 plan 条目上的
