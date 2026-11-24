@@ -15,6 +15,7 @@ superseded_by:
 ## Summary
 
 - Link the English and Simplified Chinese quick starts from their READMEs.
+- Include both quick starts in release archives so those links work offline.
 - Cover installing BBDown and FFmpeg, optional login, UGC and PGC downloads,
   and the main quality, subtitle, and danmaku options.
 - Describe automatic login QR rendering and SVG export alongside the scan
