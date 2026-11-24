@@ -2,6 +2,47 @@
 
 # BBDown Rust
 
+## 快速开始
+
+### 1. 下载并解压
+
+下载对应系统和 CPU 架构的压缩包并解压。下文以 `PATH` 中的 `bbdown` 为例。在解压目录直接运行时，Windows PowerShell 用 `.\bbdown.exe`，macOS 和 Linux 用 `./bbdown`。 [下载 BBDown](https://github.com/Joey-Project/BBDown-rust/releases/latest)
+
+<details>
+<summary>FFmpeg 配置</summary>
+
+BBDown 默认用 FFmpeg 封装 MP4。加 `--no-mux` 可以直接保留下载的媒体文件。 [下载 FFmpeg](https://ffmpeg.org/download.html)
+
+- Windows 可以把 `ffmpeg.exe` 放在 `bbdown.exe` 同一目录，然后在该目录运行 BBDown。
+- 可以使用 `PATH` 中的 FFmpeg，也可以用 `--ffmpeg` 指定路径，如 `--ffmpeg ./tools/ffmpeg` 或 `--ffmpeg "C:\ffmpeg\bin\ffmpeg.exe"`。
+
+</details>
+
+### 2. 可选的网页登录
+
+需要会员权限或更高清晰度时，运行 `bbdown auth login-web`。用本地工具将 `scan:` 后的链接转成二维码，再用 B 站 App 扫码确认。BBDown 会保存登录状态。
+
+### 3. 下载视频或分集
+
+把示例替换成自己的 B 站链接或 ID。加 `--output-dir downloads` 可将文件保存到 `downloads` 目录。
+
+| 下载内容 | 命令 |
+| --- | --- |
+| 普通视频（UGC） | `bbdown download BV1qt4y1X7TW` 或 `bbdown download av170001` |
+| 番剧、影视、纪录片单集（PGC） | `bbdown download ep318903` |
+| 整季 PGC | `bbdown download ss26801 --select all` |
+| 指定几集 | `bbdown download ss26801 --select 1,3-5` |
+
+`md...` 媒体页的 `--select` 在解析出的那一季内选集。`--select all` 可能包含预告等附加内容，可用 `bbdown info ss26801 --select all` 查看分集。
+
+### 4. 清晰度、字幕和弹幕
+
+- **清晰度**。用 `bbdown plan av170001` 查看 `videos` 下的清晰度 ID，再给下载命令加 `--video-quality <ID>`。
+- **字幕**。可用的字幕默认另存，包括 AI 字幕。`--only subtitle` 只下载字幕，`--no-subtitles` 跳过字幕。`plan` 用 `ai=true` 标记识别到的 AI 字幕。`--subtitle-ai exclude-ai` 可排除 AI 字幕，`--subtitle-ai prefer-non-ai` 可优先选用同语言的人工字幕。
+- **弹幕**。默认保存 XML。`--danmaku-format xml,ass` 保存两种格式，`--only danmaku` 只下载弹幕，`--no-danmaku` 跳过弹幕。
+
+## 项目概览
+
 `BBDown Rust` 是 BBDown 的 Rust 原生重写，目标有两个：
 
 - 提供可被其他 Rust 项目复用的 `bbdown-core` package / `bbdown_core` crate；
